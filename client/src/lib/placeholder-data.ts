@@ -49,6 +49,7 @@ export const PLACEHOLDER_SETTINGS: {
   ratingCount: null,
   /** TODO: client to verify — supplied by the client, not invented. */
   guestsServed: 15000,
+  /** TODO: client to verify — accreditation claim, permit number still pending in site.ts. */
   dotAccredited: true,
   promoCode: 'RGTOURS10',
   depositPercent: 30,
