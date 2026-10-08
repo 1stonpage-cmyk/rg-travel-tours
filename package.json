@@ -2,16 +2,19 @@
   "name": "rg-travel-tours",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "pnpm -r --parallel run dev",
     "build": "pnpm -r run build",
-    "test": "pnpm -r run test",
+    "test": "node scripts/check-coming-soon.mjs && pnpm -r run test",
     "typecheck": "pnpm -r run typecheck",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "check:coming-soon": "node scripts/check-coming-soon.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.37.0",

@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>TravelSugbo — Cebu Tours | Coming Soon</title>
+    <meta
+      name="description"
+      content="TravelSugbo is a Cebu day tour operator. Online booking is coming soon — message us on WhatsApp, Facebook, Viber or email to plan your trip. Operated by R&amp;G Travel &amp; Tours."
+    />
+    <link rel="canonical" href="https://travelsugbo.com/" />
+    <meta name="theme-color" content="#0f172e" />
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+
+    <!-- Open Graph / social -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="TravelSugbo" />
+    <meta property="og:url" content="https://travelsugbo.com/" />
+    <meta property="og:title" content="TravelSugbo — Cebu Tours | Coming Soon" />
+    <meta
+      property="og:description"
+      content="Cebu day tours, booked direct. Our booking site is on the way — message us in the meantime."
+    />
+    <meta property="og:image" content="https://travelsugbo.com/img/hero-cebu-1920.jpg" />
+    <meta property="og:image:width" content="1920" />
+    <meta property="og:image:height" content="1080" />
+    <meta
+      property="og:image:alt"
+      content="The stone gateway of Fort San Pedro in Cebu City, framed by palm trees under a clear blue sky."
+    />
+    <meta property="og:locale" content="en_PH" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="TravelSugbo — Cebu Tours | Coming Soon" />
+    <meta
+      name="twitter:description"
+      content="Cebu day tours, booked direct. Our booking site is on the way — message us in the meantime."
+    />
+    <meta name="twitter:image" content="https://travelsugbo.com/img/hero-cebu-1920.jpg" />
+
+    <link
+      rel="preload"
+      as="image"
+      href="img/hero-cebu-1920.webp"
+      imagesrcset="img/hero-cebu-800.webp 800w, img/hero-cebu-1920.webp 1920w"
+      imagesizes="100vw"
+      type="image/webp"
+    />
+
+    <!--
+      CONTACT VALUES ARE PLACEHOLDERS — they mirror client/src/lib/site.ts.
+      TODO: client to confirm before this page goes live:
+        phone / Viber  +63 900 000 0000
+        WhatsApp       639000000000
+        email          hello@travelsugbo.com
+        Facebook       https://facebook.com/
+      Permit numbers (DOT / DTI / BIR) are deliberately absent — never invent one.
+    -->
+
+    <style>
+      /* ---------------------------------------------------------------
+         TravelSugbo brand tokens — mirrored from client/src/index.css.
+         Blue primary, gold accent. No red anywhere, overlays included.
+         --------------------------------------------------------------- */
+      :root {
+        --blue-950: #0f172e;
+        --blue-900: #172554;
+        --blue-800: #1e3a8a;
+        --blue-600: #1d4ed8;
+        --blue-100: #dbeafe;
+        --gold-500: #d4a017;
+        --gold-400: #fbbf24;
+        --gold-300: #fcd34d;
+        --ink: #0f172e;
+        --paper: #ffffff;
+
+        --space-2: 0.5rem;
+        --space-3: 0.75rem;
+        --space-4: 1rem;
+        --space-6: 1.5rem;
+        --space-8: 2rem;
+        --space-12: 3rem;
+
+        --tap: 48px;
+        --ease: cubic-bezier(0.2, 0.6, 0.2, 1);
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+
+      html {
+        -webkit-text-size-adjust: 100%;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        min-height: 100svh;
+        display: flex;
+        flex-direction: column;
+        background: var(--blue-950);
+        color: var(--paper);
+        font-family:
+          'Inter',
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          'Segoe UI',
+          Roboto,
+          sans-serif;
+        font-size: 16px;
+        line-height: 1.55;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      /* --- Full-bleed hero photo + dark blue overlay ------------------- */
+
+      .backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 0;
+        /* Painted immediately so text never flashes on bare photo. */
+        background: var(--blue-950);
+      }
+
+      .backdrop img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: center 55%;
+        display: block;
+      }
+
+      /* Two stacked blue washes: a vertical darkener that guarantees AA for
+         white body text, plus a diagonal brand tint. Blues only — no red. */
+      .backdrop::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background:
+          linear-gradient(to bottom, #0f172ecc 0%, #0f172e99 45%, #172554e6 100%),
+          linear-gradient(135deg, #17255499 0%, #1e3a8a33 55%, #0f172e66 100%);
+      }
+
+      .page {
+        position: relative;
+        z-index: 1;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: var(--space-8);
+        width: 100%;
+        max-width: 56rem;
+        margin: 0 auto;
+        padding: var(--space-12) var(--space-4) var(--space-8);
+      }
+
+      /* --- Brand lockup ------------------------------------------------ */
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+      }
+
+      .brand__mark {
+        display: grid;
+        place-items: center;
+        width: 44px;
+        height: 44px;
+        flex: none;
+        border-radius: 12px;
+        background: var(--blue-600);
+        border: 1px solid var(--gold-400);
+        color: var(--gold-300);
+        font-size: 1rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+
+      .brand__word {
+        margin: 0;
+        font-size: 1.25rem;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+      }
+
+      /* --- Copy --------------------------------------------------------- */
+
+      .eyebrow {
+        margin: 0 0 var(--space-3);
+        color: var(--gold-300);
+        font-size: 0.8125rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(1.75rem, 1.2rem + 2.6vw, 3.25rem);
+        font-weight: 700;
+        line-height: 1.12;
+        letter-spacing: -0.02em;
+        text-wrap: balance;
+      }
+
+      .lede {
+        margin: var(--space-4) 0 0;
+        max-width: 42ch;
+        color: var(--blue-100);
+        font-size: clamp(1rem, 0.96rem + 0.3vw, 1.125rem);
+      }
+
+      /* --- Contact buttons --------------------------------------------- */
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-3);
+      }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: var(--space-2);
+        min-height: var(--tap);
+        min-width: var(--tap);
+        padding: var(--space-3) var(--space-6);
+        border-radius: 999px;
+        border: 1px solid transparent;
+        font: inherit;
+        font-weight: 600;
+        text-decoration: none;
+        cursor: pointer;
+        transition:
+          background-color 180ms var(--ease),
+          border-color 180ms var(--ease),
+          transform 180ms var(--ease);
+      }
+
+      .btn svg {
+        width: 20px;
+        height: 20px;
+        flex: none;
+      }
+
+      .btn--primary {
+        background: var(--gold-500);
+        color: var(--ink);
+      }
+
+      .btn--secondary {
+        background: #0f172eb3;
+        border-color: #ffffff59;
+        color: var(--paper);
+      }
+
+      .btn:hover {
+        transform: translateY(-1px);
+      }
+
+      .btn--primary:hover {
+        background: var(--gold-400);
+      }
+
+      .btn--secondary:hover {
+        background: #0f172ee6;
+        border-color: var(--paper);
+      }
+
+      .btn:active {
+        transform: translateY(0);
+      }
+
+      .btn:focus-visible {
+        outline: 3px solid var(--gold-300);
+        outline-offset: 3px;
+      }
+
+      /* --- Footer ------------------------------------------------------- */
+
+      .operator {
+        position: relative;
+        z-index: 1;
+        padding: var(--space-6) var(--space-4) var(--space-8);
+        border-top: 1px solid #ffffff2e;
+        margin: 0 var(--space-4);
+        color: var(--blue-100);
+        font-size: 0.875rem;
+      }
+
+      .operator p {
+        margin: 0 auto;
+        max-width: 56rem;
+      }
+
+      .operator strong {
+        color: var(--paper);
+        font-weight: 600;
+      }
+
+      .operator .fineprint {
+        margin-top: var(--space-2);
+        color: #cbd5e1;
+      }
+
+      @media (min-width: 640px) {
+        .page {
+          padding-inline: var(--space-8);
+        }
+
+        .operator {
+          margin-inline: var(--space-8);
+          padding-inline: var(--space-8);
+        }
+      }
+
+      /* --- Motion: one entrance, small stagger, nothing looping --------- */
+
+      @keyframes rise {
+        from {
+          opacity: 0;
+          transform: translateY(10px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+
+      .reveal {
+        animation: rise 420ms var(--ease) both;
+      }
+
+      .reveal:nth-child(1) {
+        animation-delay: 60ms;
+      }
+      .reveal:nth-child(2) {
+        animation-delay: 140ms;
+      }
+      .reveal:nth-child(3) {
+        animation-delay: 220ms;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .reveal {
+          animation: none;
+        }
+
+        .btn {
+          transition: none;
+        }
+
+        .btn:hover,
+        .btn:active {
+          transform: none;
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="backdrop">
+      <picture>
+        <source
+          type="image/webp"
+          srcset="img/hero-cebu-800.webp 800w, img/hero-cebu-1920.webp 1920w"
+          sizes="100vw"
+        />
+        <img
+          src="img/hero-cebu-1920.jpg"
+          srcset="img/hero-cebu-800.jpg 800w, img/hero-cebu-1920.jpg 1920w"
+          sizes="100vw"
+          width="1920"
+          height="1080"
+          alt="The stone gateway of Fort San Pedro in Cebu City, framed by palm trees under a clear blue sky."
+          fetchpriority="high"
+          decoding="async"
+        />
+      </picture>
+    </div>
+
+    <main class="page">
+      <div class="brand reveal">
+        <span class="brand__mark" aria-hidden="true">TS</span>
+        <p class="brand__word">TravelSugbo</p>
+      </div>
+
+      <div class="reveal">
+        <p class="eyebrow">Cebu, Philippines</p>
+        <h1>Cebu day tours, booked direct — coming soon</h1>
+        <p class="lede">
+          We are building a simpler way to book a private van and a licensed driver around Cebu —
+          message us in the meantime and we will plan your trip personally.
+        </p>
+      </div>
+
+      <div class="actions reveal">
+        <a
+          class="btn btn--primary"
+          href="https://wa.me/639000000000"
+          target="_blank"
+          rel="noopener"
+        >
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+            <path
+              d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2 22l5.25-1.38a9.9 9.9 0 0 0 4.79 1.22h.01c5.46 0 9.91-4.45 9.91-9.91C21.96 6.45 17.5 2 12.04 2Zm0 18.15h-.01a8.2 8.2 0 0 1-4.19-1.15l-.3-.18-3.12.82.83-3.04-.2-.31a8.22 8.22 0 0 1-1.26-4.38c0-4.54 3.7-8.23 8.25-8.23 2.2 0 4.27.86 5.83 2.41a8.18 8.18 0 0 1 2.41 5.83c0 4.54-3.7 8.23-8.24 8.23Zm4.52-6.16c-.25-.12-1.47-.72-1.69-.81-.23-.08-.39-.12-.56.13-.16.24-.64.8-.78.97-.15.16-.29.18-.54.06-.25-.13-1.05-.39-1.99-1.23-.74-.66-1.23-1.47-1.38-1.72-.14-.25-.01-.38.11-.5.11-.11.25-.29.37-.43.13-.15.17-.25.25-.41.08-.17.04-.31-.02-.43-.06-.12-.56-1.34-.76-1.84-.2-.48-.41-.42-.56-.43h-.48c-.17 0-.43.06-.66.31-.22.25-.87.85-.87 2.07s.9 2.4 1.02 2.56c.12.17 1.76 2.68 4.26 3.76.6.26 1.06.41 1.42.52.6.19 1.14.16 1.57.1.48-.07 1.47-.6 1.68-1.18.21-.58.21-1.08.14-1.18-.06-.11-.22-.17-.47-.29Z"
+            />
+          </svg>
+          WhatsApp
+        </a>
+
+        <a class="btn btn--secondary" href="https://facebook.com/" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+            <path
+              d="M22 12.06C22 6.5 17.52 2 12 2S2 6.5 2 12.06c0 5.02 3.66 9.18 8.44 9.94v-7.03H7.9v-2.91h2.54V9.85c0-2.52 1.49-3.91 3.77-3.91 1.09 0 2.24.2 2.24.2v2.46h-1.26c-1.24 0-1.63.78-1.63 1.57v1.89h2.78l-.45 2.91h-2.33V22c4.78-.76 8.44-4.92 8.44-9.94Z"
+            />
+          </svg>
+          Facebook
+        </a>
+
+        <a class="btn btn--secondary" href="tel:+639000000000">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path
+              d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 2.09 4.18 2 2 0 0 1 4.08 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92Z"
+            />
+          </svg>
+          Call or Viber
+        </a>
+
+        <a class="btn btn--secondary" href="mailto:hello@travelsugbo.com">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <rect x="2" y="4" width="20" height="16" rx="2" />
+            <path d="m2 7 10 6 10-6" />
+          </svg>
+          Email
+        </a>
+      </div>
+    </main>
+
+    <footer class="operator">
+      <p>
+        Operated by <strong>R&amp;G Travel &amp; Tours</strong> — TravelSugbo.com, Cebu,
+        Philippines.
+      </p>
+      <p class="fineprint">&copy; 2026 R&amp;G Travel &amp; Tours. All rights reserved.</p>
+    </footer>
+  </body>
+</html>
