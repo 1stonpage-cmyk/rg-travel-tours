@@ -21,11 +21,9 @@ const TILES = [
   { slug: 'package-cebu-highlights', label: 'CEBU HIGHLIGHTS' },
   { slug: 'package-cebu-bohol', label: 'CEBU & BOHOL' },
   { slug: 'package-south-cebu', label: 'SOUTH CEBU' },
-  // The hero tile sits directly behind the headline and trust line, so it is
-  // generated as a bare gradient: the watermark text showed through the copy at
-  // every screen size. Still a placeholder — the dev banner declares it, and the
-  // real photo replaces this file in spec task 8D.
-  { slug: 'hero', label: 'HERO IMAGE', width: 1600, height: 900, showLabel: false },
+  // No hero tile: the home hero now renders the real client photograph from
+  // client/public/hero/ (generated from assets-source/), so a placeholder for
+  // it would only rot.
 ];
 
 const escapeXml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

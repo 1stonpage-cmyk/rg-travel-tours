@@ -99,6 +99,13 @@ There is no `tailwind.config.js`.
   Write the plan, get approval, then execute.
 - Use **ui-ux-pro-max** for all UI, layout, and design work.
 - Motion: Use **emilkowalski-motion** for motion/animation only, after layout exists. Subtle only; respect `prefers-reduced-motion`.
+- **Verify before pushing — all five, in this order:**
+  `pnpm lint` · `pnpm typecheck` · `pnpm test` · `pnpm format:check` ·
+  `ALLOW_PLACEHOLDER_BUILD=1 pnpm build`.
+  `pnpm test` also runs the standalone guards (`check:coming-soon`, `check:contact`).
+  Never report work as done on an unrun command.
+- Keep formatting changes in their own commit. A `pnpm format` sweep mixed into a
+  feature commit buries the real diff.
 - Write **✅ DONE** immediately after each numbered task (1A, 1B, …) actually finishes.
 - Write **✅ WEEK X COMPLETE** when every task in a week is done and verified.
 - Report commits as `hash - short human label` (e.g. `55f1bba - Checkout deposit math`).
