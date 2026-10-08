@@ -1,6 +1,6 @@
 import { Clock, Facebook, Mail, MapPin, Phone } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { SITE } from '@/lib/site';
+import { SITE, telLink } from '@/lib/site';
 
 const PERMITS = [SITE.permits.dot, SITE.permits.dti, SITE.permits.bir];
 
@@ -10,17 +10,40 @@ export default function SiteFooter() {
       <div className="mx-auto grid max-w-7xl gap-10 px-4 py-12 sm:px-6 lg:grid-cols-4 lg:px-8">
         <div className="lg:col-span-2">
           <p className="text-brand-gold-300 text-lg font-bold">{SITE.name}</p>
-          <p className="text-brand-blue-200 mt-2 max-w-sm text-sm">{SITE.tagline}</p>
+          <p className="text-brand-blue-100 mt-1 text-base font-medium sm:text-sm">{SITE.motto}</p>
+          <p className="text-brand-blue-200 mt-2 max-w-sm text-base sm:text-sm">{SITE.tagline}</p>
 
-          <ul className="mt-6 space-y-2 text-sm">
-            <li className="flex items-center gap-2">
-              <Phone className="size-4 shrink-0" aria-hidden="true" />
-              <a
-                href={`tel:${SITE.contact.phone.replace(/\s/g, '')}`}
-                className="flex min-h-11 items-center hover:underline"
-              >
-                {SITE.contact.phone}
-              </a>
+          <ul className="mt-6 space-y-2 text-base sm:text-sm">
+            {/* Primary line: WhatsApp, Viber and voice calls all land here.
+                The apps are named as text rather than as extra links so the
+                footer keeps one unambiguous "call this number" target. */}
+            <li className="flex items-start gap-2">
+              <Phone className="mt-3.5 size-4 shrink-0" aria-hidden="true" />
+              <div>
+                <a
+                  href={telLink(SITE.contact.phone.tel)}
+                  className="flex min-h-11 items-center gap-2 hover:underline"
+                >
+                  {SITE.contact.phone.display}
+                  <span className="text-brand-blue-300 text-xs">{SITE.contact.phone.network}</span>
+                </a>
+                <p className="text-brand-blue-300 -mt-2 text-xs">WhatsApp, Viber and calls</p>
+              </div>
+            </li>
+            <li className="flex items-start gap-2">
+              <Phone className="mt-3.5 size-4 shrink-0" aria-hidden="true" />
+              <div>
+                <a
+                  href={telLink(SITE.contact.altPhone.tel)}
+                  className="flex min-h-11 items-center gap-2 hover:underline"
+                >
+                  {SITE.contact.altPhone.display}
+                  <span className="text-brand-blue-300 text-xs">
+                    {SITE.contact.altPhone.network}
+                  </span>
+                </a>
+                <p className="text-brand-blue-300 -mt-2 text-xs">Calls and SMS</p>
+              </div>
             </li>
             <li className="flex items-center gap-2">
               <Mail className="size-4 shrink-0" aria-hidden="true" />

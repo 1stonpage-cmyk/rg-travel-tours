@@ -1,14 +1,13 @@
-import { Clock, Facebook, Mail, MapPin, MessageCircle, Phone } from 'lucide-react';
+import { Clock, Facebook, Mail, MapPin, MessageCircle, MessageSquare, Phone } from 'lucide-react';
 import { useState } from 'react';
 import SectionHeading from '@/components/common/SectionHeading';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { SITE, whatsappLink } from '@/lib/site';
+import { SITE, telLink, viberLink, whatsappLink } from '@/lib/site';
 
 export default function ContactSection() {
   const [submitted, setSubmitted] = useState(false);
-  const telHref = `tel:${SITE.contact.phone.replace(/\s/g, '')}`;
 
   return (
     <section id="contact" className="bg-brand-blue-50 border-t">
@@ -23,13 +22,29 @@ export default function ContactSection() {
           <ul className="space-y-4">
             <li>
               <a
-                href={telHref}
-                className="bg-background hover:bg-brand-blue-100 flex min-h-11 items-center gap-3 rounded-xl p-4 text-sm"
+                href={telLink(SITE.contact.phone.tel)}
+                className="bg-background hover:bg-brand-blue-100 flex min-h-11 items-center gap-3 rounded-xl p-4 text-base sm:text-sm"
               >
                 <Phone className="text-brand-blue-600 size-5 shrink-0" aria-hidden="true" />
                 <span>
-                  <span className="text-brand-blue-900 block font-semibold">Phone / Viber</span>
-                  <span className="text-muted-foreground">{SITE.contact.phone}</span>
+                  <span className="text-brand-blue-900 block font-semibold">
+                    Call or text ({SITE.contact.phone.network})
+                  </span>
+                  <span className="text-muted-foreground">{SITE.contact.phone.display}</span>
+                </span>
+              </a>
+            </li>
+            <li>
+              <a
+                href={telLink(SITE.contact.altPhone.tel)}
+                className="bg-background hover:bg-brand-blue-100 flex min-h-11 items-center gap-3 rounded-xl p-4 text-base sm:text-sm"
+              >
+                <Phone className="text-brand-blue-600 size-5 shrink-0" aria-hidden="true" />
+                <span>
+                  <span className="text-brand-blue-900 block font-semibold">
+                    Call or text ({SITE.contact.altPhone.network})
+                  </span>
+                  <span className="text-muted-foreground">{SITE.contact.altPhone.display}</span>
                 </span>
               </a>
             </li>
@@ -38,19 +53,34 @@ export default function ContactSection() {
                 href={whatsappLink()}
                 target="_blank"
                 rel="noreferrer noopener"
-                className="bg-background hover:bg-brand-blue-100 flex min-h-11 items-center gap-3 rounded-xl p-4 text-sm"
+                className="bg-background hover:bg-brand-blue-100 flex min-h-11 items-center gap-3 rounded-xl p-4 text-base sm:text-sm"
               >
                 <MessageCircle className="text-brand-blue-600 size-5 shrink-0" aria-hidden="true" />
                 <span>
                   <span className="text-brand-blue-900 block font-semibold">WhatsApp</span>
-                  <span className="text-muted-foreground">Chat with the team</span>
+                  <span className="text-muted-foreground">{SITE.contact.phone.display}</span>
+                </span>
+              </a>
+            </li>
+            <li>
+              <a
+                href={viberLink()}
+                className="bg-background hover:bg-brand-blue-100 flex min-h-11 items-center gap-3 rounded-xl p-4 text-base sm:text-sm"
+              >
+                <MessageSquare
+                  className="text-brand-blue-600 size-5 shrink-0"
+                  aria-hidden="true"
+                />
+                <span>
+                  <span className="text-brand-blue-900 block font-semibold">Viber</span>
+                  <span className="text-muted-foreground">{SITE.contact.phone.display}</span>
                 </span>
               </a>
             </li>
             <li>
               <a
                 href={`mailto:${SITE.contact.email}`}
-                className="bg-background hover:bg-brand-blue-100 flex min-h-11 items-center gap-3 rounded-xl p-4 text-sm"
+                className="bg-background hover:bg-brand-blue-100 flex min-h-11 items-center gap-3 rounded-xl p-4 text-base sm:text-sm"
               >
                 <Mail className="text-brand-blue-600 size-5 shrink-0" aria-hidden="true" />
                 <span>
@@ -64,7 +94,7 @@ export default function ContactSection() {
                 href={SITE.contact.facebook}
                 target="_blank"
                 rel="noreferrer noopener"
-                className="bg-background hover:bg-brand-blue-100 flex min-h-11 items-center gap-3 rounded-xl p-4 text-sm"
+                className="bg-background hover:bg-brand-blue-100 flex min-h-11 items-center gap-3 rounded-xl p-4 text-base sm:text-sm"
               >
                 <Facebook className="text-brand-blue-600 size-5 shrink-0" aria-hidden="true" />
                 <span>
@@ -73,19 +103,38 @@ export default function ContactSection() {
                 </span>
               </a>
             </li>
-            <li className="bg-background flex items-start gap-3 rounded-xl p-4 text-sm">
+            <li className="bg-background flex items-start gap-3 rounded-xl p-4 text-base sm:text-sm">
               <MapPin className="text-brand-blue-600 mt-0.5 size-5 shrink-0" aria-hidden="true" />
               <span>
                 <span className="text-brand-blue-900 block font-semibold">Office</span>
                 <span className="text-muted-foreground">{SITE.contact.address}</span>
               </span>
             </li>
-            <li className="bg-background flex items-start gap-3 rounded-xl p-4 text-sm">
+            <li className="bg-background flex items-start gap-3 rounded-xl p-4 text-base sm:text-sm">
               <Clock className="text-brand-blue-600 mt-0.5 size-5 shrink-0" aria-hidden="true" />
               <span>
                 <span className="text-brand-blue-900 block font-semibold">Hours</span>
                 <span className="text-muted-foreground">{SITE.contact.hours}</span>
               </span>
+            </li>
+
+            {/* Services beyond tours (spec task 1D). One line, no extra page —
+                the ask goes straight to the same WhatsApp line. */}
+            <li className="border-brand-blue-200 bg-background rounded-xl border border-dashed p-4 text-base sm:text-sm">
+              <p className="text-brand-ink">
+                {SITE.otherServices.before}{' '}
+                <a
+                  href={whatsappLink(
+                    `Hi ${SITE.name}! I'd like to ask about transfers, flights or hotels.`,
+                  )}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="text-brand-blue-700 -my-3.5 inline-block py-3.5 font-semibold underline underline-offset-2"
+                >
+                  {SITE.otherServices.link}
+                </a>{' '}
+                {SITE.otherServices.after}
+              </p>
             </li>
           </ul>
 
@@ -126,7 +175,7 @@ export default function ContactSection() {
                 name="message"
                 required
                 rows={4}
-                className="border-input bg-background focus-visible:ring-ring w-full rounded-md border px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2"
+                className="border-input bg-background focus-visible:ring-ring w-full rounded-md border px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 md:text-sm"
               />
             </div>
 

@@ -29,13 +29,46 @@ export const SITE = {
     { label: 'FAQ', href: '/#faq' },
     { label: 'Contact', href: '/#contact' },
   ],
+  /** Short promise line, shown under the wordmark. */
+  motto: 'Your journey, our priority',
   contact: {
-    phone: (env.VITE_CONTACT_PHONE as string) ?? '+63 900 000 0000',
-    whatsapp: (env.VITE_WHATSAPP_NUMBER as string) ?? '639000000000',
+    /**
+     * Real client-confirmed numbers. These are NOT env-driven: the standalone
+     * coming-soon page (coming-soon/index.html) is plain static HTML that
+     * cannot read Vite env, and the two surfaces must never drift apart.
+     * scripts/check-contact-parity.mjs fails the build if they do.
+     *
+     * `phone` is the primary line — WhatsApp, Viber and voice calls all land
+     * on it. `altPhone` is a second network for calls and SMS only.
+     */
+    phone: {
+      display: '0908 469 6246',
+      network: 'Smart',
+      tel: '+639084696246',
+      /** wa.me wants the international number with no "+" or spaces. */
+      whatsapp: '639084696246',
+    },
+    altPhone: {
+      display: '0927 737 8431',
+      network: 'Globe',
+      tel: '+639277378431',
+    },
     email: (env.VITE_CONTACT_EMAIL as string) ?? 'hello@travelsugbo.com',
-    facebook: (env.VITE_FACEBOOK_URL as string) ?? 'https://facebook.com/',
+    facebook: 'https://www.facebook.com/profile.php?id=61574390071362',
     address: 'Office address pending — Cebu, Philippines',
     hours: 'Mon–Sun, 7:00 AM – 9:00 PM (PHT)',
+  },
+  /**
+   * Services beyond tours — one line next to the contact details, no extra
+   * page. Split in three so the middle part can be the WhatsApp link while the
+   * sentence stays a single source of truth; check-contact-parity.mjs joins
+   * them and compares the result with the coming-soon page.
+   */
+  otherServices: {
+    before: 'Need a van transfer, flights or a hotel?',
+    link: 'Message us',
+    after:
+      '— R&G also handles airline booking, hotel reservations and spot transportation.',
   },
   /**
    * Accreditation and registration numbers. Rendered as "pending" rather than
@@ -52,6 +85,19 @@ export const SITE = {
 
 /** Builds a wa.me deep link with an optional prefilled message. */
 export function whatsappLink(message?: string) {
-  const base = `https://wa.me/${SITE.contact.whatsapp}`;
+  const base = `https://wa.me/${SITE.contact.phone.whatsapp}`;
   return message ? `${base}?text=${encodeURIComponent(message)}` : base;
+}
+
+/**
+ * Viber deep link. The number must be percent-encoded ("+" becomes %2B) or
+ * Viber reads it as a space and the chat opens on an empty recipient.
+ */
+export function viberLink() {
+  return `viber://chat?number=${encodeURIComponent(SITE.contact.phone.tel)}`;
+}
+
+/** `tel:` href for either line. */
+export function telLink(tel: string) {
+  return `tel:${tel}`;
 }

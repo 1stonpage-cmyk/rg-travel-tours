@@ -8,13 +8,14 @@
   "scripts": {
     "dev": "pnpm -r --parallel run dev",
     "build": "pnpm -r run build",
-    "test": "node scripts/check-coming-soon.mjs && pnpm -r run test",
+    "test": "node scripts/check-coming-soon.mjs && node scripts/check-contact-parity.mjs && pnpm -r run test",
     "typecheck": "pnpm -r run typecheck",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check:coming-soon": "node scripts/check-coming-soon.mjs"
+    "check:coming-soon": "node scripts/check-coming-soon.mjs",
+    "check:contact": "node scripts/check-contact-parity.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.37.0",

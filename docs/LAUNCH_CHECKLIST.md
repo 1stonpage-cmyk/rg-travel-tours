@@ -193,13 +193,19 @@ Do these in order. Steps 1–4 change nothing public, so they are safe to do ear
 
 ### Real values confirmed by the client
 
-- [ ] Phone / Viber number (currently `+63 900 000 0000`).
-- [ ] WhatsApp number (currently `639000000000`).
-- [ ] Email (currently `hello@travelsugbo.com`).
-- [ ] Facebook page URL (currently `https://facebook.com/`).
+Confirmed and live on both surfaces:
+
+- [x] Primary line `0908 469 6246` (Smart) — WhatsApp, Viber and calls.
+- [x] Alternate line `0927 737 8431` (Globe) — calls and SMS.
+- [x] Facebook page URL.
+
+Still outstanding:
+
+- [ ] Email (currently `hello@travelsugbo.com`, still env-overridable).
 - [ ] Office address and opening hours.
-- [ ] The same four contact values appear in **two** places and must match:
-      `client/src/lib/site.ts` and the TODO block in `coming-soon/index.html`.
+- [ ] Contact values live in **two** places that must match — `client/src/lib/site.ts`
+      and `coming-soon/index.html`. `pnpm check:contact` enforces it; run it after any
+      contact change rather than eyeballing both files.
 
 ### Permits and legal
 
@@ -213,7 +219,8 @@ Do these in order. Steps 1–4 change nothing public, so they are safe to do ear
 
 - [ ] **Confirm usage rights for the hero photograph.** The source file is
       `assets-source/lapping-cebu-2008612.jpg` (Fort San Pedro, Cebu City), supplied by
-      the client. Confirm in writing that the client owns it or holds a licence that
+      the client. `assets-source/` is gitignored — the 4.6 MB original lives on the
+      build machine only, so keep a backup off this repo. Confirm in writing that the client owns it or holds a licence that
       covers commercial web use, and record the photographer credit if one is required.
 - [ ] Derived files in `client/public/hero/` and `coming-soon/img/` are regenerated if
       the source photo is ever replaced (1920 + 800 wide, WebP + JPG, each under 300 KB).

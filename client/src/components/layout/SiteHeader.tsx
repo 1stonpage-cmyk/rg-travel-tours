@@ -2,7 +2,7 @@ import { Menu, Phone, X } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { SITE } from '@/lib/site';
+import { SITE, telLink } from '@/lib/site';
 import { cn } from '@/lib/utils';
 
 /**
@@ -67,11 +67,11 @@ export default function SiteHeader() {
 
         <div className="flex items-center gap-2">
           <a
-            href={`tel:${SITE.contact.phone.replace(/\s/g, '')}`}
+            href={telLink(SITE.contact.phone.tel)}
             className="text-brand-blue-700 tap-target hidden items-center gap-2 rounded-md px-3 text-sm font-semibold lg:flex"
           >
             <Phone className="size-4" aria-hidden="true" />
-            {SITE.contact.phone}
+            {SITE.contact.phone.display}
           </a>
           <Button asChild className="tap-target hidden sm:inline-flex">
             <Link to="/tours">Book a tour</Link>
