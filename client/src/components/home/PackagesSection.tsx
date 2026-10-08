@@ -22,7 +22,7 @@ export default function PackagesSection() {
         {PACKAGES.map((pkg) => (
           <li
             key={pkg.id}
-            className="border-brand-blue-100 group press flex flex-col overflow-hidden rounded-xl border hover:-translate-y-1 hover:shadow-lg"
+            className="border-brand-blue-100 press group flex flex-col overflow-hidden rounded-xl border hover:-translate-y-1 hover:shadow-lg"
           >
             <div className="overflow-hidden">
               <img

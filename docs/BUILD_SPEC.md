@@ -57,16 +57,16 @@ If you find a bug unrelated to the current task, **don't stop or fix it**. Finis
 
 ## 1. Project overview
 
-| Item | Value |
-|---|---|
-| Brand | TravelSugbo (public-facing) |
-| Legal operator | R&G Travel & Tours, Cebu, Philippines |
-| Business | Day tours + multi-day packages (not van rentals) |
-| Domain | TravelSugbo.com |
-| Hosting | IONOS VPS M+ (2 vCPU, 4 GB RAM), Ubuntu, nginx, PM2 |
-| Payments | PayMongo (GCash, Maya, GrabPay, card, PayPal if enabled on account, QR Ph) |
-| Timeline | 8 weeks |
-| Users | Guests, customers (booked guests), drivers, admin staff |
+| Item           | Value                                                                      |
+| -------------- | -------------------------------------------------------------------------- |
+| Brand          | TravelSugbo (public-facing)                                                |
+| Legal operator | R&G Travel & Tours, Cebu, Philippines                                      |
+| Business       | Day tours + multi-day packages (not van rentals)                           |
+| Domain         | TravelSugbo.com                                                            |
+| Hosting        | IONOS VPS M+ (2 vCPU, 4 GB RAM), Ubuntu, nginx, PM2                        |
+| Payments       | PayMongo (GCash, Maya, GrabPay, card, PayPal if enabled on account, QR Ph) |
+| Timeline       | 8 weeks                                                                    |
+| Users          | Guests, customers (booked guests), drivers, admin staff                    |
 
 ### Five surfaces
 
@@ -80,20 +80,20 @@ If you find a bug unrelated to the current task, **don't stop or fix it**. Finis
 
 ## 2. Tech stack
 
-| Layer | Choice |
-|---|---|
-| Frontend | React + TypeScript + Vite + Tailwind + shadcn/ui |
-| Routing | React Router |
-| API | Express + tRPC |
-| ORM / DB | Drizzle + MySQL 8 |
-| Validation | Zod (shared between client and server) |
-| Auth | Session cookies (httpOnly, secure, sameSite=lax), bcrypt/argon2 for passwords and PINs |
-| Payments | PayMongo API + webhooks |
-| Email | SMTP via a transactional provider (configurable in `.env`) |
-| SMS | Optional, behind a provider interface (off by default) |
-| Jobs | `node-cron` in the server process (hold expiry, reminders, alerts) |
-| Process | PM2 |
-| Web server | nginx reverse proxy + Let's Encrypt SSL |
+| Layer      | Choice                                                                                 |
+| ---------- | -------------------------------------------------------------------------------------- |
+| Frontend   | React + TypeScript + Vite + Tailwind + shadcn/ui                                       |
+| Routing    | React Router                                                                           |
+| API        | Express + tRPC                                                                         |
+| ORM / DB   | Drizzle + MySQL 8                                                                      |
+| Validation | Zod (shared between client and server)                                                 |
+| Auth       | Session cookies (httpOnly, secure, sameSite=lax), bcrypt/argon2 for passwords and PINs |
+| Payments   | PayMongo API + webhooks                                                                |
+| Email      | SMTP via a transactional provider (configurable in `.env`)                             |
+| SMS        | Optional, behind a provider interface (off by default)                                 |
+| Jobs       | `node-cron` in the server process (hold expiry, reminders, alerts)                     |
+| Process    | PM2                                                                                    |
+| Web server | nginx reverse proxy + Let's Encrypt SSL                                                |
 
 ### SEO note (Vite SPA)
 
@@ -147,15 +147,15 @@ The public site needs search visibility. Handle it without SSR:
 
 ### Routes
 
-| Route | Page |
-|---|---|
-| `/` | Home |
-| `/tours` | Tour catalog |
-| `/tours/:slug` | Tour detail |
-| `/packages/:slug` | Multi-day package detail + inquiry |
-| `/checkout/:holdId` | Checkout |
-| `/booking/:ref/confirmed` | Confirmation |
-| `/contact`, `/faq` | Optional standalone pages (sections also on home) |
+| Route                     | Page                                              |
+| ------------------------- | ------------------------------------------------- |
+| `/`                       | Home                                              |
+| `/tours`                  | Tour catalog                                      |
+| `/tours/:slug`            | Tour detail                                       |
+| `/packages/:slug`         | Multi-day package detail + inquiry                |
+| `/checkout/:holdId`       | Checkout                                          |
+| `/booking/:ref/confirmed` | Confirmation                                      |
+| `/contact`, `/faq`        | Optional standalone pages (sections also on home) |
 
 ### Home sections (in order)
 
@@ -240,16 +240,16 @@ Steps 3–4 count already-confirmed-but-unassigned bookings as consuming one van
 
 ### Booking statuses
 
-| Status | Meaning | Holds capacity |
-|---|---|---|
-| `pending_payment` | Hold active, waiting for payment | Yes |
-| `pending_verification` | Manual receipt uploaded, waiting for admin | Yes |
-| `confirmed` | Paid (deposit or full), no van/driver yet | Yes |
-| `assigned` | Van + driver assigned | Yes |
-| `in_progress` | Driver started the trip | Yes |
-| `completed` | Last stop checked in | No |
-| `cancelled` | Cancelled by admin | No |
-| `expired` | Hold timed out | No |
+| Status                 | Meaning                                    | Holds capacity |
+| ---------------------- | ------------------------------------------ | -------------- |
+| `pending_payment`      | Hold active, waiting for payment           | Yes            |
+| `pending_verification` | Manual receipt uploaded, waiting for admin | Yes            |
+| `confirmed`            | Paid (deposit or full), no van/driver yet  | Yes            |
+| `assigned`             | Van + driver assigned                      | Yes            |
+| `in_progress`          | Driver started the trip                    | Yes            |
+| `completed`            | Last stop checked in                       | No             |
+| `cancelled`            | Cancelled by admin                         | No             |
+| `expired`              | Hold timed out                             | No             |
 
 Refunds are tracked on `payments`, not as a booking status.
 
@@ -310,13 +310,13 @@ Refunds are tracked on `payments`, not as a booking status.
 
 ### 5-step tracker
 
-| Step | Done when |
-|---|---|
-| Booked | Booking exists |
-| Payment sent | Online payment received, or receipt uploaded |
-| Verified by admin | Payment `paid` (auto for PayMongo) |
-| Driver assigned | Booking `assigned` |
-| Tour day | Booking `in_progress` or `completed` |
+| Step              | Done when                                    |
+| ----------------- | -------------------------------------------- |
+| Booked            | Booking exists                               |
+| Payment sent      | Online payment received, or receipt uploaded |
+| Verified by admin | Payment `paid` (auto for PayMongo)           |
+| Driver assigned   | Booking `assigned`                           |
+| Tour day          | Booking `in_progress` or `completed`         |
 
 ### Features
 
@@ -366,18 +366,18 @@ Check-ins update the admin dashboard within ~15 seconds (polling is fine; no web
 
 ### Roles & permissions
 
-| Area | Owner | Dispatcher | Finance |
-|---|---|---|---|
-| Dashboard | ✅ | ✅ | ✅ |
-| Bookings: view, notes | ✅ | ✅ | ✅ |
-| Assign van/driver | ✅ | ✅ | ❌ |
-| Verify payments, record payments | ✅ | ❌ | ✅ |
-| Cancel / refund | ✅ | ❌ | ✅ |
-| Vans, drivers | ✅ | ✅ | ❌ |
-| Tours, pricing, coupons | ✅ | ❌ | ❌ |
-| Reviews moderation | ✅ | ✅ | ❌ |
-| Reports, CSV export | ✅ | ❌ | ✅ |
-| Users, settings | ✅ | ❌ | ❌ |
+| Area                             | Owner | Dispatcher | Finance |
+| -------------------------------- | ----- | ---------- | ------- |
+| Dashboard                        | ✅    | ✅         | ✅      |
+| Bookings: view, notes            | ✅    | ✅         | ✅      |
+| Assign van/driver                | ✅    | ✅         | ❌      |
+| Verify payments, record payments | ✅    | ❌         | ✅      |
+| Cancel / refund                  | ✅    | ❌         | ✅      |
+| Vans, drivers                    | ✅    | ✅         | ❌      |
+| Tours, pricing, coupons          | ✅    | ❌         | ❌      |
+| Reviews moderation               | ✅    | ✅         | ❌      |
+| Reports, CSV export              | ✅    | ❌         | ✅      |
+| Users, settings                  | ✅    | ❌         | ❌      |
 
 ### Dashboard
 
@@ -456,38 +456,39 @@ Check-ins update the admin dashboard within ~15 seconds (polling is fine; no web
 
 All money columns are `INT` centavos. All timestamps are UTC `DATETIME`.
 
-| Table | Key columns |
-|---|---|
-| `users` | id, name, email (unique), password_hash, role (owner/dispatcher/finance), is_active, last_login_at |
-| `sessions` | id, subject_type (admin/customer/driver), subject_id, expires_at |
-| `settings` | key, value (JSON) |
-| `destinations` | id, name, slug, sort_order |
-| `tours` | id, slug, title, destination_id, about, inclusions, exclusions, groups_per_day, max_guests, free_cancel_hours, is_active |
-| `tour_images` | id, tour_id, path, alt, sort_order |
-| `tour_price_tiers` | id, tour_id, min_pax, max_pax, price_per_person |
-| `tour_itinerary_stops` | id, tour_id, sort_order, name, description |
-| `tour_addons` | id, tour_id, name, price, per_person (bool), is_active |
-| `tour_blocked_dates` | id, tour_id, date, reason |
-| `tour_date_slots` | tour_id, date (PK pair); lock row for capacity checks |
-| `packages` | id, slug, title, days, old_price, new_price, description, is_active |
-| `inquiries` | id, type (contact/package), package_id, name, email, phone, message, status |
-| `bookings` | id, ref (unique), tour_id, tour_date, pax, lead name/email/phone, pickup, requests, status, pay_mode (full/deposit), price snapshot (JSON), subtotal, discount, total, amount_paid, coupon_id, van_id, driver_id, hold_expires_at, started_at, completed_at |
-| `booking_addons` | id, booking_id, addon_id, name, price, per_person, qty |
-| `booking_notes` | id, booking_id, user_id, note, created_at |
-| `payments` | id, booking_id, type (payment/refund), method (paymongo/manual_qr/cash), amount, status (pending/paid/rejected/failed), paymongo_id, txn_ref, receipt_path, reject_reason, verified_by, verified_at, collected_by_driver_id |
-| `paymongo_events` | event_id (unique), type, received_at |
-| `vans` | id, plate, model, capacity, status, odometer, last_service, next_service, orcr_expiry, franchise_no, franchise_expiry, repair_notes, is_active |
-| `drivers` | id, name, code, phone, pin_hash, failed_attempts, locked_until, license_no, license_expiry, languages, emergency_contact, status, is_active |
-| `driver_leaves` | id, driver_id, start_date, end_date, reason |
-| `trip_checkpoints` | id, booking_id, stop_id (null for "start"), checked_at, undone (bool) |
-| `reviews` | id, tour_id, booking_id (null if unverified), name, rating, guide, value, punctuality, safety, body, status (pending/published/hidden), reply, replied_at |
-| `review_helpful_votes` | review_id, voter_hash (unique pair) |
-| `coupons` | id, code (unique), kind (percent/fixed), value, min_spend, starts_at, ends_at, usage_limit, used_count, is_active |
-| `coupon_redemptions` | id, coupon_id, booking_id |
-| `newsletter_subscribers` | id, email (unique), created_at |
-| `audit_log` | id, actor_type, actor_id, action, entity, entity_id, data (JSON), created_at |
+| Table                    | Key columns                                                                                                                                                                                                                                                 |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `users`                  | id, name, email (unique), password_hash, role (owner/dispatcher/finance), is_active, last_login_at                                                                                                                                                          |
+| `sessions`               | id, subject_type (admin/customer/driver), subject_id, expires_at                                                                                                                                                                                            |
+| `settings`               | key, value (JSON)                                                                                                                                                                                                                                           |
+| `destinations`           | id, name, slug, sort_order                                                                                                                                                                                                                                  |
+| `tours`                  | id, slug, title, destination_id, about, inclusions, exclusions, groups_per_day, max_guests, free_cancel_hours, is_active                                                                                                                                    |
+| `tour_images`            | id, tour_id, path, alt, sort_order                                                                                                                                                                                                                          |
+| `tour_price_tiers`       | id, tour_id, min_pax, max_pax, price_per_person                                                                                                                                                                                                             |
+| `tour_itinerary_stops`   | id, tour_id, sort_order, name, description                                                                                                                                                                                                                  |
+| `tour_addons`            | id, tour_id, name, price, per_person (bool), is_active                                                                                                                                                                                                      |
+| `tour_blocked_dates`     | id, tour_id, date, reason                                                                                                                                                                                                                                   |
+| `tour_date_slots`        | tour_id, date (PK pair); lock row for capacity checks                                                                                                                                                                                                       |
+| `packages`               | id, slug, title, days, old_price, new_price, description, is_active                                                                                                                                                                                         |
+| `inquiries`              | id, type (contact/package), package_id, name, email, phone, message, status                                                                                                                                                                                 |
+| `bookings`               | id, ref (unique), tour_id, tour_date, pax, lead name/email/phone, pickup, requests, status, pay_mode (full/deposit), price snapshot (JSON), subtotal, discount, total, amount_paid, coupon_id, van_id, driver_id, hold_expires_at, started_at, completed_at |
+| `booking_addons`         | id, booking_id, addon_id, name, price, per_person, qty                                                                                                                                                                                                      |
+| `booking_notes`          | id, booking_id, user_id, note, created_at                                                                                                                                                                                                                   |
+| `payments`               | id, booking_id, type (payment/refund), method (paymongo/manual_qr/cash), amount, status (pending/paid/rejected/failed), paymongo_id, txn_ref, receipt_path, reject_reason, verified_by, verified_at, collected_by_driver_id                                 |
+| `paymongo_events`        | event_id (unique), type, received_at                                                                                                                                                                                                                        |
+| `vans`                   | id, plate, model, capacity, status, odometer, last_service, next_service, orcr_expiry, franchise_no, franchise_expiry, repair_notes, is_active                                                                                                              |
+| `drivers`                | id, name, code, phone, pin_hash, failed_attempts, locked_until, license_no, license_expiry, languages, emergency_contact, status, is_active                                                                                                                 |
+| `driver_leaves`          | id, driver_id, start_date, end_date, reason                                                                                                                                                                                                                 |
+| `trip_checkpoints`       | id, booking_id, stop_id (null for "start"), checked_at, undone (bool)                                                                                                                                                                                       |
+| `reviews`                | id, tour_id, booking_id (null if unverified), name, rating, guide, value, punctuality, safety, body, status (pending/published/hidden), reply, replied_at                                                                                                   |
+| `review_helpful_votes`   | review_id, voter_hash (unique pair)                                                                                                                                                                                                                         |
+| `coupons`                | id, code (unique), kind (percent/fixed), value, min_spend, starts_at, ends_at, usage_limit, used_count, is_active                                                                                                                                           |
+| `coupon_redemptions`     | id, coupon_id, booking_id                                                                                                                                                                                                                                   |
+| `newsletter_subscribers` | id, email (unique), created_at                                                                                                                                                                                                                              |
+| `audit_log`              | id, actor_type, actor_id, action, entity, entity_id, data (JSON), created_at                                                                                                                                                                                |
 
 **Indexes:**
+
 - `bookings (tour_id, tour_date, status)`
 - `bookings (ref)`
 - `bookings (driver_id, tour_date)`
@@ -498,15 +499,15 @@ All money columns are `INT` centavos. All timestamps are UTC `DATETIME`.
 
 ## 11. Notifications
 
-| Event | Email | SMS (optional) |
-|---|---|---|
-| Booking confirmed | ✅ guest | ✅ guest |
-| Receipt received | ✅ guest | — |
-| Payment rejected | ✅ guest | ✅ guest |
-| Driver assigned | ✅ guest (driver, van, plate) | ✅ guest |
-| Reminder (day before) | ✅ guest | ✅ guest |
-| New booking / receipt to verify | ✅ admin | — |
-| Review request (after completion) | ✅ guest | — |
+| Event                             | Email                         | SMS (optional) |
+| --------------------------------- | ----------------------------- | -------------- |
+| Booking confirmed                 | ✅ guest                      | ✅ guest       |
+| Receipt received                  | ✅ guest                      | —              |
+| Payment rejected                  | ✅ guest                      | ✅ guest       |
+| Driver assigned                   | ✅ guest (driver, van, plate) | ✅ guest       |
+| Reminder (day before)             | ✅ guest                      | ✅ guest       |
+| New booking / receipt to verify   | ✅ admin                      | —              |
+| Review request (after completion) | ✅ guest                      | —              |
 
 - Emails are plain, branded HTML templates.
 - Failures are logged and never block the booking flow.

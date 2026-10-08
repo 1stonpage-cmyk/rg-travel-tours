@@ -67,10 +67,7 @@ export default function ContactSection() {
                 href={viberLink()}
                 className="bg-background hover:bg-brand-blue-100 flex min-h-11 items-center gap-3 rounded-xl p-4 text-base sm:text-sm"
               >
-                <MessageSquare
-                  className="text-brand-blue-600 size-5 shrink-0"
-                  aria-hidden="true"
-                />
+                <MessageSquare className="text-brand-blue-600 size-5 shrink-0" aria-hidden="true" />
                 <span>
                   <span className="text-brand-blue-900 block font-semibold">Viber</span>
                   <span className="text-muted-foreground">{SITE.contact.phone.display}</span>

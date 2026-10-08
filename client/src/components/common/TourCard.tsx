@@ -9,7 +9,7 @@ type Props = { tour: (typeof TOURS)[number] };
 
 export default function TourCard({ tour }: Props) {
   return (
-    <Card className="group press overflow-hidden p-0 hover:-translate-y-1 hover:shadow-lg">
+    <Card className="press group overflow-hidden p-0 hover:-translate-y-1 hover:shadow-lg">
       <div className="bg-brand-blue-100 relative aspect-[4/3] overflow-hidden">
         <img
           src={tour.image}

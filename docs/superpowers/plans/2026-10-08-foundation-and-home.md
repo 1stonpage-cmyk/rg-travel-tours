@@ -59,24 +59,24 @@ Every task's requirements implicitly include this section.
 
 ### Dependencies (approve before execution)
 
-| Package | Where | In spec? | Why |
-|---|---|---|---|
-| `react`, `react-dom` | client | yes (§2) | Frontend |
-| `react-router-dom` | client | yes (§2) | Routing |
-| `vite`, `@vitejs/plugin-react` | client | yes (§2) | Build |
-| `tailwindcss@4`, `@tailwindcss/vite` | client | yes (§2) | Styling |
-| `class-variance-authority`, `clsx`, `tailwind-merge`, `tw-animate-css`, `lucide-react` | client | implied by shadcn/ui (§2) | shadcn/ui required peers |
-| `@radix-ui/react-slot`, `-accordion`, `-select`, `-label` | client | implied by shadcn/ui (§2) | Only the 4 primitives this page needs |
-| `@trpc/client`, `@trpc/server` | client/server | yes (§2) | API |
-| `express`, `cors` | server | yes (§2) | API |
-| `drizzle-orm`, `mysql2`, `drizzle-kit` | server | yes (§2) | ORM — **config only** this plan |
-| `zod` | shared/server | yes (§2) | Validation |
-| `dotenv`, `tsx`, `typescript` | all | implied | Runtime/tooling |
-| `eslint`, `typescript-eslint`, `@eslint/js`, `globals`, `eslint-plugin-react-hooks`, `eslint-plugin-react-refresh`, `eslint-config-prettier` | root | yes (§13 1A) | ESLint |
-| `prettier`, `prettier-plugin-tailwindcss` | root | yes (§13 1A) | Prettier |
-| **`vitest`** | client/server | **not named** | Test runner. Spec requires unit tests (1D, 3A, 3B); Vitest is the Vite-native choice. **Needs approval.** |
-| **`@testing-library/react`, `@testing-library/jest-dom`, `@testing-library/user-event`, `jsdom`** | client | **not named** | Component tests for the home page + no-red guard. **Needs approval.** |
-| **`supertest`, `@types/supertest`** | server | **not named** | HTTP test for the health route. **Needs approval.** |
+| Package                                                                                                                                      | Where         | In spec?                  | Why                                                                                                       |
+| -------------------------------------------------------------------------------------------------------------------------------------------- | ------------- | ------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `react`, `react-dom`                                                                                                                         | client        | yes (§2)                  | Frontend                                                                                                  |
+| `react-router-dom`                                                                                                                           | client        | yes (§2)                  | Routing                                                                                                   |
+| `vite`, `@vitejs/plugin-react`                                                                                                               | client        | yes (§2)                  | Build                                                                                                     |
+| `tailwindcss@4`, `@tailwindcss/vite`                                                                                                         | client        | yes (§2)                  | Styling                                                                                                   |
+| `class-variance-authority`, `clsx`, `tailwind-merge`, `tw-animate-css`, `lucide-react`                                                       | client        | implied by shadcn/ui (§2) | shadcn/ui required peers                                                                                  |
+| `@radix-ui/react-slot`, `-accordion`, `-select`, `-label`                                                                                    | client        | implied by shadcn/ui (§2) | Only the 4 primitives this page needs                                                                     |
+| `@trpc/client`, `@trpc/server`                                                                                                               | client/server | yes (§2)                  | API                                                                                                       |
+| `express`, `cors`                                                                                                                            | server        | yes (§2)                  | API                                                                                                       |
+| `drizzle-orm`, `mysql2`, `drizzle-kit`                                                                                                       | server        | yes (§2)                  | ORM — **config only** this plan                                                                           |
+| `zod`                                                                                                                                        | shared/server | yes (§2)                  | Validation                                                                                                |
+| `dotenv`, `tsx`, `typescript`                                                                                                                | all           | implied                   | Runtime/tooling                                                                                           |
+| `eslint`, `typescript-eslint`, `@eslint/js`, `globals`, `eslint-plugin-react-hooks`, `eslint-plugin-react-refresh`, `eslint-config-prettier` | root          | yes (§13 1A)              | ESLint                                                                                                    |
+| `prettier`, `prettier-plugin-tailwindcss`                                                                                                    | root          | yes (§13 1A)              | Prettier                                                                                                  |
+| **`vitest`**                                                                                                                                 | client/server | **not named**             | Test runner. Spec requires unit tests (1D, 3A, 3B); Vitest is the Vite-native choice. **Needs approval.** |
+| **`@testing-library/react`, `@testing-library/jest-dom`, `@testing-library/user-event`, `jsdom`**                                            | client        | **not named**             | Component tests for the home page + no-red guard. **Needs approval.**                                     |
+| **`supertest`, `@types/supertest`**                                                                                                          | server        | **not named**             | HTTP test for the health route. **Needs approval.**                                                       |
 
 Deliberately **not** added: `@tanstack/react-query` / `@trpc/react-query` (vanilla tRPC client is enough here), `react-day-picker` + `date-fns` (hero uses a native `<input type="date">`; the real blocked-date picker is task 2D), `concurrently` (use `pnpm -r --parallel run dev`), `sonner` (no toasts needed).
 
@@ -175,10 +175,12 @@ Deliberately **not** added: `@tanstack/react-query` / `@trpc/react-query` (vanil
 Establishes the pnpm workspace, shared TypeScript config, lint/format, and the port + database constraints in env files. Nothing renders yet; the deliverable is a workspace that typechecks and lints clean.
 
 **Files:**
+
 - Create: `pnpm-workspace.yaml`, `package.json`, `tsconfig.base.json`, `eslint.config.js`, `.prettierrc.json`, `.prettierignore`, `.gitignore`, `.env.example`, `.env`, `.nvmrc`
 - Create: `shared/package.json`, `shared/tsconfig.json`, `shared/src/index.ts`, `shared/src/constants.ts`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: workspace package names `@rg/shared`, `@rg/server`, `@rg/client`. Root scripts `pnpm dev`, `pnpm build`, `pnpm lint`, `pnpm format`, `pnpm typecheck`, `pnpm test`. `@rg/shared` exports `DEPOSIT_PERCENT: number`, `HOLD_MINUTES: number`, `TIMEZONE: string`, `CURRENCY: string`, `BOOKING_REF_PREFIX: string`.
 
@@ -509,9 +511,11 @@ git commit -m "chore: pnpm workspace, shared constants, lint/format, env templat
 Written before any UI so the conventions govern the rest of the work. Seeded from `docs/BUILD_SPEC.md` section 0 and extended with the port and placeholder rules from this session.
 
 **Files:**
+
 - Create: `CLAUDE.md`
 
 **Interfaces:**
+
 - Consumes: Task 1's script names and workspace layout.
 - Produces: the standing convention document every later session reads first.
 
@@ -534,10 +538,10 @@ Five surfaces: public website, checkout, customer portal, driver portal, admin/d
 
 **Kong PMS also runs on this machine. NEVER use port 5173 or port 3000.**
 
-| Process | Port |
-|---|---|
+| Process                  | Port                          |
+| ------------------------ | ----------------------------- |
 | Client (Vite dev server) | **5180** (`strictPort: true`) |
-| Server (Express + tRPC) | **3100** |
+| Server (Express + tRPC)  | **3100**                      |
 
 - Vite proxies `/trpc` and `/api` to `http://localhost:3100`.
 - Ports come from `.env` (`CLIENT_PORT=5180`, `PORT=3100`) and are mirrored in `.env.example`.
@@ -545,15 +549,15 @@ Five surfaces: public website, checkout, customer portal, driver portal, admin/d
 
 ## Commands
 
-| Command | Does |
-|---|---|
-| `pnpm install` | Install all workspace packages |
-| `pnpm dev` | Run client (5180) and server (3100) in parallel |
-| `pnpm build` | Build every package |
-| `pnpm test` | Run all tests |
-| `pnpm typecheck` | `tsc --noEmit` across packages |
-| `pnpm lint` / `pnpm lint:fix` | ESLint |
-| `pnpm format` / `pnpm format:check` | Prettier |
+| Command                             | Does                                            |
+| ----------------------------------- | ----------------------------------------------- |
+| `pnpm install`                      | Install all workspace packages                  |
+| `pnpm dev`                          | Run client (5180) and server (3100) in parallel |
+| `pnpm build`                        | Build every package                             |
+| `pnpm test`                         | Run all tests                                   |
+| `pnpm typecheck`                    | `tsc --noEmit` across packages                  |
+| `pnpm lint` / `pnpm lint:fix`       | ESLint                                          |
+| `pnpm format` / `pnpm format:check` | Prettier                                        |
 
 Package manager is **pnpm**. Do not introduce npm or yarn lockfiles.
 
@@ -693,10 +697,12 @@ git commit -m "docs: add CLAUDE.md standing conventions"
 Express + tRPC with a single `health` procedure, plus a Drizzle **config file only**. No schema, no tables, no migrations, no auth. This exists so the Vite proxy has a live target and so 1A's type-safety wiring is proven end to end.
 
 **Files:**
+
 - Create: `server/package.json`, `server/tsconfig.json`, `server/vitest.config.ts`, `server/drizzle.config.ts`, `server/src/env.ts`, `server/src/trpc.ts`, `server/src/routers/_app.ts`, `server/src/app.ts`, `server/src/index.ts`
 - Test: `server/src/__tests__/health.test.ts`
 
 **Interfaces:**
+
 - Consumes: `@rg/shared` constants; `.env` `PORT` and `DATABASE_URL` from Task 1.
 - Produces:
   - `createApp(): express.Express` from `server/src/app.ts`
@@ -1002,10 +1008,12 @@ git commit -m "feat(server): Express + tRPC skeleton on port 3100"
 Vite + React + TypeScript on port 5180 with `strictPort`, Tailwind v4 brand tokens, shadcn/ui primitives, the proxy to 3100, a typed tRPC client, and an automated test that fails if red is ever introduced.
 
 **Files:**
+
 - Create: `client/package.json`, `client/tsconfig.json`, `client/vite.config.ts`, `client/vitest.config.ts`, `client/index.html`, `client/components.json`, `client/src/main.tsx`, `client/src/App.tsx`, `client/src/index.css`, `client/src/vite-env.d.ts`, `client/src/setupTests.ts`, `client/src/lib/utils.ts`, `client/src/lib/trpc.ts`, `client/src/components/ui/*.tsx`
 - Test: `client/src/__tests__/no-red.test.ts`
 
 **Interfaces:**
+
 - Consumes: `AppRouter` type from `server/src/routers/_app.ts` (Task 3); `@rg/shared` constants.
 - Produces:
   - `cn(...inputs: ClassValue[]): string` from `client/src/lib/utils.ts`
@@ -1419,6 +1427,7 @@ cd ..
 ```
 
 Then **audit every generated file** and replace any red with brand tokens:
+
 - `badge.tsx` and `button.tsx` ship a `destructive` variant using `bg-destructive` — that token is
   already remapped to `#334155`, so keep the variant but confirm no literal `red`/`rose` class
   survives.
@@ -1626,11 +1635,13 @@ Header with responsive nav, footer carrying DOT/DTI/BIR permit placeholders and 
 **REQUIRED: invoke `ui-ux-pro-max` before writing these components.**
 
 **Files:**
+
 - Create: `client/src/lib/site.ts`, `client/src/components/layout/SiteHeader.tsx`, `SiteFooter.tsx`, `FloatingWhatsApp.tsx`, `PublicLayout.tsx`, `PlaceholderBadge.tsx`, `client/src/components/common/SectionHeading.tsx`, `client/src/pages/public/ToursStubPage.tsx`
 - Modify: `client/src/App.tsx`
 - Test: `client/src/__tests__/layout.test.tsx`
 
 **Interfaces:**
+
 - Consumes: shadcn `Button`; `cn()`.
 - Produces:
   - `PublicLayout` — wraps `<Outlet/>` with header, footer, WhatsApp button, dev placeholder badge
@@ -1783,7 +1794,7 @@ export default function SectionHeading({
       )}
     >
       {eyebrow && (
-        <p className="text-brand-gold-600 mb-2 text-sm font-semibold tracking-widest uppercase">
+        <p className="text-brand-gold-600 mb-2 text-sm font-semibold uppercase tracking-widest">
           {eyebrow}
         </p>
       )}
@@ -1954,7 +1965,7 @@ export default function SiteFooter() {
         </div>
 
         <nav aria-label="Footer">
-          <p className="text-brand-gold-300 text-sm font-semibold tracking-wider uppercase">
+          <p className="text-brand-gold-300 text-sm font-semibold uppercase tracking-wider">
             Explore
           </p>
           <ul className="mt-4 space-y-1 text-sm">
@@ -1969,7 +1980,7 @@ export default function SiteFooter() {
         </nav>
 
         <div>
-          <p className="text-brand-gold-300 text-sm font-semibold tracking-wider uppercase">
+          <p className="text-brand-gold-300 text-sm font-semibold uppercase tracking-wider">
             Accreditation
           </p>
           <dl className="mt-4 space-y-2 text-sm">
@@ -1983,7 +1994,7 @@ export default function SiteFooter() {
             ))}
           </dl>
 
-          <p className="text-brand-gold-300 mt-6 text-sm font-semibold tracking-wider uppercase">
+          <p className="text-brand-gold-300 mt-6 text-sm font-semibold uppercase tracking-wider">
             We accept
           </p>
           <ul className="mt-3 flex flex-wrap gap-2">
@@ -2027,7 +2038,7 @@ export default function FloatingWhatsApp() {
       target="_blank"
       rel="noreferrer noopener"
       aria-label="Chat with us on WhatsApp"
-      className="bg-brand-blue-600 hover:bg-brand-blue-700 focus-visible:ring-brand-gold-400 fixed right-4 bottom-4 z-50 flex min-h-14 min-w-14 items-center justify-center gap-2 rounded-full px-4 text-white shadow-lg transition-transform hover:scale-105 sm:right-6 sm:bottom-6"
+      className="bg-brand-blue-600 hover:bg-brand-blue-700 focus-visible:ring-brand-gold-400 fixed bottom-4 right-4 z-50 flex min-h-14 min-w-14 items-center justify-center gap-2 rounded-full px-4 text-white shadow-lg transition-transform hover:scale-105 sm:bottom-6 sm:right-6"
     >
       <MessageCircle className="size-6" aria-hidden="true" />
       <span className="hidden text-sm font-semibold sm:inline">WhatsApp</span>
@@ -2075,7 +2086,7 @@ export default function PublicLayout() {
     <div className="flex min-h-dvh flex-col">
       <a
         href="#main"
-        className="bg-brand-blue-700 focus:ring-brand-gold-400 sr-only rounded-md px-4 py-2 text-white focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:ring-2"
+        className="bg-brand-blue-700 focus:ring-brand-gold-400 sr-only rounded-md px-4 py-2 text-white focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50 focus:ring-2"
       >
         Skip to main content
       </a>
@@ -2178,12 +2189,14 @@ git commit -m "feat(client): public layout with header, footer, floating WhatsAp
 One module holding every placeholder value, plus generated brand-gradient SVG tiles. Isolating this makes tasks 2C/2D a single deletion.
 
 **Files:**
+
 - Create: `client/src/lib/placeholder-data.ts`, `client/scripts/generate-placeholders.mjs`, `client/public/favicon.svg`
 - Create (generated): `client/public/placeholders/*.svg`
 - Create (optional, Step 7): `client/scripts/check-placeholders.mjs`
 - Test: `client/src/__tests__/placeholder-data.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces, from `placeholder-data.ts`:
   - `USING_PLACEHOLDER_DATA: true`
@@ -2804,12 +2817,14 @@ Hero with search and trust line, trust bar, catalog preview with destination fil
 **REQUIRED: invoke `ui-ux-pro-max` before writing these components.**
 
 **Files:**
+
 - Create: `client/src/components/common/StarRating.tsx`, `client/src/components/common/TourCard.tsx`
 - Create: `client/src/components/home/HeroSection.tsx`, `TrustBar.tsx`, `CatalogPreview.tsx`, `HowItWorks.tsx`, `WhyBookDirect.tsx`, `MostVisited.tsx`
 - Create: `client/src/pages/public/HomePage.tsx`
 - Modify: `client/src/App.tsx`
 
 **Interfaces:**
+
 - Consumes: `placeholder-data.ts` exports; shadcn `Button`, `Card`, `CardContent`, `Input`, `Label`, `Select`, `Badge`; `SectionHeading`.
 - Produces:
   - `StarRating` — props `{ value: number; count?: number; size?: 'sm' | 'md'; className?: string }`
@@ -2888,7 +2903,7 @@ export default function TourCard({ tour }: Props) {
           className="size-full object-cover transition-transform duration-300 group-hover:scale-105"
         />
         {tour.freeCancellation && (
-          <Badge className="bg-brand-gold-500 text-brand-blue-950 absolute top-3 left-3 border-0">
+          <Badge className="bg-brand-gold-500 text-brand-blue-950 absolute left-3 top-3 border-0">
             Free cancellation
           </Badge>
         )}
@@ -2903,7 +2918,7 @@ export default function TourCard({ tour }: Props) {
           {tour.durationHours}h
         </p>
 
-        <h3 className="text-brand-blue-900 text-base leading-snug font-semibold">
+        <h3 className="text-brand-blue-900 text-base font-semibold leading-snug">
           <Link to={`/tours/${tour.slug}`} className="hover:underline">
             {tour.title}
           </Link>
@@ -2995,7 +3010,7 @@ export default function HeroSection() {
 
       <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-24 lg:px-8">
         <div className="max-w-2xl">
-          <p className="text-brand-gold-300 text-sm font-semibold tracking-widest uppercase">
+          <p className="text-brand-gold-300 text-sm font-semibold uppercase tracking-widest">
             Cebu, Philippines
           </p>
           <h1 className="mt-3 text-3xl font-bold tracking-tight text-white sm:text-5xl">
@@ -3294,14 +3309,14 @@ export default function MostVisited() {
           eyebrow="Where guests go"
           title="Most visited places"
           subtitle="The six destinations our vans run to most often."
-          className="[&_h2]:text-white [&_p:last-child]:text-brand-blue-200"
+          className="[&_p:last-child]:text-brand-blue-200 [&_h2]:text-white"
         />
         <ul className="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {MOST_VISITED.map((place) => (
             <li key={place.slug}>
               <Link
                 to={`/tours?destination=${place.slug}`}
-                className="group focus-visible:ring-brand-gold-400 relative block overflow-hidden rounded-xl"
+                className="focus-visible:ring-brand-gold-400 group relative block overflow-hidden rounded-xl"
               >
                 <img
                   src={place.image}
@@ -3362,7 +3377,7 @@ In `client/src/App.tsx`, replace the index element with `<HomePage />` and add t
 ```tsx
 import HomePage from '@/pages/public/HomePage';
 // ...
-<Route index element={<HomePage />} />
+<Route index element={<HomePage />} />;
 ```
 
 - [ ] **Step 10: Verify in the browser**
@@ -3392,11 +3407,13 @@ Packages with old-vs-new pricing and an inquiry form, guest reviews, promo band 
 **REQUIRED: invoke `ui-ux-pro-max` before writing these components.**
 
 **Files:**
+
 - Create: `client/src/components/home/PackagesSection.tsx`, `ReviewsSection.tsx`, `PromoNewsletter.tsx`, `FaqSection.tsx`, `ContactSection.tsx`
 - Modify: `client/src/pages/public/HomePage.tsx`
 - Test: `client/src/__tests__/home.test.tsx`
 
 **Interfaces:**
+
 - Consumes: `PACKAGES`, `REVIEWS`, `FAQS`, `PLACEHOLDER_SETTINGS`, `formatPeso`; shadcn `Accordion`, `Button`, `Input`, `Label`; `SITE`, `whatsappLink`; `SectionHeading`, `StarRating`.
 - Produces: `HomePage` with anchors `#packages`, `#reviews`, `#faq`, `#contact` matching `SITE.nav`.
 
@@ -3544,7 +3561,7 @@ export default function PackagesSection() {
               className="aspect-[3/2] w-full object-cover"
             />
             <div className="flex flex-1 flex-col p-5">
-              <p className="text-brand-gold-700 text-xs font-semibold tracking-wider uppercase">
+              <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-wider">
                 {pkg.days} days / {pkg.days - 1} nights
               </p>
               <h3 className="text-brand-blue-900 mt-1.5 text-lg font-bold">{pkg.title}</h3>
@@ -3713,7 +3730,7 @@ export default function PromoNewsletter() {
     >
       <div className="mx-auto grid max-w-7xl gap-8 px-4 py-14 sm:px-6 lg:grid-cols-2 lg:items-center lg:px-8">
         <div>
-          <p className="text-brand-gold-300 flex items-center gap-2 text-sm font-semibold tracking-widest uppercase">
+          <p className="text-brand-gold-300 flex items-center gap-2 text-sm font-semibold uppercase tracking-widest">
             <Gift className="size-4" aria-hidden="true" />
             Direct-booking perk
           </p>
@@ -3934,7 +3951,7 @@ export default function ContactSection() {
                 name="message"
                 required
                 rows={4}
-                className="border-input bg-background focus-visible:ring-ring w-full rounded-md border px-3 py-2 text-sm focus-visible:ring-2 focus-visible:outline-none"
+                className="border-input bg-background focus-visible:ring-ring w-full rounded-md border px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2"
               />
             </div>
 
@@ -4023,6 +4040,7 @@ git commit -m "feat(home): packages, reviews, promo/newsletter, FAQ, contact"
 No new features. Verify the whole deliverable against the spec's checklists and fix only what fails.
 
 **Files:**
+
 - Modify: whatever the verification turns up
 - Modify: `CLAUDE.md` if any path or script changed
 
@@ -4124,34 +4142,34 @@ git commit -m "chore: verification pass for 1A, 1E, 2A, 2B"
 
 **Spec coverage for this scope:**
 
-| Spec requirement | Task |
-|---|---|
-| 1A client/server/shared, pnpm workspace | 1, 3, 4 |
-| 1A Vite + React + TS + Tailwind + shadcn | 4 |
-| 1A tRPC, Drizzle (config only, per approval) | 3 |
-| 1A ESLint/Prettier | 1 |
-| 1A `.env.example` | 1 |
-| 1E CLAUDE.md with conventions | 2 |
-| 2A header | 5 |
-| 2A footer with DOT/DTI/BIR + payment logos | 5 |
-| 2A floating WhatsApp | 5 |
-| 2A brand tokens blue/gold, no red | 4 (+ guard test) |
-| 2B §1 hero search + trust line | 7 |
-| 2B §2 trust bar | 7 |
-| 2B §3 catalog preview + destination filter | 7 |
-| 2B §4 how booking works | 7 |
-| 2B §5 why book direct (6) | 7 |
-| 2B §6 most visited places (6) | 7 |
-| 2B §7 packages (3), old vs new price, inquiry | 8 |
-| 2B §8 guest reviews | 8 |
-| 2B §9 promo band + newsletter, RGTOURS10 after signup | 8 |
-| 2B §10 FAQ (7) | 8 |
-| 2B §11 contact us | 8 |
-| 2B §12 footer | 5 |
-| 2B §13 floating WhatsApp | 5 |
-| §3 mobile-first, 44px, focus, alt text, AA | 5, 7, 8, 9 |
-| §14 "no red", "real stats only", "360px" | 4, 6, 9 |
-| Ports 5180/3100, never 5173/3000; `rg_travel` | 1, 2, 3, 4, 9 |
+| Spec requirement                                      | Task             |
+| ----------------------------------------------------- | ---------------- |
+| 1A client/server/shared, pnpm workspace               | 1, 3, 4          |
+| 1A Vite + React + TS + Tailwind + shadcn              | 4                |
+| 1A tRPC, Drizzle (config only, per approval)          | 3                |
+| 1A ESLint/Prettier                                    | 1                |
+| 1A `.env.example`                                     | 1                |
+| 1E CLAUDE.md with conventions                         | 2                |
+| 2A header                                             | 5                |
+| 2A footer with DOT/DTI/BIR + payment logos            | 5                |
+| 2A floating WhatsApp                                  | 5                |
+| 2A brand tokens blue/gold, no red                     | 4 (+ guard test) |
+| 2B §1 hero search + trust line                        | 7                |
+| 2B §2 trust bar                                       | 7                |
+| 2B §3 catalog preview + destination filter            | 7                |
+| 2B §4 how booking works                               | 7                |
+| 2B §5 why book direct (6)                             | 7                |
+| 2B §6 most visited places (6)                         | 7                |
+| 2B §7 packages (3), old vs new price, inquiry         | 8                |
+| 2B §8 guest reviews                                   | 8                |
+| 2B §9 promo band + newsletter, RGTOURS10 after signup | 8                |
+| 2B §10 FAQ (7)                                        | 8                |
+| 2B §11 contact us                                     | 8                |
+| 2B §12 footer                                         | 5                |
+| 2B §13 floating WhatsApp                              | 5                |
+| §3 mobile-first, 44px, focus, alt text, AA            | 5, 7, 8, 9       |
+| §14 "no red", "real stats only", "360px"              | 4, 6, 9          |
+| Ports 5180/3100, never 5173/3000; `rg_travel`         | 1, 2, 3, 4, 9    |
 
 **Out of scope by instruction, confirmed absent:** payments, auth, admin, database schema,
 migrations, deployment, catalog page (2C), tour detail (2D), meta injection (2E).

@@ -67,8 +67,7 @@ export const SITE = {
   otherServices: {
     before: 'Need a van transfer, flights or a hotel?',
     link: 'Message us',
-    after:
-      '— R&G also handles airline booking, hotel reservations and spot transportation.',
+    after: '— R&G also handles airline booking, hotel reservations and spot transportation.',
   },
   /**
    * Accreditation and registration numbers. Rendered as "pending" rather than

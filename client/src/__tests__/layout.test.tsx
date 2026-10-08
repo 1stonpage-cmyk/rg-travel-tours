@@ -51,7 +51,9 @@ describe('PublicLayout', () => {
     const badge = screen.getByRole('status');
     expect(badge).toHaveTextContent(/client-supplied/i);
     expect(badge).toHaveTextContent(/pending verification/i);
-    expect(badge).not.toHaveTextContent(/ratings, guest counts, prices, permits and photos are not real/i);
+    expect(badge).not.toHaveTextContent(
+      /ratings, guest counts, prices, permits and photos are not real/i,
+    );
   });
 });
 
@@ -173,9 +175,7 @@ describe('brand vs legal operator', () => {
 
   it('attributes copyright to the operator, not the trading brand', () => {
     renderLayout();
-    const copyright = screen
-      .getByRole('contentinfo')
-      .textContent?.match(/©\s*\d{4}[^.]*\./)?.[0];
+    const copyright = screen.getByRole('contentinfo').textContent?.match(/©\s*\d{4}[^.]*\./)?.[0];
     expect(copyright).toMatch(/R&G Travel & Tours/);
     expect(copyright).not.toMatch(/TravelSugbo/);
   });
