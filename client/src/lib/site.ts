@@ -2,12 +2,25 @@
  * Static site configuration. Contact numbers, addresses, and permit numbers are
  * PLACEHOLDERS until the client supplies real values (spec task 8D). Permit
  * numbers must never be invented — they render as an explicit pending state.
+ *
+ * BRAND vs LEGAL ENTITY — these are deliberately two different values:
+ *   `name`          the public trading brand, shown everywhere on the site
+ *   `legalOperator` the company that actually runs the tours and holds the
+ *                   DOT / DTI / BIR registrations
+ * Use `legalOperator` for anything regulatory or legal — the copyright notice,
+ * the accreditation block, the "Operated by" credit. Everything customer-facing
+ * uses `name`. Do not collapse them back into one value.
  */
 
 const env = import.meta.env;
 
 export const SITE = {
-  name: 'R&G Travel & Tours',
+  name: 'TravelSugbo',
+  /** Short mark for the 36px header square and the browser-tab favicon. */
+  shortMark: 'TS',
+  domain: 'TravelSugbo.com',
+  /** The licensed operator. Permits and the copyright notice belong to this name. */
+  legalOperator: 'R&G Travel & Tours',
   tagline: 'Cebu day tours and multi-day packages, booked direct.',
   nav: [
     { label: 'Tours', href: '/tours' },
@@ -19,7 +32,7 @@ export const SITE = {
   contact: {
     phone: (env.VITE_CONTACT_PHONE as string) ?? '+63 900 000 0000',
     whatsapp: (env.VITE_WHATSAPP_NUMBER as string) ?? '639000000000',
-    email: (env.VITE_CONTACT_EMAIL as string) ?? 'hello@randgtraveltours.com',
+    email: (env.VITE_CONTACT_EMAIL as string) ?? 'hello@travelsugbo.com',
     facebook: (env.VITE_FACEBOOK_URL as string) ?? 'https://facebook.com/',
     address: 'Office address pending — Cebu, Philippines',
     hours: 'Mon–Sun, 7:00 AM – 9:00 PM (PHT)',

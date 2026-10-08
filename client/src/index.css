@@ -4,7 +4,7 @@
 @custom-variant dark (&:is(.dark *));
 
 /* ---------------------------------------------------------------------------
-   R&G brand palette: blue primary, gold accent.
+   TravelSugbo brand palette: blue primary, gold accent.
    HARD RULE: no red anywhere. Warnings use amber; errors use dark blue/grey.
    Enforced by client/src/__tests__/no-red.test.ts
    --------------------------------------------------------------------------- */

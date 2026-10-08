@@ -152,3 +152,43 @@ describe('FloatingWhatsApp hides behind the hero search form', () => {
     expect(observer.disconnected).toBe(true);
   });
 });
+
+/**
+ * TravelSugbo is the public trading brand; R&G Travel & Tours is the licensed
+ * operator that holds the DOT/DTI/BIR registrations. These must not collapse
+ * into one name — the copyright notice and the accreditation block are legal
+ * attribution and belong to the operator.
+ */
+describe('brand vs legal operator', () => {
+  it('shows the TravelSugbo brand in the footer and as the home link name', () => {
+    renderLayout();
+    expect(screen.getByRole('contentinfo')).toHaveTextContent(/TravelSugbo/);
+    expect(screen.getByRole('link', { name: /TravelSugbo — home/i })).toBeInTheDocument();
+  });
+
+  it('credits the licensed operator beside the permits', () => {
+    renderLayout();
+    expect(screen.getByRole('contentinfo')).toHaveTextContent(/Operated by R&G Travel & Tours/);
+  });
+
+  it('attributes copyright to the operator, not the trading brand', () => {
+    renderLayout();
+    const copyright = screen
+      .getByRole('contentinfo')
+      .textContent?.match(/©\s*\d{4}[^.]*\./)?.[0];
+    expect(copyright).toMatch(/R&G Travel & Tours/);
+    expect(copyright).not.toMatch(/TravelSugbo/);
+  });
+
+  it('keeps the permit labels under the operator and still unfabricated', () => {
+    renderLayout();
+    const footer = screen.getByRole('contentinfo');
+    for (const label of [/DOT/, /DTI/, /BIR/]) expect(footer).toHaveTextContent(label);
+    expect(footer).toHaveTextContent(/— pending —/);
+  });
+
+  it('carries no stale randgtraveltours.com reference', () => {
+    const { container } = renderLayout();
+    expect(container.innerHTML).not.toMatch(/randgtraveltours/i);
+  });
+});

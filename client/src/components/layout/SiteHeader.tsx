@@ -32,11 +32,16 @@ export default function SiteHeader() {
           aria-label={`${SITE.name} — home`}
         >
           <span className="bg-brand-blue-600 flex size-9 items-center justify-center rounded-lg">
-            <span className="text-brand-gold-300 text-sm font-bold">R&amp;G</span>
+            <span className="text-brand-gold-300 text-sm font-bold">{SITE.shortMark}</span>
           </span>
           <span className="hidden flex-col leading-tight sm:flex">
-            <span className="text-brand-blue-900 text-sm font-bold">Travel &amp; Tours</span>
+            <span className="text-brand-blue-900 text-sm font-bold">{SITE.name}</span>
             <span className="text-muted-foreground text-xs">Cebu, Philippines</span>
+            {/* Operator credit — desktop only; the header is h-16 and a third
+                line is too tight below lg. The footer carries it at every width. */}
+            <span className="text-muted-foreground hidden text-[11px] lg:block">
+              by {SITE.legalOperator}
+            </span>
           </span>
         </Link>
 

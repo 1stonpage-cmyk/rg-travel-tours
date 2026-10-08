@@ -34,7 +34,7 @@ export default function HeroSection() {
     <section className="relative isolate overflow-hidden">
       <img
         src="/placeholders/hero.svg"
-        alt="Placeholder hero image for R&amp;G Travel &amp; Tours Cebu day tours"
+        alt="Placeholder hero image for TravelSugbo Cebu day tours"
         className="absolute inset-0 -z-10 size-full object-cover"
       />
       <div className="from-brand-blue-950/90 via-brand-blue-900/75 absolute inset-0 -z-10 bg-gradient-to-br to-transparent" />

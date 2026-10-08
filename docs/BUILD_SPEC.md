@@ -1,4 +1,9 @@
-# R&G Travel & Tours — Full Build Spec
+# TravelSugbo — Full Build Spec
+
+> Public brand: **TravelSugbo** (TravelSugbo.com).
+> Legal operator: **R&G Travel & Tours** — holds the DOT/DTI/BIR registrations,
+> the PayMongo merchant account and the payment QR. Customer-facing copy uses
+> the brand; anything regulatory, legal or financial names the operator.
 
 > Master build document for Claude Code. Read this file fully before starting any task.
 > The approved HTML demo is the visual and feature reference. Where this spec and the demo disagree, **this spec wins** — ask if unclear.
@@ -54,9 +59,10 @@ If you find a bug unrelated to the current task, **don't stop or fix it**. Finis
 
 | Item | Value |
 |---|---|
-| Client | R&G Travel & Tours, Cebu, Philippines |
+| Brand | TravelSugbo (public-facing) |
+| Legal operator | R&G Travel & Tours, Cebu, Philippines |
 | Business | Day tours + multi-day packages (not van rentals) |
-| Domain | randgtraveltours.com |
+| Domain | TravelSugbo.com |
 | Hosting | IONOS VPS M+ (2 vCPU, 4 GB RAM), Ubuntu, nginx, PM2 |
 | Payments | PayMongo (GCash, Maya, GrabPay, card, PayPal if enabled on account, QR Ph) |
 | Timeline | 8 weeks |

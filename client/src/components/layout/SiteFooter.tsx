@@ -72,6 +72,11 @@ export default function SiteFooter() {
           <p className="text-brand-gold-300 text-sm font-semibold uppercase tracking-wider">
             Accreditation
           </p>
+          {/* The permits below belong to the licensed operator, not to the
+              TravelSugbo trading brand — so the credit sits directly above them. */}
+          <p className="text-brand-blue-100 mt-3 text-sm font-medium">
+            Operated by {SITE.legalOperator}
+          </p>
           <dl className="mt-4 space-y-2 text-sm">
             {PERMITS.map((permit) => (
               <div key={permit.label}>
@@ -102,7 +107,7 @@ export default function SiteFooter() {
       <div className="border-brand-blue-900 border-t">
         <div className="text-brand-blue-300 mx-auto flex max-w-7xl flex-col gap-2 px-4 pt-6 pb-20 text-xs sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:pb-24 lg:px-8">
           <p>
-            © {new Date().getFullYear()} {SITE.name}. All rights reserved.
+            {/* Legal entity, not the trading brand — see SITE.legalOperator. */}© {new Date().getFullYear()} {SITE.legalOperator}. All rights reserved.
           </p>
           <p>Payments processed securely by PayMongo. Card details never touch our servers.</p>
         </div>

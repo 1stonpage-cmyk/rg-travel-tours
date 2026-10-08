@@ -5,8 +5,16 @@ Full requirements live in `docs/BUILD_SPEC.md` — that spec wins any disagreeme
 
 ## Project
 
-Online booking + operations system for R&G Travel & Tours, Cebu, Philippines.
-Day tours and multi-day packages. Domain: randgtraveltours.com. 8-week build.
+Online booking + operations system for **TravelSugbo**, Cebu, Philippines.
+Day tours and multi-day packages. Domain: TravelSugbo.com. 8-week build.
+
+**Brand vs legal entity — keep these separate.** The public trading brand is
+**TravelSugbo**; the licensed operator is **R&G Travel & Tours**, which holds the
+DOT/DTI/BIR registrations, the PayMongo merchant account and the payment QR.
+In code these are `SITE.name` and `SITE.legalOperator` (`client/src/lib/site.ts`).
+Customer-facing copy uses the brand. Anything regulatory, legal or financial —
+the copyright notice, the accreditation block, the "Operated by" credit, payment
+receipts — names the operator. Do not collapse them into one value.
 
 Five surfaces: public website, checkout, customer portal, driver portal, admin/dispatch.
 
