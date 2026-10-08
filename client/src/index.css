@@ -1,0 +1,162 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+/* ---------------------------------------------------------------------------
+   R&G brand palette: blue primary, gold accent.
+   HARD RULE: zero red-hued colours anywhere. Warnings use amber; errors use dark blue/grey.
+   Enforced by client/src/__tests__/no-red.test.ts
+   --------------------------------------------------------------------------- */
+@theme {
+  --color-brand-blue-50: #f0f6ff;
+  --color-brand-blue-100: #dbeafe;
+  --color-brand-blue-200: #bfdbfe;
+  --color-brand-blue-300: #93c5fd;
+  --color-brand-blue-400: #60a5fa;
+  --color-brand-blue-500: #3b82f6;
+  --color-brand-blue-600: #1d4ed8;
+  --color-brand-blue-700: #1e40af;
+  --color-brand-blue-800: #1e3a8a;
+  --color-brand-blue-900: #172554;
+  --color-brand-blue-950: #0f172e;
+
+  --color-brand-gold-50: #fffbeb;
+  --color-brand-gold-100: #fef3c7;
+  --color-brand-gold-200: #fde68a;
+  --color-brand-gold-300: #fcd34d;
+  --color-brand-gold-400: #fbbf24;
+  --color-brand-gold-500: #d4a017;
+  --color-brand-gold-600: #b8860b;
+  --color-brand-gold-700: #92610a;
+  --color-brand-gold-800: #6b4708;
+  --color-brand-gold-900: #4a3106;
+
+  /* Deep navy body text */
+  --color-brand-ink: #0f172e;
+  /* Warnings: amber/orange, never red-hued */
+  --color-brand-warning: #b45309;
+  /* Errors: dark blue/grey, never red-hued */
+  --color-brand-error: #334155;
+
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  --radius-card: 1rem;
+}
+
+/* shadcn/ui semantic tokens, mapped onto the brand palette. */
+:root {
+  --radius: 0.75rem;
+
+  --background: #ffffff;
+  --foreground: #0f172e;
+
+  --card: #ffffff;
+  --card-foreground: #0f172e;
+
+  --popover: #ffffff;
+  --popover-foreground: #0f172e;
+
+  --primary: #1d4ed8;
+  --primary-foreground: #ffffff;
+
+  --secondary: #f0f6ff;
+  --secondary-foreground: #1e3a8a;
+
+  --muted: #f1f5f9;
+  --muted-foreground: #475569;
+
+  --accent: #d4a017;
+  --accent-foreground: #0f172e;
+
+  /* NOT red. Dark blue/grey per the brand rule. */
+  --destructive: #334155;
+  --destructive-foreground: #ffffff;
+
+  --border: #e2e8f0;
+  --input: #cbd5e1;
+  --ring: #1d4ed8;
+}
+
+.dark {
+  --background: #0f172e;
+  --foreground: #f1f5f9;
+
+  --card: #172554;
+  --card-foreground: #f1f5f9;
+
+  --popover: #172554;
+  --popover-foreground: #f1f5f9;
+
+  --primary: #60a5fa;
+  --primary-foreground: #0f172e;
+
+  --secondary: #1e3a8a;
+  --secondary-foreground: #f1f5f9;
+
+  --muted: #1e293b;
+  --muted-foreground: #94a3b8;
+
+  --accent: #fbbf24;
+  --accent-foreground: #0f172e;
+
+  --destructive: #94a3b8;
+  --destructive-foreground: #0f172e;
+
+  --border: #1e293b;
+  --input: #334155;
+  --ring: #60a5fa;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+
+  /* Accessibility: always-visible focus ring (spec section 3). */
+  :focus-visible {
+    @apply ring-ring ring-offset-background outline-none ring-2 ring-offset-2;
+  }
+}
+
+@layer utilities {
+  /* 44px minimum tap target (spec section 3). */
+  .tap-target {
+    @apply min-h-11 min-w-11;
+  }
+}
