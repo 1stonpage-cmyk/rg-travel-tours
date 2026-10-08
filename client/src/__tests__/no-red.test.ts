@@ -4,7 +4,11 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const clientRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const scanRoots = [join(clientRoot, 'src'), join(clientRoot, 'index.html')];
+const scanRoots = [
+  join(clientRoot, 'src'),
+  join(clientRoot, 'index.html'),
+  join(clientRoot, 'public'),
+];
 const scanExtensions = new Set(['.ts', '.tsx', '.css', '.html', '.svg']);
 
 /** This test file names the forbidden patterns, so it must exempt itself. */
