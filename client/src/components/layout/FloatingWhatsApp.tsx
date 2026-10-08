@@ -2,6 +2,7 @@ import { MessageCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { SITE, whatsappLink } from '@/lib/site';
+import { cn } from '@/lib/utils';
 
 /**
  * The hero's search form is the page's primary CTA. The button is fixed in the
@@ -23,6 +24,19 @@ const HERO_SEARCH_FORM = 'form[aria-label="Search tours"]';
 export default function FloatingWhatsApp() {
   const { pathname } = useLocation();
   const [coversHeroSearch, setCoversHeroSearch] = useState(false);
+
+  /*
+   * One attention pulse, then never again (spec task 3E). The class has to
+   * come off afterwards: this button is removed whenever the hero search form
+   * scrolls back into view, and a CSS animation restarts from zero every time
+   * its element is re-created — left on, it would pulse again on every trip
+   * past the hero.
+   *
+   * Driven by animationend rather than a timer, so the pulse is spent only if
+   * it actually played. Sitting on the hero for a minute does not burn it, and
+   * leaving before it finishes re-arms it for when the button comes back.
+   */
+  const [pulse, setPulse] = useState(true);
 
   useEffect(() => {
     // jsdom has no IntersectionObserver; degrade to always-visible rather than
@@ -50,7 +64,11 @@ export default function FloatingWhatsApp() {
       target="_blank"
       rel="noreferrer noopener"
       aria-label="Chat with us on WhatsApp"
-      className="bg-brand-blue-600 hover:bg-brand-blue-700 focus-visible:ring-brand-gold-400 attention-pulse fixed bottom-4 right-4 z-50 flex min-h-14 min-w-14 items-center justify-center gap-2 rounded-full px-4 text-white shadow-lg transition-transform hover:scale-105 sm:bottom-6 sm:right-6"
+      className={cn(
+        'bg-brand-blue-600 hover:bg-brand-blue-700 focus-visible:ring-brand-gold-400 fixed bottom-4 right-4 z-50 flex min-h-14 min-w-14 items-center justify-center gap-2 rounded-full px-4 text-white shadow-lg transition-transform hover:scale-105 sm:bottom-6 sm:right-6',
+        pulse && 'attention-pulse',
+      )}
+      onAnimationEnd={() => setPulse(false)}
     >
       <MessageCircle className="size-6" aria-hidden="true" />
       <span className="hidden text-sm font-semibold sm:inline">WhatsApp</span>
