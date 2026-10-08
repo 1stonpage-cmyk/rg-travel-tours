@@ -33,7 +33,35 @@ const forbidden: { label: string; re: RegExp }[] = [
     label: 'rgb red',
     re: /rgba?\(\s*(?:1[89]\d|2[0-5]\d)\s*,\s*(?:[0-4]\d?)\s*,\s*(?:[0-4]\d?)\s*[,)]/i,
   },
+  {
+    // Every colour in this project is expressed as a hex brand token (see
+    // index.css). hsl()/oklch()/lab()/color-mix() etc. can encode a vivid
+    // red (e.g. oklch(62% 0.25 25)) that no hue-range regex here checks for.
+    // Rather than attempting colour-space arithmetic, forbid the functions
+    // outright: express colour as a hex brand token in index.css so the
+    // no-red guard can verify it — hsl()/oklch()/lab()/color-mix() cannot be
+    // hue-checked.
+    label:
+      'non-hex colour function — express colour as a hex brand token in index.css so the no-red guard can verify it; hsl()/oklch()/lab()/color-mix() cannot be hue-checked',
+    re: /\b(?:hsla?|oklch|lch|lab|color-mix)\(/i,
+  },
 ];
+
+/**
+ * Strip /* ... *\/ and // comment spans before pattern-matching, so prose
+ * commentary (including comments that explain the no-red rule itself, using
+ * the word "red") doesn't trip the forbidden patterns above. Real CSS/JSX
+ * values outside comments are untouched. Block comments are blanked
+ * character-by-character (newlines preserved) so line numbers stay stable
+ * for multi-line comments. `//` is only treated as a line comment when it is
+ * not preceded by `:` (so `https://...` URLs survive).
+ */
+function stripComments(text: string): string {
+  const withoutBlockComments = text.replace(/\/\*[\s\S]*?\*\//g, (match) =>
+    match.replace(/[^\n]/g, ' '),
+  );
+  return withoutBlockComments.replace(/(^|[^:])\/\/.*$/gm, (_match, prefix: string) => prefix);
+}
 
 function collectFiles(target: string): string[] {
   const stats = statSync(target, { throwIfNoEntry: false });
@@ -60,11 +88,13 @@ describe('brand rule: no red anywhere', () => {
       const rel = relative(clientRoot, file).replace(/\\/g, '/');
       if (exempt.includes(rel)) continue;
 
-      const lines = readFileSync(file, 'utf8').split(/\r?\n/);
-      lines.forEach((line, index) => {
+      const rawLines = readFileSync(file, 'utf8').split(/\r?\n/);
+      const checkedLines = stripComments(rawLines.join('\n')).split(/\r?\n/);
+      checkedLines.forEach((line, index) => {
         for (const { label, re } of forbidden) {
           if (re.test(line)) {
-            offences.push(`${rel}:${index + 1} [${label}] ${line.trim().slice(0, 100)}`);
+            const rawLine = rawLines[index] ?? line;
+            offences.push(`${rel}:${index + 1} [${label}] ${rawLine.trim().slice(0, 100)}`);
           }
         }
       });
