@@ -18,7 +18,7 @@ export default function TrustBar() {
         {ITEMS.map(({ icon: Icon, label }) => (
           <li
             key={label}
-            className="text-brand-blue-900 flex items-center gap-2.5 text-sm font-medium"
+            className="text-brand-blue-900 flex items-center gap-2.5 text-base font-medium sm:text-sm"
           >
             <Icon className="text-brand-gold-600 size-5 shrink-0" aria-hidden="true" />
             {label}

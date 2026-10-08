@@ -60,13 +60,13 @@ export default function HeroSection() {
 
       <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-24 lg:px-8">
         <div className="max-w-2xl">
-          <p className="text-brand-gold-300 text-sm font-semibold uppercase tracking-widest">
+          <p className="motion-rise text-brand-gold-300 text-sm font-semibold uppercase tracking-widest">
             Cebu, Philippines
           </p>
-          <h1 className="mt-3 text-3xl font-bold tracking-tight text-white sm:text-5xl">
+          <h1 className="motion-rise mt-3 text-3xl font-bold tracking-tight text-white [animation-delay:80ms] sm:text-5xl">
             Private Cebu day tours, booked direct with the people who run them.
           </h1>
-          <p className="text-brand-blue-100 mt-4 text-base sm:text-lg">
+          <p className="text-brand-blue-100 motion-rise mt-4 text-base [animation-delay:160ms] sm:text-lg">
             Whale sharks, canyoneering and island hopping in your own van with a licensed driver.
             Reserve with a {PLACEHOLDER_SETTINGS.depositPercent}% deposit.
           </p>
@@ -75,7 +75,7 @@ export default function HeroSection() {
               ratingCount is deliberately nullable: no client-supplied review count
               exists yet, so the "from N guest reviews" clause only renders once a
               real count is supplied (spec section 0 forbids fabricating it). */}
-          <ul className="text-brand-blue-100 mt-6 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+          <ul className="text-brand-blue-100 motion-rise mt-6 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm [animation-delay:240ms]">
             <li className="flex items-center gap-1.5">
               <span className="text-brand-gold-300 font-bold">
                 {PLACEHOLDER_SETTINGS.ratingAverage.toFixed(1)}★
@@ -97,7 +97,7 @@ export default function HeroSection() {
 
         <form
           onSubmit={handleSubmit}
-          className="bg-background/95 mt-10 grid gap-4 rounded-2xl p-4 shadow-xl backdrop-blur sm:p-6 lg:grid-cols-[1.4fr_1fr_0.8fr_auto]"
+          className="bg-background/95 motion-rise mt-10 grid gap-4 rounded-2xl p-4 shadow-xl backdrop-blur [animation-delay:320ms] sm:p-6 lg:grid-cols-[1.4fr_1fr_0.8fr_auto]"
           aria-label="Search tours"
         >
           <div className="space-y-1.5">

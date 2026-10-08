@@ -35,7 +35,7 @@ export default function MostVisited() {
                       aria-hidden="true"
                     />
                   </h3>
-                  <p className="text-brand-blue-100 mt-1 text-sm">{place.blurb}</p>
+                  <p className="text-brand-blue-100 mt-1 text-base sm:text-sm">{place.blurb}</p>
                 </div>
               </Link>
             </li>

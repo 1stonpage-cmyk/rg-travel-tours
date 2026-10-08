@@ -22,7 +22,7 @@ export default function PromoNewsletter() {
           <h2 id="promo-heading" className="mt-3 text-2xl font-bold text-white sm:text-3xl">
             Get 10% off your first tour
           </h2>
-          <p className="text-brand-blue-100 mt-3 text-sm sm:text-base">
+          <p className="text-brand-blue-100 mt-3 text-base">
             Join the list for Cebu trip tips and seasonal offers. We send a few emails a year and
             never share your address.
           </p>

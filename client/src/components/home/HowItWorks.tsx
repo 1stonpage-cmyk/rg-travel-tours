@@ -17,7 +17,7 @@ export default function HowItWorks() {
                 {item.step}
               </span>
               <h3 className="text-brand-blue-900 mt-4 text-base font-semibold">{item.title}</h3>
-              <p className="text-muted-foreground mt-2 text-sm">{item.body}</p>
+              <p className="text-muted-foreground mt-2 text-base sm:text-sm">{item.body}</p>
             </li>
           ))}
         </ol>

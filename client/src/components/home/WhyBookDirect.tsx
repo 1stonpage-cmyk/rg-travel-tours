@@ -28,7 +28,7 @@ export default function WhyBookDirect() {
                 <Icon className="text-brand-gold-700 size-5" aria-hidden="true" />
               </span>
               <h3 className="text-brand-blue-900 mt-4 text-base font-semibold">{reason.title}</h3>
-              <p className="text-muted-foreground mt-2 text-sm">{reason.body}</p>
+              <p className="text-muted-foreground mt-2 text-base sm:text-sm">{reason.body}</p>
             </li>
           );
         })}

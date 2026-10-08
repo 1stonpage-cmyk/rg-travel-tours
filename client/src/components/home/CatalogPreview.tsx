@@ -61,7 +61,7 @@ export default function CatalogPreview() {
           ))}
         </ul>
       ) : (
-        <p className="text-muted-foreground mt-8 text-center text-sm">
+        <p className="text-muted-foreground mt-8 text-center text-base sm:text-sm">
           No tours listed for this destination yet.
         </p>
       )}

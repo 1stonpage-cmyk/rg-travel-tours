@@ -22,22 +22,24 @@ export default function PackagesSection() {
         {PACKAGES.map((pkg) => (
           <li
             key={pkg.id}
-            className="border-brand-blue-100 flex flex-col overflow-hidden rounded-xl border"
+            className="border-brand-blue-100 group press flex flex-col overflow-hidden rounded-xl border hover:-translate-y-1 hover:shadow-lg"
           >
-            <img
-              src={pkg.image}
-              alt={pkg.alt}
-              loading="lazy"
-              className="aspect-[3/2] w-full object-cover"
-            />
+            <div className="overflow-hidden">
+              <img
+                src={pkg.image}
+                alt={pkg.alt}
+                loading="lazy"
+                className="aspect-[3/2] w-full object-cover transition-transform duration-500 ease-out group-hover:scale-105 motion-reduce:group-hover:scale-100"
+              />
+            </div>
             <div className="flex flex-1 flex-col p-5">
               <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-wider">
                 {pkg.days} days / {pkg.days - 1} nights
               </p>
               <h3 className="text-brand-blue-900 mt-1.5 text-lg font-bold">{pkg.title}</h3>
-              <p className="text-muted-foreground mt-2 text-sm">{pkg.description}</p>
+              <p className="text-muted-foreground mt-2 text-base sm:text-sm">{pkg.description}</p>
 
-              <ul className="mt-4 space-y-1.5 text-sm">
+              <ul className="mt-4 space-y-1.5 text-base sm:text-sm">
                 {pkg.highlights.map((h) => (
                   <li key={h} className="text-brand-ink flex items-center gap-2">
                     <Check className="text-brand-gold-600 size-4 shrink-0" aria-hidden="true" />
@@ -101,7 +103,7 @@ export default function PackagesSection() {
             name="package"
             value={selected}
             onChange={(e) => setSelected(e.target.value)}
-            className="border-input bg-background tap-target w-full rounded-md border px-3 text-sm"
+            className="border-input bg-background tap-target w-full rounded-md border px-3 text-base md:text-sm"
           >
             {PACKAGES.map((p) => (
               <option key={p.slug} value={p.slug}>

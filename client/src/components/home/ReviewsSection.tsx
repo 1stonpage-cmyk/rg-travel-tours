@@ -24,7 +24,7 @@ export default function ReviewsSection() {
           {REVIEWS.map((review) => (
             <li key={review.id} className="bg-background flex flex-col rounded-xl p-5 shadow-sm">
               <StarRating value={review.rating} />
-              <blockquote className="text-brand-ink mt-3 flex-1 text-sm">{review.body}</blockquote>
+              <blockquote className="text-brand-ink mt-3 flex-1 text-base sm:text-sm">{review.body}</blockquote>
               <footer className="mt-4 text-sm">
                 <p className="text-brand-blue-900 flex flex-wrap items-center gap-1.5 font-semibold">
                   {review.name}

@@ -167,6 +167,22 @@
   }
 
   /*
+   * Mobile: drop the legacy 300ms "wait and see if it's a double-tap" delay on
+   * every control, so a tap on a phone registers immediately. `manipulation`
+   * keeps pan and pinch-zoom — it only gives up double-tap-to-zoom, which the
+   * layout does not need and which nothing here depends on.
+   */
+  a,
+  button,
+  input,
+  select,
+  textarea,
+  summary,
+  [role='button'] {
+    touch-action: manipulation;
+  }
+
+  /*
    * In-page nav targets (#tours, #how, #why, #places, #packages, #reviews,
    * #faq, #contact) must not land under the sticky h-16 (64px) header when
    * scrolled to via SiteHeader/SiteFooter hash links. scroll-margin-top
@@ -181,5 +197,135 @@
   /* 44px minimum tap target (spec section 3). */
   .tap-target {
     @apply min-h-11 min-w-11;
+  }
+
+  /* -------------------------------------------------------------------------
+     Motion. One language across the site: ease-out cubic-bezier(.2,.6,.2,1),
+     ~180ms for controls and ~420ms for reveals. Transform and opacity only —
+     nothing here reads or writes layout, so none of it can shift the page or
+     thrash on a low-end phone.
+
+     Every rule below is switched off in the prefers-reduced-motion block that
+     follows this layer (unlayered, so it wins without !important).
+     ------------------------------------------------------------------------- */
+
+  @keyframes rise-in {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  /* Load-in for hero content. Stagger with [animation-delay:Nms]. */
+  .motion-rise {
+    animation: rise-in 420ms cubic-bezier(0.2, 0.6, 0.2, 1) both;
+  }
+
+  /*
+   * Scroll reveal. The hidden state keys off [data-reveal], which only
+   * use-scroll-reveal.ts sets — and only when IntersectionObserver exists and
+   * motion is allowed. If the script never runs (no JS, old browser, jsdom),
+   * the attribute is never added and the content is simply visible. Content
+   * must never depend on JS to become readable.
+   */
+  [data-reveal] {
+    opacity: 0;
+    transform: translateY(16px);
+    transition:
+      opacity 420ms cubic-bezier(0.2, 0.6, 0.2, 1),
+      transform 420ms cubic-bezier(0.2, 0.6, 0.2, 1);
+  }
+
+  [data-reveal='shown'] {
+    opacity: 1;
+    transform: none;
+  }
+
+  /*
+   * Press feedback for buttons and cards. Pointer-agnostic — :active covers
+   * mouse, touch and keyboard activation alike, so a phone gets the same
+   * confirmation a desktop hover gives.
+   *
+   * The transition names its properties instead of using `all`: this class is
+   * written after Tailwind's own utilities, so a bare `transition` shorthand
+   * here would silently cancel a component's `transition-all` and make its
+   * colour hovers snap.
+   */
+  .press {
+    transition-property: transform, background-color, border-color, color, box-shadow, opacity;
+    transition-duration: 180ms;
+    transition-timing-function: cubic-bezier(0.2, 0.6, 0.2, 1);
+  }
+
+  .press:active {
+    transform: scale(0.97);
+  }
+
+  /*
+   * One attention pulse on the floating WhatsApp button, ~3s after it mounts.
+   * No fill-mode: once it ends the element returns to its class transform, so
+   * hover:scale-105 keeps working afterwards.
+   */
+  @keyframes attention-pulse {
+    0% {
+      transform: scale(1);
+    }
+    40% {
+      transform: scale(1.09);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+
+  .attention-pulse {
+    animation: attention-pulse 1100ms cubic-bezier(0.2, 0.6, 0.2, 1) 3s 1;
+  }
+}
+
+/*
+ * Reduced motion (spec task 3G). Unlayered on purpose: unlayered rules beat
+ * anything in @layer utilities, so the named rules below need no !important.
+ *
+ * The blanket rule does need it — a `*` selector has zero specificity and
+ * would lose to every Tailwind utility class otherwise. It is deliberately
+ * broad: it also covers motion this file does not own (Radix's accordion
+ * height animation, tw-animate-css enter/exit, Tailwind hover transitions on
+ * the cards), so nothing new can slip past the preference later.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+  }
+
+  .motion-rise,
+  .attention-pulse {
+    animation: none;
+  }
+
+  /* Reveal targets must end up visible, not merely stop transitioning. */
+  [data-reveal],
+  [data-reveal='shown'] {
+    opacity: 1;
+    transform: none;
+  }
+
+  .press:active {
+    transform: none;
+  }
+
+  /* Hover affordances that move: keep the shadow, drop the travel. */
+  .press:hover {
+    transform: none;
   }
 }

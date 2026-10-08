@@ -34,7 +34,7 @@ export default function PublicLayout() {
     <div className="flex min-h-dvh flex-col">
       <a
         href="#main"
-        className="bg-brand-blue-700 focus:ring-brand-gold-400 sr-only rounded-md px-4 py-2 text-white focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50 focus:ring-2"
+        className="bg-brand-blue-700 focus:ring-brand-gold-400 sr-only inline-flex min-h-11 items-center rounded-md px-4 py-2 text-white focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50 focus:ring-2"
       >
         Skip to main content
       </a>

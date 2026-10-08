@@ -9,13 +9,13 @@ type Props = { tour: (typeof TOURS)[number] };
 
 export default function TourCard({ tour }: Props) {
   return (
-    <Card className="group overflow-hidden p-0 transition-shadow hover:shadow-lg">
+    <Card className="group press overflow-hidden p-0 hover:-translate-y-1 hover:shadow-lg">
       <div className="bg-brand-blue-100 relative aspect-[4/3] overflow-hidden">
         <img
           src={tour.image}
           alt={tour.alt}
           loading="lazy"
-          className="size-full object-cover transition-transform duration-300 group-hover:scale-105"
+          className="size-full object-cover transition-transform duration-500 ease-out group-hover:scale-105 motion-reduce:group-hover:scale-100"
         />
         {tour.freeCancellation && (
           <Badge className="bg-brand-gold-500 text-brand-blue-950 absolute left-3 top-3 border-0">
@@ -34,7 +34,7 @@ export default function TourCard({ tour }: Props) {
         </p>
 
         <h3 className="text-brand-blue-900 text-base font-semibold leading-snug">
-          <Link to={`/tours/${tour.slug}`} className="hover:underline">
+          <Link to={`/tours/${tour.slug}`} className="flex min-h-11 items-center hover:underline">
             {tour.title}
           </Link>
         </h3>
