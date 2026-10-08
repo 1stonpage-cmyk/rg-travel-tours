@@ -45,4 +45,12 @@ describe('PublicLayout', () => {
     renderLayout();
     expect(screen.getByRole('link', { name: /skip to (main )?content/i })).toBeInTheDocument();
   });
+
+  it('pins the mandated PlaceholderBadge copy and forbids the superseded "not real" wording', () => {
+    renderLayout();
+    const badge = screen.getByRole('status');
+    expect(badge).toHaveTextContent(/client-supplied/i);
+    expect(badge).toHaveTextContent(/pending verification/i);
+    expect(badge).not.toHaveTextContent(/ratings, guest counts, prices, permits and photos are not real/i);
+  });
 });
