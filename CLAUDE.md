@@ -98,7 +98,7 @@ There is no `tailwind.config.js`.
 - Use **Superpowers** (`writing-plans` + `subagent-driven-development`) per week of work.
   Write the plan, get approval, then execute.
 - Use **ui-ux-pro-max** for all UI, layout, and design work.
-- Motion: **emilkowalski-motion is NOT installed in this environment.** Use Tailwind CSS transitions only (card hovers, accordion). Subtle motion only, and only after layout exists.
+- Motion: Use **emilkowalski-motion** for motion/animation only, after layout exists. Subtle only; respect `prefers-reduced-motion`.
 - Write **✅ DONE** immediately after each numbered task (1A, 1B, …) actually finishes.
 - Write **✅ WEEK X COMPLETE** when every task in a week is done and verified.
 - Report commits as `hash - short human label` (e.g. `55f1bba - Checkout deposit math`).
