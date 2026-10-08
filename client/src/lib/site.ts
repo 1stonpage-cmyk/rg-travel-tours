@@ -1,7 +1,10 @@
 /**
- * Static site configuration. Contact numbers, addresses, and permit numbers are
- * PLACEHOLDERS until the client supplies real values (spec task 8D). Permit
- * numbers must never be invented — they render as an explicit pending state.
+ * Static site configuration.
+ *
+ * The phone numbers and the Facebook URL are REAL, client-confirmed values.
+ * The office address and permit numbers are still pending (spec task 8D);
+ * permit numbers must never be invented — they render as an explicit pending
+ * state. The email keeps its env override until the client confirms it.
  *
  * BRAND vs LEGAL ENTITY — these are deliberately two different values:
  *   `name`          the public trading brand, shown everywhere on the site
