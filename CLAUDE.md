@@ -78,6 +78,10 @@ There is no `tailwind.config.js`.
 - **Mobile-first.** Must work at 360px; most guests book on a phone.
 - **Accessibility:** 44px minimum tap targets, visible focus states, alt text on every
   image, AA contrast.
+- **Gold contrast:** `brand-gold-600` (`#b8860b`) fails AA (4.5:1) for normal-size text on
+  white and on `brand-blue-50` — measured 3.25:1 and 3.00:1. Small gold text (eyebrows,
+  labels, captions) must use `brand-gold-700` or darker. `brand-gold-600` remains fine for
+  non-text uses (icons, badges, large decorative elements).
 - **Motion:** subtle only (card hovers, tracker progress, check-in confirmation), and only
   after the layout exists.
 

@@ -2,7 +2,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
-import { DESTINATIONS, PLACEHOLDER_SETTINGS } from '@/lib/placeholder-data';
+import { DESTINATIONS, PLACEHOLDER_SETTINGS, REVIEWS } from '@/lib/placeholder-data';
 import HomePage from '@/pages/public/HomePage';
 
 function renderHome() {
@@ -62,7 +62,19 @@ describe('home page', () => {
     await user.type(within(form).getByLabelText(/email/i), 'guest@example.com');
     await user.click(within(form).getByRole('button', { name: /sign up/i }));
 
-    expect(await screen.findByText(PLACEHOLDER_SETTINGS.promoCode)).toBeInTheDocument();
+    const status = await screen.findByRole('status');
+    expect(within(status).getByText(PLACEHOLDER_SETTINGS.promoCode)).toBeInTheDocument();
+    expect(status).toHaveTextContent(/address has not been saved/i);
+  });
+
+  it('renders exactly six review cards', () => {
+    // REVIEWS.length is asserted against a literal, not against itself, so
+    // dropping a review from placeholder-data.ts actually fails this test.
+    expect(REVIEWS.length).toBe(6);
+    const { container } = renderHome();
+    const reviews = container.querySelector('#reviews');
+    expect(reviews).toBeTruthy();
+    expect(within(reviews as HTMLElement).getAllByRole('listitem').length).toBe(6);
   });
 
   it('offers phone, email, and WhatsApp in the contact section', () => {
@@ -82,6 +94,19 @@ describe('home page', () => {
     await user.type(within(form).getByLabelText(/email/i), 'guest@example.com');
     await user.type(within(form).getByLabelText(/message/i), 'Hello');
     await user.click(within(form).getByRole('button', { name: /send message/i }));
+
+    const status = await within(form).findByRole('status');
+    expect(status).toHaveTextContent(/nothing has been sent/i);
+  });
+
+  it('never claims a package inquiry was sent', async () => {
+    const user = userEvent.setup();
+    renderHome();
+
+    const form = screen.getByRole('form', { name: /package inquiry/i });
+    await user.type(within(form).getByLabelText(/your name/i), 'Test Guest');
+    await user.type(within(form).getByLabelText(/email/i), 'guest@example.com');
+    await user.click(within(form).getByRole('button', { name: /send inquiry/i }));
 
     const status = await within(form).findByRole('status');
     expect(status).toHaveTextContent(/nothing has been sent/i);

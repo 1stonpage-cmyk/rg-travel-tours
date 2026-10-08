@@ -15,13 +15,19 @@ export default function SiteFooter() {
           <ul className="mt-6 space-y-2 text-sm">
             <li className="flex items-center gap-2">
               <Phone className="size-4 shrink-0" aria-hidden="true" />
-              <a href={`tel:${SITE.contact.phone.replace(/\s/g, '')}`} className="hover:underline">
+              <a
+                href={`tel:${SITE.contact.phone.replace(/\s/g, '')}`}
+                className="flex min-h-11 items-center hover:underline"
+              >
                 {SITE.contact.phone}
               </a>
             </li>
             <li className="flex items-center gap-2">
               <Mail className="size-4 shrink-0" aria-hidden="true" />
-              <a href={`mailto:${SITE.contact.email}`} className="hover:underline">
+              <a
+                href={`mailto:${SITE.contact.email}`}
+                className="flex min-h-11 items-center hover:underline"
+              >
                 {SITE.contact.email}
               </a>
             </li>
@@ -39,7 +45,7 @@ export default function SiteFooter() {
                 href={SITE.contact.facebook}
                 target="_blank"
                 rel="noreferrer noopener"
-                className="hover:underline"
+                className="flex min-h-11 items-center hover:underline"
               >
                 Facebook
               </a>
