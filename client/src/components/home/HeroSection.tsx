@@ -32,12 +32,31 @@ export default function HeroSection() {
 
   return (
     <section className="relative isolate overflow-hidden">
-      <img
-        src="/placeholders/hero.svg"
-        alt="Placeholder hero image for TravelSugbo Cebu day tours"
-        className="absolute inset-0 -z-10 size-full object-cover"
-      />
-      <div className="from-brand-blue-950/90 via-brand-blue-900/75 absolute inset-0 -z-10 bg-gradient-to-br to-transparent" />
+      {/* Real photo (assets-source/), not a placeholder. `display: contents` on the
+          <picture> keeps the absolutely-positioned <img> behaving exactly as the
+          single <img> it replaced — no extra box, no layout shift. */}
+      <picture className="contents">
+        <source
+          type="image/webp"
+          srcSet="/hero/hero-cebu-800.webp 800w, /hero/hero-cebu-1920.webp 1920w"
+          sizes="100vw"
+        />
+        <img
+          src="/hero/hero-cebu-1920.jpg"
+          srcSet="/hero/hero-cebu-800.jpg 800w, /hero/hero-cebu-1920.jpg 1920w"
+          sizes="100vw"
+          width={1920}
+          height={1080}
+          alt="The stone gateway of Fort San Pedro in Cebu City, framed by palm trees under a clear blue sky."
+          fetchPriority="high"
+          decoding="async"
+          className="absolute inset-0 -z-10 size-full object-cover"
+        />
+      </picture>
+      {/* Two blue washes over the photo: a vertical darkener that holds white text
+          at AA over the bright sky, plus the diagonal brand tint. Blues only. */}
+      <div className="from-brand-blue-950/80 via-brand-blue-950/60 to-brand-blue-900/90 absolute inset-0 -z-10 bg-gradient-to-b" />
+      <div className="from-brand-blue-900/60 via-brand-blue-800/20 to-brand-blue-950/40 absolute inset-0 -z-10 bg-gradient-to-br" />
 
       <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-24 lg:px-8">
         <div className="max-w-2xl">
