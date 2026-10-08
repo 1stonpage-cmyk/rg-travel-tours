@@ -11,7 +11,7 @@ export default function MostVisited() {
           eyebrow="Where guests go"
           title="Most visited places"
           subtitle="The six destinations our vans run to most often."
-          className="[&_p:last-child]:text-brand-blue-200 [&_h2]:text-white"
+          className="[&_p:first-child]:text-brand-gold-300 [&_p:last-child]:text-brand-blue-200 [&_h2]:text-white"
         />
         <ul className="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {MOST_VISITED.map((place) => (
