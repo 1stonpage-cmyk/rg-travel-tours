@@ -144,6 +144,19 @@
     -webkit-text-size-adjust: 100%;
   }
 
+  /*
+   * Without this, reduced motion is NOT honoured. PublicLayout's hash-scroll
+   * passes `behavior: 'auto'` for reduced-motion users, but per CSSOM View
+   * 'auto' means "defer to the container's computed scroll-behavior" — and the
+   * rule above is unconditional, so both branches animated. This override is
+   * what makes that JS branch actually do anything.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+  }
+
   body {
     @apply bg-background text-foreground font-sans antialiased;
   }

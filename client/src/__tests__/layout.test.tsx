@@ -1,6 +1,6 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import PublicLayout from '@/components/layout/PublicLayout';
 
 function renderLayout() {
@@ -52,5 +52,103 @@ describe('PublicLayout', () => {
     expect(badge).toHaveTextContent(/client-supplied/i);
     expect(badge).toHaveTextContent(/pending verification/i);
     expect(badge).not.toHaveTextContent(/ratings, guest counts, prices, permits and photos are not real/i);
+  });
+});
+
+/**
+ * The floating WhatsApp button hides while the hero's search form is on screen,
+ * because a fixed bottom-right button otherwise covers the right edge of that
+ * primary CTA (measured at 360px and 390px).
+ *
+ * jsdom implements no IntersectionObserver, so it is stubbed here. That covers
+ * the wiring — selector, state, early return, cleanup — but NOT the browser's
+ * own intersection computation, which is platform behaviour.
+ */
+describe('FloatingWhatsApp hides behind the hero search form', () => {
+  class MockIntersectionObserver {
+    static instances: MockIntersectionObserver[] = [];
+    callback: IntersectionObserverCallback;
+    observed: Element[] = [];
+    disconnected = false;
+
+    constructor(callback: IntersectionObserverCallback) {
+      this.callback = callback;
+      MockIntersectionObserver.instances.push(this);
+    }
+    observe(el: Element) {
+      this.observed.push(el);
+    }
+    unobserve() {}
+    disconnect() {
+      this.disconnected = true;
+    }
+    takeRecords(): IntersectionObserverEntry[] {
+      return [];
+    }
+    emit(isIntersecting: boolean) {
+      this.callback(
+        [{ isIntersecting, target: this.observed[0] } as IntersectionObserverEntry],
+        this as unknown as IntersectionObserver,
+      );
+    }
+  }
+
+  function addHeroSearchForm() {
+    const form = document.createElement('form');
+    form.setAttribute('aria-label', 'Search tours');
+    document.body.appendChild(form);
+    return form;
+  }
+
+  beforeEach(() => {
+    MockIntersectionObserver.instances = [];
+    vi.stubGlobal('IntersectionObserver', MockIntersectionObserver);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    document.querySelectorAll('form[aria-label="Search tours"]').forEach((f) => f.remove());
+  });
+
+  const whatsapp = () => screen.queryByRole('link', { name: /whatsapp/i });
+
+  it('observes the hero search form when one is present', () => {
+    const form = addHeroSearchForm();
+    renderLayout();
+
+    const observer = MockIntersectionObserver.instances.at(-1);
+    expect(observer).toBeDefined();
+    expect(observer!.observed).toContain(form);
+  });
+
+  it('hides the button while the search form is intersecting, and restores it after', () => {
+    addHeroSearchForm();
+    renderLayout();
+    const observer = MockIntersectionObserver.instances.at(-1)!;
+
+    // Visible to begin with — the observer has not reported yet.
+    expect(whatsapp()).toBeInTheDocument();
+
+    act(() => observer.emit(true));
+    expect(whatsapp()).not.toBeInTheDocument();
+
+    act(() => observer.emit(false));
+    expect(whatsapp()).toBeInTheDocument();
+  });
+
+  it('stays visible on pages with no hero search form', () => {
+    renderLayout();
+    expect(whatsapp()).toBeInTheDocument();
+    expect(MockIntersectionObserver.instances).toHaveLength(0);
+  });
+
+  it('disconnects the observer on unmount', () => {
+    addHeroSearchForm();
+    const { unmount } = renderLayout();
+    const observer = MockIntersectionObserver.instances.at(-1)!;
+
+    expect(observer.disconnected).toBe(false);
+    unmount();
+    expect(observer.disconnected).toBe(true);
   });
 });

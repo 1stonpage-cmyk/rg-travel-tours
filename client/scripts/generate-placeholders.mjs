@@ -21,13 +21,25 @@ const TILES = [
   { slug: 'package-cebu-highlights', label: 'CEBU HIGHLIGHTS' },
   { slug: 'package-cebu-bohol', label: 'CEBU & BOHOL' },
   { slug: 'package-south-cebu', label: 'SOUTH CEBU' },
-  { slug: 'hero', label: 'HERO IMAGE', width: 1600, height: 900 },
+  // The hero tile sits directly behind the headline and trust line, so it is
+  // generated as a bare gradient: the watermark text showed through the copy at
+  // every screen size. Still a placeholder — the dev banner declares it, and the
+  // real photo replaces this file in spec task 8D.
+  { slug: 'hero', label: 'HERO IMAGE', width: 1600, height: 900, showLabel: false },
 ];
 
 const escapeXml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-function tile({ slug, label, width = 1200, height = 800 }) {
+function tile({ slug, label, width = 1200, height = 800, showLabel = true }) {
   const id = `g-${slug}`;
+  const labelGroup = showLabel
+    ? `
+  <g fill="#ffffff" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="middle">
+    <text x="${width / 2}" y="${height / 2 - 10}" font-size="${Math.round(width / 16)}" font-weight="700" letter-spacing="2">${escapeXml(label)}</text>
+    <text x="${width / 2}" y="${height / 2 + Math.round(width / 22)}" font-size="${Math.round(width / 34)}" font-weight="600" letter-spacing="6" opacity="0.85">PLACEHOLDER</text>
+  </g>`
+    : '';
+
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="${escapeXml(label)} placeholder">
   <defs>
     <linearGradient id="${id}" x1="0" y1="0" x2="1" y2="1">
@@ -36,11 +48,7 @@ function tile({ slug, label, width = 1200, height = 800 }) {
       <stop offset="100%" stop-color="#d4a017"/>
     </linearGradient>
   </defs>
-  <rect width="${width}" height="${height}" fill="url(#${id})"/>
-  <g fill="#ffffff" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" text-anchor="middle">
-    <text x="${width / 2}" y="${height / 2 - 10}" font-size="${Math.round(width / 16)}" font-weight="700" letter-spacing="2">${escapeXml(label)}</text>
-    <text x="${width / 2}" y="${height / 2 + Math.round(width / 22)}" font-size="${Math.round(width / 34)}" font-weight="600" letter-spacing="6" opacity="0.85">PLACEHOLDER</text>
-  </g>
+  <rect width="${width}" height="${height}" fill="url(#${id})"/>${labelGroup}
 </svg>
 `;
 }
