@@ -1,10 +1,20 @@
+import { USING_PLACEHOLDER_DATA } from '@/lib/placeholder-data';
+
 /**
- * Dev-only marker that the page is rendering placeholder content, not real
- * business data (spec section 0: do not fake social proof). Stripped from
- * production builds by the import.meta.env.DEV guard.
+ * Marker that the page is rendering placeholder content, not real business
+ * data (spec section 0: do not fake social proof).
+ *
+ * Gated on USING_PLACEHOLDER_DATA, not import.meta.env.DEV: a demo build
+ * made with ALLOW_PLACEHOLDER_BUILD=1 is a production build that still
+ * renders the invented tour ratings/booking counts from placeholder-data.ts,
+ * and that is exactly the build someone will actually look at. DEV is kept
+ * as a belt-and-braces OR so the badge still shows during local development
+ * even in the (currently impossible) case placeholder-data.ts reports false.
+ * Once tasks 2C/2D delete placeholder-data.ts and replace it with real API
+ * data, this component (and its import) should be deleted too.
  */
 export default function PlaceholderBadge() {
-  if (!import.meta.env.DEV) return null;
+  if (!import.meta.env.DEV && !USING_PLACEHOLDER_DATA) return null;
 
   return (
     <div

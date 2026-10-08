@@ -152,6 +152,16 @@
   :focus-visible {
     @apply ring-ring ring-offset-background outline-none ring-2 ring-offset-2;
   }
+
+  /*
+   * In-page nav targets (#tours, #how, #why, #places, #packages, #reviews,
+   * #faq, #contact) must not land under the sticky h-16 (64px) header when
+   * scrolled to via SiteHeader/SiteFooter hash links. scroll-margin-top
+   * applies to both scrollIntoView() and native fragment scrolling.
+   */
+  section[id] {
+    scroll-margin-top: 5rem;
+  }
 }
 
 @layer utilities {

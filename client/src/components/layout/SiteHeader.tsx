@@ -1,12 +1,27 @@
 import { Menu, Phone, X } from 'lucide-react';
 import { useState } from 'react';
-import { Link, NavLink } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { SITE } from '@/lib/site';
 import { cn } from '@/lib/utils';
 
+/**
+ * A nav item is "active" only when it is the genuinely-current location.
+ * `NavLink`'s default matching compares pathname only, so every "/#..."
+ * same-page anchor (pathname "/") would light up at once while on the home
+ * page. Hash-aware links must also match the current hash.
+ */
+function isNavItemActive(href: string, pathname: string, hash: string) {
+  const [path, anchor] = href.split('#');
+  if (anchor) {
+    return pathname === (path || '/') && hash === `#${anchor}`;
+  }
+  return pathname === href;
+}
+
 export default function SiteHeader() {
   const [open, setOpen] = useState(false);
+  const { pathname, hash } = useLocation();
 
   return (
     <header className="bg-background/95 supports-[backdrop-filter]:bg-background/80 sticky top-0 z-40 w-full border-b backdrop-blur">
@@ -26,21 +41,23 @@ export default function SiteHeader() {
         </Link>
 
         <nav aria-label="Main" className="hidden items-center gap-1 md:flex">
-          {SITE.nav.map((item) => (
-            <NavLink
-              key={item.href}
-              to={item.href}
-              className={({ isActive }) =>
-                cn(
+          {SITE.nav.map((item) => {
+            const active = isNavItemActive(item.href, pathname, hash);
+            return (
+              <Link
+                key={item.href}
+                to={item.href}
+                aria-current={active ? 'page' : undefined}
+                className={cn(
                   'rounded-md px-3 py-2 text-sm font-medium transition-colors',
                   'hover:bg-brand-blue-50 hover:text-brand-blue-700',
-                  isActive ? 'text-brand-blue-700' : 'text-brand-ink/80',
-                )
-              }
-            >
-              {item.label}
-            </NavLink>
-          ))}
+                  active ? 'text-brand-blue-700' : 'text-brand-ink/80',
+                )}
+              >
+                {item.label}
+              </Link>
+            );
+          })}
         </nav>
 
         <div className="flex items-center gap-2">

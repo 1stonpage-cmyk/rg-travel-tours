@@ -12,6 +12,7 @@ const schema = z.object({
   PORT: z.coerce.number().int().positive().default(3100),
   DATABASE_URL: z.string().optional(),
   UPLOADS_DIR: z.string().default('./uploads'),
+  PUBLIC_BASE_URL: z.string().default('http://localhost:5180'),
 });
 
 const parsed = schema.safeParse(process.env);

@@ -1,10 +1,35 @@
-import { Outlet } from 'react-router-dom';
+import { useEffect } from 'react';
+import { Outlet, useLocation } from 'react-router-dom';
 import FloatingWhatsApp from './FloatingWhatsApp';
 import PlaceholderBadge from './PlaceholderBadge';
 import SiteFooter from './SiteFooter';
 import SiteHeader from './SiteHeader';
 
 export default function PublicLayout() {
+  const { pathname, hash } = useLocation();
+
+  // React Router does not perform the browser's native fragment scroll on
+  // client-side navigation (pushState never triggers it). Do it ourselves:
+  // when the hash changes (including arriving from a different route in the
+  // same navigation), find the target section and scroll to it. The
+  // requestAnimationFrame gives the destination route's DOM a tick to
+  // render before we look up the id — e.g. navigating from /tours to /#faq
+  // mounts the home page's sections in the same transition.
+  useEffect(() => {
+    if (!hash) return;
+
+    const frame = requestAnimationFrame(() => {
+      const target = document.getElementById(hash.slice(1));
+      if (!target) return;
+      const prefersReducedMotion = window.matchMedia(
+        '(prefers-reduced-motion: reduce)',
+      ).matches;
+      target.scrollIntoView({ behavior: prefersReducedMotion ? 'auto' : 'smooth', block: 'start' });
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [pathname, hash]);
+
   return (
     <div className="flex min-h-dvh flex-col">
       <a
