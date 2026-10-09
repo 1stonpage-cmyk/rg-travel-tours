@@ -76,6 +76,7 @@ async function upsertTour(db: Db, tour: SeedTour, destinationId: number): Promis
     title: tour.title,
     destinationId,
     durationHours: tour.durationHours,
+    freeCancelHours: tour.freeCancelHours,
     isFeatured: tour.isFeatured,
     sortOrder: tour.sortOrder,
     badge: 'none' as const,

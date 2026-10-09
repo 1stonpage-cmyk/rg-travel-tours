@@ -142,6 +142,25 @@ export interface SeedTour {
   durationHours: number;
   sortOrder: number;
   isFeatured: boolean;
+  /**
+   * Fix round 2 (Task 1.6 review, F1): `client/src/lib/placeholder-data.ts`
+   * carries an explicit per-tour `freeCancellation` boolean today, and
+   * `TourCard.tsx` renders a "Free cancellation" badge from it on five of
+   * the six tours. `tours.list` derives that same boolean server-side as
+   * `free_cancel_hours != null && > 0` (correct), but this field was left
+   * NULL on every seeded tour, so all six badges vanished — a visible
+   * regression the "rendered page must be indistinguishable" bar forbids.
+   *
+   * 24 is a PLACEHOLDER cancellation window, not a confirmed policy number
+   * — nobody at the business has signed off on it. It reproduces today's
+   * page exactly because only the derived boolean is rendered anywhere
+   * right now; the hours value itself has no on-screen consumer yet. A
+   * future tour-detail page that displays the window must get a real,
+   * client-confirmed number before shipping, not this one by default.
+   * `null` for mactan-island-hopping matches today's `false` exactly —
+   * not a lesser guess, the correct value.
+   */
+  freeCancelHours: number | null;
   priceTiers: SeedPriceTier[];
   images: SeedTourImage[];
 }
@@ -168,6 +187,7 @@ export const SEED_TOURS: SeedTour[] = [
     durationHours: 14,
     sortOrder: 0,
     isFeatured: true,
+    freeCancelHours: 24,
     priceTiers: priceTiersFrom(189_000),
     images: singleImage(
       'oslob',
@@ -181,6 +201,7 @@ export const SEED_TOURS: SeedTour[] = [
     durationHours: 13,
     sortOrder: 1,
     isFeatured: true,
+    freeCancelHours: 24,
     priceTiers: priceTiersFrom(215_000),
     images: singleImage(
       'badian-kawasan',
@@ -194,6 +215,7 @@ export const SEED_TOURS: SeedTour[] = [
     durationHours: 12,
     sortOrder: 2,
     isFeatured: true,
+    freeCancelHours: 24,
     priceTiers: priceTiersFrom(175_000),
     images: singleImage(
       'moalboal',
@@ -207,6 +229,8 @@ export const SEED_TOURS: SeedTour[] = [
     durationHours: 8,
     sortOrder: 3,
     isFeatured: true,
+    // Matches today's `freeCancellation: false` in placeholder-data.ts exactly.
+    freeCancelHours: null,
     priceTiers: priceTiersFrom(145_000),
     images: singleImage(
       'mactan',
@@ -220,6 +244,7 @@ export const SEED_TOURS: SeedTour[] = [
     durationHours: 6,
     sortOrder: 4,
     isFeatured: true,
+    freeCancelHours: 24,
     priceTiers: priceTiersFrom(98_000),
     images: singleImage(
       'cebu-city',
@@ -233,6 +258,7 @@ export const SEED_TOURS: SeedTour[] = [
     durationHours: 15,
     sortOrder: 5,
     isFeatured: true,
+    freeCancelHours: 24,
     priceTiers: priceTiersFrom(245_000),
     images: singleImage(
       'bohol',

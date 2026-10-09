@@ -26,6 +26,25 @@ describeWithDb('public queries', () => {
     expect(tours.map((t) => t.id)).toEqual(featuredFirst.map((t) => t.id));
   });
 
+  // Fix round 2 (review F1): placeholder-data.ts renders a "Free
+  // cancellation" badge from an explicit per-tour boolean on five of the
+  // six tours today. seed-data.ts left `free_cancel_hours` NULL on every
+  // tour, so the derived boolean was false everywhere — all five badges
+  // silently vanished. Pins the exact set so a future seed edit that drops
+  // this again fails here instead of only being visible on the live page.
+  it('tours.list reports freeCancellation on five tours, matching today’s page — mactan-island-hopping stays false', async () => {
+    const tours = await caller.tours.list({});
+    const bySlug = new Map(tours.map((t) => [t.slug, t.freeCancellation]));
+
+    expect(tours.filter((t) => t.freeCancellation)).toHaveLength(5);
+    expect(bySlug.get('mactan-island-hopping')).toBe(false);
+    expect(bySlug.get('oslob-whale-shark-tumalog-falls')).toBe(true);
+    expect(bySlug.get('kawasan-falls-canyoneering')).toBe(true);
+    expect(bySlug.get('moalboal-sardine-run-turtles')).toBe(true);
+    expect(bySlug.get('cebu-city-heritage-tour')).toBe(true);
+    expect(bySlug.get('bohol-countryside-chocolate-hills')).toBe(true);
+  });
+
   it('tours.list filters by destination slug', async () => {
     const oslob = await caller.tours.list({ destination: 'oslob' });
     expect(oslob.length).toBeGreaterThan(0);
