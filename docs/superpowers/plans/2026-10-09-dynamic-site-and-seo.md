@@ -1882,6 +1882,58 @@ Use **emilkowalski-motion** for all motion and **ui-ux-pro-max** for layout.
 - **2.9F — Header shrinks/solidifies on scroll**, and nav links smooth-scroll to sections.
 - **2.9G — Subtle hero parallax, desktop only.**
 - **2.9H — Tap feedback** (scale 0.97 + soft shadow) on cards, chips and buttons on touch devices.
+- **2.9I — Official WhatsApp + Viber branding and motion**, on both the main site and `coming-soon/index.html`. Detail below.
+
+#### 2.9I — WhatsApp / Viber branding and motion
+
+Applies to **five surfaces**: the floating button, the mobile bottom bar (2.9B), the contact section, the footer, and `coming-soon/index.html`.
+
+**Branding**
+
+- WhatsApp: official green `#25D366` background, white official WhatsApp glyph as **inline SVG** from WhatsApp's brand resources — no icon-library dependency. Label "Chat on WhatsApp" where there is room. Hover/pressed `#128C7E`.
+- Viber: official purple `#7360F2` with the white Viber glyph, inline SVG.
+- **Keep both glyphs unmodified** — no recolouring, stretching or outlines — per the WhatsApp and Viber brand guidelines.
+- These two brand colours are an **explicit, documented exception** to the blue/gold palette. Record the exception in `CLAUDE.md`. Red remains forbidden.
+
+**Motion (emilkowalski-motion)**
+
+- Floating / bottom-bar button: slide-up + fade on first appearance; one gentle attention pulse (scale 1 → 1.06 → 1) after ~3s, **once per session**, then stop.
+- A subtle "Chat with us" label that slides out from the icon on desktop hover, and once on mobile after the pulse, tucking back after ~3s.
+- Press feedback: scale 0.95 with a quick spring-back. Desktop hover: lift + soft shadow.
+- Contact-section buttons: **no idle animation**, press feedback only.
+- Coming-soon buttons: same press feedback, staggered fade-in with the rest of the page.
+- Transform/opacity only, 150–400ms, ease-out. All motion off under `prefers-reduced-motion`. No layout shift. Never covers a CTA.
+
+**Guard compatibility — already verified 2026-10-10, do not re-litigate**
+
+All three hex values were checked against every pattern in `client/src/__tests__/no-red.test.ts` and `scripts/check-coming-soon.mjs`: `#25D366`, `#128C7E` and `#7360F2` **pass all red patterns**. Two cautions that follow from how those guards work:
+
+- Both guards **forbid `hsl()` / `oklch()` / `lab()` / `color-mix()` outright**, because a hue range cannot be checked inside them. Express these colours as **hex** only.
+- Both guards scan `.svg`, so the inline glyph markup is scanned too. Hex is fine there as well.
+
+**Contrast — a real conflict, measured**
+
+| Background | White text | `brand-ink` #0f172e |
+| ---------- | ---------- | ------------------- |
+| `#25D366`  | **1.98:1** | 8.96:1              |
+| `#128C7E`  | 4.14:1     | 4.30:1              |
+| `#7360F2`  | 4.48:1     | 3.96:1              |
+
+The **glyph** is exempt — WCAG 1.4.11 exempts logotypes and brand marks, so a white official glyph on `#25D366` is correct and must not be altered.
+
+The **text label is not exempt.** "Chat on WhatsApp" is functional text and needs 4.5:1. White on `#25D366` is **1.98:1**, which fails AA by a wide margin and cannot be rescued by font size — even the large-text allowance is 3:1. CLAUDE.md requires AA contrast, so this needs a deliberate decision rather than a default; see the controller's question of 2026-10-10. Until answered, the fallback is **icon-only with an `aria-label`** on the green surfaces, which is accessible and brand-faithful, with any visible wording placed outside the green pill.
+
+`#128C7E` (4.14:1) and `#7360F2` (4.48:1) both sit just under 4.5:1 for normal text but clear the 3:1 large-text bar — so white labels on those are acceptable at ≥18.66px bold / ≥24px, and should be sized accordingly or darkened.
+
+**Accessibility & checks**
+
+- `aria-label` on every icon-only button; 44px tap targets; visible focus ring that is itself visible against the brand colours.
+- **`scripts/check-contact-parity.mjs` risk:** it asserts the coming-soon page's text contains `phoneDisplay` and `altPhoneDisplay`. If restyling replaces a visible phone number with a label like "Chat on WhatsApp", **that guard fails**. Check before restructuring, and update the guard only if the change is genuinely intended — the user authorised updating it if it inspects button markup.
+- Its `allowed` map also rejects any `wa.me` / `viber:` / `tel:` target not declared in `site.ts`, so new links must reuse the existing numbers exactly.
+- Run the no-red guard and confirm both brand colours pass (expected: they do).
+- Report the white-on-`#25D366` glyph contrast in the summary rather than altering the official colours.
+
+**✅ DONE 2.9I**
 
 #### Overlaps with work already in the tree — check before building
 
