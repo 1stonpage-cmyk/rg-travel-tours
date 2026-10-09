@@ -9,7 +9,7 @@ import QueryBoundary, { EmptyState } from '@/components/common/QueryBoundary';
 import { ReviewCardSkeleton, TourCardSkeleton } from '@/components/common/Skeleton';
 import ReviewsSection from '@/components/home/ReviewsSection';
 import TourCard from '@/components/common/TourCard';
-import { TOURS } from '@/lib/placeholder-data';
+import { TOURS_FIXTURE } from './helpers/fixtures';
 
 const base = { data: undefined, isPending: false, isError: false } as const;
 
@@ -178,7 +178,7 @@ describe('TourCardSkeleton — no layout shift', () => {
     const { container: skeletonContainer } = render(<TourCardSkeleton />);
     const { container: realContainer } = render(
       <MemoryRouter>
-        <TourCard tour={TOURS[0]!} />
+        <TourCard tour={TOURS_FIXTURE[0]!} />
       </MemoryRouter>,
     );
     return { skeletonContainer, realContainer };

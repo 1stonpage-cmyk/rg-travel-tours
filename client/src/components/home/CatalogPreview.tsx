@@ -5,8 +5,35 @@ import TourCard from '@/components/common/TourCard';
 import { Button } from '@/components/ui/button';
 import { DESTINATIONS, TOURS } from '@/lib/placeholder-data';
 import { cn } from '@/lib/utils';
+import type { TourListItem } from '../../../../server/src/routers/public/tours';
 
 const ALL = 'all';
+
+/**
+ * Task 2.3 adapts this call site only enough to compile against TourCard's
+ * new `TourListItem` prop — the catalog's own conversion to live API data is
+ * Task 2.4. This reshapes today's placeholder `TOURS` rows 1:1 (same image,
+ * rating, counters) so the rendered output is unchanged.
+ */
+function toTourListItem(t: (typeof TOURS)[number]): TourListItem {
+  const destination = DESTINATIONS.find((d) => d.name === t.destination);
+  return {
+    id: t.id,
+    slug: t.slug,
+    title: t.title,
+    destination: destination ?? { id: 0, name: t.destination, slug: '' },
+    image: { path: t.image, alt: t.alt, width: null, height: null },
+    fromPriceCentavos: t.fromPriceCentavos,
+    durationHours: t.durationHours,
+    rating: { average: t.ratingAverage, count: t.ratingCount },
+    bookedThisWeek: t.bookedThisWeek,
+    tripsRun: t.bookedTotal,
+    freeCancellation: t.freeCancellation,
+    badge: 'none',
+    alertNote: null,
+    isFeatured: true,
+  };
+}
 
 export default function CatalogPreview() {
   const [active, setActive] = useState<string>(ALL);
@@ -112,7 +139,7 @@ export default function CatalogPreview() {
         <ul className="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map((tour) => (
             <li key={tour.id}>
-              <TourCard tour={tour} />
+              <TourCard tour={toTourListItem(tour)} />
             </li>
           ))}
         </ul>
