@@ -1875,7 +1875,10 @@ Use **emilkowalski-motion** for all motion and **ui-ux-pro-max** for layout.
 - **2.9B — Sticky mobile bottom bar.** "Book a tour" + WhatsApp icon. Slides up once the hero leaves the viewport; hides near the footer. **Must not cover the existing floating WhatsApp button or any CTA** — merging the two on mobile is explicitly allowed and is probably cleaner than stacking them.
 - **2.9C — Staggered card entrance.** Tour, package and review cards, 40–60ms stagger, once only.
 - **2.9D — Skeleton shimmer.**
-- **2.9E — Count-up for numeric stats** (guests served, prices) on scroll into view. **The final value must always be exactly correct**, and there must be no animation at all under reduced motion — the number simply appears.
+- **2.9E — Count-up for trust stats only** (e.g. guests served) on scroll into view. **Prices must NOT animate — they render instantly at their final value**, everywhere they appear: tour cards, package cards, the "from" price, and any future detail page. **The final value of any counted stat must always be exactly correct**, and there must be no animation at all under reduced motion — the number simply appears.
+
+  Two reasons prices are excluded, so nobody reinstates them later: a price is a factual commitment rather than a flourish, and it renders through `formatPeso` (centavos → `₱1,890`), so animating it would mean re-formatting every frame and showing a sequence of wrong prices on the way to the right one.
+
 - **2.9F — Header shrinks/solidifies on scroll**, and nav links smooth-scroll to sections.
 - **2.9G — Subtle hero parallax, desktop only.**
 - **2.9H — Tap feedback** (scale 0.97 + soft shadow) on cards, chips and buttons on touch devices.
