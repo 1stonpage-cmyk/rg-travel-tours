@@ -22,6 +22,7 @@ function validValueFor(key: string): unknown {
         guestsServed: 15000,
         dotAccredited: true,
         depositPercent: 30,
+        minReviewsForRating: 3,
       };
     case 'hero':
       return {

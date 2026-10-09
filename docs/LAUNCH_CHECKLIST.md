@@ -132,6 +132,33 @@ Checks before leaving it running:
 
 ---
 
+## Deployment requirements — not optional
+
+Three things Phase 1 found the hard way. Each one is a config line that silently
+disables a security control if it's missing — no error, no log line, nothing to
+notice until it's exploited or until something leaks. Set all three before the app
+ever takes real traffic, and re-check them any time the PM2 or nginx config changes.
+
+- [ ] **Express `trust proxy` is set**, because the app sits behind nginx (see the
+      `proxy_pass` blocks above). The rate limiter keys on request IP. Without
+      `trust proxy`, Express reads nginx's own address for every request, so every
+      visitor collectively shares one IP's worth of rate limit — one abusive visitor
+      exhausts the login/coupon/review limiter for everyone else behind the same
+      proxy, not just themselves.
+- [ ] **`NODE_ENV=production` is set** in the PM2 environment. tRPC's default error
+      formatter includes the `stack` field when `NODE_ENV` is not `production`, so a
+      malformed or hostile request gets a stack trace — file paths, call sites — back
+      in the response instead of a plain error message.
+- [ ] **PM2 runs the API in fork mode, a single instance** — not cluster mode.
+      `express-rate-limit`'s default `MemoryStore` is per-process. Cluster mode with N
+      workers gives each worker its own counter, so the effective rate limit becomes N
+      times the configured value, split unpredictably across workers by whichever one
+      handles a given request. If cluster mode is ever needed for throughput, the
+      limiter needs a shared store (e.g. Redis) first — don't switch PM2 modes without
+      also doing that.
+
+---
+
 ## (b) Launch day — point travelsugbo.com at the real app
 
 Do these in order. Steps 1–4 change nothing public, so they are safe to do early.

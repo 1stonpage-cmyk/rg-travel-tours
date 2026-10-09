@@ -1,7 +1,12 @@
 import { eq } from 'drizzle-orm';
-import { expect, it } from 'vitest';
+import { afterEach, beforeAll, expect, it } from 'vitest';
 import { getDb } from '../db/client';
-import { destinations, tours as toursTable } from '../db/schema';
+import {
+  destinations,
+  reviews as reviewsTable,
+  settings as settingsTable,
+  tours as toursTable,
+} from '../db/schema';
 import { describeWithDb } from './helpers/db';
 import { appRouter } from '../routers/_app';
 
@@ -178,14 +183,117 @@ describeWithDb('public queries', () => {
     try {
       const tours = await caller.tours.list({});
       expect(tours.length).toBe(6);
-      // Exactly 3, proven by counting real pool.query() calls rather than
+      // Exactly 4, proven by counting real pool.query() calls rather than
       // trusting a comment: the grouped tours+destinations+min-price query,
-      // the batched first-image lookup, and the batched rating aggregates.
-      // Fixed regardless of how many tours exist — never one per tour.
-      expect(calls).toBe(3);
+      // the batched first-image lookup, the batched rating aggregates, and
+      // (Task 1.9, R1) the single `trust` settings row for
+      // minReviewsForRating. Fixed regardless of how many tours exist —
+      // never one per tour.
+      expect(calls).toBe(4);
     } finally {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (pool as any).query = originalQuery;
     }
+  });
+});
+
+// Task 1.9 (R1): a tour's displayed `rating` is withheld below
+// `trust.minReviewsForRating` published reviews (sample or real — the same
+// population displayAggregate() counts). Uses a seeded tour that starts
+// with exactly one published sample review, so adding fixture reviews moves
+// it across the (seeded) threshold of 3 deterministically.
+describeWithDb('tours.list / tours.bySlug rating display threshold (Task 1.9, R1)', () => {
+  const TOUR_SLUG = 'oslob-whale-shark-tumalog-falls';
+  let tourId: number;
+  const insertedReviewIds: number[] = [];
+
+  beforeAll(async () => {
+    const db = getDb();
+    const [row] = await db
+      .select({ id: toursTable.id })
+      .from(toursTable)
+      .where(eq(toursTable.slug, TOUR_SLUG));
+    expect(row).toBeDefined();
+    tourId = row!.id;
+  });
+
+  afterEach(async () => {
+    const db = getDb();
+    for (const id of insertedReviewIds.splice(0)) {
+      await db.delete(reviewsTable).where(eq(reviewsTable.id, id));
+    }
+  });
+
+  async function addPublishedReview(): Promise<void> {
+    const db = getDb();
+    const [result] = await db.insert(reviewsTable).values({
+      tourId,
+      name: 'Fixture Reviewer',
+      rating: 5,
+      body: 'Fixture review body.',
+      status: 'published',
+      isSample: false,
+    });
+    insertedReviewIds.push(result.insertId);
+  }
+
+  it('reports rating: null for a tour with 2 published reviews (below the seeded threshold of 3)', async () => {
+    await addPublishedReview(); // seed's 1 sample review + 1 fixture = 2
+
+    const list = await caller.tours.list({});
+    expect(list.find((t) => t.id === tourId)?.rating).toBeNull();
+
+    const detail = await caller.tours.bySlug({ slug: TOUR_SLUG });
+    expect(detail.rating).toBeNull();
+  });
+
+  it('reports the aggregate once the tour reaches 3 published reviews', async () => {
+    await addPublishedReview();
+    await addPublishedReview(); // seed's 1 + 2 fixtures = 3
+
+    const list = await caller.tours.list({});
+    const listRating = list.find((t) => t.id === tourId)?.rating;
+    expect(listRating).not.toBeNull();
+    expect(listRating?.count).toBe(3);
+
+    const detail = await caller.tours.bySlug({ slug: TOUR_SLUG });
+    expect(detail.rating).toEqual(listRating);
+  });
+
+  it('reads the threshold from settings rather than a hardcoded 3 — raising it to 4 pushes a 3-review tour back to null', async () => {
+    await addPublishedReview();
+    await addPublishedReview(); // 3 total — would display at the seeded threshold of 3
+
+    const db = getDb();
+    const [trustRow] = await db.select().from(settingsTable).where(eq(settingsTable.key, 'trust'));
+    expect(trustRow).toBeDefined();
+    const originalValue = trustRow!.value;
+
+    await db
+      .update(settingsTable)
+      .set({ value: { ...(originalValue as Record<string, unknown>), minReviewsForRating: 4 } })
+      .where(eq(settingsTable.key, 'trust'));
+
+    try {
+      const list = await caller.tours.list({});
+      expect(list.find((t) => t.id === tourId)?.rating).toBeNull();
+
+      const detail = await caller.tours.bySlug({ slug: TOUR_SLUG });
+      expect(detail.rating).toBeNull();
+    } finally {
+      await db
+        .update(settingsTable)
+        .set({ value: originalValue })
+        .where(eq(settingsTable.key, 'trust'));
+    }
+  });
+
+  it('leaves realAggregate untouched by the display threshold — it stays published AND is_sample=0, with no review-count floor', async () => {
+    await addPublishedReview();
+    await addPublishedReview(); // 2 real fixtures, below the seeded display threshold of 3
+
+    const r = await caller.reviews.published({ tourId });
+    // The two real fixtures count; the seeded is_sample review does not.
+    expect(r.realAggregate).toEqual({ average: 5, count: 2 });
   });
 });

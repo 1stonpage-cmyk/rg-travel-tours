@@ -79,6 +79,24 @@ describe('settings schemas', () => {
     ).toBe(false);
   });
 
+  it('trust.minReviewsForRating (Task 1.9, R1) must be a positive integer', () => {
+    const base = {
+      ratingAverage: 4.9,
+      ratingCount: 120,
+      guestsServed: 15000,
+      dotAccredited: true,
+      depositPercent: 30,
+    };
+    expect(SETTING_SCHEMAS.trust.safeParse({ ...base, minReviewsForRating: 3 }).success).toBe(true);
+    expect(SETTING_SCHEMAS.trust.safeParse({ ...base, minReviewsForRating: 0 }).success).toBe(
+      false,
+    );
+    expect(SETTING_SCHEMAS.trust.safeParse({ ...base, minReviewsForRating: 2.5 }).success).toBe(
+      false,
+    );
+    expect(SETTING_SCHEMAS.trust.safeParse(base).success).toBe(false); // missing entirely
+  });
+
   it('rejects content_unverified when it is not a boolean', () => {
     expect(SETTING_SCHEMAS.content_unverified.safeParse(true).success).toBe(true);
     expect(SETTING_SCHEMAS.content_unverified.safeParse('true').success).toBe(false);

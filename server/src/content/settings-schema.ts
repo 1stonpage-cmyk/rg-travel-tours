@@ -36,6 +36,16 @@ const trustSchema = z.object({
   guestsServed: z.number().int().nullable(),
   dotAccredited: z.boolean(),
   depositPercent: z.number().int(),
+  /**
+   * Task 1.9 (R1), client-supplied. A tour's displayed rating (stars +
+   * count) is withheld below this many published reviews — sample or real,
+   * the same population `displayAggregate()` counts — and a "New" badge
+   * shows instead. Lives here, with its `ratingAverage`/`ratingCount`
+   * siblings, rather than as a sixteenth settings key: this is social-proof
+   * display policy, and `readSettings()` throws if any key is missing, so a
+   * new key costs schema + seed + every fixture for no benefit.
+   */
+  minReviewsForRating: z.number().int().min(1),
 });
 
 const heroSchema = z.object({

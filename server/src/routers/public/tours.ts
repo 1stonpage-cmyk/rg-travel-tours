@@ -3,15 +3,17 @@
  *
  * `tours.list` is a fixed, small number of round trips no matter how many
  * tours exist: one grouped query for tours+destination+lowest price tier,
- * one batched query for each tour's first image, and one batched query
- * (`aggregatesByTour`, services/ratings.ts) for every tour's rating. None
- * of those run once per tour — see the "no N+1" test in
+ * one batched query for each tour's first image, one batched query
+ * (`aggregatesByTour`, services/ratings.ts) for every tour's rating, and one
+ * query for the `trust` settings row (Task 1.9, R1's display threshold).
+ * None of those run once per tour — see the "no N+1" test in
  * __tests__/public-queries.test.ts, which counts the actual pool.query()
  * calls rather than trusting this comment.
  */
 import { toursBySlugInput, toursListInput } from '@rg/shared';
 import { TRPCError } from '@trpc/server';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { readTrustSettings } from '../../content/settings';
 import { getDb } from '../../db/client';
 import {
   destinations,
@@ -86,6 +88,21 @@ interface ListRow {
 
 function freeCancellationFrom(freeCancelHours: number | null): boolean {
   return freeCancelHours != null && freeCancelHours > 0;
+}
+
+/**
+ * Task 1.9 (R1): withhold the display rating below `minReviewsForRating`
+ * published reviews (sample or real — `rating`'s count already is that
+ * population). `rating: null` is the only signal the card needs to fall
+ * back to a "New" badge; this must never touch `realAggregate`, which feeds
+ * JSON-LD and stays exactly as strict as it already was.
+ */
+function applyRatingThreshold(
+  rating: Aggregate | null,
+  minReviewsForRating: number,
+): Aggregate | null {
+  if (rating === null || rating.count < minReviewsForRating) return null;
+  return rating;
 }
 
 function toListItem(row: ListRow, image: TourImage | null, rating: Aggregate | null): TourListItem {
@@ -195,11 +212,16 @@ export const toursRouter = router({
     const rows = await listRows(input.destination);
     const ids = rows.map((row) => row.id);
 
-    const [images, ratings] = await Promise.all([firstImageByTour(ids), aggregatesByTour()]);
+    const [images, ratings, trust] = await Promise.all([
+      firstImageByTour(ids),
+      aggregatesByTour(),
+      readTrustSettings(),
+    ]);
 
-    return rows.map((row) =>
-      toListItem(row, images.get(row.id) ?? null, ratings.get(row.id) ?? null),
-    );
+    return rows.map((row) => {
+      const rating = applyRatingThreshold(ratings.get(row.id) ?? null, trust.minReviewsForRating);
+      return toListItem(row, images.get(row.id) ?? null, rating);
+    });
   }),
 
   bySlug: publicProcedure.input(toursBySlugInput).query(async ({ input }): Promise<TourDetail> => {
@@ -242,7 +264,7 @@ export const toursRouter = router({
       });
     }
 
-    const [priceTiers, images, itinerary, addons, rating] = await Promise.all([
+    const [priceTiers, images, itinerary, addons, rating, trust] = await Promise.all([
       db
         .select({
           minPax: tourPriceTiers.minPax,
@@ -277,6 +299,7 @@ export const toursRouter = router({
         .from(tourAddons)
         .where(and(eq(tourAddons.tourId, row.id), eq(tourAddons.isActive, true))),
       displayAggregate(row.id),
+      readTrustSettings(),
     ]);
 
     const fromPriceCentavos =
@@ -300,7 +323,7 @@ export const toursRouter = router({
         fromPriceCentavos,
       },
       images[0] ?? null,
-      rating,
+      applyRatingThreshold(rating, trust.minReviewsForRating),
     );
 
     return {

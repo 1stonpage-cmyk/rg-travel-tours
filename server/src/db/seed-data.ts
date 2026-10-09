@@ -414,13 +414,16 @@ export const SEED_SETTINGS: SettingsBlocks = {
 
   // From PLACEHOLDER_SETTINGS. ratingAverage/guestsServed are client-supplied,
   // not invented (carried across as-is). ratingCount stays null: no
-  // client-supplied review count exists yet.
+  // client-supplied review count exists yet. minReviewsForRating is the
+  // client's Task 1.9 (R1) ruling: withhold a tour's displayed rating below
+  // this many published reviews (sample or real) in favor of a "New" badge.
   trust: {
     ratingAverage: 4.9,
     ratingCount: null,
     guestsServed: 15_000,
     dotAccredited: true,
     depositPercent: DEPOSIT_PERCENT,
+    minReviewsForRating: 3,
   },
 
   // From HeroSection.tsx — today's real hero copy and photo (not a placeholder image).

@@ -7,6 +7,7 @@
  * would put invented content on a live marketing page, which this project
  * forbids. Errors name the key, never the value.
  */
+import { eq } from 'drizzle-orm';
 import { getDb } from '../db/client';
 import { settings } from '../db/schema';
 import { resolveOpenState, type OpenState } from '../services/hours';
@@ -46,6 +47,29 @@ export async function readSettings(): Promise<SettingsBlocks> {
   }
 
   return blocks as SettingsBlocks;
+}
+
+/**
+ * Just the `trust` block, in one round trip — for callers like
+ * `tours.list`/`tours.bySlug` (Task 1.9, R1) that need only
+ * `minReviewsForRating` and must not take on a dependency on every other
+ * settings key being valid (readSettings() throws on the first bad key,
+ * whichever block it's in). Throws naming "trust" under the same two
+ * conditions readSettings() would.
+ */
+export async function readTrustSettings(): Promise<SettingsBlocks['trust']> {
+  const db = getDb();
+  const [row] = await db.select().from(settings).where(eq(settings.key, 'trust'));
+  if (!row) {
+    throw new Error('Missing setting: "trust"');
+  }
+
+  const result = SETTING_SCHEMAS.trust.safeParse(row.value);
+  if (!result.success) {
+    throw new Error('Invalid setting: "trust"');
+  }
+
+  return result.data;
 }
 
 // ---------------------------------------------------------------------------

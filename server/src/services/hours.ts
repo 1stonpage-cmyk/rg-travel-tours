@@ -28,9 +28,8 @@ const OPEN_MESSAGE = 'Open now — we reply within minutes';
 /**
  * Fallback copy for the (currently hypothetical, but admin-configurable
  * once Weeks 5-7 ship) case where every day of the week is closed — a
- * full-week holiday/typhoon/off-season closure. This is a placeholder
- * pending client sign-off, not approved marketing copy: it exists only so
- * resolveOpenState() degrades instead of throwing. Revisit before ships.
+ * full-week holiday/typhoon/off-season closure. Wording approved by the
+ * client (Task 1.9, R2) — do not reopen this question.
  */
 const ALL_WEEK_CLOSED_MESSAGE = 'Closed — we will reply as soon as we reopen';
 
