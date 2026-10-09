@@ -1891,7 +1891,7 @@ Applies to **five surfaces**: the floating button, the mobile bottom bar (2.9B),
 **Branding**
 
 - WhatsApp: official green `#25D366` background, white official WhatsApp glyph as **inline SVG** from WhatsApp's brand resources — no icon-library dependency. Hover/pressed `#128C7E`. The "Chat on WhatsApp" label goes **beside** the green pill, not inside it (see Contrast below).
-- Viber: official purple `#7360F2` with the white Viber glyph, inline SVG.
+- Viber: official purple `#7360F2` with the white Viber glyph, inline SVG. **Same pattern as WhatsApp** — icon-only pill with an `aria-label`; any visible label sits outside it in brand ink.
 - **Keep both glyphs unmodified** — no recolouring, stretching or outlines — per the WhatsApp and Viber brand guidelines.
 - These two brand colours are an **explicit, documented exception** to the blue/gold palette. Record the exception in `CLAUDE.md`. Red remains forbidden.
 
@@ -1923,12 +1923,16 @@ The **glyph** is exempt — WCAG 1.4.11 exempts logotypes and brand marks, so a 
 
 The **text label is not exempt.** "Chat on WhatsApp" is functional text and needs 4.5:1. White on `#25D366` is **1.98:1**, which fails AA by a wide margin and cannot be rescued by font size — even the large-text allowance is 3:1. CLAUDE.md requires AA contrast. **Resolved by the user 2026-10-10: the green button stays official and icon-only, carrying an `aria-label`; any visible wording sits outside the pill on the page background in brand ink, where it passes AA comfortably.** So there is no white text on `#25D366` anywhere — only the exempt glyph. Do not place "Chat on WhatsApp" inside the green surface.
 
-`#128C7E` (4.14:1) and `#7360F2` (4.48:1) both sit just under 4.5:1 for normal text but clear the 3:1 large-text bar — so white labels on those are acceptable at ≥18.66px bold / ≥24px, and should be sized accordingly or darkened.
+**Amended by the user 2026-10-10 — one uniform rule, no per-colour exceptions:**
+
+> **No white text on any of the three brand colours.** `#25D366`, `#7360F2` and `#128C7E` carry the exempt white **glyph** and nothing else. Every pill is icon-only with an `aria-label`; every visible label sits **outside** the pill, on the page background, in brand ink. `#128C7E` is for the icon pill's hover/pressed state only and never gets white text either.
+
+This is simpler and safer than the per-colour sizing rules it replaces. `#128C7E` (4.14:1) and `#7360F2` (4.48:1) both sit just under the 4.5:1 normal-text bar, so a white label on either would have needed a minimum font size to stay legal — a constraint nobody would remember six months from now. Removing white text from all three removes the question.
 
 **Accessibility & checks**
 
 - `aria-label` on every icon-only button; 44px tap targets; visible focus ring that is itself visible against the brand colours.
-- **`scripts/check-contact-parity.mjs` risk:** it asserts the coming-soon page's text contains `phoneDisplay` and `altPhoneDisplay`. If restyling replaces a visible phone number with a label like "Chat on WhatsApp", **that guard fails**. Check before restructuring, and update the guard only if the change is genuinely intended — the user authorised updating it if it inspects button markup.
+- **The coming-soon page keeps both visible phone numbers.** `scripts/check-contact-parity.mjs` asserts its text contains `phoneDisplay` and `altPhoneDisplay`, and the user has confirmed those stay on the page. So the restyle is visual only — **do not replace a visible number with a label**, and the guard should still pass untouched. If it fails, that is a signal the restyle went further than intended; fix the markup rather than the guard.
 - Its `allowed` map also rejects any `wa.me` / `viber:` / `tel:` target not declared in `site.ts`, so new links must reuse the existing numbers exactly.
 - Run the no-red guard and confirm both brand colours pass (expected: they do).
 - Report the white-on-`#25D366` glyph contrast in the summary rather than altering the official colours.
