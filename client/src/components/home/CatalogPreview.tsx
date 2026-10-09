@@ -118,7 +118,7 @@ export default function CatalogPreview() {
         ref={chipRow}
         role="group"
         aria-label="Filter tours by destination"
-        className="scroll-fade-x mt-8 flex gap-2 overflow-x-auto pb-2"
+        className="scroll-fade-x mt-6 flex gap-2 overflow-x-auto py-2"
       >
         <QueryBoundary
           query={destinationsQuery}

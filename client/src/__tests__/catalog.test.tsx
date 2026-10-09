@@ -198,3 +198,69 @@ describe('the two QueryBoundarys fail independently', () => {
     expect(headings).toHaveLength(TOURS_FIXTURE.length);
   });
 });
+
+// BUG-001 / task 2.7: overflow-x-auto computes the vertical axis to auto too
+// (CSS Overflow §3), so a row with only pb-2 clipped a focused chip's ring at
+// the top edge. The fix is py-2 (room on both edges) in place of pb-2.
+//
+// jsdom performs no layout, so nothing here can prove the ring stops being
+// visually clipped — that was verified by eye (and by measuring box-model
+// numbers in a real browser; see the task report). What *is* verifiable here:
+// the row carries the padding class that creates the room, that the chips
+// remain keyboard-reachable with focus landing on them in order, and that the
+// unrelated bits living on the same element (the group semantics other tests
+// in this file and home.test.tsx depend on, and the horizontal scroll-fade
+// mask from commit 719dabe) are untouched by the change.
+describe('chip row — focus ring room (BUG-001, task 2.7)', () => {
+  it('pads the row on both the top and bottom edge, not the bottom alone', async () => {
+    mockTrpc({ 'destinations.list': DESTINATIONS_FIXTURE, 'tours.list': TOURS_FIXTURE });
+    renderCatalog();
+
+    const group = await screen.findByRole('group', { name: /filter tours by destination/i });
+    expect(
+      group.classList.contains('py-2'),
+      'expected py-2 so the row has room on both edges',
+    ).toBe(true);
+    expect(
+      group.classList.contains('pb-2'),
+      'pb-2 alone is the original bug — it leaves the top edge at 0 and clips the focus ring',
+    ).toBe(false);
+  });
+
+  it('keeps every destination chip keyboard-reachable, focus landing on them in order', async () => {
+    mockTrpc({ 'destinations.list': DESTINATIONS_FIXTURE, 'tours.list': TOURS_FIXTURE });
+    const user = userEvent.setup();
+    renderCatalog();
+
+    const group = await screen.findByRole('group', { name: /filter tours by destination/i });
+    // Wait for the real chips to replace the skeleton bars before tabbing.
+    const chips = await within(group).findAllByRole('button');
+    // "All tours" plus one chip per fixture destination.
+    expect(chips).toHaveLength(DESTINATIONS_FIXTURE.length + 1);
+
+    chips[0]!.focus();
+    expect(document.activeElement).toBe(chips[0]);
+    for (let i = 1; i < chips.length; i++) {
+      await user.tab();
+      expect(
+        document.activeElement,
+        `expected focus to land on chip ${i} ("${chips[i]!.textContent}")`,
+      ).toBe(chips[i]);
+    }
+  });
+
+  it('keeps the group semantics and the scroll-fade-x mask class intact', async () => {
+    mockTrpc({ 'destinations.list': DESTINATIONS_FIXTURE, 'tours.list': TOURS_FIXTURE });
+    renderCatalog();
+
+    // home.test.tsx and the tests above in this file all locate the row via
+    // this exact role + name — if either attribute were lost, every one of
+    // those would fail too. Asserted directly here as well so this file is
+    // self-contained proof the padding change left it alone.
+    const group = await screen.findByRole('group', { name: /filter tours by destination/i });
+    expect(
+      group.classList.contains('scroll-fade-x'),
+      'the horizontal edge-fade mask (commit 719dabe) must still be applied',
+    ).toBe(true);
+  });
+});
