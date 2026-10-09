@@ -10,13 +10,15 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "echo \"no tests in @rg/shared yet\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "build": "echo \"@rg/shared is consumed as TypeScript source\""
   },
   "dependencies": {
     "zod": "^4.1.12"
   },
   "devDependencies": {
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
   }
 }
