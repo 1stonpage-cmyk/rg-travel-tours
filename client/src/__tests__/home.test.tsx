@@ -2,10 +2,15 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { PLACEHOLDER_SETTINGS, REVIEWS } from '@/lib/placeholder-data';
+import { PLACEHOLDER_SETTINGS } from '@/lib/placeholder-data';
 import { TrpcProviders } from '@/lib/trpc';
 import HomePage from '@/pages/public/HomePage';
-import { DESTINATIONS_FIXTURE, TOURS_FIXTURE } from './helpers/fixtures';
+import {
+  DESTINATIONS_FIXTURE,
+  PACKAGES_FIXTURE,
+  REVIEWS_FIXTURE,
+  TOURS_FIXTURE,
+} from './helpers/fixtures';
 import { mockTrpc } from './helpers/mock-trpc';
 
 function renderHome() {
@@ -19,13 +24,15 @@ function renderHome() {
 }
 
 describe('home page', () => {
-  // CatalogPreview (the #tours section) now fetches from the API. Every
-  // test here renders the full HomePage, so the catalog's two queries need
-  // a mock whether or not a given test looks at the tours section.
+  // CatalogPreview, PackagesSection and ReviewsSection all fetch from the
+  // API now. Every test here renders the full HomePage, so all four
+  // queries need a mock whether or not a given test looks at that section.
   beforeEach(() => {
     mockTrpc({
       'destinations.list': DESTINATIONS_FIXTURE,
       'tours.list': TOURS_FIXTURE,
+      'packages.list': PACKAGES_FIXTURE,
+      'reviews.published': REVIEWS_FIXTURE,
     });
   });
 
@@ -49,11 +56,15 @@ describe('home page', () => {
     }
   });
 
-  it('shows three packages, each with a struck-through old price', () => {
+  it('shows three packages, each with a struck-through old price', async () => {
     const { container } = renderHome();
-    const packages = container.querySelector('#packages');
+    const packages = container.querySelector('#packages') as HTMLElement;
     expect(packages).toBeTruthy();
-    expect(packages!.querySelectorAll('s').length).toBe(3);
+    await within(packages).findByRole('heading', {
+      level: 3,
+      name: PACKAGES_FIXTURE[0]!.title,
+    });
+    expect(packages.querySelectorAll('s').length).toBe(PACKAGES_FIXTURE.length);
   });
 
   it('hides the weekly booking count when it is zero', () => {
@@ -82,14 +93,16 @@ describe('home page', () => {
     expect(status).toHaveTextContent(/address has not been saved/i);
   });
 
-  it('renders exactly six review cards', () => {
-    // REVIEWS.length is asserted against a literal, not against itself, so
-    // dropping a review from placeholder-data.ts actually fails this test.
-    expect(REVIEWS.length).toBe(6);
+  it('renders exactly six review cards', async () => {
+    // REVIEWS_FIXTURE.items.length is asserted against a literal, not
+    // against itself, so dropping a review from the fixture actually fails
+    // this test.
+    expect(REVIEWS_FIXTURE.items.length).toBe(6);
     const { container } = renderHome();
-    const reviews = container.querySelector('#reviews');
+    const reviews = container.querySelector('#reviews') as HTMLElement;
     expect(reviews).toBeTruthy();
-    expect(within(reviews as HTMLElement).getAllByRole('listitem').length).toBe(6);
+    await within(reviews).findByText(REVIEWS_FIXTURE.items[0]!.name);
+    expect(within(reviews).getAllByRole('listitem').length).toBe(6);
   });
 
   it('offers phone, email, and WhatsApp in the contact section', () => {
@@ -118,7 +131,7 @@ describe('home page', () => {
     const user = userEvent.setup();
     renderHome();
 
-    const form = screen.getByRole('form', { name: /package inquiry/i });
+    const form = await screen.findByRole('form', { name: /package inquiry/i });
     await user.type(within(form).getByLabelText(/your name/i), 'Test Guest');
     await user.type(within(form).getByLabelText(/email/i), 'guest@example.com');
     await user.click(within(form).getByRole('button', { name: /send inquiry/i }));

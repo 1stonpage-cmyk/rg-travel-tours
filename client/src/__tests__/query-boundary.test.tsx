@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -9,7 +9,9 @@ import QueryBoundary, { EmptyState } from '@/components/common/QueryBoundary';
 import { ReviewCardSkeleton, TourCardSkeleton } from '@/components/common/Skeleton';
 import ReviewsSection from '@/components/home/ReviewsSection';
 import TourCard from '@/components/common/TourCard';
-import { TOURS_FIXTURE } from './helpers/fixtures';
+import { TrpcProviders } from '@/lib/trpc';
+import { REVIEWS_FIXTURE, TOURS_FIXTURE } from './helpers/fixtures';
+import { mockTrpc } from './helpers/mock-trpc';
 
 const base = { data: undefined, isPending: false, isError: false } as const;
 
@@ -225,9 +227,19 @@ describe('TourCardSkeleton — no layout shift', () => {
 });
 
 describe('ReviewCardSkeleton — no layout shift', () => {
-  it('mirrors the real review card container classes exactly, anchored to ReviewsSection', () => {
+  it('mirrors the real review card container classes exactly, anchored to ReviewsSection', async () => {
+    mockTrpc({ 'reviews.published': REVIEWS_FIXTURE });
+
     const { container: skeletonContainer } = render(<ReviewCardSkeleton />);
-    const { container: realContainer } = render(<ReviewsSection />);
+    const { container: realContainer } = render(
+      <TrpcProviders>
+        <ReviewsSection />
+      </TrpcProviders>,
+    );
+
+    // ReviewsSection now fetches reviews.published — wait for the real
+    // card to replace the skeleton before comparing classes.
+    await within(realContainer).findByText(REVIEWS_FIXTURE.items[0]!.name);
 
     const skeletonCard = skeletonContainer.querySelector('[data-testid="review-card-skeleton"]');
     const realCard = realContainer.querySelector('li');
