@@ -1890,7 +1890,7 @@ Applies to **five surfaces**: the floating button, the mobile bottom bar (2.9B),
 
 **Branding**
 
-- WhatsApp: official green `#25D366` background, white official WhatsApp glyph as **inline SVG** from WhatsApp's brand resources — no icon-library dependency. Label "Chat on WhatsApp" where there is room. Hover/pressed `#128C7E`.
+- WhatsApp: official green `#25D366` background, white official WhatsApp glyph as **inline SVG** from WhatsApp's brand resources — no icon-library dependency. Hover/pressed `#128C7E`. The "Chat on WhatsApp" label goes **beside** the green pill, not inside it (see Contrast below).
 - Viber: official purple `#7360F2` with the white Viber glyph, inline SVG.
 - **Keep both glyphs unmodified** — no recolouring, stretching or outlines — per the WhatsApp and Viber brand guidelines.
 - These two brand colours are an **explicit, documented exception** to the blue/gold palette. Record the exception in `CLAUDE.md`. Red remains forbidden.
@@ -1921,7 +1921,7 @@ All three hex values were checked against every pattern in `client/src/__tests__
 
 The **glyph** is exempt — WCAG 1.4.11 exempts logotypes and brand marks, so a white official glyph on `#25D366` is correct and must not be altered.
 
-The **text label is not exempt.** "Chat on WhatsApp" is functional text and needs 4.5:1. White on `#25D366` is **1.98:1**, which fails AA by a wide margin and cannot be rescued by font size — even the large-text allowance is 3:1. CLAUDE.md requires AA contrast, so this needs a deliberate decision rather than a default; see the controller's question of 2026-10-10. Until answered, the fallback is **icon-only with an `aria-label`** on the green surfaces, which is accessible and brand-faithful, with any visible wording placed outside the green pill.
+The **text label is not exempt.** "Chat on WhatsApp" is functional text and needs 4.5:1. White on `#25D366` is **1.98:1**, which fails AA by a wide margin and cannot be rescued by font size — even the large-text allowance is 3:1. CLAUDE.md requires AA contrast. **Resolved by the user 2026-10-10: the green button stays official and icon-only, carrying an `aria-label`; any visible wording sits outside the pill on the page background in brand ink, where it passes AA comfortably.** So there is no white text on `#25D366` anywhere — only the exempt glyph. Do not place "Chat on WhatsApp" inside the green surface.
 
 `#128C7E` (4.14:1) and `#7360F2` (4.48:1) both sit just under 4.5:1 for normal text but clear the 3:1 large-text bar — so white labels on those are acceptable at ≥18.66px bold / ≥24px, and should be sized accordingly or darkened.
 
