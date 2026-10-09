@@ -9,8 +9,14 @@ const FORBIDDEN_PORTS = [3000, 5173];
 
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  // development | preview | production. Controls robots.txt and X-Robots-Tag (task 5D).
+  SITE_ENV: z.enum(['development', 'preview', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(3100),
-  DATABASE_URL: z.string().optional(),
+  DATABASE_URL: z.string().min(1),
+  // Host/port only — never the credentials — so the database guard can name
+  // where it tried to connect without ever touching DATABASE_URL's secrets.
+  DB_HOST: z.string().min(1).default('localhost'),
+  DB_PORT: z.coerce.number().int().positive().default(3306),
   UPLOADS_DIR: z.string().default('./uploads'),
   PUBLIC_BASE_URL: z.string().default('http://localhost:5180'),
 });

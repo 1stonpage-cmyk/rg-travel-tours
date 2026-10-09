@@ -11,7 +11,9 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate"
+    "db:migrate": "node scripts/db-preflight.mjs && drizzle-kit migrate",
+    "db:push": "node scripts/db-preflight.mjs && drizzle-kit push",
+    "db:seed": "node scripts/db-preflight.mjs && tsx src/db/seed.ts"
   },
   "dependencies": {
     "@rg/shared": "workspace:*",
