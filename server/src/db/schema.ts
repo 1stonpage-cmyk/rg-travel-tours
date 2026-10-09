@@ -39,10 +39,21 @@ export const destinations = mysqlTable('destinations', {
   id: int('id').autoincrement().primaryKey(),
   name: varchar('name', { length: 120 }).notNull(),
   slug: varchar('slug', { length: 140 }).notNull().unique(),
+  /**
+   * Overrides `name` for the Most Visited section only (e.g. "Kawasan Falls"
+   * for the "Badian / Kawasan" destination chip). Null means "use `name`".
+   */
+  displayName: varchar('display_name', { length: 120 }),
   blurb: varchar('blurb', { length: 400 }),
   imagePath: varchar('image_path', { length: 300 }),
   imageAlt: varchar('image_alt', { length: 300 }),
   sortOrder: int('sort_order').notNull().default(0),
+  /**
+   * Independent ordering for the Most Visited section — `sortOrder` drives
+   * the destination chip row, which renders in a different order. Null
+   * destinations are omitted from Most Visited.
+   */
+  featuredSortOrder: int('featured_sort_order'),
   isFeatured: boolean('is_featured').notNull().default(false),
   isActive: boolean('is_active').notNull().default(true),
   createdAt: datetime('created_at', { mode: 'date' })
