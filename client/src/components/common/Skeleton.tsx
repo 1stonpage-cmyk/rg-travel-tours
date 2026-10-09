@@ -34,6 +34,12 @@ export function Skeleton({ className, ...props }: ComponentProps<'div'>) {
  * price/cta row's two halves) — so swapping between this and the real card
  * causes no layout shift. Covered by
  * `src/__tests__/query-boundary.test.tsx`.
+ *
+ * The title and "View tour" rows are both real 44px tap targets in
+ * TourCard (`flex min-h-11 items-center` / `inline-flex min-h-11
+ * items-center`) — the title and CTA bars below are wrapped in the same
+ * `min-h-11` container so the skeleton reserves that same 44px, not just
+ * the smaller visual height of the bar itself.
  */
 export function TourCardSkeleton() {
   return (
@@ -41,12 +47,16 @@ export function TourCardSkeleton() {
       <Skeleton className="aspect-[4/3] w-full rounded-none" />
       <CardContent className="space-y-3 p-4">
         <Skeleton data-skeleton-bar className="h-3.5 w-2/3" />
-        <Skeleton data-skeleton-bar className="h-5 w-5/6" />
+        <div className="flex min-h-11 items-center">
+          <Skeleton data-skeleton-bar className="h-5 w-5/6" />
+        </div>
         <Skeleton data-skeleton-bar className="h-4 w-28" />
         <Skeleton data-skeleton-bar className="h-3.5 w-1/2" />
         <div className="flex items-end justify-between pt-1">
           <Skeleton data-skeleton-bar className="h-5 w-20" />
-          <Skeleton data-skeleton-bar className="h-6 w-24" />
+          <div className="flex min-h-11 items-center">
+            <Skeleton data-skeleton-bar className="h-6 w-24" />
+          </div>
         </div>
       </CardContent>
     </Card>

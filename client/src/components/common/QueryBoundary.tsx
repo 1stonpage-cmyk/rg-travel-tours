@@ -40,6 +40,13 @@ function defaultIsEmpty(data: unknown): boolean {
  * pass the real thing, but it is never read or rendered here — the error
  * state is always the generic `errorTitle` plus a fixed, human sentence.
  * See `src/__tests__/query-boundary.test.tsx`.
+ *
+ * Ruling: stale content beats an error box. Under TanStack Query v5, a
+ * background refetch failure after an earlier successful load keeps the
+ * last-good `data` while flipping `isError` true — on a marketing page,
+ * rendering the content we already have is strictly better than replacing
+ * it with "could not load" over a transient network blip. The error state
+ * only wins when there is no data at all to fall back on.
  */
 export default function QueryBoundary<T>({
   query,
@@ -51,13 +58,12 @@ export default function QueryBoundary<T>({
 }: Props<T>) {
   if (query.isPending) return <>{skeleton}</>;
 
-  if (query.isError) {
+  if (query.isError && query.data === undefined) {
     return <ErrorState title={errorTitle} onRetry={query.refetch} />;
   }
 
-  // Past the pending/error guards above, a well-behaved query has settled
-  // into success and `data` is defined — that contract is TanStack Query's,
-  // not this component's, so this narrows rather than re-validates it.
+  // Either a clean success, or an `isError` background-refetch failure that
+  // still carries stale `data` — both render the same way.
   const data = query.data as T;
   const resolvedIsEmpty = isEmpty ? isEmpty(data) : defaultIsEmpty(data);
 

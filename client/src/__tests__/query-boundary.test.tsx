@@ -7,6 +7,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import QueryBoundary, { EmptyState } from '@/components/common/QueryBoundary';
 import { ReviewCardSkeleton, TourCardSkeleton } from '@/components/common/Skeleton';
+import ReviewsSection from '@/components/home/ReviewsSection';
 import TourCard from '@/components/common/TourCard';
 import { TOURS } from '@/lib/placeholder-data';
 
@@ -58,6 +59,24 @@ describe('QueryBoundary', () => {
     expect(screen.queryByText(/guest@example\.com/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/ER_ACCESS_DENIED/i)).not.toBeInTheDocument();
     expect(screen.queryByText(error.stack ?? '__never__')).not.toBeInTheDocument();
+  });
+
+  // Ruling: stale content beats an error box on a marketing page. Under
+  // TanStack v5, a background refetch failure after a successful load keeps
+  // the last-good `data` while flipping `isError` true — this must render
+  // the real content, not discard it for a generic error.
+  it('renders children with stale data instead of the error state when a background refetch fails', () => {
+    render(
+      <QueryBoundary
+        query={{ ...base, data: [1, 2, 3], isError: true, refetch: () => {} }}
+        skeleton={<p>s</p>}
+        errorTitle="Tours could not load"
+      >
+        {(d) => <p>got {d.length}</p>}
+      </QueryBoundary>,
+    );
+    expect(screen.getByText('got 3')).toBeInTheDocument();
+    expect(screen.queryByText('Tours could not load')).not.toBeInTheDocument();
   });
 
   it('calls query.refetch() when the retry button is pressed', async () => {
@@ -152,13 +171,21 @@ describe('EmptyState', () => {
 });
 
 describe('TourCardSkeleton — no layout shift', () => {
-  it('mirrors the real TourCard image aspect ratio', () => {
+  // Both renders anchored against the real, current TourCard — not a
+  // hardcoded belief about its shape — so a future change to TourCard's
+  // rows is exactly what would make these fail.
+  function renderBoth() {
     const { container: skeletonContainer } = render(<TourCardSkeleton />);
     const { container: realContainer } = render(
       <MemoryRouter>
         <TourCard tour={TOURS[0]!} />
       </MemoryRouter>,
     );
+    return { skeletonContainer, realContainer };
+  }
+
+  it('mirrors the real TourCard image aspect ratio', () => {
+    const { skeletonContainer, realContainer } = renderBoth();
 
     const skeletonImage = skeletonContainer.querySelector('.aspect-\\[4\\/3\\]');
     const realImage = realContainer.querySelector('.aspect-\\[4\\/3\\]');
@@ -167,24 +194,51 @@ describe('TourCardSkeleton — no layout shift', () => {
     expect(realImage, 'TourCard is missing the aspect-[4/3] image box').toBeTruthy();
   });
 
-  it('renders the same number of content lines as TourCard has text rows', () => {
-    const { container } = render(<TourCardSkeleton />);
-    // meta row, title, rating, booked-count row, then the price/cta row
-    // (which contributes two bars: price + the "View tour" link) = 6 text
-    // bars below the image. `[data-skeleton-bar]` deliberately excludes the
-    // image placeholder itself — that's the media block, asserted on
-    // separately above by its aspect-ratio class.
-    const bars = container.querySelectorAll('[data-skeleton-bar]');
-    expect(bars.length).toBe(6);
+  it('renders the same number of content rows inside CardContent as the real TourCard', () => {
+    const { skeletonContainer, realContainer } = renderBoth();
+
+    // `data-slot="card-content"` comes from the shared CardContent
+    // primitive both the skeleton and TourCard render through, so this is
+    // the real card's own row count, not a number this test invented.
+    const skeletonContent = skeletonContainer.querySelector('[data-slot="card-content"]');
+    const realContent = realContainer.querySelector('[data-slot="card-content"]');
+
+    expect(skeletonContent, 'skeleton is missing its CardContent').toBeTruthy();
+    expect(realContent, 'TourCard is missing its CardContent').toBeTruthy();
+    expect(skeletonContent!.children.length).toBe(realContent!.children.length);
+  });
+
+  it('reserves the same 44px tap-target rows as the real TourCard (title link + "View tour" link)', () => {
+    const { skeletonContainer, realContainer } = renderBoth();
+
+    const skeletonTapRows = skeletonContainer.querySelectorAll('.min-h-11').length;
+    const realTapRows = realContainer.querySelectorAll('.min-h-11').length;
+
+    // Guards against the comparison below passing vacuously if both sides
+    // were accidentally zero.
+    expect(realTapRows, 'TourCard has no min-h-11 rows — fixture or markup changed').toBe(2);
+    expect(
+      skeletonTapRows,
+      'skeleton min-h-11 row count does not match TourCard — a tap-target row would visibly jump height when the real card replaces the skeleton',
+    ).toBe(realTapRows);
   });
 });
 
 describe('ReviewCardSkeleton — no layout shift', () => {
-  it('mirrors the real review card container (rounded-xl, p-5, shadow-sm)', () => {
-    const { container } = render(<ReviewCardSkeleton />);
-    const card = container.querySelector('[data-testid="review-card-skeleton"]');
-    expect(card).toBeTruthy();
-    expect(card).toHaveClass('rounded-xl', 'p-5', 'shadow-sm');
+  it('mirrors the real review card container classes exactly, anchored to ReviewsSection', () => {
+    const { container: skeletonContainer } = render(<ReviewCardSkeleton />);
+    const { container: realContainer } = render(<ReviewsSection />);
+
+    const skeletonCard = skeletonContainer.querySelector('[data-testid="review-card-skeleton"]');
+    const realCard = realContainer.querySelector('li');
+
+    expect(skeletonCard, 'ReviewCardSkeleton is missing its root').toBeTruthy();
+    expect(realCard, 'ReviewsSection is missing a review <li>').toBeTruthy();
+
+    const skeletonClasses = skeletonCard!.className.split(/\s+/).filter(Boolean).sort();
+    const realClasses = realCard!.className.split(/\s+/).filter(Boolean).sort();
+
+    expect(skeletonClasses).toEqual(realClasses);
   });
 });
 
