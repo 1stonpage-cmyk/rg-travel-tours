@@ -1,19 +1,34 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it } from 'vitest';
-import { DESTINATIONS, PLACEHOLDER_SETTINGS, REVIEWS } from '@/lib/placeholder-data';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { PLACEHOLDER_SETTINGS, REVIEWS } from '@/lib/placeholder-data';
+import { TrpcProviders } from '@/lib/trpc';
 import HomePage from '@/pages/public/HomePage';
+import { DESTINATIONS_FIXTURE, TOURS_FIXTURE } from './helpers/fixtures';
+import { mockTrpc } from './helpers/mock-trpc';
 
 function renderHome() {
   return render(
-    <MemoryRouter>
-      <HomePage />
-    </MemoryRouter>,
+    <TrpcProviders>
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>
+    </TrpcProviders>,
   );
 }
 
 describe('home page', () => {
+  // CatalogPreview (the #tours section) now fetches from the API. Every
+  // test here renders the full HomePage, so the catalog's two queries need
+  // a mock whether or not a given test looks at the tours section.
+  beforeEach(() => {
+    mockTrpc({
+      'destinations.list': DESTINATIONS_FIXTURE,
+      'tours.list': TOURS_FIXTURE,
+    });
+  });
+
   it('renders exactly one h1, in the hero', () => {
     renderHome();
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
@@ -127,12 +142,12 @@ describe('home page', () => {
   });
 
   // --- Mandated correction 2(b): zero-count hide rule, both halves. ---
-  it('hides the weekly booking badge only for the zero-booking tour, and shows it for a nonzero one', () => {
+  it('hides the weekly booking badge only for the zero-booking tour, and shows it for a nonzero one', async () => {
     const { container } = renderHome();
     const toursSection = container.querySelector('#tours') as HTMLElement;
 
-    // Moalboal (TOURS[2]) has bookedThisWeek: 0 — no badge for it.
-    const moalboalHeading = within(toursSection).getByRole('heading', {
+    // Moalboal (TOURS_FIXTURE[2]) has bookedThisWeek: 0 — no badge for it.
+    const moalboalHeading = await within(toursSection).findByRole('heading', {
       level: 3,
       name: /Moalboal Sardine Run/i,
     });
@@ -140,7 +155,7 @@ describe('home page', () => {
     expect(moalboalCard).toBeTruthy();
     expect(within(moalboalCard as HTMLElement).queryByText(/this week/i)).not.toBeInTheDocument();
 
-    // Oslob (TOURS[0]) has bookedThisWeek: 7 — badge must render.
+    // Oslob (TOURS_FIXTURE[0]) has bookedThisWeek: 7 — badge must render.
     const oslobHeading = within(toursSection).getByRole('heading', {
       level: 3,
       name: /Oslob Whale Sharks/i,
@@ -157,13 +172,13 @@ describe('home page', () => {
 
     const group = screen.getByRole('group', { name: /filter tours by destination/i });
 
-    for (const destination of DESTINATIONS) {
-      const chip = within(group).getByRole('button', { name: destination.name });
+    for (const destination of DESTINATIONS_FIXTURE) {
+      const chip = await within(group).findByRole('button', { name: destination.name });
       await user.click(chip);
       expect(chip).toHaveAttribute('aria-pressed', 'true');
 
       const toursSection = document.querySelector('#tours') as HTMLElement;
-      const cards = within(toursSection).getAllByRole('heading', { level: 3 });
+      const cards = await within(toursSection).findAllByRole('heading', { level: 3 });
       expect(cards.length).toBeGreaterThan(0);
 
       for (const card of cards) {
