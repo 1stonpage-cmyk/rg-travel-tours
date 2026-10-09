@@ -73,6 +73,8 @@ export default function ReviewsSection() {
                   <footer className="mt-4 text-sm">
                     <p className="text-brand-blue-900 font-semibold">{review.name}</p>
                     <p className="text-muted-foreground text-xs">
+                      {/* tourTitle is null when a review has no tourId. */}
+                      {review.tourTitle && <>{review.tourTitle} · </>}
                       {reviewDateFormatter.format(toDate(review.createdAt))}
                     </p>
                   </footer>

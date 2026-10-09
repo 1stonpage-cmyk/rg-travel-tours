@@ -111,12 +111,43 @@ describe('ReviewsSection — live data', () => {
       // Every fixture review has isSample: true — if sample reviews were
       // being filtered out, none of these would ever appear.
       expect(review.isSample).toBe(true);
-      expect(within(reviewsSection).getByText(review.name)).toBeInTheDocument();
+      const nameNode = within(reviewsSection).getByText(review.name);
+      expect(nameNode).toBeInTheDocument();
       expect(within(reviewsSection).getByText(review.body)).toBeInTheDocument();
+      // Round 1 fix on Task 2.5 (F1): the tour name is back, sourced from
+      // the server's joined tourTitle rather than placeholder copy. Plain
+      // substring check, not a RegExp — several fixture titles contain "+",
+      // a regex metacharacter.
+      const card = nameNode.closest('li') as HTMLElement;
+      expect(card.textContent).toContain(review.tourTitle);
     }
     expect(within(reviewsSection).getAllByRole('listitem')).toHaveLength(
       REVIEWS_FIXTURE.items.length,
     );
+  });
+
+  it('omits the tour name (but keeps the date) for a review with no tourTitle', async () => {
+    const noTour: ReviewsPublishedResult['items'][number] = {
+      ...REVIEWS_FIXTURE.items[0]!,
+      id: 998,
+      tourId: null,
+      tourTitle: null,
+      name: 'Guest With No Tour',
+    };
+    mockTrpc({
+      'reviews.published': {
+        items: [noTour],
+        displayAggregate: { average: 5, count: 1 },
+        realAggregate: null,
+      },
+    });
+    renderReviews();
+
+    const nameNode = await screen.findByText('Guest With No Tour');
+    const card = nameNode.closest('li') as HTMLElement;
+    // The date still renders; just no "<tour> · " prefix before it.
+    expect(within(card).getByText(/\d{4}/)).toBeInTheDocument();
+    expect(card.textContent).not.toContain('·');
   });
 
   it('shows an empty state when no reviews are published', async () => {

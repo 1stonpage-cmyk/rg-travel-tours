@@ -29,6 +29,28 @@
  *   ISO strings on the wire. Using real `Date` objects here still produces
  *   the correct wire bytes, because `mockTrpc`'s `JSON.stringify` converts
  *   them the same way the real HTTP response does.
+ *
+ * A related trap for whoever next imports one of the routers' exported
+ * result interfaces (`PackageListItem`, `Review`, etc.) to type a CLIENT
+ * value rather than this fixture file: that interface describes what the
+ * *server* produces, not what the client actually receives after a JSON
+ * round trip with no transformer. Two concrete consequences, both found the
+ * hard way while building Task 2.5:
+ *   - A `Date`-typed field (`Review.createdAt`/`repliedAt`) arrives on the
+ *     client as a plain ISO **string**, not a `Date` instance.
+ *   - A field typed `unknown` (`PackageListItem.highlights`) becomes
+ *     **optional** on the client — `JSON.stringify` drops a key whose value
+ *     is `undefined`, and `unknown` admits `undefined`, so tRPC's
+ *     client-side output type reflects that possibility with `?:`.
+ * `tsc` will reject a component prop typed directly as one of these server
+ * interfaces for exactly this reason. `PackagesSection.tsx`/
+ * `ReviewsSection.tsx` work around it by never naming the server interface
+ * client-side at all — the data stays structurally inferred from the
+ * `useQuery()` call all the way through. This fixture file is the
+ * exception that's fine: these are plain object literals checked against
+ * the server's own types, not something flowing through tRPC's client
+ * output-typing machinery, so the server-shape interfaces apply here
+ * exactly as declared.
  */
 import type { SettingsPayload } from '../../../../server/src/content/settings';
 import type { Destination } from '../../../../server/src/routers/public/destinations';
@@ -460,6 +482,7 @@ export const REVIEWS_FIXTURE: ReviewsPublishedResult = {
     {
       id: 1,
       tourId: 6,
+      tourTitle: 'Oslob Whale Sharks + Tumalog Falls',
       name: 'Placeholder Guest A',
       rating: 5,
       guide: null,
@@ -475,13 +498,17 @@ export const REVIEWS_FIXTURE: ReviewsPublishedResult = {
     {
       id: 2,
       tourId: 7,
+      tourTitle: 'Kawasan Falls Canyoneering',
       name: 'Placeholder Guest B',
       rating: 5,
       guide: null,
       value: null,
       punctuality: null,
       safety: null,
-      body: 'Placeholder review copy. This card demonstrates the verified-booking badge and star layout.',
+      // Round 1 fix on Task 2.5: this used to say "demonstrates the
+      // verified-booking badge" — that badge was removed because zero
+      // seeded reviews have a bookingId, so it was fabricated social proof.
+      body: 'Placeholder review copy. This card demonstrates the star layout.',
       isSample: true,
       reply: null,
       repliedAt: null,
@@ -490,6 +517,7 @@ export const REVIEWS_FIXTURE: ReviewsPublishedResult = {
     {
       id: 3,
       tourId: 8,
+      tourTitle: 'Moalboal Sardine Run & Sea Turtles',
       name: 'Placeholder Guest C',
       rating: 4,
       guide: null,
@@ -505,6 +533,7 @@ export const REVIEWS_FIXTURE: ReviewsPublishedResult = {
     {
       id: 4,
       tourId: 9,
+      tourTitle: 'Mactan Island Hopping & Snorkelling',
       name: 'Placeholder Guest D',
       rating: 5,
       guide: null,
@@ -520,6 +549,7 @@ export const REVIEWS_FIXTURE: ReviewsPublishedResult = {
     {
       id: 5,
       tourId: 11,
+      tourTitle: 'Bohol Countryside & Chocolate Hills',
       name: 'Placeholder Guest E',
       rating: 5,
       guide: null,
@@ -535,6 +565,7 @@ export const REVIEWS_FIXTURE: ReviewsPublishedResult = {
     {
       id: 6,
       tourId: 10,
+      tourTitle: 'Cebu City Heritage & Temple Tour',
       name: 'Placeholder Guest F',
       rating: 4,
       guide: null,

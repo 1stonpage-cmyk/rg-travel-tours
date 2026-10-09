@@ -33,7 +33,6 @@ export default function StarRating({ value, count, size = 'sm', className }: Pro
       )}
       <span className="sr-only">
         {value.toFixed(1)} out of 5{typeof count === 'number' ? ` from ${count} reviews` : ''}.
-        Placeholder value.
       </span>
     </span>
   );

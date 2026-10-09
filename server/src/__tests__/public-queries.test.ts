@@ -151,6 +151,74 @@ describeWithDb('public queries', () => {
     expect(r.realAggregate).toBeNull(); // and never for structured data
   });
 
+  // Round 1 fix on Task 2.5 (F1): the review card lost its tour name when
+  // converted off placeholder data, because the API didn't expose it.
+  // `tourTitle` is now joined in — asserted against the real seeded tour
+  // titles, not just "is a string", so a join to the wrong table/column
+  // would actually fail this.
+  it('reviews.published joins each review to its tour title', async () => {
+    const db = getDb();
+    const tourTitles = new Map(
+      (await db.select({ id: toursTable.id, title: toursTable.title }).from(toursTable)).map(
+        (t) => [t.id, t.title],
+      ),
+    );
+
+    const r = await caller.reviews.published({});
+    expect(r.items.length).toBeGreaterThan(0);
+    for (const item of r.items) {
+      expect(item.tourId).not.toBeNull();
+      expect(item.tourTitle).toBe(tourTitles.get(item.tourId!));
+    }
+  });
+
+  it('reviews.published returns tourTitle: null for a review with no tourId', async () => {
+    const db = getDb();
+    const [result] = await db.insert(reviewsTable).values({
+      tourId: null,
+      name: 'Fixture Reviewer — no tour',
+      rating: 5,
+      body: 'Fixture review with no associated tour.',
+      status: 'published',
+      isSample: false,
+    });
+    const fixtureId = result.insertId;
+
+    try {
+      const r = await caller.reviews.published({});
+      const fixture = r.items.find((i) => i.id === fixtureId);
+      expect(fixture).toBeDefined();
+      expect(fixture!.tourId).toBeNull();
+      expect(fixture!.tourTitle).toBeNull();
+    } finally {
+      await db.delete(reviewsTable).where(eq(reviewsTable.id, fixtureId));
+    }
+  });
+
+  it('reviews.published issues a constant number of queries, not one per review (no N+1)', async () => {
+    const pool = (await import('../db/client')).getPool();
+    let calls = 0;
+    const originalQuery = pool.query.bind(pool);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (pool as any).query = (...args: unknown[]) => {
+      calls += 1;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (originalQuery as any)(...args);
+    };
+
+    try {
+      const r = await caller.reviews.published({});
+      expect(r.items.length).toBeGreaterThan(0);
+      // The joined items query plus displayAggregate() and realAggregate()
+      // (run in parallel via Promise.all) — fixed regardless of how many
+      // reviews exist, never one query per review.
+      expect(calls).toBe(3);
+    } finally {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (pool as any).query = originalQuery;
+    }
+  });
+
   it('packages.list returns active packages with integer centavos', async () => {
     const p = await caller.packages.list();
     expect(p.length).toBe(3);

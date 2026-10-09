@@ -1,13 +1,15 @@
 import { reviewsPublishedInput } from '@rg/shared';
 import { and, desc, eq } from 'drizzle-orm';
 import { getDb } from '../../db/client';
-import { reviews } from '../../db/schema';
+import { reviews, tours } from '../../db/schema';
 import { displayAggregate, realAggregate, type Aggregate } from '../../services/ratings';
 import { publicProcedure, router } from '../../trpc';
 
 export interface Review {
   id: number;
   tourId: number | null;
+  /** The reviewed tour's title, joined in — null when `tourId` is null. */
+  tourTitle: string | null;
   name: string;
   rating: number;
   guide: number | null;
@@ -37,10 +39,14 @@ export const reviewsRouter = router({
       const conditions = [eq(reviews.status, 'published')];
       if (input.tourId !== undefined) conditions.push(eq(reviews.tourId, input.tourId));
 
+      // One query, one left join — a review has at most one tour, so there's
+      // no fan-out to batch (unlike tours.list's per-tour images/ratings).
+      // Never N+1: see "no N+1" test in public-queries.test.ts.
       const items = await db
         .select({
           id: reviews.id,
           tourId: reviews.tourId,
+          tourTitle: tours.title,
           name: reviews.name,
           rating: reviews.rating,
           guide: reviews.guide,
@@ -54,6 +60,7 @@ export const reviewsRouter = router({
           createdAt: reviews.createdAt,
         })
         .from(reviews)
+        .leftJoin(tours, eq(reviews.tourId, tours.id))
         .where(and(...conditions))
         .orderBy(desc(reviews.createdAt), desc(reviews.id))
         .limit(input.limit);
