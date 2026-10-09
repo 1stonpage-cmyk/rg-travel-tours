@@ -13,6 +13,10 @@ const schema = z.object({
   SITE_ENV: z.enum(['development', 'preview', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(3100),
   DATABASE_URL: z.string().min(1),
+  // Dedicated database for `pnpm test` (task 1.4b) — never rg_travel. Only
+  // required when tests actually run; optional here so booting the server
+  // or seeding the app database doesn't need it configured.
+  TEST_DATABASE_URL: z.string().optional(),
   UPLOADS_DIR: z.string().default('./uploads'),
   PUBLIC_BASE_URL: z.string().default('http://localhost:5180'),
 });

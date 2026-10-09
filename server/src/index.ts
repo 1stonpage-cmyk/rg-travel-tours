@@ -3,8 +3,8 @@ import { assertConnectedDatabase, assertDatabaseName, databaseNameFromUrl } from
 import { env } from './env';
 
 try {
-  assertDatabaseName(databaseNameFromUrl(env.DATABASE_URL));
-  await assertConnectedDatabase();
+  assertDatabaseName(databaseNameFromUrl(env.DATABASE_URL), 'app');
+  await assertConnectedDatabase('app');
 } catch (error) {
   console.error(`\n[rg-travel-tours] Database check failed.\n  ${(error as Error).message}\n`);
   process.exit(1);

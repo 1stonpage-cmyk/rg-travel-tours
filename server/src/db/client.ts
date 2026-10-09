@@ -12,10 +12,29 @@ import * as schema from './schema';
 let pool: Pool | undefined;
 let db: MySql2Database<typeof schema> | undefined;
 
+/**
+ * Task 1.4b: under Vitest (`process.env.VITEST`, set by Vitest itself for
+ * every process it runs, including globalSetup) every connection goes to
+ * TEST_DATABASE_URL (`rg_travel_test`) instead of DATABASE_URL (`rg_travel`).
+ * This is the only place that branches on VITEST — guard.ts separately
+ * verifies whichever database this resolves to is actually the right one
+ * for the caller's context ('app' | 'test'), so a misconfigured env var
+ * still aborts loudly instead of silently connecting to the wrong database.
+ */
+function resolveDatabaseUrl(): string {
+  if (process.env.VITEST) {
+    if (!env.TEST_DATABASE_URL) {
+      throw new Error('TEST_DATABASE_URL is not set — required to run tests.');
+    }
+    return env.TEST_DATABASE_URL;
+  }
+  return env.DATABASE_URL;
+}
+
 export function getPool(): Pool {
   if (!pool) {
     pool = mysql.createPool({
-      uri: env.DATABASE_URL,
+      uri: resolveDatabaseUrl(),
       timezone: 'Z',
       connectionLimit: 10,
       supportBigNumbers: true,

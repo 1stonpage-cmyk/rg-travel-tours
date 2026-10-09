@@ -1,7 +1,9 @@
 /**
- * Seeds the `rg_travel` database with today's content (task 1.4) so that a
- * later task can switch the public site over to the API without changing
- * the rendered page.
+ * Seeds today's content (task 1.4) so that a later task can switch the
+ * public site over to the API without changing the rendered page. Seeds
+ * `rg_travel` by default; task 1.4b's test global setup calls `seed('test')`
+ * to seed `rg_travel_test` instead, so the test suite starts from the same
+ * canonical baseline.
  *
  * Idempotent: every table is upserted by a natural key (`slug` for
  * destinations/tours/packages, `key` for settings, `name` + `tourId` for
@@ -10,14 +12,20 @@
  * fixed set in, same fixed set out, never duplicated.
  *
  * `assertDatabaseName` + `assertConnectedDatabase` run first (CLAUDE.md:
- * this project may only ever touch `rg_travel`; Kong PMS shares the same
- * MySQL server). Never prints DATABASE_URL or a password. Never truncates,
- * never hard-deletes.
+ * this project may only ever touch `rg_travel` for the app, `rg_travel_test`
+ * for tests; Kong PMS shares the same MySQL server). Never prints
+ * DATABASE_URL, TEST_DATABASE_URL or a password. Never truncates, never
+ * hard-deletes.
  */
 import { eq, and } from 'drizzle-orm';
 import { pathToFileURL } from 'node:url';
 import { env } from '../env';
-import { assertConnectedDatabase, assertDatabaseName, databaseNameFromUrl } from './guard';
+import {
+  assertConnectedDatabase,
+  assertDatabaseName,
+  databaseNameFromUrl,
+  type DatabaseContext,
+} from './guard';
 import { closeDb, getDb } from './client';
 import * as schema from './schema';
 import {
@@ -187,9 +195,15 @@ async function upsertSetting(db: Db, key: string, value: unknown): Promise<void>
   await db.insert(schema.settings).values({ key, value });
 }
 
-export async function seed(): Promise<void> {
-  assertDatabaseName(databaseNameFromUrl(env.DATABASE_URL));
-  await assertConnectedDatabase();
+export async function seed(context: DatabaseContext = 'app'): Promise<void> {
+  const url = context === 'test' ? env.TEST_DATABASE_URL : env.DATABASE_URL;
+  if (!url) {
+    throw new Error(
+      `No ${context === 'test' ? 'TEST_DATABASE_URL' : 'DATABASE_URL'} is configured.`,
+    );
+  }
+  assertDatabaseName(databaseNameFromUrl(url), context);
+  await assertConnectedDatabase(context);
 
   const db = getDb();
 
