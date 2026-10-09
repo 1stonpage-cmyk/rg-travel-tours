@@ -1,4 +1,5 @@
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 import HeroSection from '@/components/home/HeroSection';
@@ -6,7 +7,26 @@ import TrustBar from '@/components/home/TrustBar';
 import { TrpcProviders } from '@/lib/trpc';
 import type { Destination } from '../../../server/src/routers/public/destinations';
 import { DESTINATIONS_FIXTURE, SETTINGS_FIXTURE } from './helpers/fixtures';
-import { mockTrpc } from './helpers/mock-trpc';
+import { mockTrpc, mockTrpcError } from './helpers/mock-trpc';
+
+// Radix's Select popover only mounts once genuinely open (Presence waits on
+// `context.open`, not just a click), and opening it calls pointer-capture
+// and scroll APIs jsdom doesn't implement. These two no-op stubs are the
+// standard, narrowly-scoped workaround — needed only for the one test below
+// that must inspect the real, rendered listbox (role="listbox") rather than
+// the always-mounted hidden native <select> the other tests read from.
+if (typeof Element.prototype.hasPointerCapture !== 'function') {
+  Element.prototype.hasPointerCapture = () => false;
+}
+if (typeof Element.prototype.setPointerCapture !== 'function') {
+  Element.prototype.setPointerCapture = () => {};
+}
+if (typeof Element.prototype.releasePointerCapture !== 'function') {
+  Element.prototype.releasePointerCapture = () => {};
+}
+if (typeof Element.prototype.scrollIntoView !== 'function') {
+  Element.prototype.scrollIntoView = () => {};
+}
 
 function renderHero() {
   return render(
@@ -26,7 +46,17 @@ function renderTrustBar() {
   );
 }
 
-/** The hidden native `<select>` Radix always renders (mirrors every SelectItem as an <option>, aria-hidden, regardless of open state) — lets us assert on the options without opening the popover, which needs pointer-capture APIs jsdom doesn't implement. */
+/**
+ * The hidden native `<select>` Radix always renders (mirrors every
+ * SelectItem as an <option>, aria-hidden, regardless of open state) — lets
+ * us assert on the options without opening the popover, which needs
+ * pointer-capture APIs jsdom doesn't implement. Do NOT "simplify" this to a
+ * `userEvent.click` on the trigger to open the real popover and read its
+ * rendered items instead — jsdom's missing `hasPointerCapture`/
+ * `scrollIntoView` make that a silent dead end (the click resolves, the
+ * popover never actually opens, and the assertion below it stops proving
+ * anything while still reporting green).
+ */
 function nativeOptionTexts(container: HTMLElement): string[] {
   const native = container.querySelector('select[aria-hidden="true"]');
   if (!native) return [];
@@ -103,6 +133,61 @@ describe('HeroSection — settings-driven', () => {
     // The other trust-line items must still render.
     expect(screen.getByText('4.9★')).toBeInTheDocument();
     expect(screen.getByText(/dot accredited/i)).toBeInTheDocument();
+  });
+
+  it('keeps the search form usable, with the destination trigger present, when destinations.list fails', async () => {
+    mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
+    mockTrpcError('destinations.list');
+    const { container } = renderHero();
+
+    await screen.findByRole('heading', { level: 1 });
+    // destinations.list settles independently of settings.get — wait for it
+    // to actually reach its (error) end state before asserting the trigger
+    // is enabled, otherwise this would pass trivially while the query is
+    // still pending. 3000ms, matching catalog.test.tsx's error-settling
+    // waits: the query client retries once (query-client.ts) with a ~1s
+    // backoff before settling into isError, past the default 1000ms timeout.
+    await waitFor(
+      () => {
+        expect(nativeOptionTexts(container)).not.toContain('Loading destinations…');
+      },
+      { timeout: 3000 },
+    );
+
+    const form = screen.getByRole('form', { name: /search tours/i });
+    const trigger = within(form).getByRole('combobox', { name: /destination/i });
+    expect(trigger).toBeInTheDocument();
+    expect(trigger).not.toBeDisabled();
+    expect(within(form).getByRole('button', { name: /search tours/i })).toBeInTheDocument();
+  });
+
+  it('degrades the destination dropdown to no options (never a card with a button) when destinations.list fails', async () => {
+    mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
+    mockTrpcError('destinations.list');
+    const user = userEvent.setup();
+    renderHero();
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('combobox', { name: /destination/i }));
+
+    const listbox = await screen.findByRole('listbox');
+    // The destinations query settles (to its error) independently of, and
+    // not necessarily in step with, the settings query the heading above
+    // already waited on — wait out the "Loading destinations…" item before
+    // asserting the final, settled shape of the dropdown. 3000ms for the
+    // same retry-backoff reason as the test above.
+    await waitFor(
+      () => {
+        expect(within(listbox).queryByText(/loading destinations/i)).not.toBeInTheDocument();
+      },
+      { timeout: 3000 },
+    );
+    // The regression this guards against: QueryBoundary's error state is a
+    // <p> plus a "Try again" <button> — a control that must never land
+    // inside a Radix listbox. On failure the dropdown must offer zero
+    // options instead, not an error card.
+    expect(within(listbox).queryByRole('button')).not.toBeInTheDocument();
+    expect(within(listbox).queryAllByRole('option')).toHaveLength(0);
   });
 
   it('keeps the hero readable while settings are still loading: photo and search form render immediately', () => {

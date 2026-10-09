@@ -171,26 +171,25 @@ export default function HeroSection() {
               <SelectTrigger id="hero-destination" className="tap-target w-full">
                 <SelectValue placeholder="Anywhere in Cebu" />
               </SelectTrigger>
+              {/* Handled by hand, not QueryBoundary: a <SelectContent> is a
+                  Radix listbox (role="listbox"), and QueryBoundary's error
+                  state renders a <button> ("Try again") — a control that
+                  must never appear inside a listbox. On failure this
+                  degrades to an empty dropdown rather than an error card:
+                  the form stays usable and a destination-less search is a
+                  valid search. The trigger itself is never gated — it's
+                  outside this block entirely. */}
               <SelectContent>
-                <QueryBoundary
-                  query={destinationsQuery}
-                  skeleton={
-                    <SelectItem value="__loading" disabled>
-                      Loading destinations…
-                    </SelectItem>
-                  }
-                  errorTitle="Destinations could not load"
-                >
-                  {(destinations) => (
-                    <>
-                      {destinations.map((d) => (
-                        <SelectItem key={d.slug} value={d.slug}>
-                          {d.name}
-                        </SelectItem>
-                      ))}
-                    </>
-                  )}
-                </QueryBoundary>
+                {destinationsQuery.isPending && (
+                  <SelectItem value="__loading" disabled>
+                    Loading destinations…
+                  </SelectItem>
+                )}
+                {destinationsQuery.data?.map((d) => (
+                  <SelectItem key={d.slug} value={d.slug}>
+                    {d.name}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
