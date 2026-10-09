@@ -9,6 +9,7 @@ import {
   DESTINATIONS_FIXTURE,
   PACKAGES_FIXTURE,
   REVIEWS_FIXTURE,
+  SETTINGS_FIXTURE,
   TOURS_FIXTURE,
 } from './helpers/fixtures';
 import { mockTrpc } from './helpers/mock-trpc';
@@ -24,11 +25,13 @@ function renderHome() {
 }
 
 describe('home page', () => {
-  // CatalogPreview, PackagesSection and ReviewsSection all fetch from the
-  // API now. Every test here renders the full HomePage, so all four
-  // queries need a mock whether or not a given test looks at that section.
+  // HeroSection, TrustBar, CatalogPreview, PackagesSection and
+  // ReviewsSection all fetch from the API now. Every test here renders the
+  // full HomePage, so all five queries need a mock whether or not a given
+  // test looks at that section.
   beforeEach(() => {
     mockTrpc({
+      'settings.get': SETTINGS_FIXTURE,
       'destinations.list': DESTINATIONS_FIXTURE,
       'tours.list': TOURS_FIXTURE,
       'packages.list': PACKAGES_FIXTURE,
@@ -36,9 +39,11 @@ describe('home page', () => {
     });
   });
 
-  it('renders exactly one h1, in the hero', () => {
+  it('renders exactly one h1, in the hero', async () => {
+    // The hero's h1 is the only part of HeroSection gated on settings.get
+    // (Task 2.6) — everything else in the hero renders unconditionally.
     renderHome();
-    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
+    expect(await screen.findAllByRole('heading', { level: 1 })).toHaveLength(1);
   });
 
   it('renders a search form with destination, date, and guests', () => {

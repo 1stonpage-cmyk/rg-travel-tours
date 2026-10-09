@@ -1,6 +1,8 @@
 import { Search } from 'lucide-react';
-import { useState, type FormEvent } from 'react';
+import { Fragment, useState, type FormEvent, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
+import QueryBoundary from '@/components/common/QueryBoundary';
+import { Skeleton } from '@/components/common/Skeleton';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -11,15 +13,47 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { DESTINATIONS, PLACEHOLDER_SETTINGS } from '@/lib/placeholder-data';
+import { trpc } from '@/lib/trpc';
 
 const today = new Date().toISOString().slice(0, 10);
 
+/**
+ * Stand-in for the eyebrow/headline/subtitle/trust-line block below, sized
+ * to roughly the same box so there is minimal shift once settings resolve.
+ * This is the ONLY part of the hero gated on a query — see the component
+ * comment for why the photo, overlays and search form are not.
+ */
+function HeroCopySkeleton() {
+  return (
+    <div aria-hidden="true">
+      <Skeleton className="h-4 w-36" />
+      <Skeleton className="mt-3 h-9 w-full sm:h-12" />
+      <Skeleton className="mt-2 h-9 w-2/3 sm:h-12" />
+      <Skeleton className="mt-4 h-5 w-full" />
+      <Skeleton className="mt-1.5 h-5 w-5/6" />
+      <Skeleton className="mt-6 h-5 w-60" />
+    </div>
+  );
+}
+
+/**
+ * The hero is above the fold — the first thing every guest sees, often over
+ * a slow Philippine mobile connection. So unlike every other settings-driven
+ * section, it must NOT gate its photo, overlays or search form behind a
+ * query-pending check: those render unconditionally, every time, with no
+ * dependency on `settingsQuery`/`destinationsQuery` having resolved. Only
+ * the copy (eyebrow, headline, subtitle, trust line) — which has no
+ * reasonable placeholder text that wouldn't itself be fabricated copy — is
+ * allowed to show a skeleton while `settings.get` loads.
+ */
 export default function HeroSection() {
   const navigate = useNavigate();
   const [destination, setDestination] = useState('');
   const [date, setDate] = useState('');
   const [guests, setGuests] = useState('2');
+
+  const settingsQuery = trpc.settings.get.useQuery();
+  const destinationsQuery = trpc.destinations.list.useQuery();
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -60,39 +94,70 @@ export default function HeroSection() {
 
       <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-24 lg:px-8">
         <div className="max-w-2xl">
-          <p className="motion-rise text-brand-gold-300 text-sm font-semibold uppercase tracking-widest">
-            Cebu, Philippines
-          </p>
-          <h1 className="motion-rise mt-3 text-3xl font-bold tracking-tight text-white [animation-delay:80ms] sm:text-5xl">
-            Private Cebu day tours, booked direct with the people who run them.
-          </h1>
-          <p className="text-brand-blue-100 motion-rise mt-4 text-base [animation-delay:160ms] sm:text-lg">
-            Whale sharks, canyoneering and island hopping in your own van with a licensed driver.
-            Reserve with a {PLACEHOLDER_SETTINGS.depositPercent}% deposit.
-          </p>
+          <QueryBoundary
+            query={settingsQuery}
+            skeleton={<HeroCopySkeleton />}
+            errorTitle="Content could not load"
+          >
+            {({ trust, hero }) => {
+              // ratingCount is nullable: no client-supplied review count
+              // exists yet, so the "from N guest reviews" clause only
+              // renders once a real count is supplied (no fabricated social
+              // proof). ratingAverage/guestsServed are independently
+              // nullable — each item is omitted entirely, not rendered as
+              // "0" or "—", when its value is null.
+              const trustItems: ReactNode[] = [];
+              if (trust.ratingAverage !== null) {
+                trustItems.push(
+                  <li key="rating" className="flex items-center gap-1.5">
+                    <span className="text-brand-gold-300 font-bold">
+                      {trust.ratingAverage.toFixed(1)}★
+                    </span>
+                    {trust.ratingCount !== null && (
+                      <span>from {trust.ratingCount} guest reviews</span>
+                    )}
+                  </li>,
+                );
+              }
+              if (trust.dotAccredited) {
+                trustItems.push(<li key="dot">DOT accredited</li>);
+              }
+              if (trust.guestsServed !== null) {
+                trustItems.push(
+                  <li key="guests">{trust.guestsServed.toLocaleString('en-PH')}+ guests served</li>,
+                );
+              }
 
-          {/* Trust line — placeholder settings values, marked by the dev banner.
-              ratingCount is deliberately nullable: no client-supplied review count
-              exists yet, so the "from N guest reviews" clause only renders once a
-              real count is supplied (spec section 0 forbids fabricating it). */}
-          <ul className="text-brand-blue-100 motion-rise mt-6 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm [animation-delay:240ms]">
-            <li className="flex items-center gap-1.5">
-              <span className="text-brand-gold-300 font-bold">
-                {PLACEHOLDER_SETTINGS.ratingAverage.toFixed(1)}★
-              </span>
-              {PLACEHOLDER_SETTINGS.ratingCount !== null && (
-                <span>from {PLACEHOLDER_SETTINGS.ratingCount} guest reviews</span>
-              )}
-            </li>
-            <li aria-hidden="true" className="text-brand-blue-400">
-              |
-            </li>
-            <li>DOT accredited</li>
-            <li aria-hidden="true" className="text-brand-blue-400">
-              |
-            </li>
-            <li>{PLACEHOLDER_SETTINGS.guestsServed.toLocaleString('en-PH')}+ guests served</li>
-          </ul>
+              return (
+                <>
+                  <p className="motion-rise text-brand-gold-300 text-sm font-semibold uppercase tracking-widest">
+                    {hero.eyebrow}
+                  </p>
+                  <h1 className="motion-rise mt-3 text-3xl font-bold tracking-tight text-white [animation-delay:80ms] sm:text-5xl">
+                    {hero.headline}
+                  </h1>
+                  <p className="text-brand-blue-100 motion-rise mt-4 text-base [animation-delay:160ms] sm:text-lg">
+                    {hero.subtitle}
+                  </p>
+
+                  {trustItems.length > 0 && (
+                    <ul className="text-brand-blue-100 motion-rise mt-6 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm [animation-delay:240ms]">
+                      {trustItems.map((item, i) => (
+                        <Fragment key={i}>
+                          {i > 0 && (
+                            <li aria-hidden="true" className="text-brand-blue-400">
+                              |
+                            </li>
+                          )}
+                          {item}
+                        </Fragment>
+                      ))}
+                    </ul>
+                  )}
+                </>
+              );
+            }}
+          </QueryBoundary>
         </div>
 
         <form
@@ -107,11 +172,25 @@ export default function HeroSection() {
                 <SelectValue placeholder="Anywhere in Cebu" />
               </SelectTrigger>
               <SelectContent>
-                {DESTINATIONS.map((d) => (
-                  <SelectItem key={d.slug} value={d.slug}>
-                    {d.name}
-                  </SelectItem>
-                ))}
+                <QueryBoundary
+                  query={destinationsQuery}
+                  skeleton={
+                    <SelectItem value="__loading" disabled>
+                      Loading destinations…
+                    </SelectItem>
+                  }
+                  errorTitle="Destinations could not load"
+                >
+                  {(destinations) => (
+                    <>
+                      {destinations.map((d) => (
+                        <SelectItem key={d.slug} value={d.slug}>
+                          {d.name}
+                        </SelectItem>
+                      ))}
+                    </>
+                  )}
+                </QueryBoundary>
               </SelectContent>
             </Select>
           </div>
@@ -145,7 +224,7 @@ export default function HeroSection() {
           <div className="flex items-end">
             <Button type="submit" size="lg" className="tap-target w-full lg:w-auto">
               <Search className="size-4" aria-hidden="true" />
-              Search tours
+              {settingsQuery.data?.hero.ctaLabel ?? 'Search tours'}
             </Button>
           </div>
         </form>
