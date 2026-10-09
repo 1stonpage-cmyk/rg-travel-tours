@@ -37,3 +37,20 @@ describe('open/closed state in Asia/Manila', () => {
     expect(state.message).toBe("Closed — we'll reply by 7:00 AM");
   });
 });
+
+describe('open/closed state — full-week closure (fix round 1, I2)', () => {
+  it('degrades to a fallback message instead of throwing when every day is closed', () => {
+    const allClosed = OPEN_7_TO_9.map((d) => ({
+      ...d,
+      isClosed: true,
+      opensAt: null,
+      closesAt: null,
+    }));
+
+    const state = resolveOpenState(allClosed, new Date('2026-10-09T02:00:00.000Z'));
+    expect(state).toEqual({
+      isOpen: false,
+      message: 'Closed — we will reply as soon as we reopen',
+    });
+  });
+});

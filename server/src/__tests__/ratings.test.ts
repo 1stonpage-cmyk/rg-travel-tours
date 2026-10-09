@@ -98,4 +98,22 @@ describeWithDb('rating aggregates — fixtures', () => {
     expect(await displayAggregate(TOUR_A)).toEqual({ average: 5, count: 1 });
     expect(await realAggregate(TOUR_A)).toBeNull();
   });
+
+  // Fix round 1, I1: every other realAggregate() assertion in this suite
+  // expects null, which a regression that made realAggregate() always
+  // return null (a stray early return, an inverted filter) would also
+  // satisfy. This case mixes real and sample rows for the same tour so
+  // realAggregate() is proven to both include the real rows AND exclude
+  // the sample ones — displayAggregate() over the same tour proves the
+  // full set is still there for display.
+  it('realAggregate() includes real rows and excludes samples when both exist for the same tour', async () => {
+    await insertReview({ tourId: TOUR_A, rating: 5, status: 'published', isSample: false });
+    await insertReview({ tourId: TOUR_A, rating: 3, status: 'published', isSample: false });
+    await insertReview({ tourId: TOUR_A, rating: 1, status: 'published', isSample: true });
+
+    // Real-only: average of 5 and 3 -> 4, count 2. Samples excluded.
+    expect(await realAggregate(TOUR_A)).toEqual({ average: 4, count: 2 });
+    // Display: all three rows -> average 3, count 3.
+    expect(await displayAggregate(TOUR_A)).toEqual({ average: 3, count: 3 });
+  });
 });

@@ -25,6 +25,15 @@ export interface OpenState {
 
 const OPEN_MESSAGE = 'Open now — we reply within minutes';
 
+/**
+ * Fallback copy for the (currently hypothetical, but admin-configurable
+ * once Weeks 5-7 ship) case where every day of the week is closed — a
+ * full-week holiday/typhoon/off-season closure. This is a placeholder
+ * pending client sign-off, not approved marketing copy: it exists only so
+ * resolveOpenState() degrades instead of throwing. Revisit before ships.
+ */
+const ALL_WEEK_CLOSED_MESSAGE = 'Closed — we will reply as soon as we reopen';
+
 function closedMessage(opensAt: string): string {
   return `Closed — we'll reply by ${formatClockTime12(opensAt)}`;
 }
@@ -53,11 +62,15 @@ function entryFor(hours: BusinessHours, weekday: number): BusinessHourEntry | un
 
 /**
  * The opening time of the next day (starting today) that is not closed.
- * Walks at most 7 days forward; throws if every day is closed, which the
- * `business_hours` schema's 7-entries-one-per-weekday shape should never
- * actually produce in practice.
+ * Walks at most 7 days forward; returns null if every day is closed (a
+ * full-week closure) rather than throwing — resolveOpenState()'s signature
+ * promises `{ isOpen, message }`, never an exception.
  */
-function nextOpeningTime(hours: BusinessHours, fromWeekday: number, nowMinutes: number): string {
+function nextOpeningTime(
+  hours: BusinessHours,
+  fromWeekday: number,
+  nowMinutes: number,
+): string | null {
   const today = entryFor(hours, fromWeekday);
   if (today && !today.isClosed && today.opensAt && nowMinutes < toMinutes(today.opensAt)) {
     return today.opensAt;
@@ -70,7 +83,7 @@ function nextOpeningTime(hours: BusinessHours, fromWeekday: number, nowMinutes: 
     }
   }
 
-  throw new Error('No opening hours configured for any day of the week.');
+  return null;
 }
 
 export function resolveOpenState(hours: BusinessHours, now: Date): OpenState {
@@ -86,5 +99,9 @@ export function resolveOpenState(hours: BusinessHours, now: Date): OpenState {
     }
   }
 
-  return { isOpen: false, message: closedMessage(nextOpeningTime(hours, weekday, nowMinutes)) };
+  const nextOpen = nextOpeningTime(hours, weekday, nowMinutes);
+  if (nextOpen === null) {
+    return { isOpen: false, message: ALL_WEEK_CLOSED_MESSAGE };
+  }
+  return { isOpen: false, message: closedMessage(nextOpen) };
 }
