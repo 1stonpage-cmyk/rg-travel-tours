@@ -110,7 +110,11 @@ function toListItem(row: ListRow, image: TourImage | null, rating: Aggregate | n
 /** One query: tours joined to destinations, with the lowest price tier aggregated per tour. Every selected non-aggregate column is in GROUP BY (ONLY_FULL_GROUP_BY). */
 async function listRows(destinationSlug: string | undefined): Promise<ListRow[]> {
   const db = getDb();
-  const conditions = [eq(tours.isActive, true)];
+  // I1: soft-deleting a destination must hide its tours too — otherwise the
+  // chip row drops it while the catalog keeps listing (and the ?destination=
+  // filter keeps matching) tours under a destination the site no longer
+  // publicly offers.
+  const conditions = [eq(tours.isActive, true), eq(destinations.isActive, true)];
   if (destinationSlug) conditions.push(eq(destinations.slug, destinationSlug));
 
   const rows = await db
@@ -173,7 +177,11 @@ async function firstImageByTour(tourIds: number[]): Promise<Map<number, TourImag
     })
     .from(tourImages)
     .where(inArray(tourImages.tourId, tourIds))
-    .orderBy(asc(tourImages.tourId), asc(tourImages.sortOrder));
+    // I3: `id` breaks a tie on `sort_order` deterministically — without it,
+    // two images sharing a sort_order leave "the first image" to MySQL's
+    // unspecified tie resolution, and the catalog card's hero image could
+    // change between requests.
+    .orderBy(asc(tourImages.tourId), asc(tourImages.sortOrder), asc(tourImages.id));
 
   for (const row of rows) {
     if (map.has(row.tourId)) continue; // rows arrive sort_order-ascending per tour; the first one wins
@@ -219,12 +227,15 @@ export const toursRouter = router({
         destinationId: destinations.id,
         destinationName: destinations.name,
         destinationSlug: destinations.slug,
+        destinationIsActive: destinations.isActive,
       })
       .from(tours)
       .innerJoin(destinations, eq(tours.destinationId, destinations.id))
       .where(eq(tours.slug, input.slug));
 
-    if (!row || !row.isActive) {
+    // I1: an inactive destination makes bySlug throw NOT_FOUND exactly as an
+    // inactive tour does — soft delete has to mean "not publicly visible".
+    if (!row || !row.isActive || !row.destinationIsActive) {
       throw new TRPCError({
         code: 'NOT_FOUND',
         message: `NOT_FOUND: no tour found for slug "${input.slug}"`,
@@ -250,7 +261,8 @@ export const toursRouter = router({
         })
         .from(tourImages)
         .where(eq(tourImages.tourId, row.id))
-        .orderBy(asc(tourImages.sortOrder)),
+        // I3: same tie-break as the batched list query — deterministic order.
+        .orderBy(asc(tourImages.sortOrder), asc(tourImages.id)),
       db
         .select({
           name: tourItineraryStops.name,

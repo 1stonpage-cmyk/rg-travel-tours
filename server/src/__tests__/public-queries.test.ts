@@ -1,4 +1,7 @@
+import { eq } from 'drizzle-orm';
 import { expect, it } from 'vitest';
+import { getDb } from '../db/client';
+import { destinations, tours as toursTable } from '../db/schema';
 import { describeWithDb } from './helpers/db';
 import { appRouter } from '../routers/_app';
 
@@ -14,7 +17,7 @@ describeWithDb('public queries', () => {
     expect(typeof s.openState.isOpen).toBe('boolean');
   });
 
-  it('tours.list returns a lowest-tier price and orders featured first', async () => {
+  it('tours.list returns a lowest-tier price', async () => {
     const tours = await caller.tours.list({});
     expect(tours.length).toBe(6);
     for (const t of tours) {
@@ -22,8 +25,88 @@ describeWithDb('public queries', () => {
       expect(t.bookedThisWeek).toBe(0); // no bookings table yet (D8)
       expect(t.tripsRun).toBeNull(); // historical count seeded NULL
     }
-    const featuredFirst = [...tours].sort((a, b) => Number(b.isFeatured) - Number(a.isFeatured));
-    expect(tours.map((t) => t.id)).toEqual(featuredFirst.map((t) => t.id));
+  });
+
+  // Fix round 3 (review I2): the original version of this test re-sorted the
+  // API's own output with a comparator that returns 0 for every pair,
+  // because all six seeded tours are isFeatured: true — Array.prototype.sort
+  // is stable, so that "expected" array was always byte-identical to the
+  // input regardless of what ORDER BY the SQL used. This version inserts a
+  // real mixed fixture: an unfeatured tour with a sort_order low enough to
+  // sort first under `sort_order` alone, and asserts it still lands after
+  // every featured tour — a claim that actually depends on `is_featured
+  // DESC` being in the query. Verified both ways by hand (see report):
+  // temporarily removing `desc(tours.isFeatured)` from listRows' orderBy
+  // makes this test fail; restoring it makes it pass again.
+  it('tours.list orders featured tours first even when a non-featured tour has the lowest sort_order', async () => {
+    const db = getDb();
+    const [anyDestination] = await db.select({ id: destinations.id }).from(destinations).limit(1);
+    expect(anyDestination).toBeDefined();
+
+    const [inserted] = await db.insert(toursTable).values({
+      slug: 'fixture-unfeatured-lowest-sort-order',
+      title: 'Fixture — unfeatured, lowest sort_order',
+      destinationId: anyDestination!.id,
+      isFeatured: false,
+      sortOrder: -1, // would sort first under `sort_order ASC` alone
+      isActive: true,
+    });
+    const fixtureId = inserted.insertId;
+
+    try {
+      const list = await caller.tours.list({});
+      const fixtureIndex = list.findIndex((t) => t.id === fixtureId);
+      expect(fixtureIndex).toBeGreaterThan(-1);
+
+      const featuredIndices = list
+        .map((t, index) => (t.isFeatured ? index : -1))
+        .filter((index) => index !== -1);
+      expect(featuredIndices.length).toBeGreaterThan(0);
+      // Every featured tour must appear before the unfeatured fixture, no
+      // matter how low its sort_order is.
+      expect(Math.max(...featuredIndices)).toBeLessThan(fixtureIndex);
+    } finally {
+      await db.delete(toursTable).where(eq(toursTable.id, fixtureId));
+    }
+  });
+
+  // Fix round 3 (review I1): soft-deleting a destination must hide its
+  // tours too, or "is_active" is decorative. Deactivates a real seeded
+  // destination (cebu-city, chosen because no earlier test in this file
+  // filters on it), asserts its tour disappears from the catalog and that
+  // bySlug on that tour now throws NOT_FOUND, then restores the baseline
+  // with resetTestDb() rather than hand-flipping the flag back — cheaper to
+  // get right and proven correct by every other test file that already
+  // relies on it.
+  it('tours.list and tours.bySlug hide tours whose destination is inactive', async () => {
+    const db = getDb();
+    const destinationSlug = 'cebu-city';
+    const tourSlug = 'cebu-city-heritage-tour';
+
+    const before = await caller.tours.list({});
+    expect(before.some((t) => t.slug === tourSlug)).toBe(true);
+    await expect(caller.tours.bySlug({ slug: tourSlug })).resolves.toBeDefined();
+
+    await db
+      .update(destinations)
+      .set({ isActive: false })
+      .where(eq(destinations.slug, destinationSlug));
+
+    try {
+      const after = await caller.tours.list({});
+      expect(after.some((t) => t.slug === tourSlug)).toBe(false);
+      expect(after.length).toBe(before.length - 1);
+
+      await expect(caller.tours.bySlug({ slug: tourSlug })).rejects.toThrow(/NOT_FOUND/);
+    } finally {
+      const { resetTestDb } = await import('./helpers/test-db');
+      await resetTestDb();
+    }
+
+    // Baseline restored — the untouched seed is back to its usual 6 tours.
+    const restored = await caller.tours.list({});
+    expect(restored.length).toBe(6);
+    expect(restored.some((t) => t.slug === tourSlug)).toBe(true);
   });
 
   // Fix round 2 (review F1): placeholder-data.ts renders a "Free
