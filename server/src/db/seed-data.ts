@@ -408,10 +408,13 @@ export const SEED_SETTINGS: SettingsBlocks = {
       'The stone gateway of Fort San Pedro in Cebu City, framed by palm trees under a clear blue sky.',
   },
 
-  // No announcement bar exists on the site today — isActive: false keeps it
-  // that way until an admin turns one on.
+  // No announcement bar exists on the site today, so there is no "today's
+  // content" to transcribe here — unlike every other block in this file,
+  // this message is NOT sourced from placeholder-data.ts/site.ts. It is a
+  // self-describing TODO, not invented marketing copy, and isActive: false
+  // keeps it off until an admin both supplies real copy and turns it on.
   announcement: {
-    message: 'Limited slots this weekend — message us to check availability.',
+    message: 'TODO: client to supply announcement copy.',
     href: null,
     style: 'info',
     startsAt: null,
@@ -547,6 +550,9 @@ export const SEED_SETTINGS: SettingsBlocks = {
     address: 'Office address pending — Cebu, Philippines',
     tagline: 'Cebu day tours and multi-day packages, booked direct.',
     hoursNote: 'Mon–Sun, 7:00 AM – 9:00 PM (PHT)',
+    // site.ts's committed fallback literal (`?? 'hello@travelsugbo.com'`) —
+    // deliberately ignores any VITE_CONTACT_EMAIL env override, since this
+    // seed can't read the client's Vite env. Assumption, not an oversight.
     email: 'hello@travelsugbo.com',
     phoneDisplay: '0908 469 6246',
     phoneTel: '+639084696246',
