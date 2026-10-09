@@ -1308,6 +1308,50 @@ git push origin main
 
 ---
 
+### Task 1.9: Phase 1 rulings (rating threshold, approved copy, deploy notes)
+
+**Added 2026-10-10 at the user's instruction**, resolving the three open items Phase 1 surfaced.
+
+**Files:**
+
+- Modify: `server/src/content/settings-schema.ts`, `server/src/db/seed-data.ts`, `server/src/routers/public/tours.ts`, `server/src/services/hours.ts`, `docs/LAUNCH_CHECKLIST.md`
+- Test: `server/src/__tests__/public-queries.test.ts`, `server/src/__tests__/settings-schema.test.ts`
+
+#### R1 — Rating display threshold
+
+Phase 1 established that tour-card ratings would drop from the invented `4.9 (68)` to a real `5.0 (1)`, because the seed holds six sample reviews, one per tour. The user's ruling: **do not show a rating at all below a threshold.**
+
+- A tour shows stars + count **only when it has 3 or more published reviews** — sample or real, i.e. the same population `displayAggregate` already counts.
+- Below the threshold it shows a small **"New"** badge instead.
+- The threshold lives in settings, not in code.
+- **The JSON-LD `AggregateRating` rule is unchanged**: still built from `realAggregate` (published AND `is_sample = 0`), still omitted entirely when null. The threshold is a _display_ rule and must not leak into structured data.
+
+Implementation:
+
+- Add `minReviewsForRating: z.number().int().min(1)` to the **existing `trust` settings block**, seeded to `3`. (It sits with `ratingAverage`/`ratingCount` rather than in a sixteenth key — it is social-proof display policy, and every settings key must exist or `readSettings()` throws, so a new key costs schema + seed + fixtures for no gain.)
+- In `tours.list` **and** `tours.bySlug`, return `rating: null` when the display count is below the threshold. Do not invent a separate flag: `rating === null` is the single signal, and the card renders "New" from it. That keeps "no reviews at all" and "too few reviews" rendering identically, which is the intent.
+- Do **not** reuse the existing `badge` column's `'new'` value. That is admin-controlled per tour (6D) and would be overwritten by, or silently conflict with, a derived value.
+
+Tests: a tour with 2 published reviews reports `rating: null`; with 3 it reports the aggregate; the threshold is read from settings rather than hardcoded (change it to 4 in a fixture and the 3-review tour goes null); and `realAggregate` is untouched by the threshold.
+
+#### R2 — Approved copy
+
+The all-week-closed fallback **`'Closed — we will reply as soon as we reopen'` is approved by the client.** Remove the "pending client sign-off" comment in `server/src/services/hours.ts` and replace it with a note that the wording is approved, so no one re-opens the question.
+
+The **`24`-hour cancellation window stays a TODO** pending client confirmation. Leave the value and its comment as they are — it renders nowhere today, only the derived boolean does.
+
+#### R3 — Deployment requirements
+
+Add a **"Deployment requirements"** section to `docs/LAUNCH_CHECKLIST.md` recording what Phase 1 learned. These are prerequisites, not suggestions — each one silently breaks a security control if missed:
+
+- **`trust proxy` must be set** behind nginx. The rate limiter keys on IP; without it Express sees the proxy's address and the whole limit applies to every visitor collectively — one person exhausts it for everyone.
+- **`NODE_ENV=production` must be set.** tRPC's default error formatter includes `stack` when it is not, so a malformed request returns a stack trace to the caller.
+- **PM2 must run a single instance (fork mode), not cluster mode.** `express-rate-limit`'s default `MemoryStore` is per-process, so N workers multiply the effective limit by N. If cluster mode is ever needed, the limiter needs a shared store first.
+
+**✅ DONE 1.9**
+
+---
+
 # PHASE 2 — Client data layer and catalog
 
 Delivers 3A, 3B and 6J. At the end the catalog, packages, reviews, hero and trust bar all render from the API. `placeholder-data.ts` still exists but only the content blocks of Phase 3 still import it.
