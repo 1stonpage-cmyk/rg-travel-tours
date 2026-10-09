@@ -2,6 +2,7 @@ import { createExpressMiddleware } from '@trpc/server/adapters/express';
 import cors from 'cors';
 import express from 'express';
 import { TIMEZONE } from '@rg/shared';
+import { createProcedureRateLimit } from './middleware/rate-limit';
 import { appRouter } from './routers/_app';
 
 /**
@@ -26,6 +27,18 @@ export function createApp(allowedOrigin: string = DEFAULT_ALLOWED_ORIGIN) {
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true, service: 'rg-travel-tours', timezone: TIMEZONE });
   });
+
+  // Task 1.7: the only write endpoints the public site has. Mounted before
+  // the tRPC middleware so a limited request never reaches a procedure.
+  // See middleware/rate-limit.ts for how the path-matching was verified
+  // against the real mount shape and the real httpBatchLink client.
+  app.use(
+    '/trpc',
+    createProcedureRateLimit(['inquiries.create', 'newsletter.subscribe'], {
+      windowMs: 15 * 60_000,
+      max: 5,
+    }),
+  );
 
   app.use('/trpc', createExpressMiddleware({ router: appRouter }));
 

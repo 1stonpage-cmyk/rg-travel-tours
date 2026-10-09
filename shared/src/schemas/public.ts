@@ -23,6 +23,37 @@ export const reviewsPublishedInput = z.object({
   tourId: z.number().int().positive().optional(),
 });
 
+export const inquiryInput = z.object({
+  type: z.enum(['contact', 'package']),
+  packageId: z.number().int().positive().optional(),
+  name: z.string().min(1).max(160),
+  email: z.email(),
+  phone: z.string().max(40).optional(),
+  message: z.string().min(1).max(5000),
+  /**
+   * RA 10173 (Data Privacy Act) consent checkbox. A `false` or missing
+   * value fails validation here, before the router ever runs, so a
+   * non-consenting submission is never stored.
+   *
+   * Typed `z.boolean().refine(...)` rather than `z.literal(true)`: both
+   * reject everything except `true` at runtime, but `z.literal(true)`
+   * infers the TS type `true`, which the brief's own test file (task
+   * 1.7's "rejects a missing consent checkbox" case passes a plain
+   * `consent: false`) cannot satisfy statically — `false` isn't
+   * assignable to `true`. `z.boolean()` infers `boolean`, so the same
+   * runtime rejection holds without a compile error on that test.
+   */
+  consent: z.boolean().refine((value) => value === true, {
+    message: 'Consent is required',
+  }),
+});
+
+export const newsletterInput = z.object({
+  email: z.email(),
+});
+
 export type ToursListInput = z.infer<typeof toursListInput>;
 export type ToursBySlugInput = z.infer<typeof toursBySlugInput>;
 export type ReviewsPublishedInput = z.infer<typeof reviewsPublishedInput>;
+export type InquiryInput = z.infer<typeof inquiryInput>;
+export type NewsletterInput = z.infer<typeof newsletterInput>;

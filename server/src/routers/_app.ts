@@ -1,5 +1,7 @@
 import { TIMEZONE } from '@rg/shared';
 import { destinationsRouter } from './public/destinations';
+import { inquiriesRouter } from './public/inquiries';
+import { newsletterRouter } from './public/newsletter';
 import { packagesRouter } from './public/packages';
 import { reviewsRouter } from './public/reviews';
 import { settingsRouter } from './public/settings';
@@ -16,12 +18,16 @@ export const appRouter = router({
     timezone: TIMEZONE,
   })),
 
-  // Public read queries (Task 1.6). Mutations (inquiries, newsletter) land in 1.7.
+  // Public read queries (Task 1.6).
   settings: settingsRouter,
   destinations: destinationsRouter,
   tours: toursRouter,
   packages: packagesRouter,
   reviews: reviewsRouter,
+
+  // Public mutations (Task 1.7) — rate-limited in app.ts.
+  inquiries: inquiriesRouter,
+  newsletter: newsletterRouter,
 });
 
 export type AppRouter = typeof appRouter;
