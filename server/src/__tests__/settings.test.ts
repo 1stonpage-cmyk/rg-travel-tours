@@ -1,10 +1,9 @@
-import { afterEach, expect, it } from 'vitest';
-import { inArray } from 'drizzle-orm';
+import { afterEach, beforeEach, expect, it } from 'vitest';
 import { getDb } from '../db/client';
 import { settings } from '../db/schema';
 import { readSettings, readRawSettings } from '../content/settings';
 import { SETTING_KEYS } from '../content/settings-schema';
-import { describeWithDb } from './helpers/db';
+import { describeWithDb, snapshotRows } from './helpers/db';
 
 /** A full, valid set of rows for every settings key — used as the baseline
  * for the DB-backed tests below, then mutated per-test to exercise the
@@ -93,19 +92,27 @@ function validValueFor(key: string): unknown {
 }
 
 describeWithDb('readSettings()', () => {
-  let insertedKeys: string[] = [];
+  // This repo has no separate test database, so these fixtures use the real
+  // production key names and would collide with the Task 1.4 seed once it
+  // exists. snapshotRows() reads back whatever is already there for these
+  // 15 keys, clears them, lets the test write its own rows, and restore()
+  // (below) puts the originals back verbatim — leaving the table exactly
+  // as found whether it started empty or fully seeded.
+  let restoreSettings: (() => Promise<void>) | undefined;
+
+  beforeEach(async () => {
+    const snapshot = await snapshotRows(settings, settings.key, SETTING_KEYS);
+    restoreSettings = snapshot.restore;
+  });
 
   afterEach(async () => {
-    if (insertedKeys.length === 0) return;
-    const db = getDb();
-    await db.delete(settings).where(inArray(settings.key, insertedKeys));
-    insertedKeys = [];
+    await restoreSettings?.();
+    restoreSettings = undefined;
   });
 
   async function insertRow(key: string, value: unknown) {
     const db = getDb();
     await db.insert(settings).values({ key, value, updatedAt: new Date() });
-    insertedKeys.push(key);
   }
 
   it('parses a full, valid set of rows into SettingsBlocks', async () => {
