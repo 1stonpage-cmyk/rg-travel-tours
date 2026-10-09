@@ -1,6 +1,7 @@
 import { createExpressMiddleware } from '@trpc/server/adapters/express';
 import cors from 'cors';
 import express from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { TIMEZONE } from '@rg/shared';
 import { createProcedureRateLimit } from './middleware/rate-limit';
 import { appRouter } from './routers/_app';
@@ -28,10 +29,26 @@ export function createApp(allowedOrigin: string = DEFAULT_ALLOWED_ORIGIN) {
     res.json({ ok: true, service: 'rg-travel-tours', timezone: TIMEZONE });
   });
 
-  // Task 1.7: the only write endpoints the public site has. Mounted before
-  // the tRPC middleware so a limited request never reaches a procedure.
-  // See middleware/rate-limit.ts for how the path-matching was verified
-  // against the real mount shape and the real httpBatchLink client.
+  // Task 1.7 round 1: a generous, unscoped backstop on every /trpc request,
+  // mounted ahead of the procedure-scoped limiter below. Enumerating the
+  // exact path shapes tRPC's own procedure resolution can take already
+  // missed one real case (see middleware/rate-limit.ts) — this backstop
+  // means the failure mode for the next shape nobody anticipated is
+  // "limited generously," never "unlimited."
+  app.use(
+    '/trpc',
+    rateLimit({
+      windowMs: 15 * 60_000,
+      limit: 300,
+      standardHeaders: true,
+      legacyHeaders: false,
+    }),
+  );
+
+  // The only write endpoints the public site has. Mounted before the tRPC
+  // middleware so a limited request never reaches a procedure. See
+  // middleware/rate-limit.ts for how the path-matching mirrors tRPC's own
+  // procedure-path derivation rather than a hand-rolled guess at it.
   app.use(
     '/trpc',
     createProcedureRateLimit(['inquiries.create', 'newsletter.subscribe'], {

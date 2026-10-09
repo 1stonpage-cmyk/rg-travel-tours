@@ -6,42 +6,47 @@ import type { RequestHandler } from 'express';
  * one of `procedures` — every other tRPC procedure (and any non-tRPC
  * request under the mount path) passes through untouched.
  *
- * ## The path shape, verified against the real client and the real mount
+ * ## The path shape — mirrored from tRPC's own derivation, not invented
  *
- * `client/src/lib/trpc.ts` uses `httpBatchLink`. A real batched call
- * (`Promise.all` of two calls of the *same* HTTP method — two mutations,
- * or two queries) lands as one request whose path is the two procedure
- * names joined by a comma, e.g. `/inquiries.create,newsletter.subscribe`.
- * A query and a mutation never share a batch — they're different HTTP
- * methods (GET vs POST) — so each goes out as its own request. All of
- * this was confirmed with a real `httpBatchLink` client against a live
- * Express+tRPC server, not assumed; see task-1.7-report.md.
+ * Round 1 of review found that a hand-rolled "strip `/trpc/`" normalization
+ * (whatever shape it assumed) kept missing a shape tRPC itself actually
+ * produces, which fails the limiter *open* — the exact opposite of safe.
+ * So this doesn't normalize independently; it reproduces, line for line,
+ * what `@trpc/server`'s Express adapter and `resolveResponse` do before a
+ * procedure resolves:
  *
- * The other thing that had to be checked for real: when this middleware
- * is mounted the way `app.ts` mounts it —
- * `app.use('/trpc', createProcedureRateLimit(...))` — Express strips the
- * `/trpc` mount prefix from `req.path` *inside* the middleware (this is
- * standard Express path-mounting behaviour, true for a plain middleware
- * function exactly as it is for a Router). So in production `req.path` is
- * `/inquiries.create`, not `/trpc/inquiries.create`.
+ * 1. `adapters/express.mjs`: `path = req.path.slice(req.path.lastIndexOf('/') + 1)`
+ *    — only the segment after the LAST `/` survives. `/trpc/x/inquiries.create`
+ *    resolves the same as `/x/inquiries.create` would: tRPC takes
+ *    `inquiries.create`, ignoring everything before the last slash. (This
+ *    also means the `/trpc` mount prefix is irrelevant either way — tRPC
+ *    never looks at anything before the last `/`, so whether Express has
+ *    already stripped the mount prefix from `req.path` or not makes no
+ *    difference here, which sidesteps the mount-prefix question round 1 got
+ *    wrong a different way.)
+ * 2. `resolveResponse-*.mjs`: `path: decodeURIComponent(opts.path)` — that
+ *    segment is then percent-decoded. `/trpc/inquiries%2Ecreate` and
+ *    `/trpc/%69nquiries.create` both decode to `inquiries.create`.
  *
- * That matters because the brief's own unit tests mount this middleware
- * at the app root (`app.use(createProcedureRateLimit(...))`, no path
- * argument) and send requests to `/trpc/inquiries.create` directly — so
- * in *those* tests `req.path` still has the `/trpc/` prefix. A predicate
- * that only strips a leading `/trpc/` (and nothing else) passes the given
- * unit tests while being silently broken in production: a single,
- * unbatched call to `/inquiries.create` would keep its leading `/` after
- * stripping nothing, `'/inquiries.create' !== 'inquiries.create'`, and the
- * limiter would never fire. Verified this failure mode with a throwaway
- * probe against the real mount shape before writing the fix below — see
- * the report for the exact output.
+ * `client/src/lib/trpc.ts`'s `httpBatchLink` joins batched procedure names
+ * with a comma in that same last segment (confirmed against a real batched
+ * call — see task-1.7-report.md), so the decoded segment is split on `,`
+ * same as before.
  *
- * The fix: strip a leading `/`, and *then* an optional `trpc/` right
- * after it. That normalizes both shapes (`/trpc/inquiries.create` and
- * `/inquiries.create`) to the same `inquiries.create`, so matching works
- * whether this middleware ends up mounted with the prefix still on the
- * path or already stripped.
+ * A malformed percent-escape (`%zz`) makes `decodeURIComponent` throw a
+ * `URIError`. tRPC's own resolveResponse would surface that as a 400 to the
+ * caller; an unguarded throw in `skip` would instead crash this middleware
+ * into an unhandled 500. Caught and treated as "not skip" (i.e. counted
+ * against the limit) — a request too malformed to parse should fail
+ * closed, not bypass the limiter.
+ *
+ * ## Backstop
+ *
+ * Enumerating every shape tRPC's path resolution can take already missed
+ * one real case in round 1. Rather than trust this list is now exhaustive,
+ * `createApp` also mounts a generous, unscoped limiter on all of `/trpc`
+ * (see app.ts) — so the failure mode for any shape nobody thought of is
+ * "limited generously," not "unlimited."
  */
 export function createProcedureRateLimit(
   procedures: string[],
@@ -52,10 +57,15 @@ export function createProcedureRateLimit(
     limit: opts.max,
     standardHeaders: true,
     legacyHeaders: false,
-    skip: (req) =>
-      !req.path
-        .replace(/^\/(trpc\/)?/, '')
-        .split(',')
-        .some((p) => procedures.includes(p)),
+    skip: (req) => {
+      const lastSegment = req.path.slice(req.path.lastIndexOf('/') + 1);
+      let decoded: string;
+      try {
+        decoded = decodeURIComponent(lastSegment);
+      } catch {
+        return false; // malformed escape: fail CLOSED, count it against the limit
+      }
+      return !decoded.split(',').some((p) => procedures.includes(p));
+    },
   });
 }

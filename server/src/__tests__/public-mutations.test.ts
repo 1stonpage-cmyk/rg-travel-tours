@@ -27,16 +27,22 @@ describeWithDb('public mutations', () => {
     ).rejects.toThrow();
   });
 
-  it('rejects a missing consent checkbox (RA 10173)', async () => {
+  it('rejects a missing consent checkbox (RA 10173) and stores nothing', async () => {
+    const email = `${MARK}a@example.com`;
     await expect(
       caller.inquiries.create({
         type: 'contact',
         name: 'A',
-        email: `${MARK}a@example.com`,
+        email,
         message: 'hello there',
         consent: false,
       }),
     ).rejects.toThrow();
+    // "Rejects validation" is necessary but not sufficient for RA 10173 —
+    // the actual legal requirement is that a non-consenting submission is
+    // never stored (round 1 review, cheap fix #2).
+    const rows = await getDb().select().from(inquiries).where(eq(inquiries.email, email));
+    expect(rows).toHaveLength(0);
   });
 
   it('rejects an empty message and an over-long one', async () => {

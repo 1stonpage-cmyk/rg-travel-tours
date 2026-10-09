@@ -27,7 +27,10 @@ export const inquiryInput = z.object({
   type: z.enum(['contact', 'package']),
   packageId: z.number().int().positive().optional(),
   name: z.string().min(1).max(160),
-  email: z.email(),
+  // .max(200) matches the `varchar(200)` email column (round 1 review,
+  // I4) — a format-valid but over-long address must fail Zod validation
+  // here rather than the MySQL driver with ER_DATA_TOO_LONG.
+  email: z.email().max(200),
   phone: z.string().max(40).optional(),
   message: z.string().min(1).max(5000),
   /**
@@ -49,7 +52,8 @@ export const inquiryInput = z.object({
 });
 
 export const newsletterInput = z.object({
-  email: z.email(),
+  // .max(200) matches the `varchar(200)` email column (round 1 review, I4).
+  email: z.email().max(200),
 });
 
 export type ToursListInput = z.infer<typeof toursListInput>;
