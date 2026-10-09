@@ -783,6 +783,85 @@ git commit -m "feat(db): seed today's content, with a test pinning contact value
 
 ---
 
+### Task 1.4b: Test database isolation (`rg_travel_test`)
+
+**Added 2026-10-09 at the user's instruction, after Task 1.4.** Supersedes the snapshot/restore approach introduced in Task 1.3's fix round.
+
+**Files:**
+
+- Modify: `server/src/db/guard.ts`, `server/src/db/client.ts`, `server/src/env.ts`, `server/scripts/db-preflight.mjs`, `server/vitest.config.ts`, `.env.example`, `server/package.json`
+- Create: `server/src/__tests__/helpers/test-db.ts`, `server/src/__tests__/global-setup.ts`
+- Modify: every DB-backed test file
+- Delete: `snapshotRows` from `server/src/__tests__/helpers/db.ts` once nothing imports it
+
+**Why:** tests were running against the live `rg_travel` database. That is the same database the dev server and the seed use, so a test could corrupt real content, and test fixtures collided with seeded rows on primary keys. A dedicated `rg_travel_test` database removes both problems and lets suites truncate freely.
+
+**Interfaces:**
+
+- `REQUIRED_DATABASE_NAME` becomes context-aware: `assertDatabaseName(name, context)` where `context` is `'app' | 'test'`. `'app'` accepts only `rg_travel`; `'test'` accepts only `rg_travel_test`. **Neither context ever accepts the other's database.**
+- `TEST_DATABASE_URL` in `.env` / `.env.example`, same `rg_travel` user, database `rg_travel_test`.
+- `getDb()` / `getPool()` select their URL from the context: `TEST_DATABASE_URL` when `process.env.VITEST` is set, `DATABASE_URL` otherwise.
+- `resetTestDb(): Promise<void>` in `helpers/test-db.ts` — truncates every content table and re-applies the seed, leaving each suite a canonical baseline.
+
+- [ ] **Step 1: Write the failing guard tests**
+
+```ts
+describe('context-aware database guard', () => {
+  it('app context accepts only rg_travel', () => {
+    expect(() => assertDatabaseName('rg_travel', 'app')).not.toThrow();
+    expect(() => assertDatabaseName('rg_travel_test', 'app')).toThrow(/rg_travel/);
+  });
+
+  it('test context accepts only rg_travel_test', () => {
+    expect(() => assertDatabaseName('rg_travel_test', 'test')).not.toThrow();
+    expect(() => assertDatabaseName('rg_travel', 'test')).toThrow(/rg_travel_test/);
+  });
+
+  it.each(['kong_pms', 'mysql', '', null, undefined])('rejects %s in both contexts', (name) => {
+    expect(() => assertDatabaseName(name, 'app')).toThrow();
+    expect(() => assertDatabaseName(name, 'test')).toThrow();
+  });
+
+  it('still never leaks a connection string or password', () => {
+    try {
+      assertDatabaseName(databaseNameFromUrl('mysql://u:s3cret@h/kong_pms'), 'app');
+    } catch (error) {
+      expect((error as Error).message).not.toContain('s3cret');
+      expect((error as Error).message).not.toContain('mysql://');
+    }
+  });
+});
+```
+
+Note the asymmetry the second case protects: a test run must **fail loudly** if pointed at `rg_travel`, which is the whole point of this task.
+
+- [ ] **Step 2: Write the failing isolation test**
+
+```ts
+it('the test suite is connected to rg_travel_test, never rg_travel', async () => {
+  const [[row]] = await getPool().query('SELECT DATABASE() AS db');
+  expect((row as { db: string }).db).toBe('rg_travel_test');
+});
+```
+
+- [ ] **Step 3: Implement the context-aware guard and URL selection.** Keep `guard.ts` free of top-level imports (Task 1.1's property) and keep every message free of credentials.
+
+- [ ] **Step 4: Global setup.** `server/src/__tests__/global-setup.ts`, wired via `globalSetup` in `server/vitest.config.ts`: assert the connected database is `rg_travel_test`, run migrations against it, seed it once. Migrations must run against the test database, not `rg_travel`.
+
+- [ ] **Step 5: `resetTestDb()`.** Truncate all content tables and re-seed. `tours.destination_id` has a foreign key, so either truncate in dependency order or wrap in `SET FOREIGN_KEY_CHECKS = 0/1`. Prefer explicit ordering; if using the FK toggle, restore it in a `finally`.
+
+- [ ] **Step 6: Repoint every DB-backed test** to the new baseline, calling `resetTestDb()` where a suite needs a clean slate.
+
+- [ ] **Step 7: Delete `snapshotRows`** from `helpers/db.ts` and confirm nothing imports it (`grep -rn snapshotRows server/src`). Its reason for existing is gone.
+
+- [ ] **Step 8: Verify the negative case by hand.** Temporarily point `TEST_DATABASE_URL` at `rg_travel` in a throwaway shell env (never edit `.env`) and confirm the suite **aborts** rather than running. Report the actual output.
+
+- [ ] **Step 9:** Full chain, then commit.
+
+**✅ DONE 1.4b**
+
+---
+
 ### Task 1.5: Date-window, opening-hours and rating services
 
 **Files:**
