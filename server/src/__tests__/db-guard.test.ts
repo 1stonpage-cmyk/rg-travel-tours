@@ -62,12 +62,37 @@ describe('context-aware database guard', () => {
     expect(() => assertDatabaseName(name, 'test')).toThrow();
   });
 
+  // Fix round 1 cheap fix: the app list above exercises near-miss names
+  // ('rg_travel_backup', 'RG_TRAVEL'); the test context had dropped them.
+  // 'rg_travel' is the one with real value here — it is the live app
+  // database, and accepting it in 'test' context is exactly the accident
+  // this task exists to prevent.
+  it.each([
+    'rg_travel',
+    'kong_pms',
+    'mysql',
+    'RG_TRAVEL_TEST',
+    'rg_travel_test_backup',
+    '',
+    null,
+    undefined,
+  ])('test context aborts on %s', (name) => {
+    expect(() => assertDatabaseName(name, 'test')).toThrow(/rg_travel_test/);
+  });
+
   it('still never leaks a connection string or password', () => {
     try {
       assertDatabaseName(databaseNameFromUrl('mysql://u:s3cret@h/kong_pms'), 'app');
+      throw new Error('should have aborted');
     } catch (error) {
-      expect((error as Error).message).not.toContain('s3cret');
-      expect((error as Error).message).not.toContain('mysql://');
+      const message = (error as Error).message;
+      expect(message).not.toContain('s3cret');
+      expect(message).not.toContain('mysql://');
+      // A positive assertion, not just negatives: without it, a sentinel
+      // thrown because assertDatabaseName failed to throw would satisfy
+      // both `.not.toContain` checks above just as well as a real abort
+      // would, and this test would pass either way.
+      expect(message).toContain('kong_pms');
     }
   });
 });

@@ -6,6 +6,15 @@
  *
  * Clears every content table, then re-applies the seed (task 1.4b).
  *
+ * Asserts the live connection is `rg_travel_test` BEFORE issuing a single
+ * delete (fix round 1, C1). `seed('test')`'s own assertion runs too late to
+ * protect the deletes above it: in any process where `process.env.VITEST`
+ * is unset, `getDb()` resolves DATABASE_URL (the live `rg_travel`), and the
+ * twelve deletes below would already have emptied it by the time `seed()`
+ * got a chance to object. This check queries `SELECT DATABASE()` — unlike
+ * the env-var fallback in client.ts, it cannot be fooled by a merely
+ * correctly-spelled but misresolving TEST_DATABASE_URL.
+ *
  * Deletion order, not TRUNCATE + FOREIGN_KEY_CHECKS: `tours.destination_id`
  * is the only real FK constraint in this schema (every "tourId" column on
  * the other tables is a plain int with no DB-level FK). MySQL/InnoDB
@@ -18,6 +27,7 @@
  * with no session-level state to remember to restore — so that's what this
  * uses.
  */
+import { assertConnectedDatabase } from '../../db/guard';
 import { getDb } from '../../db/client';
 import * as schema from '../../db/schema';
 import { seed } from '../../db/seed';
@@ -38,6 +48,8 @@ const TABLES_IN_DELETE_ORDER = [
 ] as const;
 
 export async function resetTestDb(): Promise<void> {
+  await assertConnectedDatabase('test');
+
   const db = getDb();
   for (const table of TABLES_IN_DELETE_ORDER) {
     await db.delete(table);

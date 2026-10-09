@@ -77,17 +77,25 @@ export async function assertConnectedDatabase(context: DatabaseContext = 'app'):
       `No ${context === 'test' ? 'TEST_DATABASE_URL' : 'DATABASE_URL'} is configured.`,
     );
   }
-  const host = new URL(url).host;
 
+  // `new URL(url)` lives INSIDE the try, not before it (fix round 1 cheap
+  // fix): unreachable from today's three callers, but Node's
+  // ERR_INVALID_URL error carries the full credentialed URL on `err.input`,
+  // and nothing upstream of this module is guaranteed to only print
+  // `.message` any more — Vitest's own reporter can surface a raw error
+  // object. Keeping URL parsing inside the same catch that already discards
+  // the raw error means that risk never opens up.
+  let host: string | undefined;
   let rows: Array<{ db: string | null }>;
   try {
+    host = new URL(url).host;
     [rows] = (await getPool().query('SELECT DATABASE() AS db')) as unknown as [
       Array<{ db: string | null }>,
       unknown,
     ];
   } catch (error) {
     const code = (error as { code?: string }).code;
-    if (code && UNREACHABLE_CODES.has(code)) {
+    if (code && host !== undefined && UNREACHABLE_CODES.has(code)) {
       throw new Error(`Cannot reach MySQL at ${host} — is the service running?`);
     }
     throw new Error(`Database connection failed (${code ?? 'unknown error'}).`);
