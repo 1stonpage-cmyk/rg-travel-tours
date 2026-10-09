@@ -1851,6 +1851,56 @@ git commit -m "fix(a11y): give the chip row room so a focused chip's ring is not
 
 ---
 
+### Task 2.9: Mobile-first motion pass
+
+**Queued by the user 2026-10-10. Runs AFTER ✅ PHASE 2 COMPLETE and BEFORE Phase 3.**
+
+Use **emilkowalski-motion** for all motion and **ui-ux-pro-max** for layout.
+
+**This task deliberately changes the mobile presentation, and that is the one place it overrides the plan's standing "page must be indistinguishable" bar.** That bar still binds every other task; here it is replaced by: no layout shift, no jank, nothing moving that the user did not ask to move, and the desktop grid unchanged.
+
+#### Hard constraints
+
+- **No new libraries.** CSS, `IntersectionObserver`, and small local hooks only.
+- **No data or API changes.** Presentation only. If a change seems to need a new field, stop and ask.
+- **No copy changes. No red anywhere.**
+- **Transform and opacity only.** Never animate `width`, `height`, `top`, `left`, `margin` or anything else that triggers layout.
+- **Everything off under `prefers-reduced-motion`**, and the static end state must be correct and legible on its own.
+- **No jank on low-end Android. No layout shift.**
+- Verify at **360 / 390 / 430 / 768px**.
+
+#### Subtasks
+
+- **2.9A — Mobile tour-card carousel (<768px).** Horizontal swipe with CSS scroll-snap, a peek of the next card, and a dot indicator. Desktop keeps the existing grid. Dots must be real controls with accessible names, not decoration.
+- **2.9B — Sticky mobile bottom bar.** "Book a tour" + WhatsApp icon. Slides up once the hero leaves the viewport; hides near the footer. **Must not cover the existing floating WhatsApp button or any CTA** — merging the two on mobile is explicitly allowed and is probably cleaner than stacking them.
+- **2.9C — Staggered card entrance.** Tour, package and review cards, 40–60ms stagger, once only.
+- **2.9D — Skeleton shimmer.**
+- **2.9E — Count-up for numeric stats** (guests served, prices) on scroll into view. **The final value must always be exactly correct**, and there must be no animation at all under reduced motion — the number simply appears.
+- **2.9F — Header shrinks/solidifies on scroll**, and nav links smooth-scroll to sections.
+- **2.9G — Subtle hero parallax, desktop only.**
+- **2.9H — Tap feedback** (scale 0.97 + soft shadow) on cards, chips and buttons on touch devices.
+
+#### Overlaps with work already in the tree — check before building
+
+Several of these are partly implemented already. Extend rather than reinvent, and do not duplicate a mechanism:
+
+| Subtask | Already present                                                                                                                                                                                                                      |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2.9H    | `.press` in `client/src/index.css` already does `scale(0.97)` with the project's easing, and is already disabled under reduced motion. Likely needs only the soft shadow and wider application.                                      |
+| 2.9F    | `index.css` already sets `scroll-behavior: smooth` (reduced-motion-guarded) and `section[id] { scroll-margin-top: 5rem }` for the sticky header. The header shrink is the new part.                                                  |
+| 2.9C    | `client/src/lib/use-scroll-reveal.ts` already does once-only reveal with an `IntersectionObserver`, a rAF-throttled catch-up sweep for skipped sections, and full reduced-motion handling. Stagger should extend it, not replace it. |
+| 2.9D    | Task 2.2 creates the skeletons and the plan already requires a reduced-motion-respecting shimmer. 2.9D may be a no-op — verify first.                                                                                                |
+| 2.9A    | `CatalogPreview` carries the destination chip row with its `scroll-fade-x` mask (commit `719dabe`) and the `py-2` focus-ring fix from Task 2.7. A card carousel in the same component must not disturb either.                       |
+| 2.9B    | `client/src/components/layout/FloatingWhatsApp.tsx` exists and has a one-shot attention pulse (`attention-pulse` in `index.css`). This is the component to merge with or coordinate against.                                         |
+
+#### Verification
+
+All five checks, plus before/after screenshots at 360 / 390 / 430 / 768px and on desktop. Confirm the desktop grid is byte-identical to before. Confirm every animation stops under `prefers-reduced-motion` by actually toggling it, not by reading the CSS.
+
+Write **✅ DONE** per subtask and **✅ MOTION PASS COMPLETE** at the end. Commit, report as `hash - short label`, push.
+
+---
+
 # PHASE 3 — Dynamic content blocks and forms
 
 Delivers 6A, 6C–6I, 3C and 4A. At the end `placeholder-data.ts` is deleted.
