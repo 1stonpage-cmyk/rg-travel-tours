@@ -75,3 +75,25 @@ export async function displayAggregate(tourId?: number): Promise<Aggregate | nul
 export async function realAggregate(tourId?: number): Promise<Aggregate | null> {
   return mergeGroups(await queryGroups(true, tourId));
 }
+
+/**
+ * Every tour's aggregate in one round trip, keyed by `tour_id` — the batch
+ * form `tours.list` must use instead of calling `displayAggregate(id)` once
+ * per tour (an N+1 the catalog would otherwise hit on every page load).
+ * `queryGroups(onlyReal, undefined)` already does exactly this query (no
+ * tourId filter, grouped by tour_id); this just turns its rows into a map
+ * and drops the review-less rows a plain Map.get() already treats as
+ * "absent" — never a `{average: 0, count: 0}` entry, which would render as
+ * a false zero-star rating.
+ */
+export async function aggregatesByTour(onlyReal = false): Promise<Map<number, Aggregate>> {
+  const rows = await queryGroups(onlyReal, undefined);
+  const map = new Map<number, Aggregate>();
+  for (const row of rows) {
+    if (row.tourId === null) continue; // reviews with no tour (none exist today, but not this fn's job to assume)
+    const count = Number(row.count);
+    if (count <= 0) continue;
+    map.set(row.tourId, { average: Number(row.average), count });
+  }
+  return map;
+}
