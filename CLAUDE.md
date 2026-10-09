@@ -104,6 +104,10 @@ There is no `tailwind.config.js`.
   `ALLOW_PLACEHOLDER_BUILD=1 pnpm build`.
   `pnpm test` also runs the standalone guards (`check:coming-soon`, `check:contact`).
   Never report work as done on an unrun command.
+- **Every new test must be proven able to fail.** Break the code it covers, confirm the
+  test goes red, then restore. A test that cannot fail is a bug — log it in
+  `docs/BUGS_LOG.md`. **Security controls and destructive operations must fail closed,
+  with a test for the failure path.**
 - Keep formatting changes in their own commit. A `pnpm format` sweep mixed into a
   feature commit buries the real diff.
 - Write **✅ DONE** immediately after each numbered task (1A, 1B, …) actually finishes.
