@@ -14,3 +14,6 @@ coverage/
 # Client-supplied source media. Kept on disk as the master for
 # client/public/hero + coming-soon/img, but too large to carry in git.
 assets-source/
+
+# Superpowers subagent-driven-development scratch (ledger, briefs, review packages)
+.superpowers/
