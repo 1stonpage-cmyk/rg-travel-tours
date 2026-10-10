@@ -164,7 +164,9 @@ export const SETTINGS_FIXTURE: SettingsPayload = {
     },
     {
       q: 'Which payment methods do you accept?',
-      a: 'GCash, Maya, GrabPay, QR Ph and major cards through PayMongo. You can also transfer manually to our QR code and upload the receipt for verification.',
+      // Seeded verbatim — the `{{paymentMethods}}` token is substituted at
+      // render time from `settings.paymentMethods` (see FaqSection.tsx).
+      a: '{{paymentMethods}} You can also transfer manually to our QR code and upload the receipt for verification.',
     },
     {
       q: 'Can I cancel or reschedule?',

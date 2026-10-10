@@ -15,18 +15,25 @@ const SKELETON_ITEM_COUNT = 5;
  * Cross-block coupling (spec task 3.4, the main point of this task): the
  * footer's payment chips (SiteFooter.tsx) and this one FAQ answer both
  * describe `settings.paymentMethods`. Task 3.3 wired this section to
- * `settings.faqs` verbatim, which left the seeded answer to this exact
- * question as static prose naming every method by hand — if an admin
- * disables one (say GrabPay), the footer chip disappears but the FAQ goes
- * on advertising it. Matching this question's text and composing its
- * answer from the live `paymentMethods` list, instead of rendering
- * `faq.a` for it, is what closes that drift. Do NOT split this back into
- * two independent copies of the method list — if the seeded question
- * text in `server/src/db/seed-data.ts` ever changes, update this constant
- * to match, or this composition silently stops firing and the answer
- * quietly reverts to whatever static prose is seeded.
+ * `settings.faqs` verbatim, which left the seeded answer to the
+ * payment-methods question as static prose naming every method by hand —
+ * if an admin disables one (say GrabPay), the footer chip disappears but
+ * the FAQ goes on advertising it.
+ *
+ * The first attempt closed that drift by matching the question's exact
+ * text and discarding `faq.a` for it. Two problems with that: editing the
+ * question (any admin, any typo) silently stopped the composition and
+ * reverted the answer to the stale seeded prose, and the seeded `faq.a`
+ * was thrown away even though it carried the rest of the sentence.
+ *
+ * So the coupling lives in the stored answer instead: a `{{paymentMethods}}`
+ * token, substituted at render time with the live, enabled-only list. The
+ * question text is irrelevant; `faq.a` is rendered, not discarded; an
+ * answer with no token renders exactly as stored. An admin who deletes the
+ * token sees it gone from their own text — visible, unlike an invisible
+ * dependency on a question string.
  */
-const PAYMENT_METHODS_QUESTION = 'Which payment methods do you accept?';
+const PAYMENT_METHODS_TOKEN = '{{paymentMethods}}';
 
 /**
  * Fix round 1, F2: an earlier version of this function folded the 'visa'
@@ -64,19 +71,29 @@ function formatList(items: string[]): string {
 }
 
 /**
- * Composes the one FAQ answer that must never drift from the footer's
- * payment chips. `methods` is already enabled-only and sorted by
- * `sortOrder` (server-resolved — see `resolvePaymentMethods`,
- * server/src/content/settings.ts), so this only has to join the labels —
- * no grouping, no per-key special-casing (see the comment above).
+ * The sentence that replaces `{{paymentMethods}}`. `methods` is already
+ * enabled-only and sorted by `sortOrder` (server-resolved — see
+ * `resolvePaymentMethods`, server/src/content/settings.ts), so this only
+ * has to join the labels — no grouping, no per-key special-casing (see the
+ * comment above).
  */
-function paymentMethodsAnswer(methods: { label: string }[]): string {
+function paymentMethodsSentence(methods: { label: string }[]): string {
   const list = formatList(methods.map((m) => m.label));
+  // Every online method disabled: say so plainly rather than emitting a
+  // dangling "… through PayMongo." with nothing in front of it. The rest of
+  // the stored answer (manual QR transfer) still applies and still renders.
+  if (!list) return 'Message us for current payment options.';
+  return `${list} through PayMongo.`;
+}
 
-  if (!list) {
-    return 'Message us for current payment options. You can also transfer manually to our QR code and upload the receipt for verification.';
-  }
-  return `${list} through PayMongo. You can also transfer manually to our QR code and upload the receipt for verification.`;
+/**
+ * Substitutes `{{paymentMethods}}` wherever an admin put it. Keyed on the
+ * stored answer's own text, not on which question it belongs to — rename or
+ * reword any question freely and this keeps working.
+ */
+function resolveAnswer(answer: string, methods: { label: string }[]): string {
+  if (!answer.includes(PAYMENT_METHODS_TOKEN)) return answer;
+  return answer.split(PAYMENT_METHODS_TOKEN).join(paymentMethodsSentence(methods));
 }
 
 /** One bar per question row, roughly the trigger's own min-h-11 height, so the real accordion causes no layout shift once it resolves. */
@@ -95,9 +112,9 @@ function FaqSkeleton() {
  * below is task 3.4). `settings.faqs` is `Array<{ q, a }>`, rendered in API
  * order through the same shadcn `Accordion` — its keyboard behaviour
  * (Radix's roving tabindex, Enter/Space to toggle) is unchanged by this
- * conversion. One exception: the answer to `PAYMENT_METHODS_QUESTION` is
- * composed at render time from `settings.paymentMethods` instead of
- * rendered from `faq.a` verbatim — see that constant's comment for why.
+ * conversion. Every answer renders from `faq.a`; the one wrinkle is the
+ * `{{paymentMethods}}` token, substituted from `settings.paymentMethods` —
+ * see that constant's comment for why.
  */
 export default function FaqSection() {
   const query = trpc.settings.get.useQuery();
@@ -110,8 +127,7 @@ export default function FaqSection() {
         {({ faqs, paymentMethods }) => (
           <Accordion type="single" collapsible className="mt-8 w-full">
             {faqs.map((faq, i) => {
-              const answer =
-                faq.q === PAYMENT_METHODS_QUESTION ? paymentMethodsAnswer(paymentMethods) : faq.a;
+              const answer = resolveAnswer(faq.a, paymentMethods);
               return (
                 <AccordionItem key={faq.q} value={`faq-${i}`}>
                   <AccordionTrigger className="text-brand-blue-900 min-h-11 text-left text-base font-semibold">

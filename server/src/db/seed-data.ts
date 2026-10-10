@@ -549,7 +549,12 @@ export const SEED_SETTINGS: SettingsBlocks = {
     },
     {
       q: 'Which payment methods do you accept?',
-      a: 'GCash, Maya, GrabPay, QR Ph and major cards through PayMongo. You can also transfer manually to our QR code and upload the receipt for verification.',
+      // `{{paymentMethods}}` is substituted at render time from the live,
+      // enabled-only `payment_methods` setting (see FaqSection.tsx). The
+      // list is NOT written out here: a hand-written copy would go stale
+      // the moment an admin disables a method, and the footer's payment
+      // chips would then disagree with this answer.
+      a: '{{paymentMethods}} You can also transfer manually to our QR code and upload the receipt for verification.',
     },
     {
       q: 'Can I cancel or reschedule?',

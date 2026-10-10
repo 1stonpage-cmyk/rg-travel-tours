@@ -238,6 +238,34 @@ describe('payment methods — footer and FAQ composed from the same settings.pay
     expect(answer.textContent).not.toMatch(/major cards/i);
   });
 
+  /**
+   * The drift case the question-string match could not survive: an admin
+   * rewords the payment question. Under the old implementation the exact
+   * string stopped matching, the composition silently switched off and the
+   * answer reverted to the seeded prose — which still advertised the
+   * disabled method. The coupling now lives in the stored answer's
+   * `{{paymentMethods}}` token, so the question's wording is irrelevant.
+   */
+  it('still composes the answer from paymentMethods after the question is reworded', async () => {
+    const methods = SETTINGS_FIXTURE.paymentMethods.filter((m) => m.key !== 'grabpay');
+    const rewordedQuestion = 'What can I pay with?';
+    const faqs = SETTINGS_FIXTURE.faqs.map((faq) =>
+      faq.q === PAYMENT_METHODS_QUESTION ? { ...faq, q: rewordedQuestion } : faq,
+    );
+    mockTrpc({ 'settings.get': settingsWith({ paymentMethods: methods, faqs }) });
+    renderWithTrpc(<FaqSection />);
+
+    const user = userEvent.setup();
+    const question = await screen.findByRole('button', { name: rewordedQuestion });
+    await user.click(question);
+
+    const answer = await screen.findByText(/through PayMongo/);
+    expect(answer.textContent).toMatch(/GCash/);
+    expect(answer.textContent).not.toMatch(/GrabPay/);
+    // The token itself is never shown to a visitor.
+    expect(answer.textContent).not.toMatch(/\{\{/);
+  });
+
   /** A new, never-seeded card brand must appear in the FAQ answer too — nothing here may silently drop an unrecognised method. */
   it('lists a newly added payment method in the FAQ answer', async () => {
     const methods = [...SETTINGS_FIXTURE.paymentMethods, { key: 'jcb', label: 'JCB' }];
