@@ -76,6 +76,57 @@ export async function readSettingBlock<K extends SettingKey>(key: K): Promise<Se
   return result.data as SettingsBlocks[K];
 }
 
+// ---------------------------------------------------------------------------
+// content_unverified — the site-wide indexing gate (task 4.3)
+// ---------------------------------------------------------------------------
+
+/**
+ * How long a read of `content_unverified` is reused. Every page request and
+ * every asset request under the SPA shell asks this question (see
+ * middleware/robots-header.ts), and the answer changes roughly once in the
+ * lifetime of the site — when an admin clears the flag. A minute's staleness
+ * on "may Google index this" is harmless; a settings SELECT per asset request
+ * is not.
+ */
+export const CONTENT_UNVERIFIED_TTL_MS = 60_000;
+
+let unverifiedCache: { value: boolean; expiresAt: number } | null = null;
+
+/** Drops the cached flag. For tests, and for anything that writes the setting. */
+export function resetContentUnverifiedCache(): void {
+  unverifiedCache = null;
+}
+
+/**
+ * `settings.content_unverified`, cached, and FAILING CLOSED.
+ *
+ * While this is true the database still holds seed content — placeholder
+ * tours, placeholder prices, `is_sample` reviews — and none of it may be
+ * offered to a search engine. So an unreadable or invalid setting resolves to
+ * `true`: if we cannot prove the content is real, we do not publish it for
+ * indexing. The failure is NOT cached, so a transient database blip does not
+ * pin the site to noindex for a whole TTL.
+ *
+ * Logs the error's `code` only — never the message, which can echo connection
+ * details, and never DATABASE_URL (CLAUDE.md security rules).
+ */
+export async function readContentUnverified(now: number = Date.now()): Promise<boolean> {
+  if (unverifiedCache && unverifiedCache.expiresAt > now) return unverifiedCache.value;
+
+  try {
+    const value = await readSettingBlock('content_unverified');
+    unverifiedCache = { value, expiresAt: now + CONTENT_UNVERIFIED_TTL_MS };
+    return value;
+  } catch (error) {
+    const code = (error as { code?: string }).code ?? 'unreadable';
+    console.error(
+      `[seo] settings.content_unverified could not be read (${code}); ` +
+        'treating the site as unverified (noindex).',
+    );
+    return true;
+  }
+}
+
 /**
  * Just the `trust` block — for callers like `tours.list`/`tours.bySlug`
  * (Task 1.9, R1) that need only `minReviewsForRating`. Kept as a named

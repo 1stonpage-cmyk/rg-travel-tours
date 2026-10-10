@@ -21,6 +21,14 @@ const schema = z.object({
   PUBLIC_BASE_URL: z.string().default('http://localhost:5180'),
 });
 
+/**
+ * Deploy environment, as `robots.txt` and `X-Robots-Tag` see it (task 4.3).
+ * Exported as a type so `seo/sitemap.ts` and `middleware/robots-header.ts`
+ * can name it without importing the parsed `env` value (and its
+ * import-time process.env read) just for a union of three strings.
+ */
+export type SiteEnv = z.infer<typeof schema>['SITE_ENV'];
+
 const parsed = schema.safeParse(process.env);
 
 if (!parsed.success) {

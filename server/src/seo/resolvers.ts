@@ -18,7 +18,11 @@
  */
 import { formatPeso } from '@rg/shared';
 import { and, asc, eq, sql } from 'drizzle-orm';
-import { readSettingBlock, resolvePaymentMethods } from '../content/settings';
+import {
+  readContentUnverified,
+  readSettingBlock,
+  resolvePaymentMethods,
+} from '../content/settings';
 import { getDb } from '../db/client';
 import { destinations, packages, tourImages, tourPriceTiers, tours } from '../db/schema';
 import { env } from '../env';
@@ -616,9 +620,28 @@ export function matchRoute(pathname: string): RouteMatch | null {
  * out, 404 meta for anything that does not resolve. Never throws for an
  * unknown path — only a database failure can throw, and both callers treat
  * that as "serve the un-injected shell".
+ *
+ * Task 4.3 added the site-wide gate at the end: while
+ * `settings.content_unverified` is true, the database holds placeholder
+ * tours, placeholder prices and `is_sample` reviews, and EVERY route is
+ * served `noindex,nofollow` regardless of what its own resolver asked for.
+ * Each resolver still states its own intent (`/` is `index,follow`), because
+ * that intent is what takes effect the moment an admin clears the flag.
+ *
+ * The gate lives here, in the one function both surfaces call, rather than in
+ * each resolver — a resolver added later cannot forget it. `SITE_ENV` is
+ * deliberately NOT part of this: a preview deploy is a transport-level fact,
+ * enforced by the `X-Robots-Tag` header and robots.txt (which is the stronger
+ * signal anyway), and reading it here would make the meta tag depend on an
+ * import-time environment variable no test could vary.
  */
 export async function resolvePage(pathname: string): Promise<PageMeta> {
   const match = matchRoute(pathname);
   if (!match) return notFoundMeta(pathname);
-  return match.resolve(match.params);
+
+  const meta = await match.resolve(match.params);
+  // Fails closed: an unreadable flag resolves to "unverified" (see
+  // readContentUnverified), so the shell is served noindex rather than
+  // indexable-by-accident.
+  return (await readContentUnverified()) ? { ...meta, robots: 'noindex,nofollow' } : meta;
 }
