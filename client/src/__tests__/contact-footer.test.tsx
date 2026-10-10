@@ -66,20 +66,39 @@ describe('open/closed state', () => {
     mockTrpc({
       'settings.get': settingsWith({ openState: { isOpen: true, message: OPEN_MESSAGE } }),
     });
-    renderWithTrpc(
+    const { container } = renderWithTrpc(
       <>
         <ContactSection />
         <FloatingWhatsApp />
       </>,
     );
 
-    // The message appears at least once in ContactSection and at least once
-    // (desktop bubble and/or mobile bar — both mount at once in jsdom; CSS,
-    // not conditional rendering, picks one per breakpoint) alongside the
-    // WhatsApp control. Both read from the same cached settings.get result,
-    // not independent clocks, so they can never disagree.
-    const occurrences = await screen.findAllByText(OPEN_MESSAGE);
-    expect(occurrences.length).toBeGreaterThanOrEqual(2);
+    await screen.findAllByText(OPEN_MESSAGE);
+
+    /*
+     * Asserted PER SURFACE, not as a global count. A global
+     * `length >= 2` proved nothing: FloatingWhatsApp alone mounts BOTH the
+     * desktop bubble and the mobile bar in jsdom (CSS, not conditional
+     * rendering, picks one per breakpoint — layout.test.tsx documents
+     * that), so it supplies two occurrences by itself and deleting
+     * ContactSection's status line left the old assertion green.
+     *
+     * Both surfaces read the same cached settings.get result, not
+     * independent clocks, so they can never disagree — but each one has to
+     * actually render it.
+     */
+    const contactSection = container.querySelector('#contact');
+    expect(contactSection, 'ContactSection did not render its #contact section').toBeTruthy();
+    expect(within(contactSection as HTMLElement).getAllByText(OPEN_MESSAGE)).toHaveLength(1);
+
+    const whatsappControls = screen.getAllByRole('link', { name: 'Chat with us on WhatsApp' });
+    expect(whatsappControls.length).toBeGreaterThan(0);
+    for (const control of whatsappControls) {
+      // The status chip is a sibling of the link inside the control's own
+      // wrapper (see OpenStatusChip in FloatingWhatsApp.tsx).
+      const wrapper = control.parentElement as HTMLElement;
+      expect(within(wrapper).getAllByText(OPEN_MESSAGE)).toHaveLength(1);
+    }
   });
 
   /**
