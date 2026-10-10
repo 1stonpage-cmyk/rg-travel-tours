@@ -1,3 +1,4 @@
+import { HERO_IMAGE_PRELOAD } from '@rg/shared';
 import { Search } from 'lucide-react';
 import { Fragment, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -76,21 +77,26 @@ export default function HeroSection() {
           single <img> it replaced — no extra box, no layout shift.
 
           This photo is the mobile LCP element, and it only exists inside this
-          bundle — so client/index.html carries a matching
+          bundle — so the server's SEO injector emits a matching
           <link rel="preload" as="image" type="image/webp"> that lets the
           browser start fetching it at HTML-parse time instead of waiting for
           the bundle to download, parse and run (task 4.4).
 
-          That preload's `imagesrcset`/`imagesizes` MUST stay byte-identical to
-          the WebP <source> below. A mismatch means the browser preloads one
-          candidate and the <picture> then fetches a different one — two hero
-          downloads instead of a faster one. `width`/`height` stay too: they are
-          what reserves the box before the stylesheet lands. */}
+          That preload is emitted for `/` ALONE, by the home resolver in
+          server/src/seo/resolvers.ts (task 4.4b) — it used to sit in the static
+          client/index.html, which is the shared SPA shell, so /tours, /privacy
+          and /terms were preloading a hero they never render.
+
+          Both sides read HERO_IMAGE_PRELOAD below, so their candidate lists
+          cannot drift: a mismatch would make the browser preload one candidate
+          and the <picture> fetch a different one — two hero downloads instead
+          of a faster one. `width`/`height` stay inline: they are what reserves
+          the box before the stylesheet lands. */}
       <picture className="contents">
         <source
-          type="image/webp"
-          srcSet="/hero/hero-cebu-800.webp 800w, /hero/hero-cebu-1920.webp 1920w"
-          sizes="100vw"
+          type={HERO_IMAGE_PRELOAD.type}
+          srcSet={HERO_IMAGE_PRELOAD.srcset}
+          sizes={HERO_IMAGE_PRELOAD.sizes}
         />
         <img
           ref={heroImageRef}

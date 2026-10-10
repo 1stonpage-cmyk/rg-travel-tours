@@ -9,6 +9,7 @@
 import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { HERO_IMAGE_PRELOAD } from '@rg/shared';
 import request from 'supertest';
 import { expect, it } from 'vitest';
 import { createApp } from '../app';
@@ -55,6 +56,26 @@ describeWithDb('Express HTML serving', () => {
     expect(scripts.map((node) => node['@type'])).toEqual(['TravelAgency', 'FAQPage']);
     // Nothing is claimed about ratings while only sample reviews exist.
     expect(res.text).not.toContain('AggregateRating');
+  });
+
+  it('serves the hero preload on / and on no other route (4.4b)', async () => {
+    const home = await request(app).get('/');
+    expect(home.text).toContain('rel="preload"');
+    expect(home.text).toContain('as="image"');
+    // Byte-identical to HeroSection's WebP <source>, which renders from the
+    // same constant — a mismatch costs two hero downloads, not one.
+    expect(home.text).toContain(`imagesrcset="${HERO_IMAGE_PRELOAD.srcset}"`);
+    expect(home.text).toContain(`imagesizes="${HERO_IMAGE_PRELOAD.sizes}"`);
+
+    // The non-hero routes. That the real client/index.html no longer carries a
+    // preload of its own is asserted where that file lives — see
+    // client/src/__tests__/performance-markup.test.tsx.
+    for (const path of ['/tours', '/privacy', '/terms']) {
+      const res = await request(app).get(path);
+      expect(res.status).toBe(200);
+      expect(res.text, `${path} must not preload the hero`).not.toContain('rel="preload"');
+      expect(res.text, `${path} must not name a hero candidate`).not.toContain('hero-cebu-800');
+    }
   });
 
   it('answers an unknown path with the 404 the resolver asked for', async () => {

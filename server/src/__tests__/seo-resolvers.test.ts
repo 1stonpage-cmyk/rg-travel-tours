@@ -1,3 +1,4 @@
+import { HERO_IMAGE_PRELOAD } from '@rg/shared';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { getDb } from '../db/client';
@@ -149,6 +150,21 @@ describeWithDb('page resolution', () => {
   it('returns a 404 PageMeta for an unknown path', async () => {
     expect((await resolvePage('/nope')).status).toBe(404);
     expect((await resolvePage('/packages/no-such-package')).status).toBe(404);
+  });
+
+  it('asks for the hero preload on / and on no other route (4.4b)', async () => {
+    // The home page is the only route that renders HeroSection. The preload
+    // used to live in client/index.html, which is the shared SPA shell, so
+    // every route paid for it — ~73 KB on mobile and ~295 KB on desktop that
+    // the page never used, plus Chrome's "preloaded but not used" warning.
+    expect((await resolvePage('/')).preload).toEqual(HERO_IMAGE_PRELOAD);
+
+    for (const path of ['/tours', '/privacy', '/terms']) {
+      expect((await resolvePage(path)).preload, `${path} should preload nothing`).toBeNull();
+    }
+    expect((await resolvePage('/tours/oslob-whale-shark-tumalog-falls')).preload).toBeNull();
+    expect((await resolvePage('/packages/cebu-highlights-3d2n')).preload).toBeNull();
+    expect((await resolvePage('/nope')).preload).toBeNull();
   });
 });
 

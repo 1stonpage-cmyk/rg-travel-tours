@@ -1,3 +1,4 @@
+import { HERO_IMAGE_PRELOAD } from '@rg/shared';
 import { describe, expect, it } from 'vitest';
 import { escapeHtmlAttribute, injectMeta } from '../seo/render';
 import type { PageMeta } from '../seo/types';
@@ -21,6 +22,7 @@ const META: PageMeta = {
   ogImage: 'https://travelsugbo.com/hero/hero-cebu-1920.jpg',
   ogType: 'website',
   jsonLd: [{ '@context': 'https://schema.org', '@type': 'TravelAgency', name: 'TravelSugbo' }],
+  preload: null,
   status: 200,
   robots: 'index,follow',
 };
@@ -87,6 +89,37 @@ describe('injectMeta', () => {
     expect(evil).not.toMatch(/<\/script><script>alert/);
     // Still round-trips: escaping must not corrupt the data it protects.
     expect(JSON.parse(firstJsonLd(evil)).name).toBe('</script><script>alert(1)</script>');
+  });
+
+  it('emits no preload link for a route that asks for none (4.4b)', () => {
+    expect(out).not.toContain('rel="preload"');
+  });
+
+  it('emits the image preload a route does ask for, inside the head and before the JSON-LD', () => {
+    const withHero = injectMeta(HTML, { ...META, preload: HERO_IMAGE_PRELOAD });
+
+    const link = /<link [^>]*rel="preload"[^>]*>/.exec(withHero)?.[0];
+    expect(link, 'no rel="preload" link emitted').toBeTruthy();
+    expect(link).toContain('as="image"');
+    expect(link).toContain('type="image/webp"');
+    expect(link).toContain(`imagesrcset="${HERO_IMAGE_PRELOAD.srcset}"`);
+    expect(link).toContain(`imagesizes="${HERO_IMAGE_PRELOAD.sizes}"`);
+    expect(link).toContain('fetchpriority="high"');
+
+    // In the head, and ahead of the inline JSON-LD — the preload scanner reads
+    // the head top-down and this tag exists to start a download early.
+    const headEnd = withHero.indexOf('</head>');
+    expect(withHero.indexOf('rel="preload"')).toBeLessThan(headEnd);
+    expect(withHero.indexOf('rel="preload"')).toBeLessThan(withHero.indexOf('application/ld+json'));
+  });
+
+  it('escapes a quote in a preload candidate list so it cannot end the attribute', () => {
+    const evil = injectMeta(HTML, {
+      ...META,
+      preload: { type: 'image/webp', srcset: '" onload="alert(1)', sizes: '100vw' },
+    });
+    expect(evil).not.toContain('onload="alert(1)"');
+    expect(evil).toContain('&quot; onload=&quot;alert(1)');
   });
 
   it('emits a robots meta only when noindex', () => {

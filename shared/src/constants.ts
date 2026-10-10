@@ -20,3 +20,26 @@ export const CURRENCY = 'PHP';
 
 /** Prefix for public, non-sequential booking references, e.g. RG-7KQ4M9. */
 export const BOOKING_REF_PREFIX = 'RG';
+
+/**
+ * The hero photo's WebP candidates — the mobile LCP element.
+ *
+ * ONE definition with TWO consumers, deliberately: the WebP `<source>` in
+ * `client/src/components/home/HeroSection.tsx`, and the
+ * `<link rel="preload" as="image">` the SEO injector emits for `/` alone
+ * (`server/src/seo/resolvers.ts`, task 4.4b).
+ *
+ * Those two must agree character for character. If they drift, the browser
+ * preloads one candidate list and the `<picture>` then fetches a different
+ * one — two hero downloads instead of one earlier one, which is worse than
+ * having no preload at all. Sharing the constant makes that drift impossible
+ * rather than merely tested for.
+ */
+export const HERO_IMAGE_PRELOAD = {
+  /** The `type` of every candidate below, so a browser without WebP skips the preload. */
+  type: 'image/webp',
+  /** `srcSet` on the `<source>`; `imagesrcset` on the preload link. */
+  srcset: '/hero/hero-cebu-800.webp 800w, /hero/hero-cebu-1920.webp 1920w',
+  /** `sizes` on the `<source>`; `imagesizes` on the preload link. */
+  sizes: '100vw',
+} as const;

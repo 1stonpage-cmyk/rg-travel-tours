@@ -10,6 +10,24 @@
  * markup instead would let the two drift.
  */
 
+/**
+ * A responsive image this route should start fetching at HTML-parse time,
+ * rendered as `<link rel="preload" as="image">` by `injectMeta`.
+ *
+ * Per-route on purpose (task 4.4b): the shared SPA shell is one file, so a
+ * preload hard-coded into `client/index.html` is served on `/tours`,
+ * `/privacy` and `/terms` too, where the hero never renders — wasted bytes on
+ * a mobile connection and Chrome's "preloaded but not used" warning.
+ */
+export type ImagePreload = {
+  /** `type` — the MIME type of every candidate, so an unsupporting browser skips it. */
+  type: string;
+  /** `imagesrcset` — the candidate list. Must match the `<source srcSet>` that consumes it. */
+  srcset: string;
+  /** `imagesizes` — must match that same `<source sizes>`. */
+  sizes: string;
+};
+
 /** Everything the `<head>` of one URL needs, resolved from the database. */
 export type PageMeta = {
   /** `<title>` and `og:title`. Already the final, display-ready string — never a template. */
@@ -26,6 +44,11 @@ export type PageMeta = {
    * Empty until task 4.2 fills it; `injectMeta` emits nothing for an empty array.
    */
   jsonLd: unknown[];
+  /**
+   * The LCP image to preload on this route, or null for a route that renders
+   * none. Only `/` sets it today — it is the only route with a hero.
+   */
+  preload: ImagePreload | null;
   /** The HTTP status the shell must be served with — 404 for an unknown path or slug. */
   status: 200 | 404;
   /**

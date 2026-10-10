@@ -14,15 +14,13 @@
       content="Book Cebu day tours and multi-day packages direct with TravelSugbo. Private vans, licensed drivers, pay a 30% deposit online."
     />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <!-- Hero LCP preload — keep identical to the WebP <source> in HeroSection.tsx. -->
-    <link
-      rel="preload"
-      as="image"
-      type="image/webp"
-      imagesrcset="/hero/hero-cebu-800.webp 800w, /hero/hero-cebu-1920.webp 1920w"
-      imagesizes="100vw"
-      fetchpriority="high"
-    />
+    <!--
+      No hero preload here (task 4.4b): this file is the shared SPA shell, so a
+      preload in it is served on /tours, /privacy and /terms too, where the hero
+      never renders — wasted bytes plus Chrome's "preloaded but not used"
+      warning. The home resolver in server/src/seo/resolvers.ts emits it for /
+      alone, through the same injector that writes the meta tags below.
+    -->
   </head>
   <body>
     <div id="root"></div>

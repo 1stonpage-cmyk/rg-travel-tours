@@ -7,8 +7,9 @@
  * four mechanical things a slow first paint on a Philippine mobile
  * connection comes from, every one of which is a visible attribute:
  *
- *  1. the hero (the mobile LCP element) is discoverable in the HTML head,
- *     not only inside the JS bundle,
+ *  1. the hero (the mobile LCP element) is discoverable in the HTML head —
+ *     but only on the route that renders it, which since task 4.4b means the
+ *     server's per-route injector and NOT this shared shell,
  *  2. every content image reserves its box before it loads,
  *  3. everything below the fold is lazy and decoded off the main thread,
  *     while the hero is neither,
@@ -19,6 +20,7 @@
  * `.every(...)` vacuously true and the test green against a page with no
  * images at all.
  */
+import { HERO_IMAGE_PRELOAD } from '@rg/shared';
 import { render, screen } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -79,17 +81,36 @@ describe('performance markup', () => {
     });
   });
 
-  it('preloads the hero image at both widths', () => {
-    const preload = /<link\b[^>]*rel="preload"[^>]*>/i.exec(INDEX_HTML)?.[0];
-    expect(preload, 'index.html has no rel="preload" link').toBeTruthy();
+  it('keeps the hero preload out of the shared SPA shell (4.4b)', () => {
+    // index.html is served for EVERY route, so a preload in it also lands on
+    // /tours, /privacy and /terms, where no hero renders — wasted bytes and
+    // Chrome's "preloaded but not used" warning. The server's SEO injector
+    // emits it for / alone; seo-render/seo-html/seo-resolvers cover that end.
+    expect(INDEX_HTML, 'index.html has a rel="preload" link again').not.toMatch(/rel="preload"/i);
+    // The BUG-079 viewport meta must survive any edit to this file. Matched on
+    // the TAG, not on the file: the comment above it explains BUG-079 and names
+    // `viewport-fit=cover` too, so a whole-file `toContain` would stay green
+    // with the attribute deleted from the tag.
+    const viewport = /<meta\s+name="viewport"[^>]*>/i.exec(INDEX_HTML)?.[0];
+    expect(viewport, 'index.html has no viewport meta').toBeTruthy();
+    expect(viewport).toContain('viewport-fit=cover');
+  });
 
-    expect(preload).toMatch(/as="image"/);
-    // Must name the same WebP candidates and the same `sizes` as
-    // HeroSection's <picture>, or the browser preloads one file and the
-    // <picture> then downloads a different one — two hero images, not none.
-    expect(preload).toMatch(/imagesrcset="[^"]*\/hero\/hero-cebu-800\.webp 800w/);
-    expect(preload).toMatch(/imagesrcset="[^"]*\/hero\/hero-cebu-1920\.webp 1920w/);
-    expect(preload).toMatch(/imagesizes="100vw"/);
+  it('names exactly the preloaded WebP candidates on the hero <picture>', async () => {
+    const { container } = renderHome();
+    await loadedHomeImages(container);
+
+    const source = container.querySelector('picture > source[type="image/webp"]');
+    expect(source, 'hero <picture> has no WebP source').toBeTruthy();
+    // Byte-identical to what the server preloads, because both render from
+    // HERO_IMAGE_PRELOAD. A mismatch means the browser fetches the hero twice.
+    expect(source?.getAttribute('srcset')).toBe(HERO_IMAGE_PRELOAD.srcset);
+    expect(source?.getAttribute('sizes')).toBe(HERO_IMAGE_PRELOAD.sizes);
+    // And the candidates really are the two hero widths, so the constant
+    // cannot be quietly emptied and still satisfy the equality above.
+    expect(HERO_IMAGE_PRELOAD.srcset).toBe(
+      '/hero/hero-cebu-800.webp 800w, /hero/hero-cebu-1920.webp 1920w',
+    );
   });
 
   it('gives every content image explicit width and height', async () => {

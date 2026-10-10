@@ -16,7 +16,7 @@
  * built by the pure builders in `seo/jsonld.ts`, and this module's only job
  * is to hand them the rows and settings they need.
  */
-import { formatPeso } from '@rg/shared';
+import { formatPeso, HERO_IMAGE_PRELOAD } from '@rg/shared';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import {
   readContentUnverified,
@@ -35,10 +35,19 @@ import {
   travelAgencyNode,
   type JsonLdNode,
 } from './jsonld';
-import type { PageMeta, Resolver } from './types';
+import type { ImagePreload, PageMeta, Resolver } from './types';
 
 /** Meta descriptions longer than this are truncated (5A). */
 const MAX_DESCRIPTION = 155;
+
+/**
+ * The hero preload the home page carries, and no other route does (4.4b).
+ *
+ * The candidate list itself lives in `@rg/shared` because HeroSection's WebP
+ * `<source>` renders from the same constant — see its comment there for why
+ * they may never be two separate literals.
+ */
+const HERO_PRELOAD: ImagePreload = HERO_IMAGE_PRELOAD;
 
 // ---------------------------------------------------------------------------
 // Paths and URLs
@@ -353,6 +362,8 @@ export function notFoundMeta(pathname: string): PageMeta {
     ogImage: null,
     ogType: 'website',
     jsonLd: [],
+    // A 404 shell renders the not-found page, never the hero.
+    preload: null,
     status: 404,
     robots: 'noindex,nofollow',
   };
@@ -377,6 +388,9 @@ const resolveHome: Resolver = async () => {
     ogImage,
     ogType: 'website',
     jsonLd: faq ? [agency, faq] : [agency],
+    // The ONLY route that renders HeroSection, and so the only one that may
+    // ask the browser to fetch the hero photo early.
+    preload: HERO_PRELOAD,
     status: 200,
     robots: 'index,follow',
   };
@@ -403,6 +417,7 @@ const resolveToursIndex: Resolver = async () => {
     ogImage,
     ogType: 'website',
     jsonLd: [agency],
+    preload: null,
     status: 200,
     robots: 'index,follow',
   };
@@ -439,6 +454,7 @@ function resolveLegal(page: keyof typeof LEGAL_PAGES): Resolver {
       ogImage,
       ogType: 'article',
       jsonLd: [agency],
+      preload: null,
       status: 200,
       robots: 'index,follow',
     };
@@ -485,6 +501,7 @@ const resolveTour: Resolver = async (params) => {
       }),
       agency,
     ],
+    preload: null,
     status: 200,
     // D5: the resolver is complete and tested, but NO PAGE RENDERS THIS URL
     // yet — the SPA has no /tours/:slug route, so the shell would be served
@@ -534,6 +551,7 @@ const resolvePackage: Resolver = async (params) => {
       }),
       agency,
     ],
+    preload: null,
     status: 200,
     // D5, same as /tours/:slug above. WEEK 2D: delete this line.
     robots: 'noindex,nofollow',

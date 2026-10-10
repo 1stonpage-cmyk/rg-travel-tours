@@ -63,7 +63,19 @@ function buildHeadTags(meta: PageMeta): string[] {
   const description = escapeHtmlAttribute(meta.description);
   const canonical = escapeHtmlAttribute(meta.canonical);
 
-  const tags = [
+  const tags: string[] = [];
+
+  // FIRST, ahead of the canonical and JSON-LD tags: the preload scanner reads
+  // the head in order, and this is the one tag whose whole purpose is to start
+  // a download as early as possible.
+  if (meta.preload) {
+    const { type, srcset, sizes } = meta.preload;
+    tags.push(
+      `<link rel="preload" as="image" type="${escapeHtmlAttribute(type)}" imagesrcset="${escapeHtmlAttribute(srcset)}" imagesizes="${escapeHtmlAttribute(sizes)}" fetchpriority="high">`,
+    );
+  }
+
+  tags.push(
     `<link rel="canonical" href="${canonical}">`,
     `<meta property="og:type" content="${meta.ogType}">`,
     `<meta property="og:title" content="${title}">`,
@@ -72,7 +84,7 @@ function buildHeadTags(meta: PageMeta): string[] {
     `<meta name="twitter:card" content="${meta.ogImage ? 'summary_large_image' : 'summary'}">`,
     `<meta name="twitter:title" content="${title}">`,
     `<meta name="twitter:description" content="${description}">`,
-  ];
+  );
 
   if (meta.ogImage) {
     const image = escapeHtmlAttribute(meta.ogImage);
