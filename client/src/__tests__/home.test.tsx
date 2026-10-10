@@ -87,14 +87,14 @@ describe('home page', () => {
     const user = userEvent.setup();
     renderHome();
 
-    expect(screen.queryByText(PLACEHOLDER_SETTINGS.promoCode)).not.toBeInTheDocument();
+    expect(screen.queryByText(SETTINGS_FIXTURE.promo!.code)).not.toBeInTheDocument();
 
     const form = screen.getByRole('form', { name: /newsletter/i });
     await user.type(within(form).getByLabelText(/email/i), 'guest@example.com');
     await user.click(within(form).getByRole('button', { name: /sign up/i }));
 
     const status = await screen.findByRole('status');
-    expect(within(status).getByText(PLACEHOLDER_SETTINGS.promoCode)).toBeInTheDocument();
+    expect(within(status).getByText(SETTINGS_FIXTURE.promo!.code)).toBeInTheDocument();
     expect(status).toHaveTextContent(/address has not been saved/i);
   });
 
