@@ -41,6 +41,22 @@ describeWithDb('Express HTML serving', () => {
     expect(res.text).not.toContain('shell description');
   });
 
+  it('embeds the JSON-LD graph as parseable ld+json scripts (4.2)', async () => {
+    const res = await request(app).get('/');
+
+    // `\uXXXX` escapes for `<`, `>` and `&` are valid JSON string escapes, so
+    // the payload round-trips through JSON.parse untouched by the renderer.
+    const scripts = [
+      ...res.text.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g),
+    ].map((match) => JSON.parse(match[1]!));
+
+    // TravelAgency + FAQPage, each in its own script element.
+    expect(scripts).toHaveLength(2);
+    expect(scripts.map((node) => node['@type'])).toEqual(['TravelAgency', 'FAQPage']);
+    // Nothing is claimed about ratings while only sample reviews exist.
+    expect(res.text).not.toContain('AggregateRating');
+  });
+
   it('answers an unknown path with the 404 the resolver asked for', async () => {
     const res = await request(app).get('/nope');
 

@@ -12,25 +12,26 @@
  * once, for every value, there. A resolver returning markup would smuggle an
  * un-escaped database string past that boundary.
  *
- * Task 4.2 extends this module with JSON-LD: every resolver already has its
- * row loaded and returns `jsonLd: []` at a marked line.
+ * Task 4.2 added the JSON-LD each route publishes: the nodes themselves are
+ * built by the pure builders in `seo/jsonld.ts`, and this module's only job
+ * is to hand them the rows and settings they need.
  */
 import { formatPeso } from '@rg/shared';
 import { and, asc, eq, sql } from 'drizzle-orm';
-import { readSettingBlock } from '../content/settings';
+import { readSettingBlock, resolvePaymentMethods } from '../content/settings';
 import { getDb } from '../db/client';
 import { destinations, packages, tourImages, tourPriceTiers, tours } from '../db/schema';
 import { env } from '../env';
+import { realAggregate } from '../services/ratings';
+import { BRAND, LEGAL_OPERATOR } from './brand';
+import {
+  aggregateRatingNode,
+  faqPageNode,
+  touristTripNode,
+  travelAgencyNode,
+  type JsonLdNode,
+} from './jsonld';
 import type { PageMeta, Resolver } from './types';
-
-/**
- * The public trading brand — `SITE.name` in client/src/lib/site.ts. Titles
- * and descriptions are customer-facing copy, so they carry the BRAND; the
- * legal operator (R&G Travel & Tours) belongs only on regulatory, legal and
- * financial surfaces (CLAUDE.md). Task 4.2 needs both names for JSON-LD and
- * is the right moment to decide where a server-side copy of them lives.
- */
-const BRAND = 'TravelSugbo';
 
 /** Meta descriptions longer than this are truncated (5A). */
 const MAX_DESCRIPTION = 155;
@@ -241,6 +242,47 @@ async function readSiteBlocks() {
 }
 
 // ---------------------------------------------------------------------------
+// JSON-LD inputs (4.2)
+//
+// The nodes are built by `seo/jsonld.ts`, which is pure; everything below
+// only fetches what those builders need. The rating is ALWAYS
+// `realAggregate()` — published reviews with `is_sample = 0` — never
+// `displayAggregate()` and never `settings.trust.ratingAverage`.
+// ---------------------------------------------------------------------------
+
+/**
+ * The organization node every indexable page carries, plus the review
+ * threshold its page-level nodes need, in one round trip's worth of latency.
+ *
+ * The site-wide `aggregateRating` passes through the same gate as a tour's:
+ * `realAggregate()` with no tour filter today returns null (every seeded
+ * review is a sample), so the key is absent from the emitted node.
+ */
+async function buildSiteGraph(
+  description: string,
+  imageUrl: string | null,
+): Promise<{ agency: JsonLdNode; minReviewsForRating: number }> {
+  const [contact, businessHours, trust, aggregate] = await Promise.all([
+    readSettingBlock('contact'),
+    readSettingBlock('business_hours'),
+    readSettingBlock('trust'),
+    realAggregate(),
+  ]);
+
+  return {
+    agency: travelAgencyNode({
+      siteUrl: absoluteUrl('/'),
+      description,
+      imageUrl,
+      contact,
+      businessHours,
+      rating: aggregateRatingNode(aggregate, trust.minReviewsForRating),
+    }),
+    minReviewsForRating: trust.minReviewsForRating,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // 5A fallbacks — applied when seo_title / seo_description are empty
 // ---------------------------------------------------------------------------
 
@@ -314,13 +356,23 @@ export function notFoundMeta(pathname: string): PageMeta {
 
 const resolveHome: Resolver = async () => {
   const { siteSeo, hero } = await readSiteBlocks();
+  const ogImage = firstImageUrl(siteSeo.ogImage, hero.imagePath);
+
+  const [{ agency }, faqs, paymentMethods] = await Promise.all([
+    buildSiteGraph(siteSeo.description, ogImage),
+    readSettingBlock('faqs'),
+    readSettingBlock('payment_methods'),
+  ]);
+  // Omitted, not emitted empty, when there are no FAQs to publish.
+  const faq = faqPageNode(faqs, resolvePaymentMethods(paymentMethods));
+
   return {
     title: siteSeo.title,
     description: siteSeo.description,
     canonical: absoluteUrl('/'),
-    ogImage: firstImageUrl(siteSeo.ogImage, hero.imagePath),
+    ogImage,
     ogType: 'website',
-    jsonLd: [], // Task 4.2: TravelAgency + FAQPage.
+    jsonLd: faq ? [agency, faq] : [agency],
     status: 200,
     robots: 'index,follow',
   };
@@ -334,13 +386,19 @@ const resolveHome: Resolver = async () => {
  */
 const resolveToursIndex: Resolver = async () => {
   const { siteSeo, hero } = await readSiteBlocks();
+  const ogImage = firstImageUrl(siteSeo.ogImage, hero.imagePath);
+  // The organization only. No ItemList of tours: a carousel of links to
+  // /tours/:slug would point at pages the SPA does not render yet (D5), and
+  // no CollectionPage node earns a rich result.
+  const { agency } = await buildSiteGraph(siteSeo.description, ogImage);
+
   return {
     title: `Cebu Day Tours | ${BRAND}`,
     description: siteSeo.description,
     canonical: absoluteUrl('/tours'),
-    ogImage: firstImageUrl(siteSeo.ogImage, hero.imagePath),
+    ogImage,
     ogType: 'website',
-    jsonLd: [], // Task 4.2.
+    jsonLd: [agency],
     status: 200,
     robots: 'index,follow',
   };
@@ -351,12 +409,12 @@ const LEGAL_PAGES = {
   privacy: {
     path: '/privacy',
     title: `Privacy Notice | ${BRAND}`,
-    description: `How ${BRAND} (operated by R&G Travel & Tours) collects, uses and protects your personal data under the Data Privacy Act of 2012 (RA 10173).`,
+    description: `How ${BRAND} (operated by ${LEGAL_OPERATOR}) collects, uses and protects your personal data under the Data Privacy Act of 2012 (RA 10173).`,
   },
   terms: {
     path: '/terms',
     title: `Terms of Service | ${BRAND}`,
-    description: `Booking, payment, cancellation and safety terms for Cebu tours operated by R&G Travel & Tours.`,
+    description: `Booking, payment, cancellation and safety terms for Cebu tours operated by ${LEGAL_OPERATOR}.`,
   },
 } as const;
 
@@ -364,13 +422,19 @@ function resolveLegal(page: keyof typeof LEGAL_PAGES): Resolver {
   return async () => {
     const { siteSeo, hero } = await readSiteBlocks();
     const copy = LEGAL_PAGES[page];
+    const ogImage = firstImageUrl(siteSeo.ogImage, hero.imagePath);
+    // The organization only — the identity behind the policy. The policy
+    // text itself is prose; there is no Schema.org type a crawler does
+    // anything useful with here.
+    const { agency } = await buildSiteGraph(siteSeo.description, ogImage);
+
     return {
       title: copy.title,
       description: copy.description,
       canonical: absoluteUrl(copy.path),
-      ogImage: firstImageUrl(siteSeo.ogImage, hero.imagePath),
+      ogImage,
       ogType: 'article',
-      jsonLd: [], // Task 4.2.
+      jsonLd: [agency],
       status: 200,
       robots: 'index,follow',
     };
@@ -382,18 +446,41 @@ const resolveTour: Resolver = async (params) => {
   const [tour, site] = await Promise.all([loadTourSeo(slug), readSiteBlocks()]);
   if (!tour) return notFoundMeta(`/tours/${slug}`);
 
+  const canonical = absoluteUrl(`/tours/${tour.slug}`);
+  const description = tourDescription(tour);
+  const ogImage = firstImageUrl(
+    tour.ogImage,
+    tour.firstImagePath,
+    site.siteSeo.ogImage,
+    site.hero.imagePath,
+  );
+
+  const [{ agency, minReviewsForRating }, aggregate] = await Promise.all([
+    buildSiteGraph(site.siteSeo.description, ogImage),
+    // Samples excluded, so a tour carrying only seeded reviews publishes no
+    // rating at all — the key is absent, never a zero.
+    realAggregate(tour.id),
+  ]);
+
   return {
     title: tourTitle(tour),
-    description: tourDescription(tour),
-    canonical: absoluteUrl(`/tours/${tour.slug}`),
-    ogImage: firstImageUrl(
-      tour.ogImage,
-      tour.firstImagePath,
-      site.siteSeo.ogImage,
-      site.hero.imagePath,
-    ),
+    description,
+    canonical,
+    ogImage,
     ogType: 'website',
-    jsonLd: [], // Task 4.2: TouristTrip + an offer, aggregateRating only from realAggregate().
+    jsonLd: [
+      touristTripNode({
+        name: tour.title,
+        url: canonical,
+        description,
+        imageUrl: ogImage,
+        priceCentavos: tour.fromPriceCentavos,
+        destinationName: tour.destinationName,
+        siteUrl: absoluteUrl('/'),
+        rating: aggregateRatingNode(aggregate, minReviewsForRating),
+      }),
+      agency,
+    ],
     status: 200,
     // D5: the resolver is complete and tested, but NO PAGE RENDERS THIS URL
     // yet — the SPA has no /tours/:slug route, so the shell would be served
@@ -410,13 +497,39 @@ const resolvePackage: Resolver = async (params) => {
   const [pkg, site] = await Promise.all([loadPackageSeo(slug), readSiteBlocks()]);
   if (!pkg) return notFoundMeta(`/packages/${slug}`);
 
+  const canonical = absoluteUrl(`/packages/${pkg.slug}`);
+  const description = packageDescription(pkg);
+  const ogImage = firstImageUrl(
+    pkg.ogImage,
+    pkg.imagePath,
+    site.siteSeo.ogImage,
+    site.hero.imagePath,
+  );
+  const { agency } = await buildSiteGraph(site.siteSeo.description, ogImage);
+
   return {
     title: packageTitle(pkg),
-    description: packageDescription(pkg),
-    canonical: absoluteUrl(`/packages/${pkg.slug}`),
-    ogImage: firstImageUrl(pkg.ogImage, pkg.imagePath, site.siteSeo.ogImage, site.hero.imagePath),
+    description,
+    canonical,
+    ogImage,
     ogType: 'website',
-    jsonLd: [], // Task 4.2.
+    jsonLd: [
+      touristTripNode({
+        name: pkg.title,
+        url: canonical,
+        description,
+        imageUrl: ogImage,
+        // The discounted price guests actually pay. `old_price` is a
+        // strike-through display figure, not an offer.
+        priceCentavos: pkg.newPriceCentavos,
+        siteUrl: absoluteUrl('/'),
+        // `reviews` rows join to a TOUR (`reviews.tour_id`); nothing in the
+        // schema links a review to a package, so no package can ever have a
+        // real aggregate to publish. Hard-coded undefined, not a lookup.
+        rating: undefined,
+      }),
+      agency,
+    ],
     status: 200,
     // D5, same as /tours/:slug above. WEEK 2D: delete this line.
     robots: 'noindex,nofollow',
