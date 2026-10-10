@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:lan": "vite --host",
     "build": "node scripts/check-placeholders.mjs && tsc --noEmit && vite build",
     "preview": "vite preview --port 5180 --strictPort",
     "test": "vitest run",

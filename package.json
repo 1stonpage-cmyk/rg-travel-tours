@@ -7,6 +7,7 @@
   },
   "scripts": {
     "dev": "pnpm -r --parallel run dev",
+    "dev:lan": "pnpm -r --parallel run dev:lan",
     "build": "pnpm -r run build",
     "test": "node scripts/check-coming-soon.mjs && node scripts/check-contact-parity.mjs && pnpm -r run test",
     "typecheck": "pnpm -r run typecheck",
