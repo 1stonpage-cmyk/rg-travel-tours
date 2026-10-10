@@ -97,11 +97,35 @@ If you find a bug unrelated to the current task, **don't stop or fix it**. Finis
 
 ### SEO note (Vite SPA)
 
-The public site needs search visibility. Handle it without SSR:
+The public site needs search visibility. Handle it without SSR. **Built — task 2E.** What
+shipped, as opposed to what was planned:
 
-- Express serves `index.html` and **injects per-route `<title>`, meta description, and Open Graph tags** for `/`, `/tours`, `/tours/:slug`, and `/packages/:slug` from the DB.
-- Generate `/sitemap.xml` and `/robots.txt` dynamically.
-- Add JSON-LD (`TouristTrip` / `Product` with `AggregateRating`) on tour pages, but only with real review data.
+- Express serves `index.html` and **injects per-route `<title>`, meta description, canonical,
+  Open Graph and Twitter tags** for `/`, `/tours`, `/privacy`, `/terms`, `/tours/:slug` and
+  `/packages/:slug` from the database (`server/src/seo/resolvers.ts` → `seo/render.ts`, served
+  by `server/src/html.ts`). `/privacy` and `/terms` were added to the planned list; a path that
+  matches nothing resolves to 404 meta and is served with a real 404 status.
+- **Dev injects the same meta through the same two modules**, via the `rg-seo-dev` middleware
+  in `client/vite.config.ts`, so a wrong title shows up locally instead of only after a deploy
+  (plan decision D6). That middleware only acts on requests that send `Accept: text/html` —
+  a bare `curl` sends `*/*` and falls through to the static shell, which has no meta injected.
+- The hero LCP `<link rel="preload">` travels with that per-route meta too, so only `/` carries
+  it (task 4.4b). `client/index.html` is the shared shell and must not grow a preload again.
+- `/sitemap.xml` and `/robots.txt` are generated from the database on every request
+  (`server/src/seo/sitemap.ts`). `lastmod` is read from `updated_at`, never invented, and the
+  sitemap never lists a URL that says `noindex`.
+- JSON-LD ships on **every** public route, not only tour pages: a `TravelAgency` node
+  everywhere, `FAQPage` on `/`, and `TouristTrip` on the two detail routes
+  (`server/src/seo/jsonld.ts`).
+- `AggregateRating` is built **only** from real reviews (`status = 'published' AND
+is_sample = 0`, via `services/ratings.ts` → `realAggregate()`) and the key is omitted
+  entirely when there are none — never a zero. With the current seed data no rating is
+  emitted anywhere, because every seeded review is a sample.
+- **While `settings.content_unverified` is true the whole site is noindex.** `robots.txt`
+  answers `Disallow: /` and every route carries `noindex,nofollow`, whatever its own resolver
+  asked for. Clearing that flag is now the act that publishes the site to search engines.
+- `SITE_ENV` must be `production` in the deployed `.env` or `robots.txt` fails closed to
+  `Disallow: /`. It defaults to `development`.
 
 ### Folder structure
 
@@ -539,11 +563,33 @@ All money columns are `INT` centavos. All timestamps are UTC `DATETIME`.
 
 Each task ends with **✅ DONE**. Each week ends with **✅ WEEK X COMPLETE** after verification.
 
+> **Markers audited and corrected 2026-10-09** — the previous ✅ DONE marks were template
+> defaults, not completion records. Every task below was re-checked against the actual tree
+> (`git ls-files`, the test suite, the running app); a task carries ✅ DONE only if the code
+> exists and its tests pass. No week has earned **✅ WEEK X COMPLETE** yet.
+
+Weeks 1–2 were not built in week order. The **dynamic site + SEO plan**
+(`docs/superpowers/plans/2026-10-09-dynamic-site-and-seo.md`, phases 1–4) built the database
+content layer, the live-data public site and the whole of 2E, which is why 2E is done while
+2C and 2D are not.
+
 ### Week 1 — Foundation
 
 - **1A** Repo setup: client/server/shared, TypeScript, Tailwind, shadcn, tRPC, Drizzle, ESLint/Prettier, `.env.example`. ✅ DONE
-- **1B** Full Drizzle schema (section 10) + first migration + seed (destinations, 6 tours with tiers/stops/add-ons, 4 vans, 4 drivers, owner user, settings). ✅ DONE
-- **1C** Auth: admin sessions + role middleware; customer and driver session types. ✅ DONE
+- **1B** Full Drizzle schema (section 10) + first migration + seed (destinations, 6 tours with tiers/stops/add-ons, 4 vans, 4 drivers, owner user, settings).
+  **Partial — not done.** The 12 public-content tables are built and migrated (`0000_*`,
+  `0001_*`): `settings`, `destinations`, `tours`, `tour_images`, `tour_price_tiers`,
+  `tour_itinerary_stops`, `tour_addons`, `tour_blocked_dates`, `packages`, `reviews`,
+  `inquiries`, `newsletter_subscribers`. The other 16 in section 10 are not: `users`,
+  `sessions`, `tour_date_slots`, `bookings`, `booking_addons`, `booking_notes`, `payments`,
+  `paymongo_events`, `vans`, `drivers`, `driver_leaves`, `trip_checkpoints`,
+  `review_helpful_votes`, `coupons`, `coupon_redemptions`, `audit_log`. The seed covers
+  destinations, tours, tiers, images, packages, reviews and settings — **no** vans, drivers,
+  owner user, itinerary stops or add-ons. Finish this with the week that first needs the
+  missing tables (1C needs `users` + `sessions`; Week 3 needs the rest).
+- **1C** Auth: admin sessions + role middleware; customer and driver session types.
+  **Not done** — no session table, no password hashing, no role middleware, and no
+  `protectedProcedure`. Every tRPC procedure today is public and read-mostly.
 - **1D** Shared money/time utilities (centavos, Asia/Manila) with unit tests. ✅ DONE
 - **1E** `CLAUDE.md` with these conventions. ✅ DONE
 
@@ -552,64 +598,123 @@ Each task ends with **✅ DONE**. Each week ends with **✅ WEEK X COMPLETE** af
 Use **ui-ux-pro-max** throughout; match the approved demo.
 
 - **2A** Layout, header, footer, floating WhatsApp, brand tokens (blue/gold, no red). ✅ DONE
-- **2B** Home page sections 1–13. ✅ DONE
-- **2C** Catalog with destination filter and real stats. ✅ DONE
-- **2D** Tour detail page (gallery, itinerary, tiers, add-ons, date/guest picker). ✅ DONE
-- **2E** Meta tag injection, sitemap, robots. ✅ DONE
+- **2B** Home page sections 1–13. ✅ DONE — all thirteen render from live `settings`/tRPC data.
+- **2C** Catalog with destination filter and real stats.
+  **Not done** — `/tours` is `client/src/pages/public/ToursStubPage.tsx`, which echoes the
+  hero's search params and says so. The home page's _catalog preview_ (section 3 of 2B) does
+  have the live destination filter; the standalone catalog page does not exist.
+- **2D** Tour detail page (gallery, itinerary, tiers, add-ons, date/guest picker).
+  **Not done** — no `/tours/:slug` route in `client/src/App.tsx`. The server side is already
+  built and tested ahead of it: `server/src/seo/resolvers.ts` resolves the meta and JSON-LD
+  for `/tours/:slug` and `/packages/:slug` but serves both `noindex,nofollow`, because the
+  shell would otherwise reach a crawler with correct meta over an empty body (plan decision
+  D5).
+  **When this page is built, in the same task:** delete those two `robots` lines, and add the
+  detail URLs to `/sitemap.xml` — `server/src/seo/sitemap.ts` already collects, filters by
+  `is_active` and sorts them in `detailUrls()`, with the emit commented out and marked
+  `WEEK 2D`.
+- **2E** Meta tag injection, sitemap, robots. ✅ DONE — see the SEO note in section 2. Built by
+  phase 4 of the dynamic-site plan: per-route `<title>`/description/canonical/OG/Twitter and
+  JSON-LD on `/`, `/tours`, `/privacy`, `/terms`, `/tours/:slug` and `/packages/:slug`,
+  injected by one module (`seo/render.ts`) on both surfaces — Express in production, a Vite
+  middleware in dev — plus dynamic `/sitemap.xml` and `/robots.txt` and an `X-Robots-Tag`
+  header for non-production hosts.
 
 ### Week 3 — Booking & online payments
 
-- **3A** Pricing service + tests (tiers, add-ons, coupons, deposit rounding). ✅ DONE
-- **3B** Capacity service + transaction lock + concurrency test. ✅ DONE
-- **3C** Hold creation + expiry cron. ✅ DONE
-- **3D** Checkout page + coupon validation. ✅ DONE
-- **3E** PayMongo checkout session + webhook (signature, idempotency, amount check). ✅ DONE
-- **3F** Confirmation page (read-only polling) + confirmation emails. ✅ DONE
+Nothing in this week is built. There is no `server/src/jobs`, no `server/src/webhooks`, no
+PayMongo client and no `node-cron` dependency.
+
+- **3A** Pricing service + tests (tiers, add-ons, coupons, deposit rounding).
+- **3B** Capacity service + transaction lock + concurrency test.
+- **3C** Hold creation + expiry cron.
+- **3D** Checkout page + coupon validation.
+- **3E** PayMongo checkout session + webhook (signature, idempotency, amount check).
+- **3F** Confirmation page (read-only polling) + confirmation emails.
+
+Roadmap items to pick up in or after this week:
+
+- **Week 3** — "X slots left today" and "Next available date" on the catalog and detail pages,
+  from capacity (`tour_date_slots`).
+- **Week 3+** — real "booked this week" and guests-served counts from completed bookings. Wire
+  `tours.historical_trips_count` in as the baseline so the displayed total is history + live
+  bookings (plan decision D8) rather than a number that drops to near-zero at launch.
+- **Pricing engine** — peak and holiday pricing, once the tier engine (3A) exists.
 
 ### Week 4 — Manual QR & customer portal (Phase 1 review)
 
-- **4A** Manual QR flow: QR display, timer, download, txn ref, receipt upload. ✅ DONE
-- **4B** Customer portal login + rate limiting. ✅ DONE
-- **4C** 5-step tracker, receipt re-upload, auto-refresh. ✅ DONE
-- **4D** Basic admin bookings list + detail. ✅ DONE
-- **4E** End-to-end test of every Phase 1 flow; fix and retest. ✅ DONE
+Nothing in this week is built. There is no `client/src/pages/portal` or `.../admin`.
+
+- **4A** Manual QR flow: QR display, timer, download, txn ref, receipt upload.
+- **4B** Customer portal login + rate limiting.
+- **4C** 5-step tracker, receipt re-upload, auto-refresh.
+- **4D** Basic admin bookings list + detail.
+- **4E** End-to-end test of every Phase 1 flow; fix and retest.
 
 → **Client demo / Phase 1 approval.**
 
 ### Week 5 — Dispatch
 
-- **5A** Vans CRUD + status + expiry fields. ✅ DONE
-- **5B** Drivers CRUD + leaves + PIN reset. ✅ DONE
-- **5C** Calendar month view with gold dots. ✅ DONE
-- **5D** Assignment with exclusion rules + auto-suggest. ✅ DONE
-- **5E** Dashboard alerts (verification, unassigned, repair, service, expiries). ✅ DONE
+Nothing in this week is built.
+
+- **5A** Vans CRUD + status + expiry fields.
+- **5B** Drivers CRUD + leaves + PIN reset.
+- **5C** Calendar month view with gold dots.
+- **5D** Assignment with exclusion rules + auto-suggest.
+- **5E** Dashboard alerts (verification, unassigned, repair, service, expiries).
 
 ### Week 6 — Drivers & verification
 
-- **6A** Driver portal login + lockout. ✅ DONE
-- **6B** Today/Upcoming/History + trip detail + payment box. ✅ DONE
-- **6C** Check-ins (start, stops, complete, undo, cash collected). ✅ DONE
-- **6D** Live departures on the dashboard. ✅ DONE
-- **6E** Payment verification queue (approve/reject → portal updates). ✅ DONE
-- **6F** Cancel/refund flow (PayMongo refund API + manual record). ✅ DONE
+Nothing in this week is built. There is no `client/src/pages/driver`.
+
+- **6A** Driver portal login + lockout.
+- **6B** Today/Upcoming/History + trip detail + payment box.
+- **6C** Check-ins (start, stops, complete, undo, cash collected).
+- **6D** Live departures on the dashboard.
+- **6E** Payment verification queue (approve/reject → portal updates).
+- **6F** Cancel/refund flow (PayMongo refund API + manual record).
 
 ### Week 7 — Growth features
 
-- **7A** Reviews: submit (portal + public), moderation, replies, helpful votes, verified badge. ✅ DONE
-- **7B** Coupons admin + redemption log. ✅ DONE
-- **7C** Packages + inquiries admin; newsletter signup + export. ✅ DONE
-- **7D** Reports + CSV exports. ✅ DONE
-- **7E** Notifications: all emails; SMS provider interface (off by default); day-before reminder cron. ✅ DONE
-- **7F** Settings page. ✅ DONE
-- **7G** Motion polish with **emilkowalski-motion** (subtle only). ✅ DONE
+Nothing in this week is built. Public _display_ of reviews, packages and the newsletter form
+exists (it is part of 2B), but no submission, moderation, admin or export side of any of it.
+
+- **7A** Reviews: submit (portal + public), moderation, replies, helpful votes, verified badge.
+- **7B** Coupons admin + redemption log.
+- **7C** Packages + inquiries admin; newsletter signup + export. (The public signup and both
+  inquiry forms are live via `newsletter.subscribe` and `inquiries.create`; the admin list and
+  the CSV export are not.)
+- **7D** Reports + CSV exports.
+- **7E** Notifications: all emails; SMS provider interface (off by default); day-before
+  reminder cron.
+- **7F** Settings page — **admin editing screens for every content block the dynamic-site plan
+  made database-driven**: announcement, hero, promo, business hours, payment methods, permits,
+  how-it-works, why-book-direct, FAQ, contact, the legal markdown, and the per-tour
+  featured / sort-order / badge / alert-note fields. All of these are live on the public site
+  and editable only by SQL today.
+- **7G** Motion polish with **emilkowalski-motion** (subtle only). The home page's motion layer
+  (scroll reveal, card stagger, count-up, header shrink, hero parallax, carousel) was built
+  early with the dynamic-site plan; what is left here is the portal, driver and admin surfaces.
+- **Phase 2 upsell** — travel guides / blog for SEO. Not in this build.
 
 ### Week 8 — QA & launch prep
 
-- **8A** Full test pass (section 14), at least two complete rounds. ✅ DONE
-- **8B** Role permission tests for every admin area. ✅ DONE
-- **8C** Mobile pass on real phones (iOS Safari, Android Chrome). ✅ DONE
-- **8D** Load real content from client (photos, prices, permits). ✅ DONE
-- **8E** Production readiness checklist (env vars, PayMongo live keys, webhook URL, SSL, PM2 config, weekly DB dump script). ✅ DONE
+Nothing in this week is built.
+
+- **8A** Full test pass (section 14), at least two complete rounds.
+- **8B** Role permission tests for every admin area.
+- **8C** Mobile pass on real phones (iOS Safari, Android Chrome). (A 360px mobile pass and a
+  motion pass were done for the public site only.)
+- **8D** Load real content from client (photos, prices, permits). The build guard
+  (`client/scripts/check-placeholders.mjs`) now **blocks** a production build until this is
+  done — see `docs/LAUNCH_CHECKLIST.md`.
+- **8E** Production readiness checklist (env vars, PayMongo live keys, webhook URL, SSL, PM2
+  config, weekly DB dump script).
+
+**Post-launch cleanup:** once the coming-soon holding page is retired, remove the contact
+constants from `client/src/lib/site.ts` and delete `scripts/check-contact-parity.mjs`, so
+`settings.contact` becomes the single, admin-editable source of truth for phone, email and
+hours.
 
 → **Deployment: separate prompt.**
 

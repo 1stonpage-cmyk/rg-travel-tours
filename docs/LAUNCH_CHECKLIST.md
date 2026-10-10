@@ -149,6 +149,11 @@ ever takes real traffic, and re-check them any time the PM2 or nginx config chan
       formatter includes the `stack` field when `NODE_ENV` is not `production`, so a
       malformed or hostile request gets a stack trace — file paths, call sites — back
       in the response instead of a plain error message.
+- [ ] **`SITE_ENV=production` is set** in the deployed `.env`. Separate from `NODE_ENV`, and
+      checked separately: it is what `robots.txt` and the `X-Robots-Tag` middleware read. It
+      defaults to `development`, and anything other than `production` fails closed to
+      `Disallow: /`. The failure is silent and in the _safe_ direction — the site simply never
+      gets crawled — so nothing will alert you; see section (c).
 - [ ] **PM2 runs the API in fork mode, a single instance** — not cluster mode.
       `express-rate-limit`'s default `MemoryStore` is per-process. Cluster mode with N
       workers gives each worker its own counter, so the effective rate limit becomes N
@@ -191,7 +196,14 @@ Do these in order. Steps 1–4 change nothing public, so they are safe to do ear
 
 7. **Verify live**, in this order:
    - [ ] `https://travelsugbo.com/` loads the real home page, hero photo included.
-   - [ ] No `X-Robots-Tag` header on the apex; `robots.txt` allows crawling.
+   - [ ] No `X-Robots-Tag` header on the apex; `robots.txt` allows crawling (it answers
+         `Disallow: /` unless **both** `SITE_ENV=production` and
+         `settings.content_unverified = false`).
+   - [ ] `curl -s https://travelsugbo.com/sitemap.xml` lists the live public URLs, and no URL
+         in it is served `noindex` (`curl -s -H 'Accept: text/html' <url> | grep robots`).
+   - [ ] Per-route meta is really being injected, not just the shell's defaults — send the
+         header, or you get the static shell and a false pass:
+         `curl -s -H 'Accept: text/html' https://travelsugbo.com/privacy | grep -E '<title>|canonical'`.
    - [ ] A test booking reaches PayMongo and the webhook marks it paid (never the
          redirect URL — CLAUDE.md).
    - [ ] Customer, driver and admin logins each reach only their own area.
@@ -203,20 +215,48 @@ Do these in order. Steps 1–4 change nothing public, so they are safe to do ear
 9. **After launch**: decide whether `preview.travelsugbo.com` stays as a staging host
    (keep basic auth + `noindex`) or is retired.
 
+10. **After launch — retire the holding page's contact duplication.** The contact details
+    currently live in **two** places that a guard keeps in step. Once the coming-soon page is
+    gone for good, remove the contact constants from `client/src/lib/site.ts`, delete
+    `scripts/check-contact-parity.mjs` and drop `check:contact` from the root `test` script, so
+    `settings.contact` becomes the single, admin-editable source of truth.
+
 ---
 
 ## (c) Before you flip the switch — reminders
 
 ### Placeholder content must be gone
 
-- [ ] `client/src/lib/placeholder-data.ts` is deleted (spec task 8D), or every value in
-      it has been replaced by real settings/DB data. No invented ratings, guest counts,
-      review counts or prices.
+`client/src/lib/placeholder-data.ts` no longer exists — task 3.7 deleted it, and the whole
+public site now reads tours, destinations, packages, reviews, FAQs and settings from the
+`rg_travel` database. So "placeholder content" is a **database state**, not a file, and the
+build guard (`client/scripts/check-placeholders.mjs`) asks the database rather than the
+filesystem. It blocks every production build while either condition below holds.
+
+Do these in order, against the production `rg_travel` database:
+
+- [ ] **Delete or unpublish every `is_sample` review.** The guard blocks the build while any
+      review has `status = 'published' AND is_sample = 1`, because CLAUDE.md forbids
+      presenting seeded social proof as real. Either way is fine — hide them or delete them —
+      but the seeded six must not be published.
+      Check: `SELECT COUNT(*) FROM reviews WHERE status='published' AND is_sample=1;` → `0`.
+- [ ] **Client supplies real tours, prices, photos, descriptions and permit numbers**, then
+      set `settings.content_unverified = false`. The guard blocks the build while it is true.
+      This is also what **publishes the site to search engines**: while the flag is set,
+      `robots.txt` answers `Disallow: /` and every route is served `noindex,nofollow`. Do not
+      clear it until the content is genuinely real.
+- [ ] **`SITE_ENV=production` is set in the deployed `.env`.** It defaults to `development`,
+      and `robots.txt` fails closed to `Disallow: /` for any value other than `production` —
+      so a correct, fully verified site stays uncrawlable if this line is missing. (This is
+      deliberate: it is what keeps a preview deploy out of the index.)
+      Check after deploy: `curl -s https://travelsugbo.com/robots.txt` names the sitemap and
+      does **not** say `Disallow: /`.
 - [ ] **`ALLOW_PLACEHOLDER_BUILD` must NOT be set for the launch build.** It exists only
       for deliberate client demos. If `pnpm build` succeeds while the flag is unset, the
-      placeholder guard (`client/scripts/check-placeholders.mjs`) is satisfied — that is
-      the signal you want. If you had to set it, you are not ready to launch.
-- [ ] The dev-only amber placeholder banner does not appear in the production build.
+      content guard is satisfied — that is the signal you want. If you had to set it, you are
+      not ready to launch.
+- [ ] The amber placeholder banner (`PlaceholderBadge.tsx`, driven by the same
+      `content_unverified` flag) does not appear anywhere on the live site.
 
 ### Real values confirmed by the client
 
