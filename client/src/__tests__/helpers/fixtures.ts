@@ -2,9 +2,9 @@
  * Shared test fixtures, shaped exactly like real tRPC output — not from the
  * plan's prose, but from calling the live, seeded server directly
  * (`pnpm --filter @rg/server dev`, then curling `/trpc/<procedure>`) and
- * copying what came back. Values are drawn from today's placeholder
- * content (`client/src/lib/placeholder-data.ts`) so swapping a page from
- * placeholder data to these fixtures does not change what it renders.
+ * copying what came back. Values are drawn from today's seed content
+ * (`server/src/db/seed-data.ts`), loaded by `pnpm db:seed` into the
+ * `rg_travel` database.
  *
  * Types come straight from the routers' exported result interfaces
  * (type-only imports, erased at build — no runtime dependency on server

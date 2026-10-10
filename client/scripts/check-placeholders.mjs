@@ -2,10 +2,15 @@
  * Fails a production build while the site still renders placeholder data.
  * Override intentionally with ALLOW_PLACEHOLDER_BUILD=1 (e.g. for a client demo).
  *
- * Tasks 2C/2D delete placeholder-data.ts entirely in one commit once real API
- * data exists. A missing file means the placeholders are already gone — that
- * is success, not a build error, so this must not throw/ENOENT. Guard the
- * read instead of assuming the file exists.
+ * Task 3.7 deleted placeholder-data.ts — all content now comes from the
+ * database (see CLAUDE.md). This guard still reads that file by path, so a
+ * missing file means the placeholders are already gone — that is success,
+ * not a build error, so this must not throw/ENOENT. Guard the read instead
+ * of assuming the file exists.
+ *
+ * This no longer checks anything real: it always passes now that the file
+ * is gone. Task 4.5 owns rewriting it to check settings.content_unverified
+ * and is_sample reviews against the database instead.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';

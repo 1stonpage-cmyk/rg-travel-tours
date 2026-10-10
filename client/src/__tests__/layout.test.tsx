@@ -135,9 +135,12 @@ describe('PublicLayout', () => {
     expect(viewportMeta).toMatch(/viewport-fit=cover/);
   });
 
-  it('pins the mandated PlaceholderBadge copy and forbids the superseded "not real" wording', () => {
+  it('pins the mandated PlaceholderBadge copy and forbids the superseded "not real" wording', async () => {
     renderLayout();
-    const badge = screen.getByRole('status');
+    // PlaceholderBadge now reads settings.contentUnverified (task 3.7) via
+    // its own trpc.settings.get.useQuery(), which resolves asynchronously —
+    // findByRole waits for that instead of assuming an instant render.
+    const badge = await screen.findByRole('status');
     expect(badge).toHaveTextContent(/client-supplied/i);
     expect(badge).toHaveTextContent(/pending verification/i);
     expect(badge).not.toHaveTextContent(

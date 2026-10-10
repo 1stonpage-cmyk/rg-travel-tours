@@ -1,20 +1,25 @@
-import { USING_PLACEHOLDER_DATA } from '@/lib/placeholder-data';
+import { trpc } from '@/lib/trpc';
 
 /**
- * Marker that the page is rendering placeholder content, not real business
- * data (spec section 0: do not fake social proof).
+ * Marker that the page is rendering content the client has not yet verified
+ * (spec section 0: do not fake social proof).
  *
- * Gated on USING_PLACEHOLDER_DATA, not import.meta.env.DEV: a demo build
- * made with ALLOW_PLACEHOLDER_BUILD=1 is a production build that still
- * renders the invented tour ratings/booking counts from placeholder-data.ts,
- * and that is exactly the build someone will actually look at. DEV is kept
- * as a belt-and-braces OR so the badge still shows during local development
- * even in the (currently impossible) case placeholder-data.ts reports false.
- * Once tasks 2C/2D delete placeholder-data.ts and replace it with real API
- * data, this component (and its import) should be deleted too.
+ * Driven entirely by settings.contentUnverified (task 3.7) — the database
+ * is now the single source of truth for this flag, not a build-time
+ * constant. There is deliberately no import.meta.env.DEV fallback: a demo
+ * build made with ALLOW_PLACEHOLDER_BUILD=1 is a production build someone
+ * will actually look at, and DEV is not a meaningful proxy for whether its
+ * content has been verified — only the database flag is. An admin clears
+ * content_unverified once real content replaces the seed, and the banner
+ * disappears everywhere, dev included.
+ *
+ * Hides while the settings query is still pending, not just while it is
+ * false — a banner that flashes on every page load before data arrives is
+ * worse than one that appears a moment late.
  */
 export default function PlaceholderBadge() {
-  if (!import.meta.env.DEV && !USING_PLACEHOLDER_DATA) return null;
+  const { data, isPending } = trpc.settings.get.useQuery();
+  if (isPending || !data?.contentUnverified) return null;
 
   return (
     <div

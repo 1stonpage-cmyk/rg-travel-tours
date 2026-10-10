@@ -2,7 +2,6 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { PLACEHOLDER_SETTINGS } from '@/lib/placeholder-data';
 import { TrpcProviders } from '@/lib/trpc';
 import HomePage from '@/pages/public/HomePage';
 import {
@@ -169,7 +168,7 @@ describe('home page', () => {
 
   // --- Mandated correction 2(a): the conditional trust line must not fabricate a review count. ---
   it('never prints a fabricated review-count clause while ratingCount is null', () => {
-    expect(PLACEHOLDER_SETTINGS.ratingCount).toBeNull();
+    expect(SETTINGS_FIXTURE.trust.ratingCount).toBeNull();
     const { container } = renderHome();
     const bodyText = container.textContent ?? '';
 
