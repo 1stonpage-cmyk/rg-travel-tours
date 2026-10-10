@@ -215,6 +215,25 @@ describe('HeroSection — settings-driven', () => {
   });
 });
 
+describe('HeroCopySkeleton / TrustBarSkeleton — loading announced to screen readers (BUG-071)', () => {
+  it('HeroCopySkeleton exposes a status region while settings.get is pending, instead of aria-hidden', () => {
+    mockTrpc({
+      'settings.get': () => new Promise(() => {}),
+      'destinations.list': DESTINATIONS_FIXTURE,
+    });
+    renderHero();
+
+    expect(screen.getByRole('status', { name: /loading/i })).toBeInTheDocument();
+  });
+
+  it('TrustBarSkeleton exposes a status region while settings.get is pending, instead of only aria-hidden bars', () => {
+    mockTrpc({ 'settings.get': () => new Promise(() => {}) });
+    renderTrustBar();
+
+    expect(screen.getByRole('status', { name: /loading/i })).toBeInTheDocument();
+  });
+});
+
 describe('TrustBar — settings-driven', () => {
   it('renders all four trust items from settings', async () => {
     mockTrpc({ 'settings.get': SETTINGS_FIXTURE });

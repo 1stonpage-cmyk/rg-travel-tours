@@ -1,6 +1,6 @@
 import { formatPeso } from '@rg/shared';
 import { Check } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import QueryBoundary, { EmptyState } from '@/components/common/QueryBoundary';
 import { Skeleton } from '@/components/common/Skeleton';
 import SectionHeading from '@/components/common/SectionHeading';
@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { trpc } from '@/lib/trpc';
+import { useCardStagger } from '@/lib/use-scroll-reveal';
 
 const SKELETON_CARD_COUNT = 3;
 
@@ -59,6 +60,11 @@ export default function PackagesSection() {
   const [selected, setSelected] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
 
+  const gridRef = useRef<HTMLUListElement>(null);
+  // Re-runs once packages.list resolves and the real <li>s replace the
+  // skeleton — see useCardStagger's own comment in use-scroll-reveal.ts.
+  useCardStagger(gridRef, 'li', packagesQuery.data?.length ?? 0);
+
   return (
     <section id="packages" className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
       <SectionHeading
@@ -85,7 +91,7 @@ export default function PackagesSection() {
 
           return (
             <>
-              <ul className="mt-10 grid gap-6 lg:grid-cols-3">
+              <ul ref={gridRef} className="mt-10 grid gap-6 lg:grid-cols-3">
                 {packages.map((pkg) => (
                   <li
                     key={pkg.id}

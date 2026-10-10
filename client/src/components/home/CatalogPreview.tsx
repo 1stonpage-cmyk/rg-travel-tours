@@ -6,6 +6,7 @@ import SectionHeading from '@/components/common/SectionHeading';
 import TourCard from '@/components/common/TourCard';
 import { Button } from '@/components/ui/button';
 import { trpc } from '@/lib/trpc';
+import { useCardStagger } from '@/lib/use-scroll-reveal';
 import { cn } from '@/lib/utils';
 import type { TourListItem } from '../../../../server/src/routers/public/tours';
 
@@ -134,7 +135,7 @@ export default function CatalogPreview() {
                   aria-pressed={active === f.slug}
                   onClick={() => setActive(f.slug)}
                   className={cn(
-                    'min-h-11 shrink-0 rounded-full border px-4 text-sm font-medium transition-colors',
+                    'press min-h-11 shrink-0 rounded-full border px-4 text-sm font-medium transition-colors',
                     active === f.slug
                       ? 'bg-brand-blue-600 border-brand-blue-600 text-white'
                       : 'border-brand-blue-200 text-brand-blue-800 hover:bg-brand-blue-50',
@@ -175,6 +176,13 @@ function CatalogGrid({ tours, active }: { tours: TourListItem[]; active: string 
     [tours, active],
   );
 
+  const gridRef = useRef<HTMLUListElement>(null);
+  // Cards mount here only once `tours.list` resolves (this component is
+  // itself only rendered from inside QueryBoundary's loaded-data branch), so
+  // keying on `filtered.length` lets the stagger fire the first time real
+  // cards exist and are scrolled into view — see use-scroll-reveal.ts.
+  useCardStagger(gridRef, 'li', filtered.length);
+
   if (filtered.length === 0) {
     return (
       <p className="text-muted-foreground mt-8 text-center text-base sm:text-sm">
@@ -184,7 +192,7 @@ function CatalogGrid({ tours, active }: { tours: TourListItem[]; active: string 
   }
 
   return (
-    <ul className="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+    <ul ref={gridRef} className="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
       {filtered.map((tour) => (
         <li key={tour.id}>
           <TourCard tour={tour} />

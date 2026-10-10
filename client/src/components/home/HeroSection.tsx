@@ -25,7 +25,7 @@ const today = new Date().toISOString().slice(0, 10);
  */
 function HeroCopySkeleton() {
   return (
-    <div aria-hidden="true">
+    <div role="status" aria-label="Loading hero content">
       <Skeleton className="h-4 w-36" />
       <Skeleton className="mt-3 h-9 w-full sm:h-12" />
       <Skeleton className="mt-2 h-9 w-2/3 sm:h-12" />

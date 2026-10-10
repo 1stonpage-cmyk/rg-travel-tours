@@ -5,16 +5,39 @@ import { trpc } from '@/lib/trpc';
 
 const SKELETON_ITEM_COUNT = 4;
 
-/** Mirrors the real grid's classes and one icon+label bar per slot, so swapping in the loaded items causes no layout shift. */
+/**
+ * Mirrors the real grid's classes and one icon+label bar per slot, so
+ * swapping in the loaded items causes no layout shift.
+ *
+ * BUG-071: only the first `<li>` carries `role="status"`/`aria-label` — one
+ * accessible name is enough to announce the loading state, and putting it on
+ * every item would announce it four times. The other three stay
+ * `aria-hidden` so their skeleton bars are not read as empty list items.
+ * Splitting it this way (rather than one wrapping element around all four)
+ * keeps the four-`<li>` grid exactly as wide as the real, loaded grid - the
+ * same no-layout-shift goal the classes above already serve.
+ */
 function TrustBarSkeleton() {
   return (
     <>
-      {Array.from({ length: SKELETON_ITEM_COUNT }, (_, i) => (
-        <li key={i} className="flex items-center gap-2.5">
-          <Skeleton className="size-5 shrink-0 rounded-full" />
-          <Skeleton className="h-4 w-full max-w-40" />
-        </li>
-      ))}
+      {Array.from({ length: SKELETON_ITEM_COUNT }, (_, i) =>
+        i === 0 ? (
+          <li
+            key={i}
+            role="status"
+            aria-label="Loading trust information"
+            className="flex items-center gap-2.5"
+          >
+            <Skeleton className="size-5 shrink-0 rounded-full" />
+            <Skeleton className="h-4 w-full max-w-40" />
+          </li>
+        ) : (
+          <li key={i} aria-hidden="true" className="flex items-center gap-2.5">
+            <Skeleton className="size-5 shrink-0 rounded-full" />
+            <Skeleton className="h-4 w-full max-w-40" />
+          </li>
+        ),
+      )}
     </>
   );
 }

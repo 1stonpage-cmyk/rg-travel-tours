@@ -1,8 +1,10 @@
+import { useRef } from 'react';
 import QueryBoundary, { EmptyState } from '@/components/common/QueryBoundary';
 import { ReviewCardSkeleton } from '@/components/common/Skeleton';
 import SectionHeading from '@/components/common/SectionHeading';
 import StarRating from '@/components/common/StarRating';
 import { trpc } from '@/lib/trpc';
+import { useCardStagger } from '@/lib/use-scroll-reveal';
 
 const SKELETON_CARD_COUNT = 6;
 
@@ -39,6 +41,11 @@ function ReviewsGridSkeleton() {
 export default function ReviewsSection() {
   const reviewsQuery = trpc.reviews.published.useQuery({});
 
+  const gridRef = useRef<HTMLUListElement>(null);
+  // Re-runs once reviews.published resolves and the real <li>s replace the
+  // skeleton — see useCardStagger's own comment in use-scroll-reveal.ts.
+  useCardStagger(gridRef, 'li', reviewsQuery.data?.items.length ?? 0);
+
   return (
     <section id="reviews" className="bg-brand-blue-50 border-y">
       <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
@@ -58,7 +65,7 @@ export default function ReviewsSection() {
           errorTitle="Reviews could not load"
         >
           {(data) => (
-            <ul className="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            <ul ref={gridRef} className="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
               {data.items.map((review) => (
                 <li
                   key={review.id}
