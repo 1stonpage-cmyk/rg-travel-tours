@@ -83,7 +83,14 @@ describe('CatalogPreview — mobile carousel dot indicator', () => {
     }
   });
 
-  it('does not render pagination at all for a single-result filter — nothing to paginate', async () => {
+  // Fix round 1 (F1): every destination in TOURS_FIXTURE resolves to exactly
+  // one tour, so this single-result state is not a rare edge case — it's
+  // what happens on every destination chip except "All tours". Omitting the
+  // whole pagination container here used to collapse the row and shift
+  // everything below it. The fix: no dot *buttons* for one card (nothing
+  // to paginate), but the container itself stays mounted and keeps
+  // reserving its height, so nothing jumps.
+  it('renders no dot buttons for a single-result filter, but keeps the pagination row mounted and reserving its height', async () => {
     const user = userEvent.setup();
     renderCatalog();
 
@@ -93,9 +100,12 @@ describe('CatalogPreview — mobile carousel dot indicator', () => {
     await user.click(mactanChip);
 
     await screen.findByRole('heading', { level: 3, name: /Mactan Island Hopping/i });
-    expect(
-      screen.queryByRole('group', { name: /tour carousel pagination/i }),
-    ).not.toBeInTheDocument();
+
+    const pagination = screen.getByRole('group', { name: /tour carousel pagination/i });
+    expect(pagination).toBeInTheDocument();
+    expect(within(pagination).queryAllByRole('button')).toHaveLength(0);
+    // Reserves the 44px row height on its own, not via a dot button child.
+    expect(pagination).toHaveClass('min-h-11');
   });
 
   describe('clicking a dot', () => {

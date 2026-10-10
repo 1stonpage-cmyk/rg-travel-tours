@@ -124,6 +124,18 @@ function useActiveCarouselCard(
  * The visible dot is a tiny 8-10px circle, but the clickable button around
  * it is a full 44px tap target (`tap-target`), per the brief's explicit
  * callout that small indicators still need a real touch target.
+ *
+ * The container itself is ALWAYS rendered and carries its own `min-h-11` —
+ * it reserves the row's height unconditionally; only the dot *buttons*
+ * inside are conditional on `count > 1` (fix round 1, F1). Every one of
+ * TOURS_FIXTURE's destinations resolves to exactly one tour today, so
+ * `count` is 1 on the overwhelmingly common path — every destination chip
+ * except "All tours" — not just in some rare skeleton edge case. Omitting
+ * the whole container in that state collapsed the row and shifted
+ * everything below it up, then back down the moment the filter cleared.
+ * Hiding meaningless dots for a single card is still correct; collapsing
+ * the space they occupied is not — so the container stays, and only its
+ * contents are conditional.
  */
 function CarouselDots({
   containerRef,
@@ -147,26 +159,27 @@ function CarouselDots({
     <div
       role="group"
       aria-label="Tour carousel pagination"
-      className="mt-4 flex items-center justify-center gap-1 md:hidden"
+      className="mt-4 flex min-h-11 items-center justify-center gap-1 md:hidden"
     >
-      {Array.from({ length: count }, (_, i) => (
-        <button
-          key={i}
-          type="button"
-          aria-label={`Go to tour ${i + 1} of ${count}`}
-          aria-current={active === i ? 'true' : undefined}
-          onClick={() => goTo(i)}
-          className="press tap-target flex items-center justify-center"
-        >
-          <span
-            aria-hidden="true"
-            className={cn(
-              'block rounded-full',
-              active === i ? 'bg-brand-blue-600 size-2.5' : 'bg-brand-blue-200 size-2',
-            )}
-          />
-        </button>
-      ))}
+      {count > 1 &&
+        Array.from({ length: count }, (_, i) => (
+          <button
+            key={i}
+            type="button"
+            aria-label={`Go to tour ${i + 1} of ${count}`}
+            aria-current={active === i ? 'true' : undefined}
+            onClick={() => goTo(i)}
+            className="press tap-target flex items-center justify-center"
+          >
+            <span
+              aria-hidden="true"
+              className={cn(
+                'block rounded-full',
+                active === i ? 'bg-brand-blue-600 size-2.5' : 'bg-brand-blue-200 size-2',
+              )}
+            />
+          </button>
+        ))}
     </div>
   );
 }
@@ -380,9 +393,7 @@ function CatalogGrid({ tours, active }: { tours: TourListItem[]; active: string 
           </li>
         ))}
       </ul>
-      {filtered.length > 1 && (
-        <CarouselDots containerRef={gridRef} count={filtered.length} active={activeCard} />
-      )}
+      <CarouselDots containerRef={gridRef} count={filtered.length} active={activeCard} />
     </>
   );
 }
