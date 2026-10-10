@@ -228,6 +228,34 @@
   }
 
   /*
+   * Bottom padding on <main> that reserves space for FloatingWhatsApp's
+   * fixed mobile bar (BUG-078), extended to also cover the home-indicator
+   * safe area (BUG-079). The bar's own worst-case height is ~103px (see the
+   * comment in PublicLayout.tsx); `env(safe-area-inset-bottom)` is additive
+   * on top of that, not already included in it, because the bar pads
+   * itself by `max(0.75rem, env(safe-area-inset-bottom))` — i.e. the inset
+   * only ever grows the bar's padding when it exceeds 0.75rem, which the
+   * flat 8rem reservation does not otherwise account for. Expressed as a
+   * utility rather than a Tailwind arbitrary value: `calc()` nested inside
+   * `pb-[...]` with an embedded CSS function reads worse than a named rule,
+   * and this way the reduced-motion/no-red guards and tests can grep one
+   * clearly-named class instead of an inline arbitrary-value string.
+   *
+   * `env(safe-area-inset-bottom)` resolves to 0px without `viewport-fit=
+   * cover` on the viewport meta tag (see client/index.html) — without it
+   * this rule degrades to a flat 8rem, same as before.
+   */
+  .pb-mobile-bar-safe {
+    padding-bottom: calc(8rem + env(safe-area-inset-bottom));
+  }
+
+  @media (min-width: 768px) {
+    .pb-mobile-bar-safe {
+      padding-bottom: 0px;
+    }
+  }
+
+  /*
    * Scroll affordance for a horizontally scrollable row — the destination chip
    * row, which only overflows on a narrow screen. The edges fade the row's own
    * content out with a mask instead of painting a gradient strip over it: there

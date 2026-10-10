@@ -2,7 +2,12 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      viewport-fit=cover (BUG-079): without it, env(safe-area-inset-*) in
+      index.css and FloatingWhatsApp.tsx resolves to 0px and the mobile
+      bottom bar's safe-area padding is inert.
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>TravelSugbo — Cebu Day Tours &amp; Packages</title>
     <meta
       name="description"

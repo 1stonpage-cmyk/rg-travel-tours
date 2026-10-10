@@ -55,11 +55,22 @@ export default function PublicLayout() {
        * icon button + 12px top padding + max(12px, the safe-area inset on a
        * notched phone, up to ~34px) bottom padding + a 1px border ≈ 81–103px.
        *
-       * md:pb-0 cancels this at the exact breakpoint where the bar itself
-       * stops existing (`md:hidden` in FloatingWhatsApp) — desktop gains
-       * nothing.
+       * BUG-079: that 128px (8rem) is a flat number, but the bar's own
+       * bottom padding is `max(0.75rem, env(safe-area-inset-bottom))` — on
+       * a notched phone the inset can exceed the 0.75rem already folded
+       * into the 103px estimate above, making the flat reservation short
+       * and letting the bar sit over whatever the page scrolls up against
+       * it. `.pb-mobile-bar-safe` (index.css) adds the same
+       * `env(safe-area-inset-bottom)` on top of the flat 8rem so the
+       * reservation grows with the inset instead of assuming a fixed worst
+       * case. This is reasoned, not measured — there was no notched device
+       * to confirm it against; see the task report.
+       *
+       * The class also cancels to 0 at the exact breakpoint where the bar
+       * itself stops existing (`md:hidden` in FloatingWhatsApp) — desktop
+       * gains nothing.
        */}
-      <main id="main" className="flex-1 pb-32 md:pb-0">
+      <main id="main" className="pb-mobile-bar-safe flex-1">
         <Outlet />
       </main>
       <SiteFooter />

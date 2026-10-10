@@ -1,8 +1,55 @@
 import { Clock, Facebook, Mail, MapPin, Phone } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { SITE, telLink } from '@/lib/site';
+import { ViberGlyph, WhatsAppGlyph } from '@/components/common/BrandGlyphs';
+import { SITE, telLink, viberLink, whatsappLink } from '@/lib/site';
+import { cn } from '@/lib/utils';
 
 const PERMITS = [SITE.permits.dot, SITE.permits.dti, SITE.permits.bir];
+
+/**
+ * Icon-only WhatsApp/Viber buttons beside the primary phone number (spec
+ * task 2.10A). Same shape as ContactSection's ChatIcon: the brand colour
+ * lives only on this circle, behind the glyph, never behind visible text.
+ * The caption below is the "visible wording outside the pill" the brand
+ * rule requires — it is `aria-hidden` because the link's own `aria-label`
+ * is already the accessible name; without that, a screen reader would
+ * announce the button twice. 44px (`size-11`) meets the project's tap
+ * target floor; `.press-brand` matches the other brand-colour pills' press
+ * feedback (FloatingWhatsApp, ContactSection).
+ */
+function ChatButton({
+  tone,
+  href,
+  label,
+  external,
+  children,
+}: {
+  tone: 'whatsapp' | 'viber';
+  href: string;
+  label: string;
+  external?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <span className="inline-flex flex-col items-center gap-1">
+      <a
+        href={href}
+        {...(external ? { target: '_blank', rel: 'noreferrer noopener' } : {})}
+        aria-label={label}
+        className={cn(
+          'press-brand focus-visible:ring-brand-gold-400 flex size-11 shrink-0 items-center justify-center rounded-full text-white transition-[transform,box-shadow,background-color] duration-200 hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2',
+          tone === 'whatsapp' ? 'bg-whatsapp hover:bg-whatsapp-pressed' : 'bg-viber',
+        )}
+      >
+        {children}
+      </a>
+      <span aria-hidden="true" className="text-brand-blue-300 text-[10px] font-medium">
+        {tone === 'whatsapp' ? 'WhatsApp' : 'Viber'}
+      </span>
+    </span>
+  );
+}
 
 export default function SiteFooter() {
   return (
@@ -20,14 +67,31 @@ export default function SiteFooter() {
             <li className="flex items-start gap-2">
               <Phone className="mt-3.5 size-4 shrink-0" aria-hidden="true" />
               <div>
-                <a
-                  href={telLink(SITE.contact.phone.tel)}
-                  className="flex min-h-11 items-center gap-2 hover:underline"
-                >
-                  {SITE.contact.phone.display}
-                  <span className="text-brand-blue-300 text-xs">{SITE.contact.phone.network}</span>
-                </a>
-                <p className="text-brand-blue-300 -mt-2 text-xs">WhatsApp, Viber and calls</p>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                  <a
+                    href={telLink(SITE.contact.phone.tel)}
+                    className="flex min-h-11 items-center gap-2 hover:underline"
+                  >
+                    {SITE.contact.phone.display}
+                    <span className="text-brand-blue-300 text-xs">
+                      {SITE.contact.phone.network}
+                    </span>
+                  </a>
+                  <span className="flex items-center gap-2">
+                    <ChatButton
+                      tone="whatsapp"
+                      href={whatsappLink()}
+                      label="Chat on WhatsApp"
+                      external
+                    >
+                      <WhatsAppGlyph className="size-5" />
+                    </ChatButton>
+                    <ChatButton tone="viber" href={viberLink()} label="Chat on Viber">
+                      <ViberGlyph className="size-5" />
+                    </ChatButton>
+                  </span>
+                </div>
+                <p className="text-brand-blue-300 mt-1 text-xs">WhatsApp, Viber and calls</p>
               </div>
             </li>
             <li className="flex items-start gap-2">

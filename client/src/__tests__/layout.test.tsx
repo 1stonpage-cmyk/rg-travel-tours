@@ -1,7 +1,14 @@
 import { act, render, screen } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import PublicLayout from '@/components/layout/PublicLayout';
+import { SITE, viberLink, whatsappLink } from '@/lib/site';
+
+const cssPath = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'index.css');
+const css = readFileSync(cssPath, 'utf8');
 
 function renderLayout() {
   return render(
@@ -58,12 +65,57 @@ describe('PublicLayout', () => {
    * not, and cannot be, a measurement of actual on-screen clearance (see
    * BUG-074's standing screenshot gap). Geometric non-overlap is reasoned
    * about in the task report, not measured here.
+   *
+   * BUG-079 (spec task 2.10B): the flat `pb-32` reservation above was
+   * replaced by `.pb-mobile-bar-safe` (index.css), which adds
+   * `env(safe-area-inset-bottom)` on top of the same 8rem so a notched
+   * phone's home-indicator inset doesn't eat into the reserved space.
+   * jsdom cannot compute `env()`, so — same caveat as above — this proves
+   * the class is wired up and reads the real rule text out of index.css;
+   * it is not a measurement of actual on-screen clearance on a real
+   * device.
    */
   it("reserves mobile-only bottom padding on <main> for the sticky bar's height, with nothing added on desktop", () => {
     renderLayout();
     const main = screen.getByRole('main');
-    expect(main.className).toMatch(/\bpb-32\b/);
-    expect(main.className).toMatch(/\bmd:pb-0\b/);
+    expect(main.className).toMatch(/\bpb-mobile-bar-safe\b/);
+    expect(main.className).not.toMatch(/\bpb-32\b/);
+  });
+
+  it('BUG-079: .pb-mobile-bar-safe adds the safe-area inset on top of the flat 8rem, and cancels both at md', () => {
+    const rule = css.match(/\.pb-mobile-bar-safe\s*\{([^}]*)\}/);
+    expect(rule, 'expected a .pb-mobile-bar-safe rule in index.css').toBeTruthy();
+    expect(rule![1]).toMatch(
+      /padding-bottom:\s*calc\(\s*8rem\s*\+\s*env\(safe-area-inset-bottom\)\s*\)/,
+    );
+
+    const mdBlock = css.match(
+      /@media \(min-width: 768px\)\s*\{\s*\.pb-mobile-bar-safe\s*\{([^}]*)\}/,
+    );
+    expect(
+      mdBlock,
+      'expected .pb-mobile-bar-safe to be cancelled at the md breakpoint',
+    ).toBeTruthy();
+    expect(mdBlock![1]).toMatch(/padding-bottom:\s*0/);
+  });
+
+  /**
+   * BUG-079 also requires `viewport-fit=cover` on the viewport meta tag —
+   * without it, `env(safe-area-inset-*)` resolves to 0px and the rule above
+   * is inert. jsdom doesn't load index.html, so this reads the file
+   * directly rather than asserting on a rendered <head>.
+   */
+  it('BUG-079: client/index.html sets viewport-fit=cover so env(safe-area-inset-*) resolves', () => {
+    const indexHtmlPath = resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      '..',
+      '..',
+      'index.html',
+    );
+    const html = readFileSync(indexHtmlPath, 'utf8');
+    const viewportMeta = html.match(/<meta\s+name="viewport"\s+content="([^"]*)"/)?.[1];
+    expect(viewportMeta, 'expected a viewport meta tag').toBeTruthy();
+    expect(viewportMeta).toMatch(/viewport-fit=cover/);
   });
 
   it('pins the mandated PlaceholderBadge copy and forbids the superseded "not real" wording', () => {
@@ -145,8 +197,14 @@ describe('FloatingWhatsApp hides behind the hero search form', () => {
    * once in jsdom (no real CSS layout — see the describe block's own
    * comment), so this returns however many WhatsApp-named links currently
    * exist rather than assuming exactly one.
+   *
+   * Matched on FloatingWhatsApp's own accessible name ("Chat with us on
+   * WhatsApp") rather than a bare /whatsapp/i, which would also match
+   * SiteFooter's unrelated "Chat on WhatsApp" button (spec task 2.10A) —
+   * that one is static chrome and never hides with the hero form, so a
+   * loose match here would make this assertion fail for the wrong reason.
    */
-  const whatsapp = () => screen.queryAllByRole('link', { name: /whatsapp/i });
+  const whatsapp = () => screen.queryAllByRole('link', { name: /chat with us on whatsapp/i });
 
   /**
    * FloatingWhatsApp now also watches the footer (for the bottom bar's own
@@ -237,5 +295,76 @@ describe('brand vs legal operator', () => {
   it('carries no stale randgtraveltours.com reference', () => {
     const { container } = renderLayout();
     expect(container.innerHTML).not.toMatch(/randgtraveltours/i);
+  });
+});
+
+/**
+ * Spec task 2.10A: the footer had the phone number but no WhatsApp/Viber
+ * link next to it. Same assertion shape as ContactSection's own branding
+ * coverage (motion.test.tsx, fix round 1 F1 / BUG-077): the coloured pill
+ * carries no text node, the visible label is a sibling outside it (not
+ * inside it), and the real phone number is still rendered alongside.
+ */
+describe('SiteFooter — WhatsApp/Viber icon buttons beside the phone number (spec task 2.10A)', () => {
+  function pillFor(tone: 'whatsapp' | 'viber') {
+    const pill = screen.getByRole('link', { name: new RegExp(`chat on ${tone}`, 'i') });
+    return pill;
+  }
+
+  it('the WhatsApp pill carries no text node — the glyph is the only content inside it', () => {
+    renderLayout();
+    const pill = pillFor('whatsapp');
+    expect(pill).toHaveClass('bg-whatsapp');
+    expect(pill.textContent).toBe('');
+  });
+
+  it('the Viber pill carries no text node either', () => {
+    renderLayout();
+    const pill = pillFor('viber');
+    expect(pill).toHaveClass('bg-viber');
+    expect(pill.textContent).toBe('');
+  });
+
+  it('both pills expose an aria-label naming the app', () => {
+    renderLayout();
+    expect(pillFor('whatsapp')).toHaveAttribute('aria-label', 'Chat on WhatsApp');
+    expect(pillFor('viber')).toHaveAttribute('aria-label', 'Chat on Viber');
+  });
+
+  it('the visible "WhatsApp" caption is a sibling outside the coloured pill, not inside it', () => {
+    renderLayout();
+    const pill = pillFor('whatsapp');
+    const label = pill.nextElementSibling;
+    expect(label, 'expected a sibling element after the pill').not.toBeNull();
+    expect(label).toHaveTextContent('WhatsApp');
+    expect(pill.contains(label)).toBe(false);
+  });
+
+  it('the visible "Viber" caption is a sibling outside the coloured pill, not inside it', () => {
+    renderLayout();
+    const pill = pillFor('viber');
+    const label = pill.nextElementSibling;
+    expect(label, 'expected a sibling element after the pill').not.toBeNull();
+    expect(label).toHaveTextContent('Viber');
+    expect(pill.contains(label)).toBe(false);
+  });
+
+  it('both pills use .press-brand, not the plain .press other rows here carry', () => {
+    renderLayout();
+    for (const pill of [pillFor('whatsapp'), pillFor('viber')]) {
+      expect(pill).toHaveClass('press-brand');
+      expect(pill).not.toHaveClass('press');
+    }
+  });
+
+  it('reuses the shared whatsappLink()/viberLink() helpers — no new link target', () => {
+    renderLayout();
+    expect(pillFor('whatsapp')).toHaveAttribute('href', whatsappLink());
+    expect(pillFor('viber')).toHaveAttribute('href', viberLink());
+  });
+
+  it('keeps the visible phone number rendered — it is not replaced by the new buttons', () => {
+    renderLayout();
+    expect(screen.getByRole('contentinfo')).toHaveTextContent(SITE.contact.phone.display);
   });
 });
