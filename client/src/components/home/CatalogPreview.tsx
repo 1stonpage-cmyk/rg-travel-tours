@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { Link } from 'react-router-dom';
 import QueryBoundary from '@/components/common/QueryBoundary';
 import { Skeleton, TourCardSkeleton } from '@/components/common/Skeleton';
@@ -14,6 +14,163 @@ const ALL = 'all';
 const SKELETON_CHIP_COUNT = 6;
 const SKELETON_CARD_COUNT = 6;
 
+/**
+ * Mobile (<768px): a horizontal swipe row using native CSS scroll-snap —
+ * `snap-x snap-mandatory` on the row, `snap-start` on each card. Each card
+ * is narrower than the row so the next one visibly peeks in, which is the
+ * swipe affordance (spec task 2.9A).
+ *
+ * At `md` (768px) this becomes exactly the previous desktop grid. The
+ * switch point moves from the old `sm:grid-cols-2` (640px) to `md:` (768px)
+ * on purpose — the task's carousel range is "<768px", so the 640-767 slice
+ * that used to be a 2-column grid is now carousel too, while every class
+ * that actually paints anything at >=768px (`grid`, `gap-6`, `grid-cols-2`,
+ * `lg:grid-cols-3`) is unchanged, so the desktop grid is byte-identical.
+ *
+ * Both constants are shared with CatalogGridSkeleton below so the skeleton
+ * is the same shape as the loaded carousel — otherwise the page would jump
+ * from a tall multi-row skeleton grid to a single-row carousel the instant
+ * tours.list resolves, exactly the layout shift this task forbids.
+ */
+const CAROUSEL_LIST_CLASSES =
+  'mt-8 flex gap-4 overflow-x-auto snap-x snap-mandatory md:grid md:gap-6 md:overflow-visible md:snap-none md:grid-cols-2 lg:grid-cols-3';
+const CAROUSEL_ITEM_CLASSES = 'w-[84%] shrink-0 snap-start md:w-auto';
+
+/**
+ * Mirrors the guard `useHeroParallax` uses: jsdom (this project's test
+ * environment) implements no `window.matchMedia` at all and throws if it is
+ * called unstubbed, so this checks the function exists before ever calling it.
+ */
+function prefersReducedMotion(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+/**
+ * Tracks which card is most visible in the mobile carousel row, for the dot
+ * indicator. Local to CatalogPreview — the only carousel in the app right
+ * now, so this stays a small component-local hook (per the task's "small
+ * local hooks only" constraint) rather than a shared lib addition.
+ *
+ * Same existence guard, same order, as useCardStagger/useCountUp: jsdom has
+ * no IntersectionObserver, so every existing test that renders this
+ * component without stubbing one exits here and simply reports index 0 —
+ * no crash, and the first dot reads as current until a real browser runs
+ * the observer.
+ *
+ * Re-runs on `itemsKey` (the active destination filter) changing: a filter
+ * swap replaces which tours are rendered, so both the tracked index and the
+ * row's own scroll position reset to the first card rather than leaving the
+ * dots pointing at a position within the *new* list that happens to match
+ * the old scrollLeft of the *previous* one.
+ */
+function useActiveCarouselCard(
+  containerRef: RefObject<HTMLUListElement | null>,
+  itemSelector: string,
+  itemsKey: unknown,
+) {
+  const [active, setActive] = useState(0);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    setActive(0);
+    if (!container) return;
+    // Plain property, not `scrollTo()` — this project's jsdom (no test
+    // polyfills it, unlike the targeted scrollIntoView polyfills elsewhere)
+    // implements `scrollLeft` but not `Element.prototype.scrollTo`, and an
+    // instant jump to the start needs no animation anyway.
+    container.scrollLeft = 0;
+    if (typeof IntersectionObserver === 'undefined') return;
+
+    const items = Array.from(container.querySelectorAll<HTMLElement>(itemSelector));
+    if (items.length === 0) return;
+
+    const ratios = new Map<Element, number>();
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) ratios.set(entry.target, entry.intersectionRatio);
+        let bestIndex = 0;
+        let bestRatio = -1;
+        for (const [i, item] of items.entries()) {
+          const ratio = ratios.get(item) ?? 0;
+          if (ratio > bestRatio) {
+            bestRatio = ratio;
+            bestIndex = i;
+          }
+        }
+        setActive(bestIndex);
+      },
+      { root: container, threshold: [0, 0.25, 0.5, 0.75, 1] },
+    );
+    for (const item of items) observer.observe(item);
+
+    return () => observer.disconnect();
+  }, [itemsKey]);
+
+  return active;
+}
+
+/**
+ * Real, keyboard-reachable pagination controls for the mobile carousel —
+ * not decorative dots. Each button has its own accessible name ("Go to
+ * tour N of total") and `aria-current` on the one matching the row's
+ * current scroll position, mirroring the destination chip row's own
+ * role="group" + labelled-button pattern elsewhere in this file.
+ *
+ * Hidden at `md` and up: there is no carousel to paginate on the desktop
+ * grid, so the controls are removed from the a11y tree there too, not just
+ * visually.
+ *
+ * The visible dot is a tiny 8-10px circle, but the clickable button around
+ * it is a full 44px tap target (`tap-target`), per the brief's explicit
+ * callout that small indicators still need a real touch target.
+ */
+function CarouselDots({
+  containerRef,
+  count,
+  active,
+}: {
+  containerRef: RefObject<HTMLUListElement | null>;
+  count: number;
+  active: number;
+}) {
+  const goTo = (index: number) => {
+    const item = containerRef.current?.children[index] as HTMLElement | undefined;
+    item?.scrollIntoView({
+      behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+      inline: 'start',
+      block: 'nearest',
+    });
+  };
+
+  return (
+    <div
+      role="group"
+      aria-label="Tour carousel pagination"
+      className="mt-4 flex items-center justify-center gap-1 md:hidden"
+    >
+      {Array.from({ length: count }, (_, i) => (
+        <button
+          key={i}
+          type="button"
+          aria-label={`Go to tour ${i + 1} of ${count}`}
+          aria-current={active === i ? 'true' : undefined}
+          onClick={() => goTo(i)}
+          className="press tap-target flex items-center justify-center"
+        >
+          <span
+            aria-hidden="true"
+            className={cn(
+              'block rounded-full',
+              active === i ? 'bg-brand-blue-600 size-2.5' : 'bg-brand-blue-200 size-2',
+            )}
+          />
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /** Same `min-h-11` height as the real chips, so the row below never shifts when data arrives. */
 function ChipRowSkeleton() {
   return (
@@ -25,16 +182,31 @@ function ChipRowSkeleton() {
   );
 }
 
-/** Mirrors the real grid's own classes so swapping in the loaded cards causes no layout shift. */
+/**
+ * Mirrors the real grid/carousel's own classes so swapping in the loaded
+ * cards causes no layout shift — on mobile this means being the same
+ * single-row carousel shape, not the old multi-row grid, with a matching
+ * (non-interactive) dot row reserving the same space the real pagination
+ * controls will occupy once tours.list resolves.
+ */
 function CatalogGridSkeleton() {
   return (
-    <ul className="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-      {Array.from({ length: SKELETON_CARD_COUNT }, (_, i) => (
-        <li key={i}>
-          <TourCardSkeleton />
-        </li>
-      ))}
-    </ul>
+    <>
+      <ul className={CAROUSEL_LIST_CLASSES}>
+        {Array.from({ length: SKELETON_CARD_COUNT }, (_, i) => (
+          <li key={i} className={CAROUSEL_ITEM_CLASSES}>
+            <TourCardSkeleton />
+          </li>
+        ))}
+      </ul>
+      <div aria-hidden="true" className="mt-4 flex items-center justify-center gap-1 md:hidden">
+        {Array.from({ length: SKELETON_CARD_COUNT }, (_, i) => (
+          <span key={i} className="tap-target flex items-center justify-center">
+            <Skeleton className="size-2 rounded-full" />
+          </span>
+        ))}
+      </div>
+    </>
   );
 }
 
@@ -180,8 +352,16 @@ function CatalogGrid({ tours, active }: { tours: TourListItem[]; active: string 
   // Cards mount here only once `tours.list` resolves (this component is
   // itself only rendered from inside QueryBoundary's loaded-data branch), so
   // keying on `filtered.length` lets the stagger fire the first time real
-  // cards exist and are scrolled into view — see use-scroll-reveal.ts.
+  // cards exist and are scrolled into view — see use-scroll-reveal.ts. The
+  // selector ('li') and flex/grid toggle below are independent of each
+  // other: the stagger only cares that its items match `li`, not how the
+  // container lays them out.
   useCardStagger(gridRef, 'li', filtered.length);
+  // Dot indicator for the mobile carousel (spec task 2.9A) — keyed on
+  // `active` (the destination filter), not `filtered.length`, so a filter
+  // swap that happens to produce the same card count still resets the
+  // tracked position and the row's own scroll offset to the first card.
+  const activeCard = useActiveCarouselCard(gridRef, 'li', active);
 
   if (filtered.length === 0) {
     return (
@@ -192,12 +372,17 @@ function CatalogGrid({ tours, active }: { tours: TourListItem[]; active: string 
   }
 
   return (
-    <ul ref={gridRef} className="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-      {filtered.map((tour) => (
-        <li key={tour.id}>
-          <TourCard tour={tour} />
-        </li>
-      ))}
-    </ul>
+    <>
+      <ul ref={gridRef} className={CAROUSEL_LIST_CLASSES}>
+        {filtered.map((tour) => (
+          <li key={tour.id} className={CAROUSEL_ITEM_CLASSES}>
+            <TourCard tour={tour} />
+          </li>
+        ))}
+      </ul>
+      {filtered.length > 1 && (
+        <CarouselDots containerRef={gridRef} count={filtered.length} active={activeCard} />
+      )}
+    </>
   );
 }
