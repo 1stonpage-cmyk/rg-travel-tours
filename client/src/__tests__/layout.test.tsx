@@ -6,15 +6,29 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import PublicLayout from '@/components/layout/PublicLayout';
 import { SITE, viberLink, whatsappLink } from '@/lib/site';
+import { TrpcProviders } from '@/lib/trpc';
+import { SETTINGS_FIXTURE } from './helpers/fixtures';
+import { mockTrpc } from './helpers/mock-trpc';
 
 const cssPath = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'index.css');
 const css = readFileSync(cssPath, 'utf8');
 
+// PublicLayout now mounts AnnouncementBar (task 3.1), which calls
+// trpc.settings.get.useQuery() — every render here needs the provider and a
+// mock. SETTINGS_FIXTURE.announcement is null, so the bar renders nothing
+// and every assertion below is unaffected; announcement.test.tsx covers the
+// bar's own behaviour with a non-null announcement.
+beforeEach(() => {
+  mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
+});
+
 function renderLayout() {
   return render(
-    <MemoryRouter>
-      <PublicLayout />
-    </MemoryRouter>,
+    <TrpcProviders>
+      <MemoryRouter>
+        <PublicLayout />
+      </MemoryRouter>
+    </TrpcProviders>,
   );
 }
 

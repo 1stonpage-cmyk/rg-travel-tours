@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
+import AnnouncementBar from './AnnouncementBar';
 import FloatingWhatsApp from './FloatingWhatsApp';
 import PlaceholderBadge from './PlaceholderBadge';
 import SiteFooter from './SiteFooter';
@@ -37,6 +38,21 @@ export default function PublicLayout() {
         Skip to main content
       </a>
       <PlaceholderBadge />
+      {/*
+       * Deliberately in normal document flow, not sticky/fixed — same
+       * mechanism as PlaceholderBadge just above it. SiteHeader is the only
+       * sticky element (`sticky top-0`); this bar scrolls away with the
+       * page, so once scrolled past it the header is still the sole element
+       * pinned at the viewport top. `section[id] { scroll-margin-top: 5rem
+       * }` (index.css) is tuned to the header's own h-16 box and stays
+       * correct regardless of whether this bar is mounted, its height, or
+       * its presence — there is nothing here for a hash link (#tours, #faq,
+       * etc.) to land wrong against. Do not make this sticky: a sticky bar
+       * would add its own height to the real top offset and require
+       * re-tuning scroll-margin-top (task 2.9F deliberately kept the header
+       * at one fixed height so there would only ever be one number to tune).
+       */}
+      <AnnouncementBar />
       <SiteHeader />
       {/*
        * Bottom padding reserved for the mobile sticky bar in FloatingWhatsApp
