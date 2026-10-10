@@ -48,9 +48,57 @@ describe('PrivacyPage', () => {
     mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
     renderWithTrpc(<PrivacyPage />);
 
-    // 2026-10-09T00:00:00.000Z is 2026-10-09 08:00 in Asia/Manila (UTC+8) —
-    // still October 9 there, so the displayed date must not shift to the 8th.
+    // The fixture's 2026-10-09T00:00:00.000Z renders as October 9 in both
+    // UTC and Asia/Manila — this case pins only that a date is shown. The
+    // timezone conversion itself is pinned by the test below, which needs
+    // an instant where the two zones genuinely disagree.
     expect(await screen.findByText(/Last updated October 9, 2026/)).toBeInTheDocument();
+  });
+
+  /**
+   * `updatedAt` is stored UTC and displayed in Asia/Manila (UTC+8), the
+   * project-wide time convention. 2026-10-09T17:00:00Z is 2026-10-10 01:00
+   * in Manila — a different CALENDAR DAY — so rendering this in UTC (or
+   * with the formatter's timeZone dropped, where the test machine's own
+   * zone decides) prints October 9 and fails here.
+   */
+  it('renders the last-updated date in Asia/Manila, not UTC', async () => {
+    mockTrpc({
+      'settings.get': {
+        ...SETTINGS_FIXTURE,
+        legal: {
+          ...SETTINGS_FIXTURE.legal,
+          privacy: {
+            ...SETTINGS_FIXTURE.legal.privacy,
+            updatedAt: '2026-10-09T17:00:00.000Z',
+          },
+        },
+      },
+    });
+    renderWithTrpc(<PrivacyPage />);
+
+    expect(await screen.findByText(/Last updated October 10, 2026/)).toBeInTheDocument();
+    expect(screen.queryByText(/Last updated October 9, 2026/)).not.toBeInTheDocument();
+  });
+
+  /**
+   * End-to-end counterpart to markdown.test.tsx's hard-wrap case: the
+   * fixture's privacy excerpt reproduces the seed's hard wrapping, so this
+   * proves the page renders the real content shape as one paragraph rather
+   * than three stacked ones.
+   */
+  it('renders a hard-wrapped seed paragraph as one paragraph on the page', async () => {
+    mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
+    const { container } = renderWithTrpc(<PrivacyPage />);
+
+    await screen.findByRole('heading', { level: 2, name: 'Privacy Notice' });
+    const paragraph = Array.from(container.querySelectorAll('p')).find((p) =>
+      p.textContent?.startsWith('TravelSugbo (operated by'),
+    );
+    expect(paragraph, 'the seeded opening paragraph did not render').toBeTruthy();
+    expect(paragraph!.textContent).toBe(
+      'TravelSugbo (operated by R&G Travel & Tours) collects the contact and booking details you provide when you reserve a tour, so we can confirm your trip and assign a driver.',
+    );
   });
 
   it('sets a single h1 per page — the page title, not anything from the markdown', async () => {

@@ -54,6 +54,30 @@ describe('Markdown', () => {
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
   });
 
+  /**
+   * The seeded legal documents are hard-wrapped at ~75 columns, so almost
+   * every real paragraph arrives as several short lines. They must join
+   * into ONE `<p>` with single spaces — not one paragraph per line, and not
+   * with the newlines preserved. This path was untested anywhere despite
+   * being the shape of all the actual content.
+   */
+  it('joins a hard-wrapped paragraph into a single <p>', () => {
+    const { container } = render(
+      <Markdown
+        source={
+          'TravelSugbo (operated by R&G Travel & Tours) collects the contact and booking\ndetails you provide when you reserve a tour, so we can confirm your trip and\nassign a driver.\n\nA second paragraph.'
+        }
+      />,
+    );
+
+    const paragraphs = Array.from(container.querySelectorAll('p'));
+    expect(paragraphs).toHaveLength(2);
+    expect(paragraphs[0]!.textContent).toBe(
+      'TravelSugbo (operated by R&G Travel & Tours) collects the contact and booking details you provide when you reserve a tour, so we can confirm your trip and assign a driver.',
+    );
+    expect(paragraphs[1]!.textContent).toBe('A second paragraph.');
+  });
+
   it('renders a blockquote', () => {
     render(<Markdown source={'> **TODO: client legal review.** Placeholder text.'} />);
     expect(screen.getByText(/Placeholder text\./).closest('blockquote')).toBeInTheDocument();

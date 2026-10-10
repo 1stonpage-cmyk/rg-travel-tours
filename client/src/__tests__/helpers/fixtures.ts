@@ -4,7 +4,9 @@
  * (`pnpm --filter @rg/server dev`, then curling `/trpc/<procedure>`) and
  * copying what came back. Values are drawn from today's seed content
  * (`server/src/db/seed-data.ts`), loaded by `pnpm db:seed` into the
- * `rg_travel` database.
+ * `rg_travel` database — with ONE documented exception: `SETTINGS_FIXTURE.legal`
+ * is an abridged excerpt of the two seeded legal documents, not their full
+ * text. See the comment on that field; nothing else here is abridged.
  *
  * Types come straight from the routers' exported result interfaces
  * (type-only imports, erased at build — no runtime dependency on server
@@ -207,15 +209,26 @@ export const SETTINGS_FIXTURE: SettingsPayload = {
       after: '— R&G also handles airline booking, hotel reservations and spot transportation.',
     },
   },
+  /*
+   * ABRIDGED, unlike every other block in this file. The seeded legal
+   * documents run to ~25 lines of prose each (`legal_privacy`/`legal_terms`
+   * in server/src/db/seed-data.ts); copying them in full would create a
+   * second copy of the client's legal text, stale the day either is edited.
+   * What is kept is what the page tests assert on — the TODO blockquote,
+   * the title heading, and the seed's own opening paragraph reproduced with
+   * the seed's HARD WRAPPING intact, so the renderer's join-wrapped-lines-
+   * into-one-paragraph path is exercised through the real page here and not
+   * only in markdown.test.tsx.
+   */
   legal: {
     privacy: {
       markdown:
-        '> **TODO: client legal review.** This text is a placeholder and is not legal advice.\n\n# Privacy Notice',
+        '> **TODO: client legal review.** This text is a placeholder and is not legal advice.\n\n# Privacy Notice\n\nTravelSugbo (operated by R&G Travel & Tours) collects the contact and booking\ndetails you provide when you reserve a tour, so we can confirm your trip and\nassign a driver.',
       updatedAt: '2026-10-09T00:00:00.000Z',
     },
     terms: {
       markdown:
-        '> **TODO: client legal review.** This text is a placeholder and is not legal advice.\n\n# Terms of Service',
+        '> **TODO: client legal review.** This text is a placeholder and is not legal advice.\n\n# Terms of Service\n\nThese placeholder terms cover booking, payment and cancellation at a high\nlevel while the client’s reviewed terms are pending.',
       updatedAt: '2026-10-09T00:00:00.000Z',
     },
   },
