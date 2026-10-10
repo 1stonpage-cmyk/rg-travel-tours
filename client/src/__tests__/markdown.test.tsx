@@ -45,11 +45,13 @@ describe('Markdown', () => {
     expect(link).not.toHaveAttribute('target');
   });
 
-  it('renders a mailto link without target=_blank', () => {
+  it('renders a mailto link without target=_blank, but still with rel=noopener noreferrer', () => {
     render(<Markdown source={'[email us](mailto:hello@example.com)'} />);
     const link = screen.getByRole('link', { name: 'email us' });
     expect(link).toHaveAttribute('href', 'mailto:hello@example.com');
     expect(link).not.toHaveAttribute('target');
+    // Anything that is not a same-site path carries rel, not just http(s).
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
   });
 
   it('renders a blockquote', () => {
@@ -72,5 +74,53 @@ describe('Markdown', () => {
   it('refuses a data: link', () => {
     render(<Markdown source={'[bad](data:text/html,<script>bad()</script>)'} />);
     expect(screen.queryByRole('link')).toBeNull();
+  });
+});
+
+/**
+ * The href allowlist, case by case. Legal copy becomes admin-*editable* in
+ * Weeks 5–7, so every one of these is a stored-link vector behind a login,
+ * not a theoretical exercise.
+ *
+ * The scheme-relative family is the one that was actually broken: the
+ * predicate used to return `true` for anything starting with "/", and a
+ * browser resolves `//evil.com`, `///evil.com` and `/\evil.com` as
+ * protocol-relative URLs to `https://evil.com/`. The uppercase,
+ * tab-obfuscated, URL-encoded, `vbscript:` and `data:` cases already passed
+ * but had no test naming them, so a future "simplification" of the scheme
+ * check could have reopened any of them silently.
+ *
+ * A rejected href must leave the whole `[text](url)` span as literal text —
+ * never a link with the href stripped, and never silently dropped (dropping
+ * admin-authored text is its own bug).
+ */
+describe('Markdown href allowlist', () => {
+  const REJECTED: [label: string, href: string][] = [
+    ['a scheme-relative URL', '//evil.com'],
+    ['a triple-slash URL', '///evil.com'],
+    ['a backslash scheme-relative URL', '/\\evil.com'],
+    ['an uppercase JAVASCRIPT: scheme', 'JAVASCRIPT:alert(1)'],
+    ['a tab-obfuscated javascript: scheme', 'java\tscript:alert(1)'],
+    ['a URL-encoded javascript: scheme', '%6Aavascript:alert(1)'],
+    ['a vbscript: scheme', 'vbscript:msgbox(1)'],
+    ['a data: URL', 'data:text/html,<b>x</b>'],
+  ];
+
+  it.each(REJECTED)('refuses %s, rendering it as literal text', (_label, href) => {
+    const source = `[click](${href})`;
+    const { container } = render(<Markdown source={source} />);
+
+    expect(screen.queryByRole('link')).toBeNull();
+    expect(container.querySelector('a')).toBeNull();
+    // Shown, not swallowed — the exact source text survives.
+    expect(container.textContent).toContain(source);
+  });
+
+  it('still accepts a genuine same-site path, with no rel and no target', () => {
+    render(<Markdown source={'[privacy](/privacy)'} />);
+    const link = screen.getByRole('link', { name: 'privacy' });
+    expect(link).toHaveAttribute('href', '/privacy');
+    expect(link).not.toHaveAttribute('target');
+    expect(link).not.toHaveAttribute('rel');
   });
 });

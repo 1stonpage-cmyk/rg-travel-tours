@@ -21,7 +21,9 @@ import type { ReactNode } from 'react';
  *   - blank-line-separated paragraphs
  *   - `-` bullet lists
  *   - `**bold**`
- *   - `[text](url)` links, scheme-allowlisted (http/https/mailto/leading `/`)
+ *   - `[text](url)` links, scheme-allowlisted (http/https/mailto, or a
+ *     same-site path — a leading `/` that is NOT `//`, `///` or `/\`, each
+ *     of which the browser resolves to another origin; see `isSameSitePath`)
  *   - `>` blockquotes (the amber TODO-review banner uses this)
  *
  * Everything else — a stray `####`, raw `<script>`/`<img onerror>` HTML,
@@ -102,13 +104,29 @@ function parseBlocks(source: string): Block[] {
   return blocks;
 }
 
-/** http:, https:, mailto:, or a leading "/" relative path. Nothing else — never javascript:, data:, vbscript:, or any other scheme. */
+/** http:, https:, mailto:, or a leading "/" same-site path. Nothing else — never javascript:, data:, vbscript:, or any other scheme. */
 const ALLOWED_SCHEMES = new Set(['http:', 'https:', 'mailto:']);
 const SCHEME_RE = /^([a-zA-Z][a-zA-Z0-9+.-]*):/;
 
+/**
+ * A leading "/" is a genuine same-site path ONLY when the next character is
+ * not another "/" or a "\". `//evil.com`, `///evil.com` and `/\evil.com`
+ * all start with "/" but browsers resolve every one of them as a
+ * protocol-relative URL to another origin (`https://evil.com/`) — the
+ * earlier `startsWith('/') -> true` shortcut therefore let an admin-
+ * authored link point off-site while looking local. Rejecting on the second
+ * character fails closed: a same-site path is accepted, anything that could
+ * change origin is not.
+ */
+function isSameSitePath(trimmed: string): boolean {
+  if (!trimmed.startsWith('/')) return false;
+  const second = trimmed[1];
+  return second !== '/' && second !== '\\';
+}
+
 function isSafeHref(href: string): boolean {
   const trimmed = href.trim();
-  if (trimmed.startsWith('/')) return true;
+  if (trimmed.startsWith('/')) return isSameSitePath(trimmed);
   const match = SCHEME_RE.exec(trimmed);
   if (!match) return false;
   return ALLOWED_SCHEMES.has(`${match[1]!.toLowerCase()}:`);
@@ -138,13 +156,20 @@ function renderInline(text: string, keyPrefix: string): ReactNode[] {
     if (boldText !== undefined) {
       nodes.push(<strong key={`${keyPrefix}-${i}`}>{boldText}</strong>);
     } else if (linkHref !== undefined && isSafeHref(linkHref)) {
-      const isExternal = /^https?:/i.test(linkHref.trim());
+      const trimmedHref = linkHref.trim();
+      const isExternal = /^https?:/i.test(trimmedHref);
+      // `target="_blank"` stays http(s)-only (a mailto: or same-site link
+      // has no business opening a tab), but `rel="noopener noreferrer"`
+      // goes on everything that is not a same-site path — anything leaving
+      // this origin, mailto: included — rather than only on http(s).
+      const sameSite = isSameSitePath(trimmedHref);
       nodes.push(
         <a
           key={`${keyPrefix}-${i}`}
           href={linkHref}
           className="text-brand-blue-700 underline underline-offset-2 hover:no-underline"
-          {...(isExternal ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+          {...(isExternal ? { target: '_blank' } : {})}
+          {...(sameSite ? {} : { rel: 'noopener noreferrer' })}
         >
           {linkText}
         </a>,
