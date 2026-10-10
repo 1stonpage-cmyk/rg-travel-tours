@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { formatPeso } from '@rg/shared';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -259,9 +259,65 @@ function CountUpHarness({ target }: { target: number }) {
   return <span ref={ref}>{value.toLocaleString('en-PH')}+</span>;
 }
 
+/**
+ * Deterministic requestAnimationFrame + performance.now stand-in.
+ *
+ * useCountUp (and useHeroParallax) drive their animation off the REAL clock
+ * — a genuine 400ms count-up, a genuine rAF for the parallax transform.
+ * Letting a test wait on that real clock (`waitFor(..., { timeout })`) made
+ * it wall-clock dependent: `pnpm test` at the repo root runs the shared,
+ * client and server suites concurrently, and under that CPU contention
+ * jsdom's real rAF got starved enough that 400ms of animation did not
+ * complete inside even a generous 2000ms `waitFor` window — a real failure
+ * on a real run, not flakiness, and worse on a busier machine. Raising the
+ * timeout further would only trade a failing test for a slower one that
+ * still fails eventually.
+ *
+ * This stub removes the real clock from the test entirely: callbacks queue
+ * up via the stubbed `requestAnimationFrame` and only run when the test
+ * calls `tick(ms)`, with the exact `performance.now()` value the test
+ * chooses. That lets a test step through an animation frame by frame and
+ * assert the real intermediate progression — not just "it eventually got
+ * there" — deterministically, on any machine, under any load.
+ */
+function installFakeRaf() {
+  let now = 0;
+  let queue: { id: number; cb: (t: number) => void }[] = [];
+  let nextId = 1;
+
+  vi.stubGlobal('requestAnimationFrame', (cb: (t: number) => void) => {
+    const id = nextId++;
+    queue.push({ id, cb });
+    return id;
+  });
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => {
+    queue = queue.filter((q) => q.id !== id);
+  });
+  vi.spyOn(performance, 'now').mockImplementation(() => now);
+
+  return {
+    /**
+     * Advances the clock by `ms` and runs exactly the callbacks that were
+     * queued *before* this call, with the new, advanced `now` — mirroring
+     * a real animation frame: a callback that schedules another rAF while
+     * running lands in next tick's queue, not this one's.
+     */
+    tick(ms: number) {
+      now += ms;
+      const due = queue;
+      queue = [];
+      for (const { cb } of due) cb(now);
+    },
+  };
+}
+
 describe('useCountUp — trust-stat count-up (spec task 2.9E)', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    // installFakeRaf uses vi.spyOn (not vi.stubGlobal) for performance.now
+    // — unstubAllGlobals doesn't touch spies, so this is needed too, or the
+    // frozen fake clock leaks into whichever test runs next in this file.
+    vi.restoreAllMocks();
   });
 
   it('renders the exact target immediately, with no observer, when IntersectionObserver does not exist (jsdom default)', () => {
@@ -285,7 +341,8 @@ describe('useCountUp — trust-stat count-up (spec task 2.9E)', () => {
     expect(MockIntersectionObserver.instances).toHaveLength(0);
   });
 
-  it('starts at 0 and counts up to exactly the target — never a fraction, never an overshoot — once the element intersects', async () => {
+  it('starts at 0, is still 0 immediately after intersecting, progresses through intermediate values, and lands on exactly the target with no overshoot', () => {
+    const clock = installFakeRaf();
     vi.stubGlobal('IntersectionObserver', MockIntersectionObserver);
     stubMatchMedia(false);
 
@@ -301,13 +358,22 @@ describe('useCountUp — trust-stat count-up (spec task 2.9E)', () => {
     // This is what actually proves there is a count-UP, not just a
     // start-at-0/end-at-target pair with nothing animated in between.
     expect(screen.getByText('0+')).toBeInTheDocument();
-
-    await waitFor(() => expect(screen.getByText('15,000+')).toBeInTheDocument(), {
-      timeout: 2000,
-    });
     expect(observer.disconnected).toBe(true);
-    // Never anything other than the one correct final value once it lands —
-    // e.g. no leftover interval still nudging it past 15,000.
+
+    // Halfway through the real 400ms animation (use-count-up.ts's default
+    // duration) — strictly between 0 and the target, proving an actual
+    // intermediate frame rendered, not just the two endpoints.
+    act(() => clock.tick(200));
+    const midText = screen.getByText(/\+$/).textContent!;
+    const midValue = Number(midText.replace(/[+,]/g, ''));
+    expect(midValue).toBeGreaterThan(0);
+    expect(midValue).toBeLessThan(15_000);
+
+    // Past the end of the animation: lands on exactly the target, never a
+    // fraction over or under it — e.g. no leftover tick still nudging it
+    // past 15,000.
+    act(() => clock.tick(300));
+    expect(screen.getByText('15,000+')).toBeInTheDocument();
     expect(screen.queryByText(/^15,00[1-9]/)).not.toBeInTheDocument();
   });
 
@@ -447,6 +513,9 @@ const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
 describe('useHeroParallax — desktop-only hero parallax (spec task 2.9G)', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    // See the matching note in the useCountUp describe above: installFakeRaf
+    // uses vi.spyOn for performance.now, which unstubAllGlobals does not undo.
+    vi.restoreAllMocks();
     scrollTo(0);
   });
 
@@ -463,13 +532,26 @@ describe('useHeroParallax — desktop-only hero parallax (spec task 2.9G)', () =
   }
 
   it('transforms the hero image from scroll position on a desktop, hover-capable pointer', () => {
+    // Deterministic clock — see installFakeRaf's own comment. Without it,
+    // this assertion only has something real to check once the scroll
+    // listener's requestAnimationFrame-deferred update has actually run,
+    // which a real rAF does not guarantee has happened by the very next
+    // synchronous line.
+    const clock = installFakeRaf();
     stubMatchMediaPerQuery({ [REDUCED_MOTION_QUERY]: false, [DESKTOP_POINTER_QUERY]: true });
     const img = renderHero();
 
-    scrollTo(100);
+    // Mount runs `update()` synchronously (not via rAF), at scrollY 0.
+    expect(img.style.transform).toBe('scale(1.08) translateY(0px)');
 
-    expect(img.style.transform).toMatch(/scale\(1\.08\)/);
-    expect(img.style.transform).toMatch(/translateY\(/);
+    scrollTo(100);
+    // The scroll listener's update is deferred to the next animation
+    // frame — not yet applied synchronously after the scroll event.
+    expect(img.style.transform).toBe('scale(1.08) translateY(0px)');
+
+    act(() => clock.tick(16));
+    // shift = min(scrollY * 0.15, 24) = min(100 * 0.15, 24) = 15
+    expect(img.style.transform).toBe('scale(1.08) translateY(15px)');
   });
 
   it('never transforms the image on a touch/coarse pointer, even though matchMedia exists', () => {
