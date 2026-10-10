@@ -67,9 +67,14 @@ const SAFE_CODE = /^[A-Z][A-Z0-9_]{0,40}$/;
 
 /**
  * The driver's error code when it is safely shaped, `UNREACHABLE` otherwise.
- * `UNREACHABLE` covers everything this project throws by hand (guard.ts's
- * wrong-database and cannot-reach errors carry no `code`) as well as any
- * future error whose `code` is not a plain enum token.
+ *
+ * Since BUG-104, `./guard` throws its own `DatabaseFailureCode` tokens
+ * (`DB_UNREACHABLE`, `DB_ACCESS_DENIED`, `DB_UNKNOWN_DATABASE`,
+ * `DB_WRONG_DATABASE`, `DB_NOT_CONFIGURED`, `DB_ERROR`), which are shaped to
+ * pass `SAFE_CODE` and so survive to the build guard intact — that is the
+ * whole point of them. `UNREACHABLE` is now the fallback for an error
+ * thrown from somewhere else with no `code`, or with a `code` that is not a
+ * plain enum token.
  */
 export function safeCode(error: unknown): string {
   const code = (error as { code?: unknown } | null | undefined)?.code;

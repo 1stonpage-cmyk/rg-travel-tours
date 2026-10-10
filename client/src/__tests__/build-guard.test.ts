@@ -253,4 +253,30 @@ describe('production build guard — never leaks the connection string', () => {
       /ER_ACCESS_DENIED_ERROR/,
     );
   });
+
+  /**
+   * BUG-104, the client end of the chain. `server/src/db/guard.ts` now
+   * throws its own `DB_*` tokens so a blocked build can say which failure
+   * it hit; they are only worth anything if they get through `safeCode`'s
+   * allow-shape here rather than being flattened. Each one must reach the
+   * operator's message distinctly — and must NOT be the old blanket
+   * `UNREACHABLE`, which is what every one of them used to become.
+   */
+  it.each([
+    'DB_UNREACHABLE',
+    'DB_ACCESS_DENIED',
+    'DB_UNKNOWN_DATABASE',
+    'DB_WRONG_DATABASE',
+    'DB_NOT_CONFIGURED',
+    'DB_ERROR',
+  ])('reports the guard code %s to the operator verbatim', (code) => {
+    const inputs = guardInputs({ ok: false, siteEnv: 'production', code }, {});
+    expect(inputs.code).toBe(code);
+    expect(inputs.dbReachable).toBe(false);
+
+    const message = evaluateGuard(inputs).message;
+    expect(message).toMatch(new RegExp(`reported ${code}\\b`));
+    expect(message).not.toMatch(/reported UNREACHABLE/);
+    for (const secret of SECRETS) expect(message).not.toMatch(secret);
+  });
 });

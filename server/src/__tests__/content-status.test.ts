@@ -52,6 +52,22 @@ it('reports a failure as a code only — never a driver message or the connectio
   }
 });
 
+/**
+ * BUG-104, end to end. Under Vitest every connection is routed to
+ * `rg_travel_test` while `readContentStatus` asserts the 'app' context, so
+ * the guard rejects with its wrong-database failure — and the payload the
+ * build guard reads must now carry THAT reason. Before the fix this very
+ * call returned `UNREACHABLE`, which told an operator the database was down
+ * when it was up and connected.
+ */
+it('reports the specific reason the read failed, not a blanket UNREACHABLE', async () => {
+  const payload = await probePayload();
+
+  expect(payload.ok).toBe(false);
+  expect(payload.code).toBe('DB_WRONG_DATABASE');
+  expect(payload.code).not.toBe('UNREACHABLE');
+});
+
 it('passes a safely shaped driver code through', () => {
   expect(safeCode(Object.assign(new Error('x'), { code: 'ECONNREFUSED' }))).toBe('ECONNREFUSED');
   expect(safeCode(Object.assign(new Error('x'), { code: 'ER_ACCESS_DENIED_ERROR' }))).toBe(
@@ -61,8 +77,8 @@ it('passes a safely shaped driver code through', () => {
 
 it('replaces anything else with UNREACHABLE', () => {
   const leaky = [
-    // A hand-thrown Error (guard.ts's own wrong-database and cannot-reach
-    // errors) carries no `code` at all.
+    // An Error with no `code` at all. Since BUG-104 guard.ts always attaches
+    // one, so this now stands for anything thrown from elsewhere.
     new Error('Cannot reach MySQL at localhost:3306 — is the service running?'),
     // And a `code` that is not a plain enum token is not a code.
     Object.assign(new Error('x'), { code: 'mysql://rg_travel:CHANGE_ME@localhost:3306/rg_travel' }),
