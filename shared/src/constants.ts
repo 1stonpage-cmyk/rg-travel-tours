@@ -22,24 +22,37 @@ export const CURRENCY = 'PHP';
 export const BOOKING_REF_PREFIX = 'RG';
 
 /**
- * The hero photo's WebP candidates — the mobile LCP element.
+ * The hero photo's candidates — the mobile LCP element.
  *
- * ONE definition with TWO consumers, deliberately: the WebP `<source>` in
+ * ONE definition with TWO consumers, deliberately: the `<img>` in
  * `client/src/components/home/HeroSection.tsx`, and the
  * `<link rel="preload" as="image">` the SEO injector emits for `/` alone
  * (`server/src/seo/resolvers.ts`, task 4.4b).
  *
  * Those two must agree character for character. If they drift, the browser
- * preloads one candidate list and the `<picture>` then fetches a different
- * one — two hero downloads instead of one earlier one, which is worse than
- * having no preload at all. Sharing the constant makes that drift impossible
- * rather than merely tested for.
+ * preloads one candidate list and the `<img>` then fetches a different one —
+ * two hero downloads instead of one earlier one, which is worse than having
+ * no preload at all. Sharing the constant makes that drift impossible rather
+ * than merely tested for.
+ *
+ * JPEG, not WebP (BUG-103). The hero was served through a `<picture>` whose
+ * WebP `<source>` was LARGER than the JPEG it was meant to beat — 295,436 B
+ * vs 289,855 B at 1920, and 73,388 B vs 71,774 B at 800 — so every browser
+ * that advertised WebP support paid extra bytes for the privilege. Those two
+ * `.webp` files are deleted and the `<picture>`/`<source>` pair is gone with
+ * them; the `<img>` and its JPEG srcset are the whole story now.
+ *
+ * This is not "WebP is not worth it" — a properly encoded WebP would win
+ * comfortably. It is that this repo has no image encoder (no sharp, no cwebp,
+ * no ImageMagick, no ffmpeg) and adding one was out of scope. Revisit when
+ * admin photo uploads are built and a real image pipeline exists; see the
+ * deferred item in docs/BUGS_LOG.md.
  */
 export const HERO_IMAGE_PRELOAD = {
-  /** The `type` of every candidate below, so a browser without WebP skips the preload. */
-  type: 'image/webp',
-  /** `srcSet` on the `<source>`; `imagesrcset` on the preload link. */
-  srcset: '/hero/hero-cebu-800.webp 800w, /hero/hero-cebu-1920.webp 1920w',
-  /** `sizes` on the `<source>`; `imagesizes` on the preload link. */
+  /** The `type` of every candidate below. */
+  type: 'image/jpeg',
+  /** `srcSet` on the `<img>`; `imagesrcset` on the preload link. */
+  srcset: '/hero/hero-cebu-800.jpg 800w, /hero/hero-cebu-1920.jpg 1920w',
+  /** `sizes` on the `<img>`; `imagesizes` on the preload link. */
   sizes: '100vw',
 } as const;

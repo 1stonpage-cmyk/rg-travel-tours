@@ -96,21 +96,37 @@ describe('performance markup', () => {
     expect(viewport).toContain('viewport-fit=cover');
   });
 
-  it('names exactly the preloaded WebP candidates on the hero <picture>', async () => {
+  it('names exactly the preloaded candidates on the hero <img>', async () => {
     const { container } = renderHome();
     await loadedHomeImages(container);
 
-    const source = container.querySelector('picture > source[type="image/webp"]');
-    expect(source, 'hero <picture> has no WebP source').toBeTruthy();
+    const hero = container.querySelector<HTMLImageElement>('img[fetchpriority="high"]');
+    expect(hero, 'no hero image with fetchPriority=high').toBeTruthy();
     // Byte-identical to what the server preloads, because both render from
     // HERO_IMAGE_PRELOAD. A mismatch means the browser fetches the hero twice.
-    expect(source?.getAttribute('srcset')).toBe(HERO_IMAGE_PRELOAD.srcset);
-    expect(source?.getAttribute('sizes')).toBe(HERO_IMAGE_PRELOAD.sizes);
+    expect(hero?.getAttribute('srcset')).toBe(HERO_IMAGE_PRELOAD.srcset);
+    expect(hero?.getAttribute('sizes')).toBe(HERO_IMAGE_PRELOAD.sizes);
     // And the candidates really are the two hero widths, so the constant
     // cannot be quietly emptied and still satisfy the equality above.
     expect(HERO_IMAGE_PRELOAD.srcset).toBe(
-      '/hero/hero-cebu-800.webp 800w, /hero/hero-cebu-1920.webp 1920w',
+      '/hero/hero-cebu-800.jpg 800w, /hero/hero-cebu-1920.jpg 1920w',
     );
+  });
+
+  /**
+   * BUG-103: the hero used to sit in a `<picture>` whose WebP `<source>` was
+   * LARGER than the JPEG at both widths, so advertising WebP support cost the
+   * visitor bytes. The `.webp` files are deleted; this pins their absence so
+   * a future edit cannot reintroduce a source pointing at files that are no
+   * longer in the repo.
+   */
+  it('serves the hero without a WebP source, which was bigger than the JPEG', async () => {
+    const { container } = renderHome();
+    await loadedHomeImages(container);
+
+    expect(container.querySelector('picture > source')).toBeNull();
+    expect(HERO_IMAGE_PRELOAD.type).toBe('image/jpeg');
+    expect(HERO_IMAGE_PRELOAD.srcset).not.toContain('.webp');
   });
 
   it('gives every content image explicit width and height', async () => {

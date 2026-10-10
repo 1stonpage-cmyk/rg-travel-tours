@@ -101,7 +101,7 @@ describe('injectMeta', () => {
     const link = /<link [^>]*rel="preload"[^>]*>/.exec(withHero)?.[0];
     expect(link, 'no rel="preload" link emitted').toBeTruthy();
     expect(link).toContain('as="image"');
-    expect(link).toContain('type="image/webp"');
+    expect(link).toContain(`type="${HERO_IMAGE_PRELOAD.type}"`);
     expect(link).toContain(`imagesrcset="${HERO_IMAGE_PRELOAD.srcset}"`);
     expect(link).toContain(`imagesizes="${HERO_IMAGE_PRELOAD.sizes}"`);
     expect(link).toContain('fetchpriority="high"');
@@ -116,7 +116,7 @@ describe('injectMeta', () => {
   it('escapes a quote in a preload candidate list so it cannot end the attribute', () => {
     const evil = injectMeta(HTML, {
       ...META,
-      preload: { type: 'image/webp', srcset: '" onload="alert(1)', sizes: '100vw' },
+      preload: { type: 'image/jpeg', srcset: '" onload="alert(1)', sizes: '100vw' },
     });
     expect(evil).not.toContain('onload="alert(1)"');
     expect(evil).toContain('&quot; onload=&quot;alert(1)');

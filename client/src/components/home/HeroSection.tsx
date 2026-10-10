@@ -72,45 +72,39 @@ export default function HeroSection() {
 
   return (
     <section className="relative isolate overflow-hidden">
-      {/* Real photo (assets-source/), not a placeholder. `display: contents` on the
-          <picture> keeps the absolutely-positioned <img> behaving exactly as the
-          single <img> it replaced — no extra box, no layout shift.
+      {/* Real photo (assets-source/), not a placeholder.
 
           This photo is the mobile LCP element, and it only exists inside this
           bundle — so the server's SEO injector emits a matching
-          <link rel="preload" as="image" type="image/webp"> that lets the
-          browser start fetching it at HTML-parse time instead of waiting for
-          the bundle to download, parse and run (task 4.4).
+          <link rel="preload" as="image"> that lets the browser start fetching
+          it at HTML-parse time instead of waiting for the bundle to download,
+          parse and run (task 4.4).
 
           That preload is emitted for `/` ALONE, by the home resolver in
           server/src/seo/resolvers.ts (task 4.4b) — it used to sit in the static
           client/index.html, which is the shared SPA shell, so /tours, /privacy
           and /terms were preloading a hero they never render.
 
-          Both sides read HERO_IMAGE_PRELOAD below, so their candidate lists
-          cannot drift: a mismatch would make the browser preload one candidate
-          and the <picture> fetch a different one — two hero downloads instead
-          of a faster one. `width`/`height` stay inline: they are what reserves
-          the box before the stylesheet lands. */}
-      <picture className="contents">
-        <source
-          type={HERO_IMAGE_PRELOAD.type}
-          srcSet={HERO_IMAGE_PRELOAD.srcset}
-          sizes={HERO_IMAGE_PRELOAD.sizes}
-        />
-        <img
-          ref={heroImageRef}
-          src="/hero/hero-cebu-1920.jpg"
-          srcSet="/hero/hero-cebu-800.jpg 800w, /hero/hero-cebu-1920.jpg 1920w"
-          sizes="100vw"
-          width={1920}
-          height={1080}
-          alt="The stone gateway of Fort San Pedro in Cebu City, framed by palm trees under a clear blue sky."
-          fetchPriority="high"
-          decoding="async"
-          className="absolute inset-0 -z-10 size-full object-cover"
-        />
-      </picture>
+          There is no <picture>/<source> here any more (BUG-103): the WebP
+          source was bigger than the JPEG at both widths, so it cost bytes
+          instead of saving them. The <img> below and the preload both read
+          HERO_IMAGE_PRELOAD, so their candidate lists cannot drift — a
+          mismatch would make the browser preload one candidate and the <img>
+          fetch another, i.e. two hero downloads instead of one faster one.
+          `width`/`height` stay inline: they are what reserves the box before
+          the stylesheet lands. */}
+      <img
+        ref={heroImageRef}
+        src="/hero/hero-cebu-1920.jpg"
+        srcSet={HERO_IMAGE_PRELOAD.srcset}
+        sizes={HERO_IMAGE_PRELOAD.sizes}
+        width={1920}
+        height={1080}
+        alt="The stone gateway of Fort San Pedro in Cebu City, framed by palm trees under a clear blue sky."
+        fetchPriority="high"
+        decoding="async"
+        className="absolute inset-0 -z-10 size-full object-cover"
+      />
       {/* Two blue washes over the photo: a vertical darkener that holds white text
           at AA over the bright sky, plus the diagonal brand tint. Blues only. */}
       <div className="from-brand-blue-950/80 via-brand-blue-950/60 to-brand-blue-900/90 absolute inset-0 -z-10 bg-gradient-to-b" />
