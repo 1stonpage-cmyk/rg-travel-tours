@@ -1,6 +1,7 @@
 import { Search } from 'lucide-react';
-import { Fragment, useState, type FormEvent, type ReactNode } from 'react';
+import { Fragment, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
+import CountUpStat from '@/components/common/CountUpStat';
 import QueryBoundary from '@/components/common/QueryBoundary';
 import { Skeleton } from '@/components/common/Skeleton';
 import { Button } from '@/components/ui/button';
@@ -13,6 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { useHeroParallax } from '@/lib/use-hero-parallax';
 import { trpc } from '@/lib/trpc';
 
 const today = new Date().toISOString().slice(0, 10);
@@ -55,6 +57,9 @@ export default function HeroSection() {
   const settingsQuery = trpc.settings.get.useQuery();
   const destinationsQuery = trpc.destinations.list.useQuery();
 
+  const heroImageRef = useRef<HTMLImageElement>(null);
+  useHeroParallax(heroImageRef);
+
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const params = new URLSearchParams();
@@ -76,6 +81,7 @@ export default function HeroSection() {
           sizes="100vw"
         />
         <img
+          ref={heroImageRef}
           src="/hero/hero-cebu-1920.jpg"
           srcSet="/hero/hero-cebu-800.jpg 800w, /hero/hero-cebu-1920.jpg 1920w"
           sizes="100vw"
@@ -124,7 +130,11 @@ export default function HeroSection() {
               }
               if (trust.guestsServed !== null) {
                 trustItems.push(
-                  <li key="guests">{trust.guestsServed.toLocaleString('en-PH')}+ guests served</li>,
+                  // Count-up for this trust stat only (spec 2.9E) — never
+                  // for a price. See CountUpStat.tsx / use-count-up.ts.
+                  <li key="guests">
+                    <CountUpStat value={trust.guestsServed} /> guests served
+                  </li>,
                 );
               }
 

@@ -1,4 +1,6 @@
 import { BadgeCheck, CreditCard, Headset, Users, type LucideIcon } from 'lucide-react';
+import type { ReactNode } from 'react';
+import CountUpStat from '@/components/common/CountUpStat';
 import QueryBoundary from '@/components/common/QueryBoundary';
 import { Skeleton } from '@/components/common/Skeleton';
 import { trpc } from '@/lib/trpc';
@@ -56,24 +58,38 @@ export default function TrustBar() {
           {({ trust }) => {
             // guestsServed is nullable: omit the item entirely rather than
             // showing a blank or zero (no fabricated social proof).
-            const items: { icon: LucideIcon; label: string }[] = [];
+            // `label` is a ReactNode (not just a string) so the guests-served
+            // item can carry a <CountUpStat>, so each item also gets its own
+            // stable string `key` — a JSX label can't double as a map key.
+            const items: { key: string; icon: LucideIcon; label: ReactNode }[] = [];
             if (trust.dotAccredited) {
-              items.push({ icon: BadgeCheck, label: 'DOT accredited operator' });
+              items.push({ key: 'dot', icon: BadgeCheck, label: 'DOT accredited operator' });
             }
             if (trust.guestsServed !== null) {
               items.push({
+                key: 'guests',
                 icon: Users,
-                label: `${trust.guestsServed.toLocaleString('en-PH')}+ guests served`,
+                // Count-up for this trust stat only (spec 2.9E) — never for
+                // a price. See CountUpStat.tsx / use-count-up.ts.
+                label: (
+                  <>
+                    <CountUpStat value={trust.guestsServed} /> guests served
+                  </>
+                ),
               });
             }
-            items.push({ icon: CreditCard, label: `${trust.depositPercent}% deposit to reserve` });
-            items.push({ icon: Headset, label: 'Local team on WhatsApp daily' });
+            items.push({
+              key: 'deposit',
+              icon: CreditCard,
+              label: `${trust.depositPercent}% deposit to reserve`,
+            });
+            items.push({ key: 'whatsapp', icon: Headset, label: 'Local team on WhatsApp daily' });
 
             return (
               <>
-                {items.map(({ icon: Icon, label }) => (
+                {items.map(({ key, icon: Icon, label }) => (
                   <li
-                    key={label}
+                    key={key}
                     className="text-brand-blue-900 flex items-center gap-2.5 text-base font-medium sm:text-sm"
                   >
                     <Icon className="text-brand-gold-600 size-5 shrink-0" aria-hidden="true" />

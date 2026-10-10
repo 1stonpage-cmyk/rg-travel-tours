@@ -240,7 +240,13 @@ describe('TrustBar — settings-driven', () => {
     renderTrustBar();
 
     expect(await screen.findByText(/dot accredited/i)).toBeInTheDocument();
-    expect(screen.getByText(/15,000\+ guests served/)).toBeInTheDocument();
+    // Spec 2.9E: the number itself now lives inside a <CountUpStat> span
+    // (count-up on scroll into view), so "15,000+" and "guests served" are
+    // asserted separately rather than as one getByText match spanning both
+    // — RTL's default text matching only joins an element's own direct text
+    // node children, not a whole subtree.
+    expect(screen.getByText('15,000+')).toBeInTheDocument();
+    expect(screen.getByText(/guests served/i)).toBeInTheDocument();
     expect(screen.getByText(/30% deposit to reserve/)).toBeInTheDocument();
     expect(screen.getByText(/whatsapp/i)).toBeInTheDocument();
   });

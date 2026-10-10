@@ -1,9 +1,16 @@
 import { Menu, Phone, X } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { SITE, telLink } from '@/lib/site';
 import { cn } from '@/lib/utils';
+
+/**
+ * How far past the top the page must scroll before the header solidifies
+ * (spec task 2.9F). Small and deliberate: the effect should read as "the
+ * header noticed you started scrolling", not trigger on a stray wheel tick.
+ */
+const SCROLL_SOLIDIFY_PX = 24;
 
 /**
  * A nav item is "active" only when it is the genuinely-current location.
@@ -21,11 +28,44 @@ function isNavItemActive(href: string, pathname: string, hash: string) {
 
 export default function SiteHeader() {
   const [open, setOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
   const { pathname, hash } = useLocation();
 
+  // Header shrink/solidify (spec task 2.9F). Deliberately does not animate
+  // `height`, or change it at all, in either direction: the box below is
+  // always `h-16` regardless of `scrolled`, so the header's real resting
+  // height never changes, and `section[id] { scroll-margin-top: 5rem }`
+  // (index.css, tuned to this exact h-16/64px header) stays correct in both
+  // states — there is only ever one height to tune it against. "Shrinking"
+  // is purely a `scale` transform on the inner content, which — like every
+  // transform — never affects layout or this header's own box size, so
+  // there is nothing here that could cause layout shift. No reduced-motion
+  // CSS override is needed beyond the existing blanket
+  // `prefers-reduced-motion` clamp in index.css: that already collapses
+  // this transition to instant, and both the scrolled and unscrolled states
+  // are correct, legible markup on their own.
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > SCROLL_SOLIDIFY_PX);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
   return (
-    <header className="bg-background/95 supports-[backdrop-filter]:bg-background/80 sticky top-0 z-40 w-full border-b backdrop-blur">
-      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
+    <header
+      className={cn(
+        'sticky top-0 z-40 w-full border-b backdrop-blur transition-all duration-300 ease-[cubic-bezier(0.2,0.6,0.2,1)]',
+        scrolled
+          ? 'bg-background shadow-md'
+          : 'bg-background/95 supports-[backdrop-filter]:bg-background/80',
+      )}
+    >
+      <div
+        className={cn(
+          'mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4 transition-transform duration-300 ease-[cubic-bezier(0.2,0.6,0.2,1)] sm:px-6 lg:px-8',
+          scrolled && 'scale-[0.95]',
+        )}
+      >
         <Link
           to="/"
           className="tap-target flex items-center gap-2 rounded-md"

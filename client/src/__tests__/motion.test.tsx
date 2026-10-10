@@ -1,4 +1,5 @@
-import { act, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { formatPeso } from '@rg/shared';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,8 +8,14 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Accordion, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import CatalogPreview from '@/components/home/CatalogPreview';
+import HeroSection from '@/components/home/HeroSection';
+import PackagesSection from '@/components/home/PackagesSection';
+import TrustBar from '@/components/home/TrustBar';
 import HomePage from '@/pages/public/HomePage';
+import SiteHeader from '@/components/layout/SiteHeader';
+import TourCard from '@/components/common/TourCard';
 import { useCardStagger } from '@/lib/use-scroll-reveal';
+import { useCountUp } from '@/lib/use-count-up';
 import { TrpcProviders } from '@/lib/trpc';
 import {
   DESTINATIONS_FIXTURE,
@@ -239,5 +246,276 @@ describe('.press — tap feedback (spec task 2.9H)', () => {
       </Accordion>,
     );
     expect(screen.getByRole('button', { name: 'A question' })).toHaveClass('press');
+  });
+});
+
+/**
+ * Minimal harness around the hook itself, independent of TrustBar/HeroSection's
+ * tRPC fixtures — precise control over IntersectionObserver/matchMedia without
+ * also needing settings.get to resolve.
+ */
+function CountUpHarness({ target }: { target: number }) {
+  const { ref, value } = useCountUp(target);
+  return <span ref={ref}>{value.toLocaleString('en-PH')}+</span>;
+}
+
+describe('useCountUp — trust-stat count-up (spec task 2.9E)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('renders the exact target immediately, with no observer, when IntersectionObserver does not exist (jsdom default)', () => {
+    // No stub installed — the real jsdom environment every other test here
+    // already runs under, and the environment this hook's test-time
+    // fallback exists for.
+    render(<CountUpHarness target={15_000} />);
+    expect(screen.getByText('15,000+')).toBeInTheDocument();
+  });
+
+  it('renders the exact target immediately and creates no observer under prefers-reduced-motion', () => {
+    vi.stubGlobal('IntersectionObserver', MockIntersectionObserver);
+    MockIntersectionObserver.instances = [];
+    stubMatchMedia(true);
+
+    render(<CountUpHarness target={15_000} />);
+
+    expect(screen.getByText('15,000+')).toBeInTheDocument();
+    // Reduced motion must short-circuit before ever creating an observer —
+    // the same guarantee useCardStagger makes above.
+    expect(MockIntersectionObserver.instances).toHaveLength(0);
+  });
+
+  it('starts at 0 and counts up to exactly the target — never a fraction, never an overshoot — once the element intersects', async () => {
+    vi.stubGlobal('IntersectionObserver', MockIntersectionObserver);
+    stubMatchMedia(false);
+
+    render(<CountUpHarness target={15_000} />);
+    expect(screen.getByText('0+')).toBeInTheDocument();
+
+    const observer = MockIntersectionObserver.instances.at(-1)!;
+    act(() => observer.emit(true));
+
+    // Must not jump straight to the target the instant it intersects — the
+    // first tick is scheduled via requestAnimationFrame, not run inline, so
+    // immediately after the intersection callback the value is still 0.
+    // This is what actually proves there is a count-UP, not just a
+    // start-at-0/end-at-target pair with nothing animated in between.
+    expect(screen.getByText('0+')).toBeInTheDocument();
+
+    await waitFor(() => expect(screen.getByText('15,000+')).toBeInTheDocument(), {
+      timeout: 2000,
+    });
+    expect(observer.disconnected).toBe(true);
+    // Never anything other than the one correct final value once it lands —
+    // e.g. no leftover interval still nudging it past 15,000.
+    expect(screen.queryByText(/^15,00[1-9]/)).not.toBeInTheDocument();
+  });
+
+  it('never resurrects a null guestsServed as 0 — the whole item is omitted (TrustBar)', async () => {
+    const settings = {
+      ...SETTINGS_FIXTURE,
+      trust: { ...SETTINGS_FIXTURE.trust, guestsServed: null },
+    };
+    mockTrpc({ 'settings.get': settings });
+    render(
+      <TrpcProviders>
+        <TrustBar />
+      </TrpcProviders>,
+    );
+    expect(await screen.findByText(/dot accredited/i)).toBeInTheDocument();
+    expect(screen.queryByText(/guests served/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('0+')).not.toBeInTheDocument();
+  });
+});
+
+describe('Prices never animate (spec task 2.9E hard rule)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('TourCard renders the "from" price at its exact final value on first render — no count-up, ever', () => {
+    vi.stubGlobal('IntersectionObserver', MockIntersectionObserver);
+    MockIntersectionObserver.instances = [];
+
+    const tour = TOURS_FIXTURE[0]!;
+    render(
+      <MemoryRouter>
+        <TourCard tour={tour} />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText(formatPeso(tour.fromPriceCentavos!))).toBeInTheDocument();
+    // Nothing on this card is watching for scroll-into-view — proves the
+    // price isn't quietly wired to the same mechanism as a trust stat.
+    expect(MockIntersectionObserver.instances).toHaveLength(0);
+  });
+
+  it('PackagesSection renders both the new and old package prices at their exact final values, immediately once data resolves', async () => {
+    mockTrpc({ 'packages.list': PACKAGES_FIXTURE });
+    render(
+      <TrpcProviders>
+        <PackagesSection />
+      </TrpcProviders>,
+    );
+
+    const pkg = PACKAGES_FIXTURE[0]!;
+    expect(await screen.findByText(formatPeso(pkg.newPriceCentavos))).toBeInTheDocument();
+    if (pkg.oldPriceCentavos != null) {
+      expect(screen.getByText(formatPeso(pkg.oldPriceCentavos))).toBeInTheDocument();
+    }
+  });
+});
+
+/**
+ * Sets scrollY and dispatches a scroll event, the same two-step every
+ * SiteHeader test below needs.
+ */
+function scrollTo(y: number) {
+  Object.defineProperty(window, 'scrollY', { value: y, configurable: true });
+  fireEvent.scroll(window);
+}
+
+describe('SiteHeader — shrink/solidify on scroll (spec task 2.9F)', () => {
+  afterEach(() => {
+    scrollTo(0);
+  });
+
+  function renderHeader() {
+    render(
+      <MemoryRouter>
+        <SiteHeader />
+      </MemoryRouter>,
+    );
+    const header = screen.getByRole('banner');
+    return { header, bar: header.firstElementChild as HTMLElement };
+  }
+
+  it('is unscaled at the top of the page', () => {
+    const { bar } = renderHeader();
+    expect(bar.className).not.toMatch(/scale-/);
+  });
+
+  it('scales down the inner bar and solidifies the header background once scrolled past the threshold', () => {
+    const { header, bar } = renderHeader();
+
+    scrollTo(100);
+
+    expect(bar.className).toMatch(/scale-\[0\.95\]/);
+    expect(header.className).toMatch(/shadow-md/);
+  });
+
+  it('restores the resting (unscaled, translucent) state when scrolled back to the top', () => {
+    const { header, bar } = renderHeader();
+
+    scrollTo(100);
+    expect(bar.className).toMatch(/scale-/);
+
+    scrollTo(0);
+    expect(bar.className).not.toMatch(/scale-/);
+    expect(header.className).not.toMatch(/shadow-md/);
+  });
+
+  // The knock-on the brief calls out by name: index.css's
+  // `section[id] { scroll-margin-top: 5rem }` is tuned to this header's
+  // h-16 (64px) resting height. If that height ever changed — even only
+  // while scrolled — hash links to #tours/#packages/#reviews/#faq/#contact
+  // could land under the sticky header. This proves it never does: the
+  // "shrink" is a `transform: scale()` on the inner content only, which
+  // never changes the row's own box size.
+  it("never changes the header row's own height class, scrolled or not", () => {
+    const { bar } = renderHeader();
+    expect(bar).toHaveClass('h-16');
+
+    scrollTo(500);
+    expect(bar).toHaveClass('h-16');
+  });
+});
+
+/** Like stubMatchMedia above, but lets each query string answer independently. */
+function stubMatchMediaPerQuery(answers: Record<string, boolean>) {
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: answers[query] ?? false,
+    media: query,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }));
+}
+
+const DESKTOP_POINTER_QUERY = '(hover: hover) and (pointer: fine) and (min-width: 1024px)';
+const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
+
+describe('useHeroParallax — desktop-only hero parallax (spec task 2.9G)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    scrollTo(0);
+  });
+
+  function renderHero() {
+    mockTrpc({ 'settings.get': SETTINGS_FIXTURE, 'destinations.list': DESTINATIONS_FIXTURE });
+    render(
+      <TrpcProviders>
+        <MemoryRouter>
+          <HeroSection />
+        </MemoryRouter>
+      </TrpcProviders>,
+    );
+    return screen.getByAltText(/fort san pedro/i) as HTMLImageElement;
+  }
+
+  it('transforms the hero image from scroll position on a desktop, hover-capable pointer', () => {
+    stubMatchMediaPerQuery({ [REDUCED_MOTION_QUERY]: false, [DESKTOP_POINTER_QUERY]: true });
+    const img = renderHero();
+
+    scrollTo(100);
+
+    expect(img.style.transform).toMatch(/scale\(1\.08\)/);
+    expect(img.style.transform).toMatch(/translateY\(/);
+  });
+
+  it('never transforms the image on a touch/coarse pointer, even though matchMedia exists', () => {
+    stubMatchMediaPerQuery({ [REDUCED_MOTION_QUERY]: false, [DESKTOP_POINTER_QUERY]: false });
+    const img = renderHero();
+
+    scrollTo(100);
+
+    expect(img.style.transform).toBe('');
+  });
+
+  it('never transforms the image under prefers-reduced-motion, even on a desktop pointer', () => {
+    stubMatchMediaPerQuery({ [REDUCED_MOTION_QUERY]: true, [DESKTOP_POINTER_QUERY]: true });
+    const img = renderHero();
+
+    scrollTo(100);
+
+    expect(img.style.transform).toBe('');
+  });
+
+  it('does not touch the protected <picture>/srcSet markup or the two gradient overlay divs', () => {
+    stubMatchMediaPerQuery({ [REDUCED_MOTION_QUERY]: false, [DESKTOP_POINTER_QUERY]: true });
+    mockTrpc({ 'settings.get': SETTINGS_FIXTURE, 'destinations.list': DESTINATIONS_FIXTURE });
+    const { container } = render(
+      <TrpcProviders>
+        <MemoryRouter>
+          <HeroSection />
+        </MemoryRouter>
+      </TrpcProviders>,
+    );
+    scrollTo(100);
+
+    const img = screen.getByAltText(/fort san pedro/i);
+    expect(img).toHaveAttribute(
+      'srcSet',
+      '/hero/hero-cebu-800.jpg 800w, /hero/hero-cebu-1920.jpg 1920w',
+    );
+    expect(container.querySelectorAll('.bg-gradient-to-b, .bg-gradient-to-br')).toHaveLength(2);
+  });
+
+  it('renders correctly — no crash — when window.matchMedia does not exist at all (no stub installed)', () => {
+    // No stub installed. This is the condition every OTHER test in this
+    // project's suite runs under (jsdom implements no matchMedia at all —
+    // calling it unstubbed throws), including every other HeroSection test
+    // in hero-trust.test.tsx. If this hook ever called matchMedia before
+    // checking it exists, every one of those tests would start throwing.
+    expect(() => renderHero()).not.toThrow();
   });
 });
