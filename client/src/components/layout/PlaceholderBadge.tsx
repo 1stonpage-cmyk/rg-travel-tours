@@ -24,7 +24,7 @@ export default function PlaceholderBadge() {
   return (
     <div
       role="status"
-      className="border-brand-warning/30 bg-brand-gold-100 text-brand-warning border-b px-4 py-1.5 text-center text-xs font-semibold"
+      className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 border-b px-4 py-1.5 text-center text-xs font-semibold"
     >
       PLACEHOLDER DATA — tour details, prices and photos are placeholders; permit numbers are
       pending. Rating and guest counts are client-supplied, pending verification.

@@ -112,11 +112,15 @@ describe('AnnouncementBar', () => {
     expect(await screen.findByText(ANNOUNCEMENT_WARNING.message)).toBeInTheDocument();
   });
 
-  it('uses amber (brand-warning on brand-gold-100) for the warning style, never a forbidden hue', async () => {
+  it('uses amber (brand-gold-800 on brand-gold-100) for the warning style, never a forbidden hue', async () => {
     renderBar(ANNOUNCEMENT_WARNING);
     const status = await screen.findByRole('status');
     expect(status.className).toMatch(/bg-brand-gold-100/);
-    expect(status.className).toMatch(/text-brand-warning/);
+    // BUG-080: this was `text-brand-warning`, which measures 4.51:1 on
+    // gold-100 — AA by 0.01, with no headroom. `brand-gold-800` is 7.45:1.
+    // `contrast.test.ts` computes both from index.css and guards the swap.
+    expect(status.className).toMatch(/text-brand-gold-800/);
+    expect(status.className).not.toMatch(/text-brand-warning\b/);
     expect(status.className).not.toMatch(/red|rose/i);
   });
 

@@ -20,7 +20,7 @@ import { cn } from '@/lib/utils';
 /** There is no third style, and never will be — see settings-schema.ts's `announcementSchema`. No red anywhere in the UI (CLAUDE.md). */
 const STYLE_CLASSES: Record<'info' | 'warning', string> = {
   info: 'bg-brand-blue-50 text-brand-blue-900 border-brand-blue-200',
-  warning: 'bg-brand-gold-100 text-brand-warning border-brand-warning/30',
+  warning: 'bg-brand-gold-100 text-brand-gold-800 border-brand-warning/30',
 };
 
 const DISMISS_KEY_PREFIX = 'ts-announcement-dismissed-';
