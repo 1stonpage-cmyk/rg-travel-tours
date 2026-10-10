@@ -5,6 +5,7 @@ import { rateLimit } from 'express-rate-limit';
 import { TIMEZONE } from '@rg/shared';
 import type { SiteEnv } from './env';
 import { createHtmlHandler } from './html';
+import { rejectMalformedUrl } from './middleware/malformed-url';
 import { createProcedureRateLimit } from './middleware/rate-limit';
 import { robotsHeader } from './middleware/robots-header';
 import { appRouter } from './routers/_app';
@@ -47,6 +48,17 @@ export function createApp(
   // but task 1C adds session cookies and this would defeat the sameSite +
   // origin-check CSRF story in CLAUDE.md. credentials stays true for that.
   app.use(cors({ origin: allowedOrigin, credentials: true }));
+
+  // Task 4.3b: a path with an undecodable percent-escape (`/trpc/%zz`) gets a
+  // short 400 here and goes no further. MOUNTED FIRST of the request handlers
+  // — above the limiters, tRPC, the robots header and the SPA block — because
+  // every one of those percent-decodes the path and each one leaked something
+  // different when it threw (a 500 with a tRPC stack trace, or finalhandler's
+  // error page with a stack in it). Below `cors` so the 400 still carries the
+  // CORS headers a browser needs to be able to read it. See
+  // middleware/malformed-url.ts for why the query string is NOT checked and
+  // why skipping the rate limiters is safe here.
+  app.use(rejectMalformedUrl());
 
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true, service: 'rg-travel-tours', timezone: TIMEZONE });
