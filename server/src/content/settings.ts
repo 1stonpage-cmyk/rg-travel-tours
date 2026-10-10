@@ -153,7 +153,15 @@ function resolvePromo(block: SettingsBlocks['promo'], now: Date): ResolvedPromo 
   };
 }
 
-function resolvePaymentMethods(block: SettingsBlocks['payment_methods']): ResolvedPaymentMethod[] {
+/**
+ * Enabled only, sorted by `sortOrder`. Exported because task 4.2's FAQPage
+ * JSON-LD needs the same list the browser gets — its answers must match the
+ * rendered page word for word, and that starts with the same methods in the
+ * same order.
+ */
+export function resolvePaymentMethods(
+  block: SettingsBlocks['payment_methods'],
+): ResolvedPaymentMethod[] {
   return block
     .filter((method) => method.enabled)
     .sort((a, b) => a.sortOrder - b.sortOrder)
