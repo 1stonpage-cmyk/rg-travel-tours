@@ -35,10 +35,13 @@ describe('PublicLayout', () => {
     }
   });
 
-  it('renders a floating WhatsApp link with an accessible name', () => {
+  it('renders a WhatsApp link with an accessible name (the desktop floating bubble and/or the mobile bottom bar — both are mounted at once; CSS, not conditional rendering, picks one per breakpoint)', () => {
     renderLayout();
-    const link = screen.getByRole('link', { name: /whatsapp/i });
-    expect(link).toHaveAttribute('href', expect.stringContaining('wa.me'));
+    const links = screen.getAllByRole('link', { name: /whatsapp/i });
+    expect(links.length).toBeGreaterThan(0);
+    for (const link of links) {
+      expect(link).toHaveAttribute('href', expect.stringContaining('wa.me'));
+    }
   });
 
   it('exposes a skip link to the main content', () => {
@@ -58,13 +61,21 @@ describe('PublicLayout', () => {
 });
 
 /**
- * The floating WhatsApp button hides while the hero's search form is on screen,
- * because a fixed bottom-right button otherwise covers the right edge of that
+ * The floating WhatsApp bubble (desktop) and the mobile bottom bar's own
+ * WhatsApp control both hide while the hero's search form is on screen,
+ * because a fixed bottom control otherwise covers the right edge of that
  * primary CTA (measured at 360px and 390px).
  *
  * jsdom implements no IntersectionObserver, so it is stubbed here. That covers
  * the wiring — selector, state, early return, cleanup — but NOT the browser's
  * own intersection computation, which is platform behaviour.
+ *
+ * jsdom also never computes real layout, so the `hidden md:block` /
+ * `md:hidden` breakpoint classes that pick ONE of the bubble/bar per
+ * viewport width have no effect here — both are present in the DOM
+ * whenever `coversHeroSearch` is false. Assertions below use
+ * queryAllByRole/getAllByRole rather than a single getByRole for that
+ * reason.
  */
 describe('FloatingWhatsApp hides behind the hero search form', () => {
   class MockIntersectionObserver {
@@ -112,46 +123,65 @@ describe('FloatingWhatsApp hides behind the hero search form', () => {
     document.querySelectorAll('form[aria-label="Search tours"]').forEach((f) => f.remove());
   });
 
-  const whatsapp = () => screen.queryByRole('link', { name: /whatsapp/i });
+  /**
+   * Both the desktop bubble and the mobile bottom bar's icon are present at
+   * once in jsdom (no real CSS layout — see the describe block's own
+   * comment), so this returns however many WhatsApp-named links currently
+   * exist rather than assuming exactly one.
+   */
+  const whatsapp = () => screen.queryAllByRole('link', { name: /whatsapp/i });
+
+  /**
+   * FloatingWhatsApp now also watches the footer (for the bottom bar's own
+   * "hide near the footer" behaviour), so a second observer always exists
+   * once SiteFooter is in the tree — independent of whether a hero form is
+   * present. Found by what it observes rather than by array position, so
+   * this doesn't depend on which effect happens to run first.
+   */
+  const heroObserver = (form: Element) =>
+    MockIntersectionObserver.instances.find((o) => o.observed.includes(form));
 
   it('observes the hero search form when one is present', () => {
     const form = addHeroSearchForm();
     renderLayout();
 
-    const observer = MockIntersectionObserver.instances.at(-1);
+    const observer = heroObserver(form);
     expect(observer).toBeDefined();
-    expect(observer!.observed).toContain(form);
   });
 
-  it('hides the button while the search form is intersecting, and restores it after', () => {
-    addHeroSearchForm();
+  it('hides both WhatsApp controls while the search form is intersecting, and restores them after', () => {
+    const form = addHeroSearchForm();
     renderLayout();
-    const observer = MockIntersectionObserver.instances.at(-1)!;
+    const observer = heroObserver(form)!;
 
     // Visible to begin with — the observer has not reported yet.
-    expect(whatsapp()).toBeInTheDocument();
+    expect(whatsapp().length).toBeGreaterThan(0);
 
     act(() => observer.emit(true));
-    expect(whatsapp()).not.toBeInTheDocument();
+    expect(whatsapp()).toHaveLength(0);
 
     act(() => observer.emit(false));
-    expect(whatsapp()).toBeInTheDocument();
+    expect(whatsapp().length).toBeGreaterThan(0);
   });
 
-  it('stays visible on pages with no hero search form', () => {
+  it('stays visible on pages with no hero search form, observing only the footer', () => {
     renderLayout();
-    expect(whatsapp()).toBeInTheDocument();
-    expect(MockIntersectionObserver.instances).toHaveLength(0);
+    expect(whatsapp().length).toBeGreaterThan(0);
+    // One observer — the bottom bar's footer-proximity watcher. None for the
+    // hero form, since there isn't one on this page.
+    expect(MockIntersectionObserver.instances).toHaveLength(1);
+    expect(MockIntersectionObserver.instances[0]!.observed[0]?.tagName).toBe('FOOTER');
   });
 
-  it('disconnects the observer on unmount', () => {
+  it('disconnects every observer (hero form and footer alike) on unmount', () => {
     addHeroSearchForm();
     const { unmount } = renderLayout();
-    const observer = MockIntersectionObserver.instances.at(-1)!;
+    const observers = [...MockIntersectionObserver.instances];
 
-    expect(observer.disconnected).toBe(false);
+    expect(observers.length).toBeGreaterThan(0);
+    for (const observer of observers) expect(observer.disconnected).toBe(false);
     unmount();
-    expect(observer.disconnected).toBe(true);
+    for (const observer of observers) expect(observer.disconnected).toBe(true);
   });
 });
 

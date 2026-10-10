@@ -90,6 +90,17 @@ There is no `tailwind.config.js`.
   white and on `brand-blue-50` — measured 3.25:1 and 3.00:1. Small gold text (eyebrows,
   labels, captions) must use `brand-gold-700` or darker. `brand-gold-600` remains fine for
   non-text uses (icons, badges, large decorative elements).
+- **Brand-colour exception (WhatsApp / Viber):** `#25D366` (WhatsApp), `#128C7E` (WhatsApp
+  hover/pressed) and `#7360F2` (Viber) are a documented exception to the blue/gold palette —
+  official third-party chat-app colours, used only for WhatsApp/Viber deep-link controls.
+  Red remains forbidden everywhere else. **No white text on any of the three** — each carries
+  only the official white glyph (exempt under WCAG 1.4.11 as a logotype); every pill built
+  from one of these colours is icon-only with an `aria-label`, and any visible wording
+  ("Chat on WhatsApp", "Viber") sits **outside** the pill, on the page background, in brand
+  ink. `#128C7E` is the WhatsApp pill's hover/pressed state only and never gets white text
+  either. White-on-`#25D366` measures 1.98:1 (fails AA at any size); `#128C7E` and `#7360F2`
+  measure 4.14:1 and 4.48:1, both just under the 4.5:1 bar — hence one uniform rule instead
+  of per-colour sizing exceptions.
 - **Motion:** subtle only (card hovers, tracker progress, check-in confirmation), and only
   after the layout exists.
 

@@ -12,6 +12,7 @@ import HeroSection from '@/components/home/HeroSection';
 import PackagesSection from '@/components/home/PackagesSection';
 import TrustBar from '@/components/home/TrustBar';
 import HomePage from '@/pages/public/HomePage';
+import FloatingWhatsApp from '@/components/layout/FloatingWhatsApp';
 import SiteHeader from '@/components/layout/SiteHeader';
 import TourCard from '@/components/common/TourCard';
 import { useCardStagger } from '@/lib/use-scroll-reveal';
@@ -599,5 +600,173 @@ describe('useHeroParallax — desktop-only hero parallax (spec task 2.9G)', () =
     // in hero-trust.test.tsx. If this hook ever called matchMedia before
     // checking it exists, every one of those tests would start throwing.
     expect(() => renderHero()).not.toThrow();
+  });
+});
+
+describe('.press-brand — scale(0.95) + spring-back for the WhatsApp/Viber pills (spec task 2.9I)', () => {
+  it('presses deeper than the house .press (0.95, not 0.97) and gives the release its own, different easing than the press', () => {
+    const activeMatch = css.match(/\.press-brand:active\s*\{([^}]*)\}/);
+    expect(activeMatch, 'expected a .press-brand:active rule in index.css').toBeTruthy();
+    const activeBody = activeMatch![1]!;
+    expect(activeBody).toMatch(/transform:\s*scale\(0\.95\)/);
+
+    const baseMatch = css.match(/\.press-brand\s*\{([^}]*)\}/);
+    expect(baseMatch, 'expected a base .press-brand rule in index.css').toBeTruthy();
+    const baseBody = baseMatch![1]!;
+
+    // The press (in .press-brand:active) and the release (in the base
+    // .press-brand rule, which governs the transition back once :active
+    // stops matching) must use genuinely different timing functions — that
+    // difference IS the "spring-back": a quick linear-ish press, then an
+    // overshooting "back" ease on the way out. If a future edit made them
+    // identical, this would catch it.
+    const pressEasing = activeBody.match(/cubic-bezier\(([^)]+)\)/)?.[1];
+    const releaseEasing = baseBody.match(/cubic-bezier\(([^)]+)\)/)?.[1];
+    expect(pressEasing).toBeTruthy();
+    expect(releaseEasing).toBeTruthy();
+    expect(pressEasing).not.toBe(releaseEasing);
+  });
+
+  it('is turned off under prefers-reduced-motion, same as .press', () => {
+    const reducedBlock = css.match(/@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*)\}\s*$/);
+    expect(reducedBlock, 'expected a trailing prefers-reduced-motion block').toBeTruthy();
+    expect(reducedBlock![1]).toMatch(
+      /\.press:active,\s*\.press-brand:active\s*\{\s*transform:\s*none;/,
+    );
+  });
+});
+
+describe('FloatingWhatsApp — attention pulse and "Chat with us" peek fire once per session, not once per mount (spec task 2.9I)', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+  });
+
+  afterEach(() => {
+    sessionStorage.clear();
+  });
+
+  function renderBubble() {
+    return render(
+      <MemoryRouter>
+        <FloatingWhatsApp />
+      </MemoryRouter>,
+    );
+  }
+
+  // jsdom has no IntersectionObserver by default, so both the desktop bubble
+  // and the mobile bar render in their default-visible state — exactly the
+  // condition under which the pulse is eligible to play at all.
+  const whatsappLinks = () => screen.getAllByRole('link', { name: /chat with us on whatsapp/i });
+
+  it('applies .attention-pulse to the WhatsApp control on a fresh session', () => {
+    renderBubble();
+    for (const link of whatsappLinks()) expect(link).toHaveClass('attention-pulse');
+  });
+
+  it('does not replay the pulse on a later mount within the same session, once it has played once', () => {
+    const first = renderBubble();
+    for (const link of whatsappLinks()) fireEvent.animationEnd(link);
+    first.unmount();
+
+    // A second mount within the same session (e.g. a client-side navigation
+    // that happened to remount this component, or — the case this guards —
+    // a full page reload in the same tab, which sessionStorage survives but
+    // a plain React ref/state would not).
+    renderBubble();
+    for (const link of whatsappLinks()) expect(link).not.toHaveClass('attention-pulse');
+  });
+
+  it('still pulses on a fresh mount when nothing has been recorded yet (sessionStorage genuinely empty, not just unread)', () => {
+    expect(sessionStorage.getItem('ts-whatsapp-pulse-shown')).toBeNull();
+    renderBubble();
+    for (const link of whatsappLinks()) expect(link).toHaveClass('attention-pulse');
+  });
+
+  it('peeks the outside "Chat with us" label once, on the same eligibility as the pulse, and tucks it back on its own animationend', () => {
+    renderBubble();
+    const labels = screen.getAllByText('Chat with us', { selector: 'span' });
+    const peekingLabels = labels.filter((l) => l.classList.contains('label-peek'));
+    expect(peekingLabels.length).toBeGreaterThan(0);
+
+    for (const label of peekingLabels) fireEvent.animationEnd(label);
+    expect(screen.queryAllByText('Chat with us', { selector: '.label-peek' })).toHaveLength(0);
+  });
+
+  it("times the label peek's start to exactly when the attention pulse finishes (delay + duration), so the two can't silently drift apart", () => {
+    const pulseRule = css.match(
+      /\.attention-pulse\s*\{\s*animation:\s*attention-pulse\s+([\d.]+)ms[^;]*?(\d+(?:\.\d+)?)s\s+1;/,
+    );
+    expect(pulseRule, "expected to parse .attention-pulse's duration and delay").toBeTruthy();
+    const pulseDurationMs = Number(pulseRule![1]);
+    const pulseDelayMs = Number(pulseRule![2]) * 1000;
+
+    const peekRule = css.match(
+      /\.label-peek\s*\{\s*animation:\s*label-peek\s+[\d.]+ms[^;]*?(\d+(?:\.\d+)?)ms\s+both;/,
+    );
+    expect(peekRule, "expected to parse .label-peek's delay").toBeTruthy();
+    const peekDelayMs = Number(peekRule![1]);
+
+    expect(peekDelayMs).toBe(pulseDelayMs + pulseDurationMs);
+  });
+});
+
+describe('Mobile bottom bar — "Book a tour" + WhatsApp (spec task 2.9B)', () => {
+  function addFooter() {
+    const footer = document.createElement('footer');
+    document.body.appendChild(footer);
+    return footer;
+  }
+
+  afterEach(() => {
+    document.querySelectorAll('footer').forEach((f) => f.remove());
+    vi.unstubAllGlobals();
+  });
+
+  it('renders a "Book a tour" link to /tours and an icon-only, aria-labelled WhatsApp link', () => {
+    render(
+      <MemoryRouter>
+        <FloatingWhatsApp />
+      </MemoryRouter>,
+    );
+    const bookLink = screen.getByRole('link', { name: /book a tour/i });
+    expect(bookLink).toHaveAttribute('href', '/tours');
+
+    const chatLinks = screen.getAllByRole('link', { name: /chat with us on whatsapp/i });
+    expect(chatLinks.length).toBeGreaterThan(0);
+    for (const link of chatLinks) {
+      // Icon-only: the accessible name comes entirely from aria-label, not
+      // from any visible text inside the link itself.
+      expect(link).toHaveAttribute('href', expect.stringContaining('wa.me'));
+      expect(link.textContent).toBe('');
+    }
+  });
+
+  it('hides (and goes inert) once the footer starts to arrive, without ever unmounting', () => {
+    vi.stubGlobal('IntersectionObserver', MockIntersectionObserver);
+    MockIntersectionObserver.instances = [];
+    const footer = addFooter();
+
+    const { container } = render(
+      <MemoryRouter>
+        <FloatingWhatsApp />
+      </MemoryRouter>,
+    );
+    const bar = container.querySelector('.md\\:hidden') as HTMLElement;
+    expect(bar).toBeTruthy();
+    expect(bar).not.toHaveAttribute('inert');
+    expect(bar.className).toMatch(/translate-y-0/);
+
+    const observer = MockIntersectionObserver.instances.find((o) => o.observed.includes(footer))!;
+    expect(observer).toBeDefined();
+    act(() => observer.emit(true));
+
+    // Still mounted — this is a transform/opacity transition, not a
+    // mount/unmount flash (reduced-motion correctness depends on that: see
+    // the component's own comment).
+    expect(container.querySelector('.md\\:hidden')).toBe(bar);
+    expect(bar.className).toMatch(/translate-y-full/);
+    expect(bar.className).toMatch(/opacity-0/);
+    expect(bar).toHaveAttribute('inert');
+    expect(bar).toHaveAttribute('aria-hidden', 'true');
   });
 });

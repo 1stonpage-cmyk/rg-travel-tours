@@ -39,6 +39,16 @@
   /* Errors: dark blue/grey, never red */
   --color-brand-error: #334155;
 
+  /*
+   * Documented exception to the blue/gold palette (see CLAUDE.md "Brand &
+   * design"): official WhatsApp/Viber brand colours, for chat deep-link
+   * controls only. Never paired with white text — only the exempt white
+   * glyph. `whatsapp-pressed` is the WhatsApp pill's hover/pressed state.
+   */
+  --color-whatsapp: #25d366;
+  --color-whatsapp-pressed: #128c7e;
+  --color-viber: #7360f2;
+
   --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 
   --radius-card: 1rem;
@@ -337,16 +347,52 @@
   }
 
   /*
-   * One attention pulse on the floating WhatsApp button, ~3s after it mounts.
-   * No fill-mode: once it ends the element returns to its class transform, so
-   * hover:scale-105 keeps working afterwards.
+   * Press feedback for the small circular WhatsApp/Viber glyph pills (spec
+   * task 2.9I) — deliberately its own variant, not a `.press` reuse:
+   *
+   *   - The spec calls for a deeper press (scale 0.95 vs .press's 0.97) and
+   *     an explicit spring-BACK on release, not just a symmetric ease-out.
+   *     `.press` uses one `transition-timing-function` for both directions
+   *     (the same declaration governs the press and its reverse), so it
+   *     cannot give the press and the release different character.
+   *   - These pills are small (44px circle, brand-colour fill) and icon-only
+   *     — a snappier "pop" reads better here than the soft-shadow treatment
+   *     `.press` adds for rectangular buttons/cards, which would just be a
+   *     grey smear on a saturated green/purple circle.
+   *
+   * The down-press uses the house ease-out (quick, no overshoot); the
+   * release uses a "back" easing that overshoots past 1 before settling,
+   * which is what reads as a spring — still only `transform`, still a CSS
+   * transition (no JS, no new animation per tap).
+   */
+  .press-brand {
+    transition: transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  .press-brand:active {
+    transform: scale(0.95);
+    transition: transform 100ms cubic-bezier(0.2, 0.6, 0.2, 1);
+  }
+
+  /*
+   * One attention pulse on the WhatsApp chat control, ~3s after it mounts —
+   * shared by the floating desktop bubble and the mobile bottom bar's icon
+   * (FloatingWhatsApp.tsx), whichever is actually visible at the current
+   * breakpoint. No fill-mode: once it ends the element returns to its class
+   * transform, so hover:scale-105 keeps working afterwards.
+   *
+   * Peak scale is 1.06, matching spec task 2.9I exactly (an earlier pass
+   * shipped 1.09 for a punchier first impression; reconciled back down to
+   * the spec's documented value here so the two authored requirements don't
+   * silently diverge — 1.06 is still clearly visible at the button's 56px
+   * size without reading as aggressive).
    */
   @keyframes attention-pulse {
     0% {
       transform: scale(1);
     }
     40% {
-      transform: scale(1.09);
+      transform: scale(1.06);
     }
     100% {
       transform: scale(1);
@@ -355,6 +401,33 @@
 
   .attention-pulse {
     animation: attention-pulse 1100ms cubic-bezier(0.2, 0.6, 0.2, 1) 3s 1;
+  }
+
+  /*
+   * "Chat with us" label peek (spec task 2.9I): on a touch device there is no
+   * hover to reveal the label beside the WhatsApp pill, so it peeks out once,
+   * timed to start the instant attention-pulse finishes (3s delay + 1100ms
+   * duration = 4100ms), holds briefly, then tucks back. fill-mode `both`
+   * means the end state (hidden) persists with no JS cleanup required — see
+   * the matching note on .attention-pulse above for why a *different*
+   * element re-mounting would restart this from zero (not a concern here:
+   * FloatingWhatsApp.tsx gates this the same way, once per session).
+   */
+  @keyframes label-peek {
+    0%,
+    100% {
+      opacity: 0;
+      transform: translateX(6px);
+    }
+    12%,
+    82% {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .label-peek {
+    animation: label-peek 3400ms cubic-bezier(0.2, 0.6, 0.2, 1) 4100ms both;
   }
 }
 
@@ -380,7 +453,8 @@
   }
 
   .motion-rise,
-  .attention-pulse {
+  .attention-pulse,
+  .label-peek {
     animation: none;
   }
 
@@ -401,7 +475,8 @@
     transform: none;
   }
 
-  .press:active {
+  .press:active,
+  .press-brand:active {
     transform: none;
   }
 

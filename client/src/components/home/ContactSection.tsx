@@ -1,10 +1,33 @@
-import { Clock, Facebook, Mail, MapPin, MessageCircle, MessageSquare, Phone } from 'lucide-react';
-import { useState } from 'react';
+import { Clock, Facebook, Mail, MapPin, Phone } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
+import { ViberGlyph, WhatsAppGlyph } from '@/components/common/BrandGlyphs';
 import SectionHeading from '@/components/common/SectionHeading';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SITE, telLink, viberLink, whatsappLink } from '@/lib/site';
+import { cn } from '@/lib/utils';
+
+/**
+ * Shared chip for the WhatsApp/Viber rows below (spec task 2.9I): the
+ * official brand colour lives only on this circle, behind the glyph — never
+ * behind the row's visible "WhatsApp"/"Viber" text, which stays in brand ink
+ * on the row's own background. `.press-brand` (not the plain `.press` other
+ * rows here don't carry) is the spec's own scale(0.95)-with-spring-back
+ * feedback for these specific brand-colour pills.
+ */
+function ChatIcon({ tone, children }: { tone: 'whatsapp' | 'viber'; children: ReactNode }) {
+  return (
+    <span
+      className={cn(
+        'press-brand flex size-9 shrink-0 items-center justify-center rounded-full text-white transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-md',
+        tone === 'whatsapp' ? 'bg-whatsapp hover:bg-whatsapp-pressed' : 'bg-viber',
+      )}
+    >
+      {children}
+    </span>
+  );
+}
 
 export default function ContactSection() {
   const [submitted, setSubmitted] = useState(false);
@@ -55,7 +78,9 @@ export default function ContactSection() {
                 rel="noreferrer noopener"
                 className="bg-background hover:bg-brand-blue-100 flex min-h-11 items-center gap-3 rounded-xl p-4 text-base sm:text-sm"
               >
-                <MessageCircle className="text-brand-blue-600 size-5 shrink-0" aria-hidden="true" />
+                <ChatIcon tone="whatsapp">
+                  <WhatsAppGlyph className="size-5" />
+                </ChatIcon>
                 <span>
                   <span className="text-brand-blue-900 block font-semibold">WhatsApp</span>
                   <span className="text-muted-foreground">{SITE.contact.phone.display}</span>
@@ -67,7 +92,9 @@ export default function ContactSection() {
                 href={viberLink()}
                 className="bg-background hover:bg-brand-blue-100 flex min-h-11 items-center gap-3 rounded-xl p-4 text-base sm:text-sm"
               >
-                <MessageSquare className="text-brand-blue-600 size-5 shrink-0" aria-hidden="true" />
+                <ChatIcon tone="viber">
+                  <ViberGlyph className="size-5" />
+                </ChatIcon>
                 <span>
                   <span className="text-brand-blue-900 block font-semibold">Viber</span>
                   <span className="text-muted-foreground">{SITE.contact.phone.display}</span>
