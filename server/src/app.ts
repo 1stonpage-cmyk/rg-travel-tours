@@ -3,6 +3,7 @@ import cors from 'cors';
 import express from 'express';
 import { rateLimit } from 'express-rate-limit';
 import { TIMEZONE } from '@rg/shared';
+import { createHtmlHandler } from './html';
 import { createProcedureRateLimit } from './middleware/rate-limit';
 import { appRouter } from './routers/_app';
 
@@ -14,7 +15,15 @@ import { appRouter } from './routers/_app';
  */
 const DEFAULT_ALLOWED_ORIGIN = 'http://localhost:5180';
 
-export function createApp(allowedOrigin: string = DEFAULT_ALLOWED_ORIGIN) {
+/**
+ * @param allowedOrigin  CORS origin for the browser client.
+ * @param clientDistDir  Pass `client/dist` (see html.ts's CLIENT_DIST_DIR) to
+ *   serve the built SPA with SEO meta injected — production only. Omit it and
+ *   the app is API-only, which is what every test and the dev server want:
+ *   in development Vite serves the HTML and injects the same meta itself
+ *   (D6), and there is no `dist` to read.
+ */
+export function createApp(allowedOrigin: string = DEFAULT_ALLOWED_ORIGIN, clientDistDir?: string) {
   const app = express();
 
   app.use(express.json());
@@ -58,6 +67,28 @@ export function createApp(allowedOrigin: string = DEFAULT_ALLOWED_ORIGIN) {
   );
 
   app.use('/trpc', createExpressMiddleware({ router: appRouter }));
+
+  // -------------------------------------------------------------------------
+  // Static client + SEO-injected HTML shell (task 4.1). MOUNTED LAST, AND IT
+  // MUST STAY LAST.
+  //
+  // Everything above owns a specific prefix (`/api/health`, `/trpc`). The
+  // handler below is a CATCH-ALL: `app.get('*splat', ...)` answers every
+  // remaining GET path, so anything mounted after it is dead code it has
+  // already swallowed.
+  //
+  // >>> TASK 4.3: mount `/robots.txt` and `/sitemap.xml` ABOVE this block. <<<
+  //
+  // express.static comes first inside the block so real files (/assets/*,
+  // /favicon.svg, /placeholders/*) are served as files; only paths with no
+  // file behind them fall through to the SPA shell. `index: false` stops
+  // static from answering `/` with an un-injected index.html.
+  // -------------------------------------------------------------------------
+  if (clientDistDir) {
+    const serveHtml = createHtmlHandler(clientDistDir);
+    app.use(express.static(clientDistDir, { index: false }));
+    app.get('*splat', serveHtml); // Express 5 wildcard syntax
+  }
 
   return app;
 }
