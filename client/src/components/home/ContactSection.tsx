@@ -75,6 +75,16 @@ export default function ContactSection() {
    */
   const { data: settings } = trpc.settings.get.useQuery();
   const openState = settings?.openState ?? null;
+  /**
+   * The displayed hours come from `settings.contact.hoursNote`, not from
+   * `SITE.contact.hours` and not from a hardcoded "7 AM–9 PM" subtitle.
+   * `openState.message` above is computed server-side from the
+   * `business_hours` setting, so a static hours line could contradict it —
+   * change the hours and this one card would have said "Mon–Sun, 7:00 AM –
+   * 9:00 PM" directly above "Closed — we'll reply by 9:00 AM". Both
+   * statements now come off the same settings payload.
+   */
+  const hoursNote = settings?.contact.hoursNote ?? null;
 
   return (
     <section id="contact" className="bg-brand-blue-50 border-t">
@@ -82,7 +92,9 @@ export default function ContactSection() {
         <SectionHeading
           eyebrow="Contact"
           title="Contact us"
-          subtitle="Message us any day between 7:00 AM and 9:00 PM Philippine time."
+          subtitle={
+            hoursNote ? `Message us any time — we're open ${hoursNote}.` : 'Message us any time.'
+          }
         />
 
         <div className="mt-10 grid gap-8 lg:grid-cols-2">
@@ -182,7 +194,7 @@ export default function ContactSection() {
               <Clock className="text-brand-blue-600 mt-0.5 size-5 shrink-0" aria-hidden="true" />
               <span>
                 <span className="text-brand-blue-900 block font-semibold">Hours</span>
-                <span className="text-muted-foreground">{SITE.contact.hours}</span>
+                {hoursNote && <span className="text-muted-foreground">{hoursNote}</span>}
                 {/*
                  * Live open/closed status (spec 6E). A small status line,
                  * not a banner: same text-sm scale as the surrounding copy,

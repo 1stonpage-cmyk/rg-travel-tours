@@ -143,6 +143,38 @@ describe('open/closed state', () => {
   });
 });
 
+/**
+ * The hours shown on the contact card and the server-computed open/closed
+ * message have to come from the same place. They did not: the hours came
+ * from `SITE.contact.hours` plus a hardcoded "7:00 AM and 9:00 PM"
+ * subtitle, while `settings.contact.hoursNote` had no consumer at all — so
+ * changing the hours in settings put two contradictory statements on one
+ * card. This feeds settings hours that differ from site.ts on purpose.
+ */
+describe('contact hours come from settings, not a hardcoded string', () => {
+  it('renders settings.contact.hoursNote and nothing from the old static copy', async () => {
+    const hoursNote = 'Mon–Fri, 9:00 AM – 5:00 PM (PHT)';
+    mockTrpc({
+      'settings.get': settingsWith({
+        contact: { ...SETTINGS_FIXTURE.contact, hoursNote },
+        openState: { isOpen: false, message: "Closed — we'll reply by 9:00 AM" },
+      }),
+    });
+    const { container } = renderWithTrpc(<ContactSection />);
+
+    const section = (await screen.findByText(hoursNote)).closest('section') as HTMLElement;
+    expect(section).toBeTruthy();
+    // The subtitle reads from the same value, so the whole card agrees.
+    expect(
+      within(section).getAllByText(new RegExp(hoursNote.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+        .length,
+    ).toBeGreaterThanOrEqual(2);
+    // Nothing on the card still says the seeded 7 AM–9 PM window.
+    expect(container.textContent).not.toMatch(/7:00 AM/);
+    expect(container.textContent).not.toMatch(/9:00 PM/);
+  });
+});
+
 describe('payment methods — footer and FAQ composed from the same settings.paymentMethods, not two static lists', () => {
   it('lists only enabled payment methods in the footer', async () => {
     const methods = SETTINGS_FIXTURE.paymentMethods.filter((m) => m.key !== 'grabpay');
