@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { WhatsAppGlyph } from '@/components/common/BrandGlyphs';
 import { Button } from '@/components/ui/button';
 import { SITE, whatsappLink } from '@/lib/site';
+import { trpc } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
 
 /**
@@ -154,6 +155,23 @@ export default function FloatingWhatsApp() {
   const nearFooter = useNearFooter(pathname);
   const barVisible = !coversHeroSearch && !nearFooter;
 
+  /**
+   * `settings.openState.message` is computed server-side, in Asia/Manila
+   * (Task 1.5's `resolveOpenState`) — rendered verbatim, never recomputed
+   * from a client clock, which would show the Manila-correct message only
+   * to a guest already in that timezone. Read via the same
+   * `trpc.settings.get.useQuery()` call ContactSection makes: TanStack
+   * Query dedupes identical queries by key, so both components resolve
+   * from the one cached result rather than two independent reads that
+   * could disagree. Rendered `sr-only` rather than as new visible copy —
+   * the plan's global constraint for this phase is "no design change,
+   * only the data source changes," and this control's accessible name
+   * ("Chat with us on WhatsApp") and icon-only, text-free appearance are
+   * both pinned by existing tests (layout.test.tsx, motion.test.tsx).
+   */
+  const { data: settings } = trpc.settings.get.useQuery();
+  const openState = settings?.openState ?? null;
+
   // Computed once at mount (not re-read on every render) so a mid-session
   // sessionStorage write from this same component doesn't retroactively
   // change what it decided at mount.
@@ -181,6 +199,15 @@ export default function FloatingWhatsApp() {
 
   return (
     <>
+      {/*
+       * One sr-only node, not one per breakpoint variant below — both the
+       * desktop bubble and the mobile bar exist in the DOM at once in this
+       * project's "both mounted, CSS picks one" pattern, and duplicating
+       * the same announcement per variant would just be noise for a screen
+       * reader user. Omitted entirely while the query is still pending,
+       * rather than rendering a stale/empty message.
+       */}
+      {openState && <span className="sr-only">{openState.message}</span>}
       {/*
        * Desktop (md and up): the floating bubble. Official WhatsApp green
        * instead of brand blue, icon-only with an aria-label instead of the

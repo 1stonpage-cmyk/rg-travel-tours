@@ -3,9 +3,23 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ViberGlyph, WhatsAppGlyph } from '@/components/common/BrandGlyphs';
 import { SITE, telLink, viberLink, whatsappLink } from '@/lib/site';
+import { trpc } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
 
-const PERMITS = [SITE.permits.dot, SITE.permits.dti, SITE.permits.bir];
+/**
+ * The permit *labels* ("DOT Accreditation No.", ...) are static site chrome
+ * — `settings.permits` (server/src/content/settings-schema.ts) only ever
+ * carries the three values, never their captions. The values below come
+ * from the live settings query instead of `SITE.permits.*.value`, which is
+ * why only the labels are pulled from `SITE.permits` here.
+ */
+const PERMIT_LABELS = {
+  dot: SITE.permits.dot.label,
+  dti: SITE.permits.dti.label,
+  bir: SITE.permits.bir.label,
+};
+
+const NO_PERMITS = { dot: null, dti: null, bir: null } as const;
 
 /**
  * Icon-only WhatsApp/Viber buttons beside the primary phone number (spec
@@ -52,6 +66,26 @@ function ChatButton({
 }
 
 export default function SiteFooter() {
+  /**
+   * Permits (spec task 6G) and payment methods (6F) both come from
+   * `settings.get` now, rather than the static `SITE.permits`/
+   * `SITE.paymentMethods` arrays this used to render — `settings.paymentMethods`
+   * is already enabled-only and sorted (`resolvePaymentMethods`,
+   * server/src/content/settings.ts), so these chips and FaqSection's
+   * payment-methods answer can never show a different set of methods; see
+   * PAYMENT_METHODS_QUESTION in FaqSection.tsx. Defaults below cover only
+   * the brief gap before the query resolves — not a real "no settings"
+   * state, since `readSettings()` throws rather than omitting a key.
+   */
+  const { data: settings } = trpc.settings.get.useQuery();
+  const permits = settings?.permits ?? NO_PERMITS;
+  const paymentMethods = settings?.paymentMethods ?? [];
+  const permitRows = [
+    { label: PERMIT_LABELS.dot, value: permits.dot },
+    { label: PERMIT_LABELS.dti, value: permits.dti },
+    { label: PERMIT_LABELS.bir, value: permits.bir },
+  ];
+
   return (
     <footer className="bg-brand-blue-950 text-brand-blue-100 mt-16">
       <div className="mx-auto grid max-w-7xl gap-10 px-4 py-12 sm:px-6 lg:grid-cols-4 lg:px-8">
@@ -165,7 +199,7 @@ export default function SiteFooter() {
             Operated by {SITE.legalOperator}
           </p>
           <dl className="mt-4 space-y-2 text-sm">
-            {PERMITS.map((permit) => (
+            {permitRows.map((permit) => (
               <div key={permit.label}>
                 <dt className="text-brand-blue-300">{permit.label}</dt>
                 <dd className="font-mono">
@@ -179,12 +213,12 @@ export default function SiteFooter() {
             We accept
           </p>
           <ul className="mt-3 flex flex-wrap gap-2">
-            {SITE.paymentMethods.map((method) => (
+            {paymentMethods.map((method) => (
               <li
-                key={method}
+                key={method.key}
                 className="border-brand-blue-800 bg-brand-blue-900 text-brand-blue-100 rounded-md border px-2.5 py-1 text-xs font-semibold"
               >
-                {method}
+                {method.label}
               </li>
             ))}
           </ul>

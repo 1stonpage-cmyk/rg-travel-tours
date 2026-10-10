@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,11 +48,14 @@ describe('PublicLayout', () => {
     expect(footer).toHaveTextContent(/BIR/);
   });
 
-  it('lists accepted payment methods in the footer', () => {
+  it('lists accepted payment methods in the footer', async () => {
     renderLayout();
     const footer = screen.getByRole('contentinfo');
+    // SiteFooter now reads these from settings.get (task 3.4) rather than
+    // the static SITE.paymentMethods array, so the chips arrive a tick
+    // after the initial render — findByText waits for that resolution.
     for (const method of ['GCash', 'Maya', 'GrabPay', 'QR Ph']) {
-      expect(footer).toHaveTextContent(method);
+      expect(await within(footer).findByText(method)).toBeInTheDocument();
     }
   });
 

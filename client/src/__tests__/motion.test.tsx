@@ -641,10 +641,25 @@ describe('.press-brand — scale(0.95) + spring-back for the WhatsApp/Viber pill
  * Fix round 1, F1 / BUG-077: ContactSection is one of the five named 2.9I
  * surfaces and received a real markup change (lucide icons → official
  * glyphs, a new ChatIcon wrapper, .press-brand) with no test coverage at
- * all in the original diff. ContactSection needs neither a router nor tRPC
- * — it renders no <Link> and fetches nothing — so it's rendered bare.
+ * all in the original diff.
+ *
+ * ContactSection now reads `settings.openState` (task 3.4), so it needs the
+ * tRPC provider and a mocked `settings.get` — it still renders no <Link>,
+ * so MemoryRouter stays unnecessary here.
  */
 describe('ContactSection — WhatsApp/Viber branding (spec task 2.9I, fix round 1 F1 / BUG-077)', () => {
+  beforeEach(() => {
+    mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
+  });
+
+  function renderContact() {
+    return render(
+      <TrpcProviders>
+        <ContactSection />
+      </TrpcProviders>,
+    );
+  }
+
   function pillFor(tone: 'whatsapp' | 'viber') {
     const link = screen.getByRole('link', { name: new RegExp(tone, 'i') });
     const pill = link.querySelector(`.bg-${tone}`);
@@ -652,21 +667,21 @@ describe('ContactSection — WhatsApp/Viber branding (spec task 2.9I, fix round 
   }
 
   it('the WhatsApp pill carries no text node — the glyph is the only content inside it', () => {
-    render(<ContactSection />);
+    renderContact();
     const { pill } = pillFor('whatsapp');
     expect(pill, 'expected a .bg-whatsapp chip inside the WhatsApp link').toBeTruthy();
     expect(pill!.textContent).toBe('');
   });
 
   it('the Viber pill carries no text node either', () => {
-    render(<ContactSection />);
+    renderContact();
     const { pill } = pillFor('viber');
     expect(pill, 'expected a .bg-viber chip inside the Viber link').toBeTruthy();
     expect(pill!.textContent).toBe('');
   });
 
   it('the visible "WhatsApp" label is a sibling outside the coloured pill, not inside it', () => {
-    render(<ContactSection />);
+    renderContact();
     const { pill } = pillFor('whatsapp');
     const label = screen.getByText('WhatsApp');
     expect(pill!.contains(label)).toBe(false);
@@ -674,7 +689,7 @@ describe('ContactSection — WhatsApp/Viber branding (spec task 2.9I, fix round 
   });
 
   it('the visible "Viber" label is a sibling outside the coloured pill, not inside it', () => {
-    render(<ContactSection />);
+    renderContact();
     const { pill } = pillFor('viber');
     const label = screen.getByText('Viber');
     expect(pill!.contains(label)).toBe(false);
@@ -682,7 +697,7 @@ describe('ContactSection — WhatsApp/Viber branding (spec task 2.9I, fix round 
   });
 
   it('both pills use .press-brand (scale 0.95 + spring-back), not the plain .press other rows here carry', () => {
-    render(<ContactSection />);
+    renderContact();
     const { pill: whatsappPill } = pillFor('whatsapp');
     const { pill: viberPill } = pillFor('viber');
 
@@ -696,6 +711,8 @@ describe('ContactSection — WhatsApp/Viber branding (spec task 2.9I, fix round 
 describe('FloatingWhatsApp — attention pulse and "Chat with us" peek fire once per session, not once per mount (spec task 2.9I)', () => {
   beforeEach(() => {
     sessionStorage.clear();
+    // FloatingWhatsApp now reads `settings.openState` (task 3.4).
+    mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
   });
 
   afterEach(() => {
@@ -704,9 +721,11 @@ describe('FloatingWhatsApp — attention pulse and "Chat with us" peek fire once
 
   function renderBubble() {
     return render(
-      <MemoryRouter>
-        <FloatingWhatsApp />
-      </MemoryRouter>,
+      <TrpcProviders>
+        <MemoryRouter>
+          <FloatingWhatsApp />
+        </MemoryRouter>
+      </TrpcProviders>,
     );
   }
 
@@ -774,6 +793,11 @@ describe('Mobile bottom bar — "Book a tour" + WhatsApp (spec task 2.9B)', () =
     return footer;
   }
 
+  beforeEach(() => {
+    // FloatingWhatsApp now reads `settings.openState` (task 3.4).
+    mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
+  });
+
   afterEach(() => {
     document.querySelectorAll('footer').forEach((f) => f.remove());
     vi.unstubAllGlobals();
@@ -781,9 +805,11 @@ describe('Mobile bottom bar — "Book a tour" + WhatsApp (spec task 2.9B)', () =
 
   it('renders a "Book a tour" link to /tours and an icon-only, aria-labelled WhatsApp link', () => {
     render(
-      <MemoryRouter>
-        <FloatingWhatsApp />
-      </MemoryRouter>,
+      <TrpcProviders>
+        <MemoryRouter>
+          <FloatingWhatsApp />
+        </MemoryRouter>
+      </TrpcProviders>,
     );
     const bookLink = screen.getByRole('link', { name: /book a tour/i });
     expect(bookLink).toHaveAttribute('href', '/tours');
@@ -804,9 +830,11 @@ describe('Mobile bottom bar — "Book a tour" + WhatsApp (spec task 2.9B)', () =
     const footer = addFooter();
 
     const { container } = render(
-      <MemoryRouter>
-        <FloatingWhatsApp />
-      </MemoryRouter>,
+      <TrpcProviders>
+        <MemoryRouter>
+          <FloatingWhatsApp />
+        </MemoryRouter>
+      </TrpcProviders>,
     );
     const bar = container.querySelector('.md\\:hidden') as HTMLElement;
     expect(bar).toBeTruthy();

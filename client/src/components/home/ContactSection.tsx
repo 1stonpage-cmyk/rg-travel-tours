@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SITE, telLink, viberLink, whatsappLink } from '@/lib/site';
+import { trpc } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
 
 /**
@@ -31,6 +32,21 @@ function ChatIcon({ tone, children }: { tone: 'whatsapp' | 'viber'; children: Re
 
 export default function ContactSection() {
   const [submitted, setSubmitted] = useState(false);
+
+  /**
+   * `settings.openState.message` — computed server-side, in Asia/Manila
+   * (Task 1.5's `resolveOpenState`), never recomputed here from a client
+   * clock (which would be correct only for a guest already in that
+   * timezone). Rendered verbatim, `sr-only`, right after the static Hours
+   * line below: this phase's global constraint is "no design change, only
+   * the data source changes," so the visible Hours copy stays exactly as
+   * it was and the live status is an accessibility-only addition rather
+   * than new on-screen content. FloatingWhatsApp reads the identical
+   * `openState` off the same `trpc.settings.get.useQuery()` cache entry
+   * (TanStack Query dedupes by key), so the two can never disagree.
+   */
+  const { data: settings } = trpc.settings.get.useQuery();
+  const openState = settings?.openState ?? null;
 
   return (
     <section id="contact" className="bg-brand-blue-50 border-t">
@@ -139,6 +155,7 @@ export default function ContactSection() {
               <span>
                 <span className="text-brand-blue-900 block font-semibold">Hours</span>
                 <span className="text-muted-foreground">{SITE.contact.hours}</span>
+                {openState && <span className="sr-only">{openState.message}</span>}
               </span>
             </li>
 
