@@ -97,6 +97,10 @@ export default function PackagesSection() {
             const form = e.currentTarget;
             const data = new FormData(form);
             if (data.get('consent') !== 'on') {
+              // Clear any earlier result first — see the matching note in
+              // ContactSection.tsx: a stale "Inquiry sent" status must not
+              // sit beside the new consent alert.
+              sendInquiry.reset();
               setConsentError(
                 'Please agree to be contacted before sending — we need this to reply to you (RA 10173).',
               );

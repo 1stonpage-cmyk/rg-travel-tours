@@ -40,6 +40,11 @@ export default function ContactSection() {
     const form = e.currentTarget;
     const data = new FormData(form);
     if (data.get('consent') !== 'on') {
+      // Clear any earlier result first: without this, a second submit with
+      // consent unchecked renders the stale "Message sent" status right
+      // beside the new consent alert — two contradictory statuses, one of
+      // them about a message that is not being sent.
+      sendInquiry.reset();
       setConsentError(
         'Please agree to be contacted before sending — we need this to reply to you (RA 10173).',
       );

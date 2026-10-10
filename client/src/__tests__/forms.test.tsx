@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest';
 import ContactSection from '@/components/home/ContactSection';
 import PackagesSection from '@/components/home/PackagesSection';
 import PromoNewsletter from '@/components/home/PromoNewsletter';
+import { GENERIC_MUTATION_ERROR_MESSAGE, RATE_LIMIT_MESSAGE } from '@/lib/mutation-errors';
 import { TrpcProviders } from '@/lib/trpc';
 import { PACKAGES_FIXTURE, SETTINGS_FIXTURE } from './helpers/fixtures';
 import { mockTrpc, mockTrpcError, mockTrpcRateLimited } from './helpers/mock-trpc';
@@ -92,6 +93,14 @@ describe('ContactSection — wired to inquiries.create', () => {
     expect(within(form).queryByRole('status')).not.toBeInTheDocument();
   });
 
+  /**
+   * The generic half of the 429-vs-everything-else pair. Asserting only
+   * "not the raw error" left both messages interchangeable: returning the
+   * rate-limit text unconditionally passed every form test, and BUG-084 was
+   * exactly a 429-handling defect. This pins the generic message and
+   * excludes the rate-limit one; the 429 test below does the mirror image,
+   * so swapping the two fails here AND there.
+   */
   it('shows a friendly failure message, in brand error style, when the mutation fails', async () => {
     const user = userEvent.setup();
     mockTrpcError('inquiries.create');
@@ -104,6 +113,8 @@ describe('ContactSection — wired to inquiries.create', () => {
     const alert = await within(form).findByRole('alert');
     expect(alert.className).toContain('text-brand-error');
     expect(alert.textContent).not.toMatch(/mock failure/i);
+    expect(alert).toHaveTextContent(GENERIC_MUTATION_ERROR_MESSAGE);
+    expect(alert.textContent).not.toMatch(/too many messages/i);
   });
 
   it('never claims an inquiry was sent when the mutation failed', async () => {
@@ -142,6 +153,7 @@ describe('ContactSection — wired to inquiries.create', () => {
     expect(button).not.toBeDisabled();
   });
 
+  /** The 429 half of the pair — see the generic-failure test above. */
   it('reports the rate-limit response as a distinct, calm message', async () => {
     const user = userEvent.setup();
     mockTrpcRateLimited('inquiries.create');
@@ -153,6 +165,39 @@ describe('ContactSection — wired to inquiries.create', () => {
 
     const alert = await within(form).findByRole('alert');
     expect(alert).toHaveTextContent(/too many messages.*try again shortly/i);
+    expect(alert).toHaveTextContent(RATE_LIMIT_MESSAGE);
+    expect(alert.textContent).not.toMatch(/something went wrong sending this/i);
+  });
+
+  /**
+   * A success status and a validation alert must never sit side by side.
+   * Submit once successfully, then submit again with consent cleared: the
+   * stale "Message sent" line used to stay on screen next to the new
+   * consent alert, telling the visitor their message was sent while the
+   * form was refusing to send it.
+   */
+  it('clears the previous success status when a new submit fails the consent check', async () => {
+    const user = userEvent.setup();
+    mockTrpc({ 'inquiries.create': { ok: true } });
+    renderContact();
+
+    const form = screen.getByRole('form', { name: /contact inquiry/i });
+    await fillContactForm(user, form);
+    await user.click(within(form).getByRole('button', { name: /send message/i }));
+    expect(await within(form).findByRole('status')).toHaveTextContent(/sent/i);
+
+    // Consent is unchecked again after the success reset. Clear the text
+    // fields before refilling: `user.type` appends, and an email field left
+    // holding two concatenated addresses is invalid, which makes jsdom
+    // swallow the submit event entirely instead of exercising the handler.
+    await user.clear(within(form).getByLabelText(/your name/i));
+    await user.clear(within(form).getByLabelText(/^email$/i));
+    await user.clear(within(form).getByLabelText(/^message$/i));
+    await fillContactForm(user, form, { consent: false });
+    await user.click(within(form).getByRole('button', { name: /send message/i }));
+
+    expect(await within(form).findByRole('alert')).toHaveTextContent(/agree/i);
+    expect(within(form).queryByRole('status')).not.toBeInTheDocument();
   });
 });
 
@@ -182,6 +227,38 @@ describe('PackagesSection — package inquiry wired to inquiries.create', () => 
     });
   });
 
+  /**
+   * Nothing previously pinned the selected-package -> packageId mapping:
+   * every test submitted the default (first) package, so a hardcoded
+   * `packages[0]!` would have passed while filing each inquiry against the
+   * wrong package. This selects the THIRD fixture package and asserts both
+   * the id and the synthesized message name it.
+   */
+  it('files the inquiry against the package the visitor actually selected', async () => {
+    const user = userEvent.setup();
+    const chosen = PACKAGES_FIXTURE[2]!;
+    let capturedInput: Record<string, unknown> | undefined;
+    mockTrpc({
+      'inquiries.create': (input: unknown) => {
+        capturedInput = input as Record<string, unknown>;
+        return { ok: true };
+      },
+    });
+    renderPackages();
+
+    const form = await screen.findByRole('form', { name: /package inquiry/i });
+    await user.selectOptions(within(form).getByLabelText(/^package$/i), chosen.slug);
+    await user.type(within(form).getByLabelText(/your name/i), 'Test Guest');
+    await user.type(within(form).getByLabelText(/^email$/i), 'guest@example.com');
+    await user.click(within(form).getByLabelText(/i agree/i));
+    await user.click(within(form).getByRole('button', { name: /send inquiry/i }));
+
+    await within(form).findByRole('status');
+    expect(capturedInput).toMatchObject({ type: 'package', packageId: chosen.id });
+    expect(chosen.id).not.toBe(PACKAGES_FIXTURE[0]!.id);
+    expect(String(capturedInput?.message)).toContain(chosen.title);
+  });
+
   it('blocks submission without the data-privacy consent checkbox, and says why', async () => {
     const user = userEvent.setup();
     let wasCalled = false;
@@ -201,6 +278,30 @@ describe('PackagesSection — package inquiry wired to inquiries.create', () => 
     const alert = await within(form).findByRole('alert');
     expect(alert).toHaveTextContent(/agree/i);
     expect(wasCalled).toBe(false);
+    expect(within(form).queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  /** Same stale-status defect as ContactSection — see that test's comment. */
+  it('clears the previous success status when a new submit fails the consent check', async () => {
+    const user = userEvent.setup();
+    mockTrpc({ 'inquiries.create': { ok: true } });
+    renderPackages();
+
+    const form = await screen.findByRole('form', { name: /package inquiry/i });
+    await user.type(within(form).getByLabelText(/your name/i), 'Test Guest');
+    await user.type(within(form).getByLabelText(/^email$/i), 'guest@example.com');
+    await user.click(within(form).getByLabelText(/i agree/i));
+    await user.click(within(form).getByRole('button', { name: /send inquiry/i }));
+    expect(await within(form).findByRole('status')).toHaveTextContent(/sent/i);
+
+    // Clear before refilling — see the note in the ContactSection version.
+    await user.clear(within(form).getByLabelText(/your name/i));
+    await user.clear(within(form).getByLabelText(/^email$/i));
+    await user.type(within(form).getByLabelText(/your name/i), 'Test Guest');
+    await user.type(within(form).getByLabelText(/^email$/i), 'guest@example.com');
+    await user.click(within(form).getByRole('button', { name: /send inquiry/i }));
+
+    expect(await within(form).findByRole('alert')).toHaveTextContent(/agree/i);
     expect(within(form).queryByRole('status')).not.toBeInTheDocument();
   });
 });
@@ -231,6 +332,10 @@ describe('PromoNewsletter — wired to newsletter.subscribe', () => {
 
     const alert = await within(form).findByRole('alert');
     expect(alert.textContent).not.toMatch(/mock failure/i);
+    // The same discrimination as the contact form: a non-429 failure must
+    // show the generic sentence, never the rate-limit one.
+    expect(alert).toHaveTextContent(GENERIC_MUTATION_ERROR_MESSAGE);
+    expect(alert.textContent).not.toMatch(/too many messages/i);
     expect(within(form).queryByRole('status')).not.toBeInTheDocument();
   });
 
@@ -245,5 +350,7 @@ describe('PromoNewsletter — wired to newsletter.subscribe', () => {
 
     const alert = await within(form).findByRole('alert');
     expect(alert).toHaveTextContent(/too many messages.*try again shortly/i);
+    expect(alert).toHaveTextContent(RATE_LIMIT_MESSAGE);
+    expect(alert.textContent).not.toMatch(/something went wrong sending this/i);
   });
 });
