@@ -8,6 +8,21 @@ import type { Destination } from '../../../../server/src/routers/public/destinat
 
 const SKELETON_ITEM_COUNT = 6;
 
+/**
+ * Intrinsic size for the destination tile's `width`/`height` attributes.
+ *
+ * `destinations.image_path` has no width/height columns to read (unlike
+ * `tour_images`), so these come from the only ratio that is actually
+ * guaranteed: the 3:2 the `aspect-[3/2]` class below pins, which today's
+ * generated placeholders (1200×800, client/scripts/generate-placeholders.mjs)
+ * already match. The attributes exist to reserve the box during the
+ * pre-stylesheet window — with `object-cover` the CSS ratio governs once CSS
+ * lands, so a future real photo of a different pixel size still renders
+ * identically.
+ */
+const PLACE_IMAGE_WIDTH = 1200;
+const PLACE_IMAGE_HEIGHT = 800;
+
 /** The grid classes live here and on the real list below — the skeleton owns its own `<ul>` so the boundary can sit outside both (see `MostVisited`). */
 const PLACE_LIST_CLASSES = 'mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-3';
 
@@ -83,7 +98,10 @@ export default function MostVisited() {
                     <img
                       src={place.image?.path}
                       alt={place.image?.alt ?? ''}
+                      width={PLACE_IMAGE_WIDTH}
+                      height={PLACE_IMAGE_HEIGHT}
                       loading="lazy"
+                      decoding="async"
                       className="aspect-[3/2] w-full object-cover transition-transform duration-300 group-hover:scale-105"
                     />
                     <div className="from-brand-blue-950 absolute inset-0 bg-gradient-to-t via-transparent to-transparent" />

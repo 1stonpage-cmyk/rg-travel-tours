@@ -73,7 +73,19 @@ export default function HeroSection() {
     <section className="relative isolate overflow-hidden">
       {/* Real photo (assets-source/), not a placeholder. `display: contents` on the
           <picture> keeps the absolutely-positioned <img> behaving exactly as the
-          single <img> it replaced — no extra box, no layout shift. */}
+          single <img> it replaced — no extra box, no layout shift.
+
+          This photo is the mobile LCP element, and it only exists inside this
+          bundle — so client/index.html carries a matching
+          <link rel="preload" as="image" type="image/webp"> that lets the
+          browser start fetching it at HTML-parse time instead of waiting for
+          the bundle to download, parse and run (task 4.4).
+
+          That preload's `imagesrcset`/`imagesizes` MUST stay byte-identical to
+          the WebP <source> below. A mismatch means the browser preloads one
+          candidate and the <picture> then fetches a different one — two hero
+          downloads instead of a faster one. `width`/`height` stay too: they are
+          what reserves the box before the stylesheet lands. */}
       <picture className="contents">
         <source
           type="image/webp"

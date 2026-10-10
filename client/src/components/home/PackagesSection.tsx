@@ -14,6 +14,16 @@ import { useCardStagger } from '@/lib/use-scroll-reveal';
 
 const SKELETON_CARD_COUNT = 3;
 
+/**
+ * Intrinsic size for the package card image's `width`/`height` attributes —
+ * same reasoning as `PLACE_IMAGE_WIDTH` in MostVisited.tsx: `packages` has no
+ * width/height columns, so these carry the 3:2 ratio the `aspect-[3/2]` class
+ * pins (and that the 1200×800 placeholders already have), purely to reserve
+ * the box before the stylesheet arrives.
+ */
+const PACKAGE_IMAGE_WIDTH = 1200;
+const PACKAGE_IMAGE_HEIGHT = 800;
+
 /** JSON `highlights` column comes back typed `unknown` — narrow defensively at the render boundary. */
 function asStringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
@@ -141,7 +151,10 @@ export default function PackagesSection() {
                         <img
                           src={pkg.image.path}
                           alt={pkg.image.alt}
+                          width={PACKAGE_IMAGE_WIDTH}
+                          height={PACKAGE_IMAGE_HEIGHT}
                           loading="lazy"
+                          decoding="async"
                           className="aspect-[3/2] w-full object-cover transition-transform duration-500 ease-out group-hover:scale-105 motion-reduce:group-hover:scale-100"
                         />
                       )}

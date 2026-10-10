@@ -30,6 +30,7 @@ export default function TourCard({ tour }: Props) {
             width={tour.image.width ?? undefined}
             height={tour.image.height ?? undefined}
             loading="lazy"
+            decoding="async"
             className="size-full object-cover transition-transform duration-500 ease-out group-hover:scale-105 motion-reduce:group-hover:scale-100"
           />
         )}
