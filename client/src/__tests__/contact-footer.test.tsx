@@ -13,7 +13,7 @@ import SiteFooter from '@/components/layout/SiteFooter';
 import { SITE } from '@/lib/site';
 import { TrpcProviders } from '@/lib/trpc';
 import { SETTINGS_FIXTURE } from './helpers/fixtures';
-import { mockTrpc } from './helpers/mock-trpc';
+import { mockTrpc, resetTrpcMock } from './helpers/mock-trpc';
 
 const PAYMENT_METHODS_QUESTION = 'Which payment methods do you accept?';
 
@@ -172,6 +172,94 @@ describe('contact hours come from settings, not a hardcoded string', () => {
     // Nothing on the card still says the seeded 7 AM–9 PM window.
     expect(container.textContent).not.toMatch(/7:00 AM/);
     expect(container.textContent).not.toMatch(/9:00 PM/);
+  });
+});
+
+/**
+ * BUG-100 — the footer was the last place the business hours were hardcoded.
+ * BUG-093 moved the contact card onto `settings.contact.hoursNote`; the
+ * footer kept printing `SITE.contact.hours`, so an admin editing the hours
+ * in settings left the footer stating the old window.
+ *
+ * `SETTINGS_FIXTURE.contact.hoursNote` happens to equal the string that used
+ * to be hardcoded, so every test below feeds a DIFFERENT value on purpose —
+ * otherwise the old implementation would satisfy them unchanged.
+ */
+describe('footer hours come from settings, not a second hardcoded copy', () => {
+  const HOURS = 'Daily, 6:30 AM – 10:00 PM (PHT), holidays included';
+  const STATIC_HOURS = /7:00 AM|9:00 PM/;
+
+  function settingsWithHours(hoursNote: string) {
+    return settingsWith({ contact: { ...SETTINGS_FIXTURE.contact, hoursNote } });
+  }
+
+  /** The contact list in the footer's first column, found via a stable row. */
+  function contactList(footer: HTMLElement): HTMLElement {
+    const emailLink = within(footer).getByRole('link', { name: SITE.contact.email });
+    return emailLink.closest('ul') as HTMLElement;
+  }
+
+  it('renders settings.contact.hoursNote and nothing from the old static string', async () => {
+    mockTrpc({ 'settings.get': settingsWithHours(HOURS) });
+    renderWithTrpc(<SiteFooter />);
+
+    const footer = screen.getByRole('contentinfo');
+    expect(await within(footer).findByText(HOURS)).toBeInTheDocument();
+    expect(footer.textContent).not.toMatch(STATIC_HOURS);
+  });
+
+  /**
+   * The loading state, exercised for real: `mockTrpc` answers over `fetch`,
+   * so the first paint genuinely has no settings. The row must already be
+   * there — if it only appeared once the query resolved, Facebook and
+   * everything below it would jerk upward mid-paint — and it must not be
+   * showing a stale fallback while it waits.
+   */
+  it('keeps the hours row in place before the settings query resolves', async () => {
+    mockTrpc({ 'settings.get': settingsWithHours(HOURS) });
+    renderWithTrpc(<SiteFooter />);
+
+    const footer = screen.getByRole('contentinfo');
+    const rowsWhileLoading = contactList(footer).querySelectorAll(':scope > li').length;
+    expect(footer.textContent).not.toMatch(STATIC_HOURS);
+    expect(screen.queryByText(HOURS)).toBeNull();
+
+    await within(footer).findByText(HOURS);
+    expect(contactList(footer).querySelectorAll(':scope > li')).toHaveLength(rowsWhileLoading);
+  });
+
+  it('degrades to a reserved blank line when settings carry no hours at all', async () => {
+    mockTrpc({ 'settings.get': settingsWithHours(HOURS) });
+    const populated = renderWithTrpc(<SiteFooter />);
+    const withHours = screen.getByRole('contentinfo');
+    await within(withHours).findByText(HOURS);
+    const expectedRows = contactList(withHours).querySelectorAll(':scope > li').length;
+    populated.unmount();
+
+    resetTrpcMock();
+    mockTrpc({ 'settings.get': settingsWithHours('') });
+    renderWithTrpc(<SiteFooter />);
+
+    const footer = screen.getByRole('contentinfo');
+    await within(footer).findByText('GCash'); // the settings query has landed
+    // The row survives, so nothing below it moves...
+    expect(contactList(footer).querySelectorAll(':scope > li')).toHaveLength(expectedRows);
+    // ...and it invents nothing to fill the gap.
+    expect(footer.textContent).not.toMatch(STATIC_HOURS);
+    expect(footer.textContent).not.toMatch(/\bhours?\b/i);
+  });
+
+  /**
+   * A rendering test cannot see a static string that is merely still
+   * present — the footer would pass the tests above while keeping a dead
+   * `SITE.contact.hours` ready for the next edit to reach for. Read the
+   * source, the way this file already does for the `new Date()` check.
+   */
+  it('neither the footer nor site.ts still carries a static hours string', () => {
+    expect(readComponentSource('components/layout/SiteFooter.tsx')).not.toMatch(
+      /SITE\.contact\.hours\b/,
+    );
+    expect(readComponentSource('lib/site.ts')).not.toMatch(/^\s*hours:/m);
   });
 });
 

@@ -22,6 +22,16 @@ const PERMIT_LABELS = {
 const NO_PERMITS = { dot: null, dti: null, bir: null } as const;
 
 /**
+ * One line of reserved height for the hours row while `settings.get` is in
+ * flight (BUG-100). A non-breaking space, built from its code point rather
+ * than written as a string: Prettier rewrites a U+00A0 escape sequence into
+ * the raw character, which is then invisible in the source and
+ * indistinguishable from an ordinary space to the next person editing this
+ * file.
+ */
+const RESERVED_LINE = String.fromCharCode(160);
+
+/**
  * Icon-only WhatsApp/Viber buttons beside the primary phone number (spec
  * task 2.10A). Same shape as ContactSection's ChatIcon: the brand colour
  * lives only on this circle, behind the glyph, never behind visible text.
@@ -80,6 +90,8 @@ export default function SiteFooter() {
   const { data: settings } = trpc.settings.get.useQuery();
   const permits = settings?.permits ?? NO_PERMITS;
   const paymentMethods = settings?.paymentMethods ?? [];
+  /** BUG-100 — same source as ContactSection's hours. See the Clock row below. */
+  const hoursNote = settings?.contact.hoursNote ?? null;
   const permitRows = [
     { label: PERMIT_LABELS.dot, value: permits.dot },
     { label: PERMIT_LABELS.dti, value: permits.dti },
@@ -156,9 +168,30 @@ export default function SiteFooter() {
               <MapPin className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
               <span>{SITE.contact.address}</span>
             </li>
+            {/*
+             * BUG-100: the hours come from `settings.contact.hoursNote`, the
+             * same value ContactSection renders (task 4.5 / BUG-093) — not
+             * from a second static string. This was the last place the hours
+             * were hardcoded, so an admin editing them in settings used to
+             * leave the footer stating the old window.
+             *
+             * The row stays MOUNTED while the query resolves and even if the
+             * setting is empty, with its single line reserved by a
+             * non-breaking space. Dropping the `<li>` instead would collapse
+             * the row and jerk Facebook (and everything below it) upward as
+             * the cached settings query lands — content jumping, and the one
+             * thing the loading state here has to avoid. There is no
+             * fallback string on purpose: a stale "7 AM – 9 PM" shown for a
+             * frame is exactly the wrong text this fix exists to delete.
+             *
+             * `min-w-0` + `wrap-anywhere`: a settings-driven string can be
+             * much longer than the seeded one, and without them the flex row
+             * would hold its intrinsic minimum width and push the footer into
+             * a horizontal scroll at 360px.
+             */}
             <li className="flex items-center gap-2">
               <Clock className="size-4 shrink-0" aria-hidden="true" />
-              <span>{SITE.contact.hours}</span>
+              <span className="wrap-anywhere min-w-0">{hoursNote || RESERVED_LINE}</span>
             </li>
             <li className="flex items-center gap-2">
               <Facebook className="size-4 shrink-0" aria-hidden="true" />

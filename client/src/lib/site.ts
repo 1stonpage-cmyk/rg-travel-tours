@@ -59,7 +59,13 @@ export const SITE = {
     email: (env.VITE_CONTACT_EMAIL as string) ?? 'hello@travelsugbo.com',
     facebook: 'https://www.facebook.com/profile.php?id=61574390071362',
     address: 'Office address pending — Cebu, Philippines',
-    hours: 'Mon–Sun, 7:00 AM – 9:00 PM (PHT)',
+    /*
+     * No `hours` here on purpose (BUG-100). The business hours live in
+     * `settings.contact.hoursNote`, which the admin edits alongside the
+     * `business_hours` setting the open/closed line is computed from. Both
+     * the contact card (BUG-093) and the footer read that one value; a
+     * static copy here could only ever contradict it.
+     */
   },
   /**
    * Services beyond tours — one line next to the contact details, no extra
