@@ -3,9 +3,12 @@ import cors from 'cors';
 import express from 'express';
 import { rateLimit } from 'express-rate-limit';
 import { TIMEZONE } from '@rg/shared';
+import type { SiteEnv } from './env';
 import { createHtmlHandler } from './html';
 import { createProcedureRateLimit } from './middleware/rate-limit';
+import { robotsHeader } from './middleware/robots-header';
 import { appRouter } from './routers/_app';
+import { robotsTxtHandler, sitemapXmlHandler } from './seo/sitemap';
 
 /**
  * Deliberately NOT imported from ./env — env.ts parses process.env (and
@@ -22,8 +25,19 @@ const DEFAULT_ALLOWED_ORIGIN = 'http://localhost:5180';
  *   the app is API-only, which is what every test and the dev server want:
  *   in development Vite serves the HTML and injects the same meta itself
  *   (D6), and there is no `dist` to read.
+ * @param siteEnv  Deploy environment for the crawl directives (task 4.3).
+ *   Defaults to `'development'`, which is the FAIL-CLOSED value: robots.txt
+ *   disallows everything and every response carries `X-Robots-Tag: noindex`.
+ *   Only `'production'` can produce an indexable response, and only then with
+ *   `settings.content_unverified` cleared. Passed in rather than read from
+ *   ./env for the reason given above DEFAULT_ALLOWED_ORIGIN; src/index.ts
+ *   supplies `env.SITE_ENV`.
  */
-export function createApp(allowedOrigin: string = DEFAULT_ALLOWED_ORIGIN, clientDistDir?: string) {
+export function createApp(
+  allowedOrigin: string = DEFAULT_ALLOWED_ORIGIN,
+  clientDistDir?: string,
+  siteEnv: SiteEnv = 'development',
+) {
   const app = express();
 
   app.use(express.json());
@@ -69,6 +83,21 @@ export function createApp(allowedOrigin: string = DEFAULT_ALLOWED_ORIGIN, client
   app.use('/trpc', createExpressMiddleware({ router: appRouter }));
 
   // -------------------------------------------------------------------------
+  // Crawl directives (task 4.3). Mounted here, above the catch-all block
+  // below, because `app.get('*splat', ...)` would otherwise answer
+  // /robots.txt and /sitemap.xml with the HTML shell.
+  //
+  // The header middleware sits above both routes and above the static +
+  // shell block, so every page response and every asset response under them
+  // carries it. /api/health and /trpc are mounted ABOVE it deliberately:
+  // they are not indexable page routes, and making a JSON API request wait
+  // on a settings read to be told it is not a web page buys nothing.
+  // -------------------------------------------------------------------------
+  app.use(robotsHeader(siteEnv));
+  app.get('/robots.txt', robotsTxtHandler(siteEnv));
+  app.get('/sitemap.xml', sitemapXmlHandler());
+
+  // -------------------------------------------------------------------------
   // Static client + SEO-injected HTML shell (task 4.1). MOUNTED LAST, AND IT
   // MUST STAY LAST.
   //
@@ -77,7 +106,9 @@ export function createApp(allowedOrigin: string = DEFAULT_ALLOWED_ORIGIN, client
   // remaining GET path, so anything mounted after it is dead code it has
   // already swallowed.
   //
-  // >>> TASK 4.3: mount `/robots.txt` and `/sitemap.xml` ABOVE this block. <<<
+  // (Task 4.3's /robots.txt and /sitemap.xml are mounted above, as that
+  // instruction required. Anything else that answers a path must go there
+  // too, not here.)
   //
   // express.static comes first inside the block so real files (/assets/*,
   // /favicon.svg, /placeholders/*) are served as files; only paths with no
