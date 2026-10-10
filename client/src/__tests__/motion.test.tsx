@@ -8,6 +8,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Accordion, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import CatalogPreview from '@/components/home/CatalogPreview';
+import ContactSection from '@/components/home/ContactSection';
 import HeroSection from '@/components/home/HeroSection';
 import PackagesSection from '@/components/home/PackagesSection';
 import TrustBar from '@/components/home/TrustBar';
@@ -633,6 +634,62 @@ describe('.press-brand — scale(0.95) + spring-back for the WhatsApp/Viber pill
     expect(reducedBlock![1]).toMatch(
       /\.press:active,\s*\.press-brand:active\s*\{\s*transform:\s*none;/,
     );
+  });
+});
+
+/**
+ * Fix round 1, F1 / BUG-077: ContactSection is one of the five named 2.9I
+ * surfaces and received a real markup change (lucide icons → official
+ * glyphs, a new ChatIcon wrapper, .press-brand) with no test coverage at
+ * all in the original diff. ContactSection needs neither a router nor tRPC
+ * — it renders no <Link> and fetches nothing — so it's rendered bare.
+ */
+describe('ContactSection — WhatsApp/Viber branding (spec task 2.9I, fix round 1 F1 / BUG-077)', () => {
+  function pillFor(tone: 'whatsapp' | 'viber') {
+    const link = screen.getByRole('link', { name: new RegExp(tone, 'i') });
+    const pill = link.querySelector(`.bg-${tone}`);
+    return { link, pill };
+  }
+
+  it('the WhatsApp pill carries no text node — the glyph is the only content inside it', () => {
+    render(<ContactSection />);
+    const { pill } = pillFor('whatsapp');
+    expect(pill, 'expected a .bg-whatsapp chip inside the WhatsApp link').toBeTruthy();
+    expect(pill!.textContent).toBe('');
+  });
+
+  it('the Viber pill carries no text node either', () => {
+    render(<ContactSection />);
+    const { pill } = pillFor('viber');
+    expect(pill, 'expected a .bg-viber chip inside the Viber link').toBeTruthy();
+    expect(pill!.textContent).toBe('');
+  });
+
+  it('the visible "WhatsApp" label is a sibling outside the coloured pill, not inside it', () => {
+    render(<ContactSection />);
+    const { pill } = pillFor('whatsapp');
+    const label = screen.getByText('WhatsApp');
+    expect(pill!.contains(label)).toBe(false);
+    expect(label.closest('.bg-whatsapp')).toBeNull();
+  });
+
+  it('the visible "Viber" label is a sibling outside the coloured pill, not inside it', () => {
+    render(<ContactSection />);
+    const { pill } = pillFor('viber');
+    const label = screen.getByText('Viber');
+    expect(pill!.contains(label)).toBe(false);
+    expect(label.closest('.bg-viber')).toBeNull();
+  });
+
+  it('both pills use .press-brand (scale 0.95 + spring-back), not the plain .press other rows here carry', () => {
+    render(<ContactSection />);
+    const { pill: whatsappPill } = pillFor('whatsapp');
+    const { pill: viberPill } = pillFor('viber');
+
+    for (const pill of [whatsappPill!, viberPill!]) {
+      expect(pill).toHaveClass('press-brand');
+      expect(pill).not.toHaveClass('press');
+    }
   });
 });
 

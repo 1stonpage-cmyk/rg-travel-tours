@@ -38,7 +38,28 @@ export default function PublicLayout() {
       </a>
       <PlaceholderBadge />
       <SiteHeader />
-      <main id="main" className="flex-1">
+      {/*
+       * Bottom padding reserved for the mobile sticky bar in FloatingWhatsApp
+       * (spec task 2.9B; fix round 1, F2 / BUG-078). The bar is `position:
+       * fixed`, so it occupies no layout space of its own — nothing pushes
+       * the last element of whatever page is in <Outlet/> clear of it. This
+       * padding does that unconditionally (not toggled with the bar's own
+       * show/hide state, matching the existing precedent in SiteFooter's own
+       * pb-20/sm:pb-24, reserved the same way for the floating bubble), so
+       * the very last interactive element on ANY page — not just the ones
+       * this task happened to check by hand — can always be scrolled clear
+       * of the bar, independent of the bar's own "hide near the footer"
+       * timing.
+       *
+       * ~128px comfortably covers the bar's real worst-case height: a 56px
+       * icon button + 12px top padding + max(12px, the safe-area inset on a
+       * notched phone, up to ~34px) bottom padding + a 1px border ≈ 81–103px.
+       *
+       * md:pb-0 cancels this at the exact breakpoint where the bar itself
+       * stops existing (`md:hidden` in FloatingWhatsApp) — desktop gains
+       * nothing.
+       */}
+      <main id="main" className="flex-1 pb-32 md:pb-0">
         <Outlet />
       </main>
       <SiteFooter />

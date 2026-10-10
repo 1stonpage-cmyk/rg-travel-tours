@@ -49,6 +49,23 @@ describe('PublicLayout', () => {
     expect(screen.getByRole('link', { name: /skip to (main )?content/i })).toBeInTheDocument();
   });
 
+  /**
+   * Fix round 1, F2 / BUG-078: the mobile sticky bar in FloatingWhatsApp is
+   * `position: fixed` and reserves no layout space of its own, so without
+   * this padding nothing guarantees the last element of whatever page is
+   * rendered inside <main> can ever be scrolled clear of it. jsdom has no
+   * real layout engine, so this only proves the class is present — it is
+   * not, and cannot be, a measurement of actual on-screen clearance (see
+   * BUG-074's standing screenshot gap). Geometric non-overlap is reasoned
+   * about in the task report, not measured here.
+   */
+  it("reserves mobile-only bottom padding on <main> for the sticky bar's height, with nothing added on desktop", () => {
+    renderLayout();
+    const main = screen.getByRole('main');
+    expect(main.className).toMatch(/\bpb-32\b/);
+    expect(main.className).toMatch(/\bmd:pb-0\b/);
+  });
+
   it('pins the mandated PlaceholderBadge copy and forbids the superseded "not real" wording', () => {
     renderLayout();
     const badge = screen.getByRole('status');
