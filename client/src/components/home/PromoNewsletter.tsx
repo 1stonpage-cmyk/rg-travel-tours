@@ -1,8 +1,9 @@
 import { Gift } from 'lucide-react';
-import { useState } from 'react';
+import { type FormEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { describeMutationError } from '@/lib/mutation-errors';
 import { trpc } from '@/lib/trpc';
 
 /**
@@ -23,13 +24,27 @@ import { trpc } from '@/lib/trpc';
  *
  * `promo.code` now arrives with the page payload, so "reveal after signup"
  * below is a UI affordance, not a secret — fine for a public marketing
- * code. Wiring the form to `newsletter.subscribe` is task 3.5; this stays
- * local-only for now.
+ * code. The form is wired to `newsletter.subscribe` (task 3.5): the code
+ * reveals only once that mutation actually resolves, including the
+ * `alreadySubscribed: true` case, which the server deliberately returns as
+ * a success rather than an error.
  */
 export default function PromoNewsletter() {
   const { data } = trpc.settings.get.useQuery();
   const promo = data?.promo ?? null;
-  const [signedUp, setSignedUp] = useState(false);
+  const subscribe = trpc.newsletter.subscribe.useMutation();
+
+  function handleSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const email = String(new FormData(form).get('email') ?? '');
+    // `alreadySubscribed: true` is a resolved mutation, not a thrown error
+    // (server/src/routers/public/newsletter.ts) — the server deliberately
+    // returns it rather than an error, because a repeat signup is still a
+    // success from the visitor's point of view. `isSuccess` below covers
+    // both cases without needing to branch on it here.
+    subscribe.mutate({ email }, { onSuccess: () => form.reset() });
+  }
 
   return (
     <section
@@ -55,10 +70,7 @@ export default function PromoNewsletter() {
 
         <form
           aria-label="Newsletter signup"
-          onSubmit={(e) => {
-            e.preventDefault();
-            setSignedUp(true);
-          }}
+          onSubmit={handleSubmit}
           className="bg-background/95 rounded-2xl p-5 backdrop-blur"
         >
           <div className="space-y-1.5">
@@ -72,11 +84,16 @@ export default function PromoNewsletter() {
               className="tap-target"
             />
           </div>
-          <Button type="submit" size="lg" className="tap-target mt-4 w-full">
-            Sign up for 10% off
+          <Button
+            type="submit"
+            size="lg"
+            className="tap-target mt-4 w-full"
+            disabled={subscribe.isPending}
+          >
+            {subscribe.isPending ? 'Signing up…' : 'Sign up for 10% off'}
           </Button>
 
-          {signedUp && promo && (
+          {subscribe.isSuccess && promo && (
             <div
               role="status"
               className="border-brand-gold-300 bg-brand-gold-50 mt-4 rounded-lg border p-4 text-center"
@@ -85,11 +102,17 @@ export default function PromoNewsletter() {
               <p className="text-brand-blue-900 mt-1 font-mono text-2xl font-bold tracking-wider">
                 {promo.code}
               </p>
-              <p className="text-brand-warning mt-2 text-xs">
-                Code shown locally only. Newsletter storage and coupon validation land in tasks 7C
-                and 7B — your address has not been saved.
-              </p>
             </div>
+          )}
+          {subscribe.isSuccess && !promo && (
+            <p role="status" className="text-brand-blue-700 mt-4 text-sm font-medium">
+              Thanks for signing up!
+            </p>
+          )}
+          {subscribe.isError && (
+            <p role="alert" className="text-brand-error mt-4 text-sm font-medium">
+              {describeMutationError(subscribe.error)}
+            </p>
           )}
         </form>
       </div>

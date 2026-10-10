@@ -52,6 +52,8 @@ describe('PromoNewsletter', () => {
   it('reveals the code only after a successful signup', async () => {
     const user = userEvent.setup();
     renderPromo(PROMO);
+    // Task 3.5 wires this form to the real newsletter.subscribe mutation.
+    mockTrpc({ 'newsletter.subscribe': { ok: true, alreadySubscribed: false } });
 
     expect(screen.queryByText(PROMO.code)).not.toBeInTheDocument();
 

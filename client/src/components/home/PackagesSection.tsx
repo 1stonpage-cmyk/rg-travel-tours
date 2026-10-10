@@ -1,12 +1,14 @@
 import { formatPeso } from '@rg/shared';
 import { Check } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import QueryBoundary, { EmptyState } from '@/components/common/QueryBoundary';
 import { Skeleton } from '@/components/common/Skeleton';
 import SectionHeading from '@/components/common/SectionHeading';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { describeMutationError } from '@/lib/mutation-errors';
+import { SITE } from '@/lib/site';
 import { trpc } from '@/lib/trpc';
 import { useCardStagger } from '@/lib/use-scroll-reveal';
 
@@ -58,7 +60,8 @@ function PackagesGridSkeleton() {
 export default function PackagesSection() {
   const packagesQuery = trpc.packages.list.useQuery();
   const [selected, setSelected] = useState<string | null>(null);
-  const [submitted, setSubmitted] = useState(false);
+  const [consentError, setConsentError] = useState<string | null>(null);
+  const sendInquiry = trpc.inquiries.create.useMutation();
 
   const gridRef = useRef<HTMLUListElement>(null);
   // Re-runs once packages.list resolves and the real <li>s replace the
@@ -88,6 +91,38 @@ export default function PackagesSection() {
           // `packages` is never empty here — the `empty` slot above already
           // handled that case — so `packages[0]!` is safe.
           const selectedSlug = selected ?? packages[0]!.slug;
+
+          function handleSubmit(e: FormEvent<HTMLFormElement>) {
+            e.preventDefault();
+            const form = e.currentTarget;
+            const data = new FormData(form);
+            if (data.get('consent') !== 'on') {
+              setConsentError(
+                'Please agree to be contacted before sending — we need this to reply to you (RA 10173).',
+              );
+              return;
+            }
+            setConsentError(null);
+            // packages is never empty here (see above), and selectedSlug is
+            // always one of these slugs (the <select> below only ever
+            // offers them), so this find always hits — the `packages[0]!`
+            // fallback only guards a future refactor that loosens that.
+            const pkg = packages.find((p) => p.slug === selectedSlug) ?? packages[0]!;
+            const dates = String(data.get('dates') ?? '').trim();
+            sendInquiry.mutate(
+              {
+                type: 'package',
+                packageId: pkg.id,
+                name: String(data.get('name') ?? ''),
+                email: String(data.get('email') ?? ''),
+                message: `Package enquiry: ${pkg.title}. ${
+                  dates ? `Preferred dates: ${dates}.` : 'Dates flexible.'
+                }`,
+                consent: true,
+              },
+              { onSuccess: () => form.reset() },
+            );
+          }
 
           return (
             <>
@@ -158,10 +193,7 @@ export default function PackagesSection() {
 
               <form
                 aria-label="Package inquiry"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  setSubmitted(true);
-                }}
+                onSubmit={handleSubmit}
                 className="bg-brand-blue-50 mt-10 grid gap-4 rounded-2xl p-6 sm:grid-cols-2"
               >
                 <h3 className="text-brand-blue-900 text-lg font-semibold sm:col-span-2">
@@ -208,14 +240,49 @@ export default function PackagesSection() {
                   />
                 </div>
 
+                {/* RA 10173 (Data Privacy Act) consent checkbox — see the matching note in ContactSection.tsx. */}
+                <div className="flex items-start gap-2.5 sm:col-span-2">
+                  <input
+                    id="package-inquiry-consent"
+                    name="consent"
+                    type="checkbox"
+                    onChange={() => setConsentError(null)}
+                    className="accent-brand-blue-600 border-input mt-0.5 size-5 shrink-0 rounded"
+                  />
+                  <Label
+                    htmlFor="package-inquiry-consent"
+                    className="text-muted-foreground text-sm font-normal"
+                  >
+                    I agree to be contacted about this enquiry and consent to {SITE.legalOperator}{' '}
+                    storing my details, per the Data Privacy Act (RA 10173).
+                  </Label>
+                </div>
+                {consentError && (
+                  <p
+                    role="alert"
+                    className="text-brand-error -mt-2 text-sm font-medium sm:col-span-2"
+                  >
+                    {consentError}
+                  </p>
+                )}
+
                 <div className="sm:col-span-2">
-                  <Button type="submit" size="lg" className="tap-target w-full sm:w-auto">
-                    Send inquiry
+                  <Button
+                    type="submit"
+                    size="lg"
+                    className="tap-target w-full sm:w-auto"
+                    disabled={sendInquiry.isPending}
+                  >
+                    {sendInquiry.isPending ? 'Sending…' : 'Send inquiry'}
                   </Button>
-                  {submitted && (
-                    <p role="status" className="text-brand-warning mt-3 text-sm font-medium">
-                      Form validated. Inquiry delivery is not connected yet (spec task 7C) — nothing
-                      has been sent. Please message us on WhatsApp in the meantime.
+                  {sendInquiry.isSuccess && (
+                    <p role="status" className="text-brand-blue-700 mt-3 text-sm font-medium">
+                      Inquiry sent — we'll get back to you soon.
+                    </p>
+                  )}
+                  {sendInquiry.isError && (
+                    <p role="alert" className="text-brand-error mt-3 text-sm font-medium">
+                      {describeMutationError(sendInquiry.error)}
                     </p>
                   )}
                 </div>

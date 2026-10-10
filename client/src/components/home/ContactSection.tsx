@@ -1,10 +1,11 @@
 import { Clock, Facebook, Mail, MapPin, Phone } from 'lucide-react';
-import { useState, type ReactNode } from 'react';
+import { useState, type FormEvent, type ReactNode } from 'react';
 import { ViberGlyph, WhatsAppGlyph } from '@/components/common/BrandGlyphs';
 import SectionHeading from '@/components/common/SectionHeading';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { describeMutationError } from '@/lib/mutation-errors';
 import { SITE, telLink, viberLink, whatsappLink } from '@/lib/site';
 import { trpc } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
@@ -31,7 +32,33 @@ function ChatIcon({ tone, children }: { tone: 'whatsapp' | 'viber'; children: Re
 }
 
 export default function ContactSection() {
-  const [submitted, setSubmitted] = useState(false);
+  const [consentError, setConsentError] = useState<string | null>(null);
+  const sendInquiry = trpc.inquiries.create.useMutation();
+
+  function handleSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const data = new FormData(form);
+    if (data.get('consent') !== 'on') {
+      setConsentError(
+        'Please agree to be contacted before sending — we need this to reply to you (RA 10173).',
+      );
+      return;
+    }
+    setConsentError(null);
+    const phone = String(data.get('phone') ?? '').trim();
+    sendInquiry.mutate(
+      {
+        type: 'contact',
+        name: String(data.get('name') ?? ''),
+        email: String(data.get('email') ?? ''),
+        phone: phone === '' ? undefined : phone,
+        message: String(data.get('message') ?? ''),
+        consent: true,
+      },
+      { onSuccess: () => form.reset() },
+    );
+  }
 
   /**
    * `settings.openState.message` — computed server-side, in Asia/Manila
@@ -202,10 +229,7 @@ export default function ContactSection() {
 
           <form
             aria-label="Contact inquiry"
-            onSubmit={(e) => {
-              e.preventDefault();
-              setSubmitted(true);
-            }}
+            onSubmit={handleSubmit}
             className="bg-background space-y-4 rounded-2xl p-6"
           >
             <h3 className="text-brand-blue-900 text-lg font-semibold">Send us a message</h3>
@@ -241,14 +265,53 @@ export default function ContactSection() {
               />
             </div>
 
-            <Button type="submit" size="lg" className="tap-target w-full">
-              Send message
+            {/*
+             * RA 10173 (Data Privacy Act) consent checkbox. The server
+             * rejects a missing/false `consent` outright (Task 1.7's
+             * `inquiryInput`), but that's a backstop, not the UX — this
+             * blocks submission client-side first and says why, right here
+             * next to the checkbox, rather than leaving a disabled button
+             * with no explanation.
+             */}
+            <div className="flex items-start gap-2.5">
+              <input
+                id="contact-consent"
+                name="consent"
+                type="checkbox"
+                onChange={() => setConsentError(null)}
+                className="accent-brand-blue-600 border-input mt-0.5 size-5 shrink-0 rounded"
+              />
+              <Label
+                htmlFor="contact-consent"
+                className="text-muted-foreground text-sm font-normal"
+              >
+                I agree to be contacted about this message and consent to {SITE.legalOperator}{' '}
+                storing my details, per the Data Privacy Act (RA 10173).
+              </Label>
+            </div>
+            {consentError && (
+              <p role="alert" className="text-brand-error text-sm font-medium">
+                {consentError}
+              </p>
+            )}
+
+            <Button
+              type="submit"
+              size="lg"
+              className="tap-target w-full"
+              disabled={sendInquiry.isPending}
+            >
+              {sendInquiry.isPending ? 'Sending…' : 'Send message'}
             </Button>
 
-            {submitted && (
-              <p role="status" className="text-brand-warning text-sm font-medium">
-                Form validated. Message delivery is not connected yet (spec task 7C) — nothing has
-                been sent. Please use WhatsApp or phone for now.
+            {sendInquiry.isSuccess && (
+              <p role="status" className="text-brand-blue-700 text-sm font-medium">
+                Message sent — we'll get back to you soon.
+              </p>
+            )}
+            {sendInquiry.isError && (
+              <p role="alert" className="text-brand-error text-sm font-medium">
+                {describeMutationError(sendInquiry.error)}
               </p>
             )}
           </form>

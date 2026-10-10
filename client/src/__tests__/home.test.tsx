@@ -14,6 +14,10 @@ import {
 } from './helpers/fixtures';
 import { mockTrpc } from './helpers/mock-trpc';
 
+async function checkConsent(user: ReturnType<typeof userEvent.setup>, form: HTMLElement) {
+  await user.click(within(form).getByLabelText(/i agree/i));
+}
+
 function renderHome() {
   return render(
     <TrpcProviders>
@@ -89,6 +93,10 @@ describe('home page', () => {
 
   it('reveals the promo code only after newsletter signup', async () => {
     const user = userEvent.setup();
+    // Task 3.5 wires this form to the real newsletter.subscribe mutation —
+    // the reveal now depends on that mutation actually resolving, so it
+    // needs its own mock on top of the beforeEach's five read queries.
+    mockTrpc({ 'newsletter.subscribe': { ok: true, alreadySubscribed: false } });
     renderHome();
 
     expect(screen.queryByText(SETTINGS_FIXTURE.promo!.code)).not.toBeInTheDocument();
@@ -99,7 +107,6 @@ describe('home page', () => {
 
     const status = await screen.findByRole('status');
     expect(within(status).getByText(SETTINGS_FIXTURE.promo!.code)).toBeInTheDocument();
-    expect(status).toHaveTextContent(/address has not been saved/i);
   });
 
   it('renders exactly six review cards', async () => {
@@ -122,31 +129,42 @@ describe('home page', () => {
     expect(contact.querySelector('a[href^="mailto:"]')).toBeTruthy();
   });
 
-  it('never claims an inquiry was sent', async () => {
+  // Task 3.5 wires this form to the real inquiries.create mutation. The
+  // beforeEach above mocks the five read queries but not this mutation, so
+  // submitting it here hits mock-trpc's "No mock for inquiries.create"
+  // path — a genuine failure, not a stand-in for "nothing is wired yet".
+  // The guarantee this preserves: a resolved-success claim (role="status")
+  // appears only once the mutation has actually resolved; a failed
+  // mutation surfaces as role="alert" instead, and never role="status".
+  it('never claims an inquiry was sent when the request fails', async () => {
     const user = userEvent.setup();
     renderHome();
 
     const form = screen.getByRole('form', { name: /contact inquiry/i });
     await user.type(within(form).getByLabelText(/your name/i), 'Test Guest');
     await user.type(within(form).getByLabelText(/email/i), 'guest@example.com');
-    await user.type(within(form).getByLabelText(/message/i), 'Hello');
+    await user.type(within(form).getByLabelText(/^message$/i), 'Hello');
+    await checkConsent(user, form);
     await user.click(within(form).getByRole('button', { name: /send message/i }));
 
-    const status = await within(form).findByRole('status');
-    expect(status).toHaveTextContent(/nothing has been sent/i);
+    const alert = await within(form).findByRole('alert');
+    expect(alert).toBeInTheDocument();
+    expect(within(form).queryByRole('status')).not.toBeInTheDocument();
   });
 
-  it('never claims a package inquiry was sent', async () => {
+  it('never claims a package inquiry was sent when the request fails', async () => {
     const user = userEvent.setup();
     renderHome();
 
     const form = await screen.findByRole('form', { name: /package inquiry/i });
     await user.type(within(form).getByLabelText(/your name/i), 'Test Guest');
     await user.type(within(form).getByLabelText(/email/i), 'guest@example.com');
+    await checkConsent(user, form);
     await user.click(within(form).getByRole('button', { name: /send inquiry/i }));
 
-    const status = await within(form).findByRole('status');
-    expect(status).toHaveTextContent(/nothing has been sent/i);
+    const alert = await within(form).findByRole('alert');
+    expect(alert).toBeInTheDocument();
+    expect(within(form).queryByRole('status')).not.toBeInTheDocument();
   });
 
   // --- Mandated correction 2(a): the conditional trust line must not fabricate a review count. ---

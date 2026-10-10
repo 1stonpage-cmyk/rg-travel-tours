@@ -32,8 +32,25 @@
  * serialized mid-flight. Serializing a pending `Promise` directly would
  * silently produce `{}` (JSON.stringify sees no enumerable properties on a
  * Promise, settled or not), handing back wrong data with no error.
+ *
+ * A function handler may also read the one input tRPC actually sent it —
+ * `(input) => ...` — so a mutation test can assert on what the component
+ * submitted (e.g. that a package inquiry's `packageId` matches the
+ * selected package), not just on what the mock chose to hand back. This is
+ * still positional, not deeply input-aware: for a batched POST the body is
+ * `{"0": <input0>, "1": <input1>, ...}` (httpBatchLink's `getBody`, no
+ * transformer configured — see client/src/lib/trpc.ts), keyed by the
+ * input's position in the comma-joined path, so the Nth procedure name
+ * gets the Nth parsed body entry.
  */
-type Handlers = Record<string, unknown | (() => unknown)>;
+type HandlerFn = (input?: unknown) => unknown;
+type Handlers = Record<string, unknown | HandlerFn>;
+
+/**
+ * Sentinel value for `mockTrpcRateLimited` — a real non-JSON HTTP 429, not
+ * a tRPC JSON-RPC error envelope. See the comment on that function.
+ */
+const RATE_LIMITED = Symbol('mock-trpc rate limited');
 
 let handlers: Handlers = {};
 let originalFetch: typeof globalThis.fetch | undefined;
@@ -42,11 +59,33 @@ export function mockTrpc(next: Handlers) {
   handlers = { ...handlers, ...next };
   if (originalFetch) return;
   originalFetch = globalThis.fetch;
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(typeof input === 'string' ? input : input.toString(), 'http://localhost');
     const procedures = decodeURIComponent(url.pathname.replace(/^\/trpc\//, '')).split(',');
+
+    if (procedures.some((name) => handlers[name] === RATE_LIMITED)) {
+      // Matches the real rate limiter (express-rate-limit's default
+      // handler: `res.status(429).send('Too many requests...')`) byte for
+      // byte: a plain-text body, not JSON — see lib/trpc.ts for why that
+      // distinction matters to the client.
+      return new Response('Too many requests, please try again later.', {
+        status: 429,
+        headers: { 'content-type': 'text/html; charset=utf-8' },
+      });
+    }
+
+    let parsedInputs: unknown[] = [];
+    if (typeof init?.body === 'string') {
+      try {
+        const parsed = JSON.parse(init.body) as Record<string, unknown>;
+        parsedInputs = procedures.map((_name, index) => parsed[String(index)]);
+      } catch {
+        // GET requests (queries) have no JSON body — nothing to parse.
+      }
+    }
+
     const body = await Promise.all(
-      procedures.map(async (name) => {
+      procedures.map(async (name, index) => {
         if (!(name in handlers)) {
           return {
             error: {
@@ -59,7 +98,7 @@ export function mockTrpc(next: Handlers) {
         const value = handlers[name];
         try {
           const data = await Promise.resolve(
-            typeof value === 'function' ? (value as () => unknown)() : value,
+            typeof value === 'function' ? (value as HandlerFn)(parsedInputs[index]) : value,
           );
           return { result: { data } };
         } catch (err) {
@@ -88,6 +127,16 @@ export function mockTrpcError(procedure: string) {
       throw new Error('mock failure');
     },
   });
+}
+
+/**
+ * Makes one named procedure respond the way the real rate limiter does: a
+ * plain HTTP 429 with a plain-text body, not a tRPC-shaped JSON error.
+ * Exercises `lib/trpc.ts`'s `fetchWithNormalizedErrors` end to end, rather
+ * than assuming it works.
+ */
+export function mockTrpcRateLimited(procedure: string) {
+  mockTrpc({ [procedure]: RATE_LIMITED });
 }
 
 export function resetTrpcMock() {
