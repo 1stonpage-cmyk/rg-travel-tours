@@ -26,13 +26,21 @@ function MostVisitedSkeleton() {
  * same six destinations in different orders under different labels — task
  * 1.4's `displayName`/`featuredSortOrder` columns exist for exactly that
  * reason (see fixtures.ts). This section sorts by `featuredSortOrder`,
- * never `sortOrder` (that one drives the chip row), and is filtered to
- * `isFeatured` destinations only.
+ * never `sortOrder` (that one drives the chip row).
+ *
+ * Both halves of the API's documented contract are required, not just
+ * `isFeatured`: "Null omits the destination from Most Visited"
+ * (server/src/routers/public/destinations.ts). `featured_sort_order` is a
+ * nullable column with nothing in the schema tying it to `is_featured`, so
+ * a half-configured destination — flagged featured, never given an order —
+ * is possible. Requiring a non-null order makes that case fail closed
+ * (omitted) instead of sorting to the FRONT of the section, which is what
+ * the old `?? 0` fallback did.
  */
 function selectFeatured(destinations: Destination[]): Destination[] {
   return destinations
-    .filter((d) => d.isFeatured)
-    .sort((a, b) => (a.featuredSortOrder ?? 0) - (b.featuredSortOrder ?? 0));
+    .filter((d) => d.isFeatured && d.featuredSortOrder !== null)
+    .sort((a, b) => a.featuredSortOrder! - b.featuredSortOrder!);
 }
 
 /** Settings/API-driven (spec task 6H, first half). Reads `destinations.list`, not settings — see `selectFeatured` above. */

@@ -120,6 +120,40 @@ describe('MostVisited', () => {
     expect(screen.queryByText('Not Featured')).not.toBeInTheDocument();
   });
 
+  /**
+   * The API's own contract: "Null omits the destination from Most Visited"
+   * (server/src/routers/public/destinations.ts). `featured_sort_order` is
+   * nullable with nothing tying it to `is_featured`, so a half-configured
+   * destination — flagged featured, no order given — must fail closed
+   * (omitted) rather than being sorted to the FRONT, which is what the
+   * previous `?? 0` fallback did.
+   */
+  it('omits a featured destination that has no featuredSortOrder', async () => {
+    const halfConfigured: Destination[] = [
+      {
+        id: 98,
+        name: 'Half Configured',
+        slug: 'half-configured',
+        displayName: null,
+        blurb: 'Featured but never given a featured sort order.',
+        image: { path: '/placeholders/half-configured.svg', alt: 'Half configured' },
+        sortOrder: 7,
+        featuredSortOrder: null,
+        isFeatured: true,
+      },
+      ...DESTINATIONS_FIXTURE,
+    ];
+    mockTrpc({ 'destinations.list': halfConfigured });
+    renderWithTrpc(<MostVisited />);
+
+    // The properly configured destinations still render…
+    await screen.findByRole('heading', { level: 3, name: /Oslob/ });
+    const headings = await screen.findAllByRole('heading', { level: 3 });
+    expect(headings).toHaveLength(DESTINATIONS_FIXTURE.length);
+    // …and the half-configured one appears nowhere, least of all first.
+    expect(screen.queryByText('Half Configured')).not.toBeInTheDocument();
+  });
+
   // Pins the exact order: featuredSortOrder (oslob, badian-kawasan,
   // moalboal, mactan, bohol, cebu-city), NOT sortOrder (oslob, mactan,
   // badian-kawasan, moalboal, bohol, cebu-city) — the two orders differ on
