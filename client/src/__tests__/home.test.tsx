@@ -77,10 +77,14 @@ describe('home page', () => {
     expect(screen.queryByText(/booked 0/i)).not.toBeInTheDocument();
   });
 
-  it('renders seven FAQ questions', () => {
+  it('renders seven FAQ questions', async () => {
+    // FAQs now come from settings.get (task 3.3), which resolves
+    // asynchronously, so the accordion buttons aren't present on the first
+    // synchronous render — wait for the first one before counting all seven.
     const { container } = renderHome();
-    const faq = container.querySelector('#faq');
-    expect(within(faq as HTMLElement).getAllByRole('button')).toHaveLength(7);
+    const faq = container.querySelector('#faq') as HTMLElement;
+    await within(faq).findAllByRole('button');
+    expect(within(faq).getAllByRole('button')).toHaveLength(7);
   });
 
   it('reveals the promo code only after newsletter signup', async () => {
