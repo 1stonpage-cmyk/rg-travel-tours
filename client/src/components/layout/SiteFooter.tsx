@@ -227,10 +227,24 @@ export default function SiteFooter() {
 
       <div className="border-brand-blue-900 border-t">
         <div className="text-brand-blue-300 mx-auto flex max-w-7xl flex-col gap-2 px-4 pb-20 pt-6 text-xs sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:pb-24 lg:px-8">
-          <p>
-            {/* Legal entity, not the trading brand — see SITE.legalOperator. */}©{' '}
-            {new Date().getFullYear()} {SITE.legalOperator}. All rights reserved.
-          </p>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
+            <p>
+              {/* Legal entity, not the trading brand — see SITE.legalOperator. */}©{' '}
+              {new Date().getFullYear()} {SITE.legalOperator}. All rights reserved.
+            </p>
+            {/* Task 3.6: legal pages, rendered from settings.legal via <Markdown/>. Plain
+                text links beside the copyright — not a new contact target, so the
+                contact-parity guard (scripts/check-contact-parity.mjs) has nothing new
+                to track here. */}
+            <nav aria-label="Legal" className="flex items-center gap-3">
+              <Link to="/privacy" className="flex min-h-11 items-center hover:underline">
+                Privacy Policy
+              </Link>
+              <Link to="/terms" className="flex min-h-11 items-center hover:underline">
+                Terms of Service
+              </Link>
+            </nav>
+          </div>
           <p>Payments processed securely by PayMongo. Card details never touch our servers.</p>
         </div>
       </div>
