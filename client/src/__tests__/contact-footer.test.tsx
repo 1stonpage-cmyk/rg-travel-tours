@@ -94,6 +94,34 @@ describe('open/closed state', () => {
       expect(source).not.toMatch(/new Date\(|Date\.now\(/);
     }
   });
+
+  /**
+   * Fix round 1, F1: spec 6E says the contact section and the WhatsApp
+   * button *show* this message — an earlier version rendered it `sr-only`,
+   * which is invisible to every sighted visitor (the whole audience it
+   * exists for). `toBeVisible()` doesn't catch Tailwind's `sr-only` utility
+   * (jsdom never computes its real clip-path rule from index.css), so this
+   * checks directly that neither the message node nor an ancestor carries
+   * the `sr-only` class.
+   */
+  it('shows the status visibly — not only to screen readers', async () => {
+    mockTrpc({
+      'settings.get': settingsWith({ openState: { isOpen: true, message: OPEN_MESSAGE } }),
+    });
+    renderWithTrpc(
+      <>
+        <ContactSection />
+        <FloatingWhatsApp />
+      </>,
+    );
+
+    const occurrences = await screen.findAllByText(OPEN_MESSAGE);
+    expect(occurrences.length).toBeGreaterThan(0);
+    for (const node of occurrences) {
+      expect(node.classList.contains('sr-only')).toBe(false);
+      expect(node.closest('.sr-only')).toBeNull();
+    }
+  });
 });
 
 describe('payment methods — footer and FAQ composed from the same settings.paymentMethods, not two static lists', () => {
@@ -151,6 +179,58 @@ describe('payment methods — footer and FAQ composed from the same settings.pay
     for (const method of SETTINGS_FIXTURE.paymentMethods) {
       expect(await within(footer).findByText(method.label)).toBeInTheDocument();
     }
+  });
+
+  /**
+   * Fix round 1, F2: an earlier version of `paymentMethodsAnswer` folded
+   * 'visa'/'mastercard' into the literal phrase "major cards" so the
+   * composed sentence would byte-match the original hand-written FAQ copy.
+   * Every other test above disables GrabPay — a method that was never
+   * folded — so none of them actually exercised that mapping. This one
+   * disables Visa while leaving Mastercard enabled: under the old fold,
+   * `hasCards` stayed true (Mastercard still present) and the sentence
+   * kept saying "major cards" regardless, overstating what's accepted and
+   * disagreeing with the footer (which correctly drops only the Visa
+   * chip). The fix lists every enabled method by its own label — no
+   * grouping — so Mastercard appears by name and Visa does not, and
+   * "major cards" never appears at all.
+   */
+  it('drops a disabled card network from the FAQ answer by name, not folded into "major cards"', async () => {
+    const methods = SETTINGS_FIXTURE.paymentMethods.filter((m) => m.key !== 'visa');
+    mockTrpc({ 'settings.get': settingsWith({ paymentMethods: methods }) });
+    renderWithTrpc(
+      <>
+        <SiteFooter />
+        <FaqSection />
+      </>,
+    );
+
+    const footer = screen.getByRole('contentinfo');
+    expect(await within(footer).findByText('Mastercard')).toBeInTheDocument();
+    expect(within(footer).queryByText('Visa')).not.toBeInTheDocument();
+
+    const user = userEvent.setup();
+    const question = await screen.findByRole('button', { name: PAYMENT_METHODS_QUESTION });
+    await user.click(question);
+
+    const answer = await screen.findByText(/through PayMongo/);
+    expect(answer.textContent).toMatch(/Mastercard/);
+    expect(answer.textContent).not.toMatch(/Visa/);
+    expect(answer.textContent).not.toMatch(/major cards/i);
+  });
+
+  /** A new, never-seeded card brand must appear in the FAQ answer too — nothing here may silently drop an unrecognised method. */
+  it('lists a newly added payment method in the FAQ answer', async () => {
+    const methods = [...SETTINGS_FIXTURE.paymentMethods, { key: 'jcb', label: 'JCB' }];
+    mockTrpc({ 'settings.get': settingsWith({ paymentMethods: methods }) });
+    renderWithTrpc(<FaqSection />);
+
+    const user = userEvent.setup();
+    const question = await screen.findByRole('button', { name: PAYMENT_METHODS_QUESTION });
+    await user.click(question);
+
+    const answer = await screen.findByText(/through PayMongo/);
+    expect(answer.textContent).toMatch(/JCB/);
   });
 });
 

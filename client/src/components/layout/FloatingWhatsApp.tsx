@@ -149,6 +149,40 @@ function ChatLabel({ reveal, onRevealEnd }: { reveal: boolean; onRevealEnd: () =
   );
 }
 
+/**
+ * Visible open/closed status (spec 6E), floated above the WhatsApp control
+ * it belongs to. Same trick `ChatLabel` above already uses for "Chat with
+ * us" — absolutely positioned against the icon's own `relative`/`fixed`
+ * wrapper rather than a flex sibling — so it adds zero reserved layout
+ * height: the mobile bottom bar's fixed height (and its already-tuned
+ * `.pb-mobile-bar-safe` reservation, BUG-078/079) is untouched, and the
+ * desktop bubble's position doesn't shift. Unlike `ChatLabel` this is
+ * always visible, never hover/peek-gated — that is the entire point of
+ * fix round 1, F1. `pointer-events-none` so the chip never steals a tap
+ * meant for whatever briefly sits underneath it.
+ *
+ * Only the dot carries the open/closed colour (brand blue for open,
+ * amber/orange — `brand-warning` — for closed; never red, CLAUDE.md). The
+ * message text stays plain ink, so there is no coloured-text contrast
+ * pairing to check — deliberately steering clear of BUG-080's
+ * `text-brand-warning` on `bg-brand-gold-100` near-miss (4.51:1, no
+ * headroom) by not using a tinted background or tinted text at all.
+ */
+function OpenStatusChip({ openState }: { openState: { isOpen: boolean; message: string } }) {
+  return (
+    <span className="bg-background text-brand-ink pointer-events-none absolute bottom-full right-0 mb-2 inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-medium shadow-md">
+      <span
+        aria-hidden="true"
+        className={cn(
+          'size-2 shrink-0 rounded-full',
+          openState.isOpen ? 'bg-brand-blue-500' : 'bg-brand-warning',
+        )}
+      />
+      {openState.message}
+    </span>
+  );
+}
+
 export default function FloatingWhatsApp() {
   const { pathname } = useLocation();
   const coversHeroSearch = useCoversHeroSearch(pathname);
@@ -163,11 +197,12 @@ export default function FloatingWhatsApp() {
    * `trpc.settings.get.useQuery()` call ContactSection makes: TanStack
    * Query dedupes identical queries by key, so both components resolve
    * from the one cached result rather than two independent reads that
-   * could disagree. Rendered `sr-only` rather than as new visible copy —
-   * the plan's global constraint for this phase is "no design change,
-   * only the data source changes," and this control's accessible name
-   * ("Chat with us on WhatsApp") and icon-only, text-free appearance are
-   * both pinned by existing tests (layout.test.tsx, motion.test.tsx).
+   * could disagree.
+   *
+   * Fix round 1, F1: this used to render `sr-only` — invisible to every
+   * sighted visitor, which inverts the point of showing it at all (spec
+   * 6E: the WhatsApp button *shows* this message). `OpenStatusChip` below
+   * renders it visibly instead, once per control.
    */
   const { data: settings } = trpc.settings.get.useQuery();
   const openState = settings?.openState ?? null;
@@ -200,15 +235,6 @@ export default function FloatingWhatsApp() {
   return (
     <>
       {/*
-       * One sr-only node, not one per breakpoint variant below — both the
-       * desktop bubble and the mobile bar exist in the DOM at once in this
-       * project's "both mounted, CSS picks one" pattern, and duplicating
-       * the same announcement per variant would just be noise for a screen
-       * reader user. Omitted entirely while the query is still pending,
-       * rather than rendering a stale/empty message.
-       */}
-      {openState && <span className="sr-only">{openState.message}</span>}
-      {/*
        * Desktop (md and up): the floating bubble. Official WhatsApp green
        * instead of brand blue, icon-only with an aria-label instead of the
        * lucide icon + inline "WhatsApp" text it used to carry (spec task
@@ -221,6 +247,7 @@ export default function FloatingWhatsApp() {
        */}
       {!coversHeroSearch && (
         <div className="motion-rise group fixed bottom-4 right-4 z-50 hidden sm:bottom-6 sm:right-6 md:block">
+          {openState && <OpenStatusChip openState={openState} />}
           <ChatLabel reveal={false} onRevealEnd={() => {}} />
           <a
             href={whatsappLink(message)}
@@ -276,6 +303,7 @@ export default function FloatingWhatsApp() {
         </Button>
 
         <div className="group relative flex items-center">
+          {openState && <OpenStatusChip openState={openState} />}
           <ChatLabel reveal={peek} onRevealEnd={endPeek} />
           <a
             href={whatsappLink(message)}

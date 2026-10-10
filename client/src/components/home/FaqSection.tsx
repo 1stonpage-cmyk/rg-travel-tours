@@ -29,16 +29,32 @@ const SKELETON_ITEM_COUNT = 5;
 const PAYMENT_METHODS_QUESTION = 'Which payment methods do you accept?';
 
 /**
- * Card networks the seeded prose names collectively as "major cards"
- * rather than spelling out individually — same convention the original,
- * hand-written FAQ answer used. Only these two keys get folded into that
- * phrase; every other enabled method is named by its own label. Keeping
- * this list is what lets `paymentMethodsAnswer` below reproduce today's
- * exact sentence when every method is enabled (this phase's global
- * constraint: "no design change, only the data source changes") while
- * still responding correctly when a method is disabled.
+ * Fix round 1, F2: an earlier version of this function folded the 'visa'
+ * and 'mastercard' keys into the literal phrase "major cards" so the
+ * composed sentence would byte-match the original hand-written FAQ copy.
+ * That fold was itself a second, hidden source of truth — exactly the
+ * thing this task exists to remove — and it did not survive scrutiny:
+ *
+ * - Disabling Visa while leaving Mastercard enabled still said "major
+ *   cards" (the `some()` check only cared that *a* card remained), which
+ *   overstates what is actually accepted once there is only one card
+ *   network left — the footer and the FAQ would disagree again.
+ * - A newly added card brand not in the fold list (e.g. "JCB") would
+ *   render correctly (listed by name, not silently dropped), but
+ *   inconsistently — grouped prose for two networks, a bare name for a
+ *   third.
+ * - The only disabled-method test exercised GrabPay, which was never
+ *   folded — so the fold path itself had no coverage at all.
+ *
+ * Listing every enabled method by its own label, with no grouping,
+ * removes the hidden mapping entirely: the sentence is a pure function of
+ * `settings.paymentMethods`, so disabling or adding any one method —
+ * card network or otherwise — is reflected correctly and identically to
+ * the footer chips, with nothing for this file to keep in sync by hand.
+ * This does change today's seeded wording (`"... QR Ph and major cards
+ * ..."` becomes `"... QR Ph, Visa and Mastercard ..."`) — a small, data-
+ * supported copy change traded for actually being correct.
  */
-const CARD_METHOD_KEYS = new Set(['visa', 'mastercard']);
 
 /** `['A']` -> `'A'`, `['A','B']` -> `'A and B'`, `['A','B','C']` -> `'A, B and C'` — no Oxford comma, matching the seeded answer's own style. */
 function formatList(items: string[]): string {
@@ -51,12 +67,11 @@ function formatList(items: string[]): string {
  * Composes the one FAQ answer that must never drift from the footer's
  * payment chips. `methods` is already enabled-only and sorted by
  * `sortOrder` (server-resolved — see `resolvePaymentMethods`,
- * server/src/content/settings.ts), so this only has to group and join.
+ * server/src/content/settings.ts), so this only has to join the labels —
+ * no grouping, no per-key special-casing (see the comment above).
  */
-function paymentMethodsAnswer(methods: { key: string; label: string }[]): string {
-  const named = methods.filter((m) => !CARD_METHOD_KEYS.has(m.key)).map((m) => m.label);
-  const hasCards = methods.some((m) => CARD_METHOD_KEYS.has(m.key));
-  const list = formatList(hasCards ? [...named, 'major cards'] : named);
+function paymentMethodsAnswer(methods: { label: string }[]): string {
+  const list = formatList(methods.map((m) => m.label));
 
   if (!list) {
     return 'Message us for current payment options. You can also transfer manually to our QR code and upload the receipt for verification.';

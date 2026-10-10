@@ -37,13 +37,14 @@ export default function ContactSection() {
    * `settings.openState.message` — computed server-side, in Asia/Manila
    * (Task 1.5's `resolveOpenState`), never recomputed here from a client
    * clock (which would be correct only for a guest already in that
-   * timezone). Rendered verbatim, `sr-only`, right after the static Hours
-   * line below: this phase's global constraint is "no design change, only
-   * the data source changes," so the visible Hours copy stays exactly as
-   * it was and the live status is an accessibility-only addition rather
-   * than new on-screen content. FloatingWhatsApp reads the identical
-   * `openState` off the same `trpc.settings.get.useQuery()` cache entry
-   * (TanStack Query dedupes by key), so the two can never disagree.
+   * timezone). Fix round 1, F1: spec 6E says the contact section and the
+   * WhatsApp button *show* this message — rendering it `sr-only` (as this
+   * component first did) hides it from every sighted visitor, which is
+   * the one audience it exists for. It renders visibly now, directly under
+   * the existing Hours line below, as a small status line rather than a
+   * banner. FloatingWhatsApp reads the identical `openState` off the same
+   * `trpc.settings.get.useQuery()` cache entry (TanStack Query dedupes by
+   * key), so the two can never disagree.
    */
   const { data: settings } = trpc.settings.get.useQuery();
   const openState = settings?.openState ?? null;
@@ -155,7 +156,27 @@ export default function ContactSection() {
               <span>
                 <span className="text-brand-blue-900 block font-semibold">Hours</span>
                 <span className="text-muted-foreground">{SITE.contact.hours}</span>
-                {openState && <span className="sr-only">{openState.message}</span>}
+                {/*
+                 * Live open/closed status (spec 6E). A small status line,
+                 * not a banner: same text-sm scale as the surrounding copy,
+                 * with only the dot — a decorative, non-text element —
+                 * carrying the open/closed colour, so there is no coloured-
+                 * text contrast pairing to verify (CLAUDE.md: no red; BUG-080
+                 * means text-brand-warning on bg-brand-gold-100 is avoided
+                 * on purpose here).
+                 */}
+                {openState && (
+                  <span className="text-brand-blue-900 mt-1 flex items-center gap-1.5 text-sm font-medium">
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        'size-2 shrink-0 rounded-full',
+                        openState.isOpen ? 'bg-brand-blue-500' : 'bg-brand-warning',
+                      )}
+                    />
+                    {openState.message}
+                  </span>
+                )}
               </span>
             </li>
 
