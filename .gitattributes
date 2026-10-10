@@ -1,0 +1,29 @@
+# Normalise line endings so the toolchain behaves the same on every machine.
+#
+# This repo is developed on Windows, where Git's core.autocrlf=true converts
+# files to CRLF on checkout. Prettier expects LF, so without this file a fresh
+# clone fails `pnpm format:check` — one of the five mandatory verification
+# commands — on every text file, before a line of code is written (BUG-099).
+#
+# `text=auto eol=lf` keeps LF in the repository AND in the working tree, which
+# is what Prettier, ESLint and the test suite all assume.
+* text=auto eol=lf
+
+# Explicitly binary: never line-ending-converted, never diffed as text.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.ico   binary
+*.avif  binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.otf   binary
+*.eot   binary
+*.pdf   binary
+*.zip   binary
+
+# SVG is text (it diffs usefully and Prettier formats it), so it is covered by
+# the `* text=auto eol=lf` rule above rather than being marked binary here.
