@@ -1,11 +1,29 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 import PlaceholderBadge from '@/components/layout/PlaceholderBadge';
 import PublicLayout from '@/components/layout/PublicLayout';
-import { TrpcProviders } from '@/lib/trpc';
+import { trpc, TrpcProviders } from '@/lib/trpc';
 import { SETTINGS_FIXTURE } from './helpers/fixtures';
 import { mockTrpc } from './helpers/mock-trpc';
+
+/**
+ * A positive signal that `settings.get` has actually RESOLVED, mounted as a
+ * sibling of the component under test. It reads the same query key, so
+ * TanStack Query hands both components the one cache entry — when this
+ * marker is in the DOM, the data has arrived.
+ *
+ * Needed because asserting absence alone cannot distinguish "hidden because
+ * the flag is false" from "not rendered yet". The earlier version of the
+ * false-flag test below used `waitFor(() => expect(...).not.toBeInTheDocument())`,
+ * which passes on `waitFor`'s FIRST synchronous invocation — while the query
+ * is still pending and the badge is legitimately absent — and returns
+ * immediately, so it never observed the resolved state at all.
+ */
+function SettingsResolved() {
+  const { data } = trpc.settings.get.useQuery();
+  return data ? <p>settings resolved</p> : null;
+}
 
 /**
  * PlaceholderBadge now reads settings.contentUnverified (task 3.7) instead
@@ -16,6 +34,7 @@ function renderBadge() {
   return render(
     <TrpcProviders>
       <PlaceholderBadge />
+      <SettingsResolved />
     </TrpcProviders>,
   );
 }
@@ -31,9 +50,11 @@ describe('PlaceholderBadge', () => {
     mockTrpc({ 'settings.get': { ...SETTINGS_FIXTURE, contentUnverified: false } });
     renderBadge();
 
-    // Give the query a tick to resolve, then confirm it stays hidden rather
-    // than just not-yet-rendered.
-    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
+    // Wait for the query to RESOLVE first (see SettingsResolved above), then
+    // assert absence — so this proves the banner stays hidden with the flag
+    // false, not merely that it had not rendered yet.
+    expect(await screen.findByText('settings resolved')).toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
   it('hides the banner while settings are still loading', () => {
