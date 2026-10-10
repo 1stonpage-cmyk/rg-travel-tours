@@ -10,7 +10,7 @@ import WhyBookDirect from '@/components/home/WhyBookDirect';
 import { TrpcProviders } from '@/lib/trpc';
 import type { Destination } from '../../../server/src/routers/public/destinations';
 import { DESTINATIONS_FIXTURE, SETTINGS_FIXTURE } from './helpers/fixtures';
-import { mockTrpc } from './helpers/mock-trpc';
+import { mockTrpc, mockTrpcError } from './helpers/mock-trpc';
 
 function renderWithTrpc(node: ReactNode) {
   return render(
@@ -18,6 +18,31 @@ function renderWithTrpc(node: ReactNode) {
       <MemoryRouter>{node}</MemoryRouter>
     </TrpcProviders>,
   );
+}
+
+/**
+ * `QueryBoundary` must sit OUTSIDE each section's `<ol>`/`<ul>`, the way
+ * ReviewsSection and PackagesSection already do it. Inside the list, the
+ * error state's `<div role="alert">` becomes a direct child of
+ * `<ol>`/`<ul>`: invalid markup, a zero-item list, and — because the list
+ * is a CSS grid — the whole error box squeezed into one column.
+ *
+ * Asserting on the error state specifically, because that is the state
+ * whose markup breaks; the skeleton and the loaded content both render real
+ * `<li>`s either way.
+ */
+async function expectErrorStateOutsideTheList(node: ReactNode, procedure: string) {
+  mockTrpcError(procedure);
+  const { container } = renderWithTrpc(node);
+
+  // 3s like the other error-state tests (packages-reviews.test.tsx): the
+  // query client retries once before settling into isError.
+  const alert = await screen.findByRole('alert', {}, { timeout: 3000 });
+  expect(alert.closest('ol, ul'), 'the error box is rendered inside the list element').toBeNull();
+  expect(
+    container.querySelector('ol, ul'),
+    'an empty, zero-item list is still rendered alongside the error box',
+  ).toBeNull();
 }
 
 describe('HowItWorks', () => {
@@ -33,6 +58,10 @@ describe('HowItWorks', () => {
     for (const step of SETTINGS_FIXTURE.howItWorks) {
       expect(screen.getByText(step.body)).toBeInTheDocument();
     }
+  });
+
+  it('keeps the error state out of the step list', async () => {
+    await expectErrorStateOutsideTheList(<HowItWorks />, 'settings.get');
   });
 });
 
@@ -82,6 +111,10 @@ describe('WhyBookDirect', () => {
         name: SETTINGS_FIXTURE.whyBookDirect[1]!.title,
       }),
     ).toBeInTheDocument();
+  });
+
+  it('keeps the error state out of the reason list', async () => {
+    await expectErrorStateOutsideTheList(<WhyBookDirect />, 'settings.get');
   });
 });
 
@@ -197,6 +230,10 @@ describe('MostVisited', () => {
     for (const img of images) {
       expect(img.getAttribute('alt')?.length ?? 0).toBeGreaterThan(5);
     }
+  });
+
+  it('keeps the error state out of the places list', async () => {
+    await expectErrorStateOutsideTheList(<MostVisited />, 'destinations.list');
   });
 });
 

@@ -8,16 +8,19 @@ import type { Destination } from '../../../../server/src/routers/public/destinat
 
 const SKELETON_ITEM_COUNT = 6;
 
+/** The grid classes live here and on the real list below — the skeleton owns its own `<ul>` so the boundary can sit outside both (see `MostVisited`). */
+const PLACE_LIST_CLASSES = 'mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-3';
+
 /** One image-shaped bar per card, same aspect ratio as the real photo, so no layout shift occurs once destinations.list resolves. */
 function MostVisitedSkeleton() {
   return (
-    <>
+    <ul className={PLACE_LIST_CLASSES}>
       {Array.from({ length: SKELETON_ITEM_COUNT }, (_, i) => (
         <li key={i}>
           <Skeleton className="aspect-[3/2] w-full rounded-xl" />
         </li>
       ))}
-    </>
+    </ul>
   );
 }
 
@@ -43,7 +46,15 @@ function selectFeatured(destinations: Destination[]): Destination[] {
     .sort((a, b) => a.featuredSortOrder! - b.featuredSortOrder!);
 }
 
-/** Settings/API-driven (spec task 6H, first half). Reads `destinations.list`, not settings — see `selectFeatured` above. */
+/**
+ * Settings/API-driven (spec task 6H, first half). Reads
+ * `destinations.list`, not settings — see `selectFeatured` above.
+ *
+ * `QueryBoundary` sits OUTSIDE the `<ul>` (the ReviewsSection/
+ * PackagesSection shape): inside it, the error state's `<div role="alert">`
+ * would be a direct child of `<ul>` — invalid markup, a zero-item list, and
+ * a single cramped grid cell.
+ */
 export default function MostVisited() {
   const query = trpc.destinations.list.useQuery();
 
@@ -56,14 +67,14 @@ export default function MostVisited() {
           subtitle="The six destinations our vans run to most often."
           className="[&_p:first-child]:text-brand-gold-300 [&_p:last-child]:text-brand-blue-200 [&_h2]:text-white"
         />
-        <ul className="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-          <QueryBoundary
-            query={query}
-            skeleton={<MostVisitedSkeleton />}
-            errorTitle="Places could not load"
-          >
-            {(destinations) =>
-              selectFeatured(destinations).map((place) => (
+        <QueryBoundary
+          query={query}
+          skeleton={<MostVisitedSkeleton />}
+          errorTitle="Places could not load"
+        >
+          {(destinations) => (
+            <ul className={PLACE_LIST_CLASSES}>
+              {selectFeatured(destinations).map((place) => (
                 <li key={place.slug}>
                   <Link
                     to={`/tours?destination=${place.slug}`}
@@ -88,10 +99,10 @@ export default function MostVisited() {
                     </div>
                   </Link>
                 </li>
-              ))
-            }
-          </QueryBoundary>
-        </ul>
+              ))}
+            </ul>
+          )}
+        </QueryBoundary>
       </div>
     </section>
   );

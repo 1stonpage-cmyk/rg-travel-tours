@@ -22,10 +22,13 @@ const ICONS: Record<string, LucideIcon> = {
 
 const SKELETON_ITEM_COUNT = 6;
 
+/** The grid classes live here and on the real list below — the skeleton owns its own `<ul>` so the boundary can sit outside both (see the component comment). */
+const REASON_LIST_CLASSES = 'mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-3';
+
 /** Mirrors the real card's box (icon chip + title bar + body bar) so no layout shift occurs once settings resolve. */
 function WhyBookDirectSkeleton() {
   return (
-    <>
+    <ul className={REASON_LIST_CLASSES}>
       {Array.from({ length: SKELETON_ITEM_COUNT }, (_, i) => (
         <li key={i} className="border-brand-blue-100 rounded-xl border p-6">
           <Skeleton className="size-11 rounded-lg" />
@@ -33,11 +36,19 @@ function WhyBookDirectSkeleton() {
           <Skeleton className="mt-2 h-3.5 w-full" />
         </li>
       ))}
-    </>
+    </ul>
   );
 }
 
-/** Settings-driven (spec task 6H, first half). `settings.whyBookDirect` is `Array<{ icon, title, body }>`, rendered in API order. */
+/**
+ * Settings-driven (spec task 6H, first half). `settings.whyBookDirect` is
+ * `Array<{ icon, title, body }>`, rendered in API order.
+ *
+ * `QueryBoundary` sits OUTSIDE the `<ul>` (the ReviewsSection/
+ * PackagesSection shape): inside it, the error state's `<div role="alert">`
+ * would be a direct child of `<ul>` — invalid markup, a zero-item list, and
+ * a single cramped grid cell.
+ */
 export default function WhyBookDirect() {
   const query = trpc.settings.get.useQuery();
 
@@ -48,14 +59,14 @@ export default function WhyBookDirect() {
         title="Six reasons to skip the booking platforms"
         subtitle="Editable from admin settings once the site is live."
       />
-      <ul className="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-        <QueryBoundary
-          query={query}
-          skeleton={<WhyBookDirectSkeleton />}
-          errorTitle="Content could not load"
-        >
-          {({ whyBookDirect }) =>
-            whyBookDirect.map((reason) => {
+      <QueryBoundary
+        query={query}
+        skeleton={<WhyBookDirectSkeleton />}
+        errorTitle="Content could not load"
+      >
+        {({ whyBookDirect }) => (
+          <ul className={REASON_LIST_CLASSES}>
+            {whyBookDirect.map((reason) => {
               const Icon = ICONS[reason.icon] ?? Tag;
               return (
                 <li key={reason.title} className="border-brand-blue-100 rounded-xl border p-6">
@@ -68,10 +79,10 @@ export default function WhyBookDirect() {
                   <p className="text-muted-foreground mt-2 text-base sm:text-sm">{reason.body}</p>
                 </li>
               );
-            })
-          }
-        </QueryBoundary>
-      </ul>
+            })}
+          </ul>
+        )}
+      </QueryBoundary>
     </section>
   );
 }
