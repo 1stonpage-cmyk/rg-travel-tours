@@ -12,7 +12,12 @@ import { getDb } from '../db/client';
 import { settings } from '../db/schema';
 import { resolveOpenState, type OpenState } from '../services/hours';
 import { isWithinWindow } from '../services/schedule';
-import { SETTING_KEYS, SETTING_SCHEMAS, type SettingsBlocks } from './settings-schema';
+import {
+  SETTING_KEYS,
+  SETTING_SCHEMAS,
+  type SettingKey,
+  type SettingsBlocks,
+} from './settings-schema';
 
 /** All rows, unvalidated — key -> whatever JSON is stored. */
 export async function readRawSettings(): Promise<Record<string, unknown>> {
@@ -50,26 +55,35 @@ export async function readSettings(): Promise<SettingsBlocks> {
 }
 
 /**
- * Just the `trust` block, in one round trip — for callers like
- * `tours.list`/`tours.bySlug` (Task 1.9, R1) that need only
- * `minReviewsForRating` and must not take on a dependency on every other
- * settings key being valid (readSettings() throws on the first bad key,
- * whichever block it's in). Throws naming "trust" under the same two
- * conditions readSettings() would.
+ * ONE settings block, in one round trip — for callers that need a single key
+ * and must not take on a dependency on every other settings key being valid
+ * (readSettings() throws on the first bad key, whichever block it's in).
+ * Throws naming the requested key under the same two conditions
+ * readSettings() would, and names only the key, never the stored value.
+ */
+export async function readSettingBlock<K extends SettingKey>(key: K): Promise<SettingsBlocks[K]> {
+  const db = getDb();
+  const [row] = await db.select().from(settings).where(eq(settings.key, key));
+  if (!row) {
+    throw new Error(`Missing setting: "${key}"`);
+  }
+
+  const result = SETTING_SCHEMAS[key].safeParse(row.value);
+  if (!result.success) {
+    throw new Error(`Invalid setting: "${key}"`);
+  }
+
+  return result.data as SettingsBlocks[K];
+}
+
+/**
+ * Just the `trust` block — for callers like `tours.list`/`tours.bySlug`
+ * (Task 1.9, R1) that need only `minReviewsForRating`. Kept as a named
+ * function because three call sites read better for it; the single-key read
+ * itself lives in `readSettingBlock` above.
  */
 export async function readTrustSettings(): Promise<SettingsBlocks['trust']> {
-  const db = getDb();
-  const [row] = await db.select().from(settings).where(eq(settings.key, 'trust'));
-  if (!row) {
-    throw new Error('Missing setting: "trust"');
-  }
-
-  const result = SETTING_SCHEMAS.trust.safeParse(row.value);
-  if (!result.success) {
-    throw new Error('Invalid setting: "trust"');
-  }
-
-  return result.data;
+  return readSettingBlock('trust');
 }
 
 // ---------------------------------------------------------------------------
