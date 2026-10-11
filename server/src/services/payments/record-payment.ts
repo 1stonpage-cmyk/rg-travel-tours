@@ -32,7 +32,7 @@
  */
 import { and, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import type { BookingStatus } from '@rg/shared';
+import { type BookingStatus, depositCentavos } from '@rg/shared';
 import { getDb, type Transaction } from '../../db/client';
 import {
   AUDIT_ACTOR_TYPES,
@@ -163,13 +163,13 @@ function lateMoneyReason(
  * anything the caller passed in, and never off the live tour, whose price an
  * admin may have edited since (§5, Q5).
  *
- * The deposit is computed inline here, the way owner decision Q4 fixes it:
- * **UP to the next whole peso, clamped to the total.** Plan Task 19 extracts
- * this into a shared `depositCentavos()` helper with its own rounding tests;
- * when it lands, this function calls it and the arithmetic below goes away.
- * It is NOT implemented here as that shared helper — one task owns that
- * decision, and two copies of a rounding rule is how the two copies come to
- * disagree.
+ * The deposit comes from `depositCentavos()` in `/shared` (plan Task 19),
+ * which owns owner decision Q4 — **UP to the next whole peso, clamped to the
+ * total** — and carries the enumerated rounding tests for it. This function
+ * computed the same arithmetic inline until Task 19 landed; it calls the
+ * helper now, because two copies of a rounding rule is how the two copies
+ * come to disagree, and the copy a guest's money is checked against is the
+ * worst one to let drift.
  */
 function expectedAmountCentavos(booking: {
   payMode: 'full' | 'deposit';
@@ -177,10 +177,7 @@ function expectedAmountCentavos(booking: {
   priceSnapshot: { depositPercent: number };
 }): number {
   if (booking.payMode === 'full') return booking.totalCentavos;
-  const raw = (booking.totalCentavos * booking.priceSnapshot.depositPercent) / 100;
-  // Round UP to the next whole peso (Q4), then clamp: a 100% deposit on an
-  // odd total must not round past what the guest actually owes.
-  return Math.min(Math.ceil(raw / 100) * 100, booking.totalCentavos);
+  return depositCentavos(booking.totalCentavos, booking.priceSnapshot.depositPercent);
 }
 
 /**
