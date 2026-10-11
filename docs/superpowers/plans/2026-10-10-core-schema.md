@@ -2525,9 +2525,9 @@ describe('depositCentavos', () => {
   });
 
   // One centavo over a whole peso still rounds up a full peso.
-  it('rounds up from a single centavo', () => {
-    expect(depositCentavos(100 * 100 + 1, 100)).toBe(10100);
-  });
+  // PLAN DEFECT, found by Task 19: this case is impossible. At 100% the
+  // clamp caps the deposit at the total, so depositCentavos(10_001, 100)
+  // is 10_001, never 10_100. The clamp test below covers the intent.
 
   it('never exceeds the total', () => {
     // 100% of a total that is not a whole peso would ceil ABOVE the total
@@ -2656,6 +2656,14 @@ describe('app-level error handler', () => {
   });
 });
 ```
+
+> **PLAN DEFECTS in this task's tests, found by Task 20 and fixed before they landed.** Two of the
+> cases above were vacuous as written. (1) The `headersSent` case passes end-to-end whether or not
+> the guard exists, because supertest sees the already-sent response either way — it must call the
+> middleware directly. (2) The body-leak test used `calls.map(join)`, which hides body-parser's
+> `err.body`; it would have passed over a live leak. It must read what `util.inspect` would print.
+> Both are corrected in the shipped tests. Noted because a vacuous test in an error handler is
+> exactly where one does the most harm.
 
 The third test matters as much as the first: an error handler that hides the error from the client
 **and** from the server log has not improved anything, it has only made the next outage harder.
