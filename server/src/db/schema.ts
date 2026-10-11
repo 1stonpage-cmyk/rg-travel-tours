@@ -5,7 +5,7 @@
  *
  * Since the core-schema plan (docs/superpowers/plans/2026-10-10-core-schema.md)
  * this file also holds the transactional core, added one table per task.
- * Still out of scope: bookings, payments, sessions, tour_date_slots.
+ * Still out of scope: bookings, payments, sessions.
  *
  * Conventions:
  * - Money is integer centavos (`int`), never DECIMAL/float.
@@ -23,6 +23,7 @@ import {
   json,
   mysqlEnum,
   mysqlTable,
+  primaryKey,
   text,
   tinyint,
   uniqueIndex,
@@ -546,5 +547,114 @@ export const coupons = mysqlTable(
       sql`(${t.discountType} = 'percent' AND ${t.percentBp} IS NOT NULL AND ${t.amountCentavos} IS NULL)
        OR (${t.discountType} = 'fixed'   AND ${t.amountCentavos} IS NOT NULL AND ${t.percentBp} IS NULL)`,
     ),
+  ],
+);
+
+/**
+ * The PER-TOUR lock row (BUILD_SPEC §5 "Concurrency"). One row per
+ * tour-day, and nothing but the key: it is a mutex, not data.
+ *
+ * §5: "run the check and the booking insert in one DB transaction with a row
+ * lock on a `tour_date_slots` row (`SELECT … FOR UPDATE`)". It serialises the
+ * `groups_per_day` check for ONE tour on ONE date, so two guests cannot both
+ * read "one group slot left" and both take it.
+ *
+ * The row is created on demand (owner decision 2026-10-11, Q8) with
+ * `INSERT … ON DUPLICATE KEY UPDATE tour_id = tour_id` — a no-op touch that
+ * is safe when two requests race to create the same row — and then selected
+ * `FOR UPDATE`.
+ *
+ * ALWAYS locked AFTER `fleetDateSlots`. See the lock-order note on that
+ * table: this one alone cannot enforce a fleet-wide limit.
+ */
+export const tourDateSlots = mysqlTable(
+  'tour_date_slots',
+  {
+    tourId: int('tour_id')
+      .notNull()
+      .references(() => tours.id),
+    /** Civil date in Asia/Manila — the tour day, not an instant. */
+    date: date('date').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.tourId, t.date] })],
+);
+
+/**
+ * The DATE-level lock row (owner decision 2026-10-11, Q14 option A). One row
+ * per bookable day, shared by every tour.
+ *
+ * Exists because the fleet is global: the Q7 capacity rule —
+ * `MIN(groups_per_day, vans free that day across all tours)` — cannot be
+ * enforced by a per-tour lock, since two bookings for DIFFERENT tours on the
+ * same date lock different `tour_date_slots` rows, never wait for each
+ * other, and can both take the last van.
+ *
+ * **Every booking transaction takes both locks, always in this order:**
+ *
+ *   1. `fleet_date_slots(date)`          SELECT … FOR UPDATE
+ *   2. `tour_date_slots(tour_id, date)`  SELECT … FOR UPDATE
+ *
+ * Fleet first, tour second, with no exceptions. Two transactions that take
+ * the same pair in opposite orders deadlock — A holds fleet and waits for
+ * tour while B holds tour and waits for fleet — and InnoDB kills one of
+ * them. A fixed global order makes that impossible rather than rare, and
+ * "rare" is the worst kind of concurrency bug: it passes every test and
+ * fails on a holiday weekend.
+ *
+ * Created on demand like `tour_date_slots` (Q8), with
+ * `INSERT … ON DUPLICATE KEY UPDATE date = date`.
+ *
+ * No columns beyond the key, deliberately: a counter here would be a second
+ * copy of a number the `bookings` rows already carry.
+ */
+export const fleetDateSlots = mysqlTable('fleet_date_slots', {
+  /** Civil date in Asia/Manila. */
+  date: date('date').primaryKey(),
+});
+
+/**
+ * Every provider the payment layer knows by name. `manual` is the
+ * bank-transfer / cash path an admin verifies by hand — it is a provider in
+ * this enum so a manually approved payment is recorded the same way as a
+ * gateway one, rather than as a special case with no event trail.
+ */
+export const PAYMENT_PROVIDERS = ['paymongo', 'xendit', 'manual'] as const;
+
+/**
+ * Webhook idempotency across ALL providers (BUILD_SPEC §10's
+ * `paymongo_events`, renamed per the plan's owner-approved amendment B1b;
+ * §6 "Idempotency").
+ *
+ * A gateway retries a webhook until it gets a 2xx, so the same event
+ * arrives more than once. The unique index below is what makes replaying it
+ * a no-op instead of a second payment.
+ */
+export const paymentEvents = mysqlTable(
+  'payment_events',
+  {
+    id: int('id').autoincrement().primaryKey(),
+    provider: mysqlEnum('provider', PAYMENT_PROVIDERS).notNull(),
+    /**
+     * The gateway's own event id. Unique PER PROVIDER, never globally —
+     * nothing stops PayMongo and Xendit minting the same string, and a
+     * global unique index would make the second gateway's event silently
+     * look like a duplicate and be dropped.
+     *
+     * 191 characters, not 255: this column sits in a unique index, and
+     * utf8mb4 at 4 bytes/char puts 255 over MySQL's 767-byte index prefix
+     * limit on older row formats. 191 is the conventional safe maximum.
+     */
+    providerEventId: varchar('provider_event_id', { length: 191 }).notNull(),
+    type: varchar('type', { length: 80 }).notNull(),
+    payload: json('payload'),
+    receivedAt: datetime('received_at', { mode: 'date' })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    /** Null until the event has been acted on; lets a crash mid-processing be retried. */
+    processedAt: datetime('processed_at', { mode: 'date' }),
+  },
+  (t) => [
+    uniqueIndex('payment_events_provider_event_unique').on(t.provider, t.providerEventId),
+    index('payment_events_unprocessed_idx').on(t.processedAt),
   ],
 );

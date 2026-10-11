@@ -28,6 +28,11 @@ const EXPECTED_TABLES = [
   'driverLeaves',
   // Core-schema plan, Task 5. Its own assertions live in schema-coupons.test.ts.
   'coupons',
+  // Core-schema plan, Task 6 — the two lock rows and the webhook event log.
+  // Their own assertions live in schema-locks.test.ts.
+  'tourDateSlots',
+  'fleetDateSlots',
+  'paymentEvents',
 ];
 
 describe('public content schema', () => {
@@ -36,7 +41,6 @@ describe('public content schema', () => {
     expect(schema).not.toHaveProperty('bookings');
     expect(schema).not.toHaveProperty('payments');
     expect(schema).not.toHaveProperty('sessions');
-    expect(schema).not.toHaveProperty('tourDateSlots');
   });
 
   it('carries the columns the public site depends on', () => {
