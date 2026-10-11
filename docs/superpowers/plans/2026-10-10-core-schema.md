@@ -10,7 +10,15 @@
 
 **Spec:** `docs/BUILD_SPEC.md` (§5 pricing/capacity/holds, §6 checkout & payments, §7 customer portal, §8 driver portal, §9 admin roles, §10 database tables, §12 security checklist). The plan argues from the spec; executors read both.
 
-**Status:** PLAN ONLY — awaiting owner approval. No table in this document may be created, altered or migrated until that approval is given.
+**Status:** PLAN ONLY — awaiting owner approval. No table in this document may be created, altered
+or migrated until that approval is given.
+
+**Revision 2, 2026-10-11.** Owner answered Q4 (deposit rounds UP to a whole peso), Q6 (coupon
+discount split into `discount_type` + `percent_bp` + `amount_centavos` with a database CHECK) and
+Q7 (capacity = `MIN(groups_per_day, vans free that day across all tours)`, never auto-overbook,
+admin override audited), and approved an app-level Express error handler. Tasks 5, 19 and 20 carry
+those. **The Q7 answer raised one new blocking question — Q14, the cross-tour fleet lock — because
+the per-tour lock the spec designed cannot enforce a fleet-wide limit.** Nine questions remain open.
 
 ## Global Constraints
 
@@ -580,59 +588,167 @@ git commit -m "feat(db): drivers and driver_leaves"
 **Files:**
 
 - Modify: `server/src/db/schema.ts`
+- Create: `shared/src/coupon.ts`
 - Test: `server/src/__tests__/schema-coupons.test.ts`
 
 **Interfaces:**
 
-- Produces: `coupons` table; `COUPON_KINDS = ['percent','fixed'] as const`.
+- Produces: `coupons` table; from `@rg/shared`: `DISCOUNT_TYPES = ['percent','fixed'] as const`,
+  `type DiscountType`, `couponDiscountSchema`.
 
-**Design note the implementer must not改 without asking:** `value` is a single `int` column whose unit depends on `kind` — **percent points** when `kind='percent'` (so `10` means 10%), **centavos** when `kind='fixed'` (so `10000` means ₱100). This is Open Question Q6 below; the plan picks one reading so the schema can exist, and the column comment says so explicitly.
+**Owner decision, 2026-10-11 (answers Q6).** The spec's single `value` column — one `int` meaning
+percent points or centavos depending on a sibling column — is replaced by three columns and a
+database CHECK:
+
+| Column            | Type                      | Meaning                                                      |
+| ----------------- | ------------------------- | ------------------------------------------------------------ |
+| `discount_type`   | `enum('percent','fixed')` | Which of the two below is in use                             |
+| `percent_bp`      | `int NULL`                | **Basis points.** `1000` = 10%, `250` = 2.5%, `10000` = 100% |
+| `amount_centavos` | `int NULL`                | Flat discount in centavos                                    |
+
+Exactly one of `percent_bp` / `amount_centavos` is set, and it must match `discount_type`. That is
+enforced by a `CHECK`, not only by Zod — verified available: this project runs **MySQL 8.0.46**,
+which has enforced `CHECK` since 8.0.16, and **drizzle-orm 0.44.7** exports `check()` from
+`mysql-core`. (On MySQL 8.0.15 or earlier the constraint would be _parsed and silently ignored_, so
+the test below is what proves it is actually live rather than decorative.)
+
+Basis points, not whole percent, because 2.5% off is a thing a marketing campaign asks for and an
+`int` percent cannot express it without the schema changing again.
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
 describe('coupons', () => {
-  it('stores money as centavos and percent as points in one int column', async () => {
+  it('stores the discount as basis points or centavos, never a float', async () => {
     const [cols] = await getDb().execute(sql`
-      SELECT DATA_TYPE FROM information_schema.columns
-      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'coupons' AND COLUMN_NAME = 'value'`);
-    expect(cols[0]?.DATA_TYPE).toBe('int');
+      SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE FROM information_schema.columns
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'coupons'
+        AND COLUMN_NAME IN ('discount_type','percent_bp','amount_centavos')
+      ORDER BY COLUMN_NAME`);
+    expect(cols.map((c) => String(c.COLUMN_NAME))).toEqual([
+      'amount_centavos',
+      'discount_type',
+      'percent_bp',
+    ]);
+    expect(cols.find((c) => c.COLUMN_NAME === 'percent_bp')?.DATA_TYPE).toBe('int');
+    expect(cols.find((c) => c.COLUMN_NAME === 'amount_centavos')?.DATA_TYPE).toBe('int');
+    // Both nullable: exactly one is set per row, and the CHECK decides which.
+    expect(cols.every((c) => c.IS_NULLABLE === 'YES' || c.COLUMN_NAME === 'discount_type')).toBe(
+      true,
+    );
+  });
+
+  it('accepts a well-formed percent coupon', async () => {
+    await expect(
+      insertCoupon({ discountType: 'percent', percentBp: 1000, amountCentavos: null }),
+    ).resolves.toBeDefined();
+  });
+
+  it('accepts a well-formed fixed coupon', async () => {
+    await expect(
+      insertCoupon({ discountType: 'fixed', percentBp: null, amountCentavos: 10000 }),
+    ).resolves.toBeDefined();
+  });
+
+  // The four ways a row can be malformed. Each must be refused BY THE DATABASE,
+  // so a bad row cannot arrive through a path that skipped Zod — a seed script,
+  // a migration, a manual fix in a SQL client at 2am.
+  it('REFUSES percent with the centavos column set instead', async () => {
+    await expect(
+      insertCoupon({ discountType: 'percent', percentBp: null, amountCentavos: 10000 }),
+    ).rejects.toThrow(/check constraint/i);
+  });
+
+  it('REFUSES fixed with the basis-points column set instead', async () => {
+    await expect(
+      insertCoupon({ discountType: 'fixed', percentBp: 1000, amountCentavos: null }),
+    ).rejects.toThrow(/check constraint/i);
+  });
+
+  it('REFUSES both columns set at once', async () => {
+    await expect(
+      insertCoupon({ discountType: 'percent', percentBp: 1000, amountCentavos: 10000 }),
+    ).rejects.toThrow(/check constraint/i);
+  });
+
+  it('REFUSES neither column set', async () => {
+    await expect(
+      insertCoupon({ discountType: 'percent', percentBp: null, amountCentavos: null }),
+    ).rejects.toThrow(/check constraint/i);
   });
 
   it('refuses a duplicate code', async () => {
-    const db = getDb();
     const code = `SAVE${Date.now() % 100000}`;
-    await db.execute(sql`INSERT INTO coupons (code, kind, value, used_count, is_active, created_at, updated_at)
-      VALUES (${code}, 'percent', 10, 0, 1, UTC_TIMESTAMP(), UTC_TIMESTAMP())`);
+    await insertCoupon({ code, discountType: 'percent', percentBp: 1000, amountCentavos: null });
     await expect(
-      db.execute(sql`INSERT INTO coupons (code, kind, value, used_count, is_active, created_at, updated_at)
-        VALUES (${code}, 'fixed', 10000, 0, 1, UTC_TIMESTAMP(), UTC_TIMESTAMP())`),
+      insertCoupon({ code, discountType: 'fixed', percentBp: null, amountCentavos: 10000 }),
     ).rejects.toThrow(/duplicate/i);
   });
 });
 ```
 
-- [ ] **Step 2: Run it and watch it fail.**
+`insertCoupon` is a local helper in the test file that issues a raw `INSERT` — **not** a Drizzle
+insert through a Zod-validated service. The whole point of these four rejection tests is that the
+_database_ refuses the row, so they must bypass every application-level check. A version of this
+test that goes through a validating helper proves nothing about the CHECK and would stay green if
+the constraint were dropped.
 
-- [ ] **Step 3: Add the table**
+- [ ] **Step 2: Run it and watch it fail**
+
+Run: `pnpm --filter @rg/server test schema-coupons`
+Expected: FAIL — table `coupons` does not exist.
+
+- [ ] **Step 3: Add the shared discount types**
 
 ```ts
-export const COUPON_KINDS = ['percent', 'fixed'] as const;
+// shared/src/coupon.ts
+import { z } from 'zod';
+
+export const DISCOUNT_TYPES = ['percent', 'fixed'] as const;
+export type DiscountType = (typeof DISCOUNT_TYPES)[number];
+
+/**
+ * A coupon's discount, as a discriminated union — so TypeScript makes the
+ * invalid combinations unrepresentable in code, the same way the CHECK
+ * constraint makes them unrepresentable in the database.
+ *
+ * `percentBp` is BASIS POINTS: 1000 = 10%, 250 = 2.5%. Whole-percent ints
+ * cannot express 2.5% without another schema change, and a float has no
+ * business anywhere near money.
+ */
+export const couponDiscountSchema = z.discriminatedUnion('discountType', [
+  z.object({
+    discountType: z.literal('percent'),
+    percentBp: z.number().int().min(1).max(10000),
+    amountCentavos: z.null(),
+  }),
+  z.object({
+    discountType: z.literal('fixed'),
+    percentBp: z.null(),
+    amountCentavos: z.number().int().positive(),
+  }),
+]);
+export type CouponDiscount = z.infer<typeof couponDiscountSchema>;
+```
+
+- [ ] **Step 4: Add the table with the CHECK**
+
+```ts
+import { check } from 'drizzle-orm/mysql-core';
+import { sql } from 'drizzle-orm';
 
 export const coupons = mysqlTable(
   'coupons',
   {
     id: int('id').autoincrement().primaryKey(),
     code: varchar('code', { length: 40 }).notNull().unique(),
-    kind: mysqlEnum('kind', COUPON_KINDS).notNull(),
-    /**
-     * UNIT DEPENDS ON `kind` — see Open Question Q6.
-     *   kind='percent' -> percent points, 1..100 (10 means 10%)
-     *   kind='fixed'   -> CENTAVOS (10000 means PHP 100.00)
-     * Validated in Zod on the admin form, not by a CHECK constraint, so the
-     * message can explain which unit is expected.
-     */
-    value: int('value').notNull(),
+
+    discountType: mysqlEnum('discount_type', DISCOUNT_TYPES).notNull(),
+    /** Basis points: 1000 = 10%, 250 = 2.5%. Set iff discount_type='percent'. */
+    percentBp: int('percent_bp'),
+    /** Flat discount in centavos. Set iff discount_type='fixed'. */
+    amountCentavos: int('amount_centavos'),
+
     minSpendCentavos: int('min_spend_centavos'),
     startsAt: datetime('starts_at', { mode: 'date' }),
     endsAt: datetime('ends_at', { mode: 'date' }),
@@ -642,14 +758,48 @@ export const coupons = mysqlTable(
     createdAt: datetime('created_at', { mode: 'date' }).notNull(),
     updatedAt: datetime('updated_at', { mode: 'date' }).notNull(),
   },
-  (t) => [index('coupons_active_window_idx').on(t.isActive, t.startsAt, t.endsAt)],
+  (t) => [
+    index('coupons_active_window_idx').on(t.isActive, t.startsAt, t.endsAt),
+    /**
+     * Exactly one discount column is set, and it matches discount_type.
+     *
+     * In the database, not only in Zod: a seed script, a migration or a
+     * hand-written UPDATE all bypass application validation, and a coupon
+     * row with neither column set would make every discount silently zero
+     * while looking perfectly valid in the admin list.
+     */
+    check(
+      'coupons_discount_shape',
+      sql`(${t.discountType} = 'percent' AND ${t.percentBp} IS NOT NULL AND ${t.amountCentavos} IS NULL)
+       OR (${t.discountType} = 'fixed'   AND ${t.amountCentavos} IS NOT NULL AND ${t.percentBp} IS NULL)`,
+    ),
+  ],
 );
 ```
 
-- [ ] **Step 4: Run the test, five checks, commit**
+- [ ] **Step 5: Confirm the CHECK is live, not merely written**
+
+Before trusting it, read the generated migration SQL and confirm the `CONSTRAINT … CHECK (…)` is in
+the `CREATE TABLE`, then after migrating:
+
+```sql
+SELECT CONSTRAINT_NAME, CHECK_CLAUSE FROM information_schema.check_constraints
+WHERE CONSTRAINT_SCHEMA = DATABASE() AND CONSTRAINT_NAME = 'coupons_discount_shape';
+```
+
+One row means MySQL accepted and will enforce it. Zero rows means it was dropped silently — stop and
+report rather than relying on Zod alone.
+
+- [ ] **Step 6: Prove the rejection tests can fail**
+
+Drop the constraint (`ALTER TABLE coupons DROP CHECK coupons_discount_shape;`), re-run — the four
+rejection tests must all go red — then restore it by re-running the migration. State what the red
+looked like.
+
+- [ ] **Step 7: Run the five checks and commit**
 
 ```bash
-git commit -m "feat(db): coupons"
+git commit -m "feat(db): coupons, with a CHECK that the discount shape is valid"
 ```
 
 **✅ DONE 5**
@@ -669,7 +819,35 @@ git commit -m "feat(db): coupons"
 - Consumes: `tours` (existing).
 - Produces: `tourDateSlots`, `paymentEvents` tables; `PAYMENT_PROVIDERS = ['paymongo','xendit','manual'] as const`.
 
-`tour_date_slots` exists only to be locked. §5: "run the check and the booking insert in one DB transaction with a row lock on a `tour_date_slots` row (`SELECT … FOR UPDATE`)". The row is created on demand with `INSERT … ON DUPLICATE KEY UPDATE tour_id = tour_id` (a no-op touch that is safe to race), then selected `FOR UPDATE`.
+`tour_date_slots` exists only to be locked. §5: "run the check and the booking insert in one DB
+transaction with a row lock on a `tour_date_slots` row (`SELECT … FOR UPDATE`)". The row is created
+on demand with `INSERT … ON DUPLICATE KEY UPDATE tour_id = tour_id` (a no-op touch that is safe to
+race), then selected `FOR UPDATE`.
+
+> **⚠ BLOCKED ON Q14 — read before building this table.**
+>
+> The owner's Q7 answer (2026-10-11) makes the fleet a resource shared **across all tours**:
+> accept up to `MIN(tour.groups_per_day, vans free that day across all tours)`. A per-tour lock
+> cannot enforce a cross-tour limit — two bookings for **different** tours on the same date lock
+> **different** `tour_date_slots` rows, so neither waits for the other and both can claim the last
+> van.
+>
+> The recommended fix is a 17th table, `fleet_date_slots (date)`, locked `FOR UPDATE` **before**
+> the per-tour row, always in that order so the pair cannot deadlock. That is one extra table
+> beyond this plan's scope, so it is **not built until Q14 is answered**. Build `tour_date_slots`
+> as specified here; leave the fleet lock alone.
+>
+> If Q14 comes back as option A, add to this task:
+>
+> ```ts
+> export const fleetDateSlots = mysqlTable('fleet_date_slots', {
+>   /** Civil date in Asia/Manila. One row per bookable day, created on demand. */
+>   date: date('date').primaryKey(),
+> });
+> ```
+>
+> …and a test asserting two concurrent bookings for _different_ tours on the same date serialise.
+> That test belongs with the Week 3 capacity service, which is where the lock is actually taken.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2085,37 +2263,339 @@ git commit -m "test(db): guard the money, time and soft-delete conventions in so
 
 ---
 
-## Which test proves which constraint
+---
 
-| Constraint                                              | Proven by                                                                            |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Money is centavos, no decimals                          | Task 18 source guard + per-table `information_schema` assertions (Tasks 3, 5, 8, 12) |
-| Times are UTC `datetime`, never `timestamp`             | Task 18 source guard + Task 7 `expires_at` assertion                                 |
-| Booking refs are random, non-sequential, crypto-sourced | Task 9 — four tests, including the `Math.random` spy                                 |
-| A ref collision cannot lose a booking                   | Task 9 `insertBookingWithRef` retry test                                             |
-| Soft deletes only; bookings/payments never hard-deleted | Task 18 source guard                                                                 |
-| The capacity-holding status set is exactly the spec's   | Task 8                                                                               |
-| An audit row shares the transaction it describes        | Task 2 rollback test                                                                 |
-| Payments name no gateway                                | Task 12 column-name scan                                                             |
-| Webhook idempotency                                     | Task 6 unique index + Task 15 duplicate delivery                                     |
-| A bad signature cannot pay                              | Task 15, asserting on the `payments` row count                                       |
-| An unknown provider cannot pay                          | Tasks 13 and 15                                                                      |
-| The Xendit stub cannot pay                              | Tasks 13 and 15                                                                      |
-| Only a verified webhook or an admin marks paid          | Task 14 (two callers) + Task 15                                                      |
-| The amount must match what the booking expects          | Task 14                                                                              |
-| Role isolation, both directions                         | Task 17 — 30 generated cases                                                         |
-| A session token is never stored raw                     | Task 7                                                                               |
-| A driver PIN is never stored raw                        | Task 4                                                                               |
+### Task 19: `depositCentavos()` — rounding, decided and pinned
+
+**Files:**
+
+- Modify: `shared/src/money.ts`
+- Test: `shared/src/__tests__/money.test.ts` (extend the existing file)
+
+**Interfaces:**
+
+- Produces: `depositCentavos(totalCentavos: number, depositPercent: number): number`.
+
+No dependency on any other task — can run at any point.
+
+**Owner decision, 2026-10-11 (answers Q4).** The deposit rounds **UP to the next whole peso**:
+compute `total × percent / 100`, then ceil to a multiple of 100 centavos. The spec's phrasing said
+both "ceil" and "to the nearest whole peso", which disagree on anything with centavos; **ceil wins**.
+Computed **server-side only** — the browser never sends a deposit, and nothing in `/client` may
+reimplement this (Global Constraints: "The server computes all money").
+
+- [ ] **Step 1: Write the failing test** — boundaries are the whole point here, so they are
+      enumerated rather than sampled:
+
+```ts
+import { depositCentavos } from '../money';
+
+describe('depositCentavos', () => {
+  // ₱1,890.00 at 30% = ₱567.00 exactly — already whole, must not move.
+  it('leaves an exact whole peso alone', () => {
+    expect(depositCentavos(189000, 30)).toBe(56700);
+  });
+
+  // ₱1,895.00 at 30% = ₱568.50 -> ceil -> ₱569.00
+  it('rounds a half peso UP', () => {
+    expect(depositCentavos(189500, 30)).toBe(56900);
+  });
+
+  // ₱1,894.00 at 30% = ₱568.20 -> ceil -> ₱569.00.
+  // This is the case where "ceil" and "to the nearest whole peso" disagree:
+  // nearest would give ₱568.00. The owner chose ceil (2026-10-11).
+  it('rounds UP even when the nearest whole peso is DOWN', () => {
+    expect(depositCentavos(189400, 30)).toBe(56900);
+  });
+
+  // One centavo over a whole peso still rounds up a full peso.
+  it('rounds up from a single centavo', () => {
+    expect(depositCentavos(100 * 100 + 1, 100)).toBe(10100);
+  });
+
+  it('never exceeds the total', () => {
+    // 100% of a total that is not a whole peso would ceil ABOVE the total
+    // without a clamp, and a deposit larger than the price is nonsense.
+    expect(depositCentavos(10050, 100)).toBe(10050);
+  });
+
+  it('returns 0 for a 0% deposit and the total for 100% of a whole peso', () => {
+    expect(depositCentavos(189000, 0)).toBe(0);
+    expect(depositCentavos(189000, 100)).toBe(189000);
+  });
+
+  it('returns an integer for every percent from 0 to 100', () => {
+    for (let pct = 0; pct <= 100; pct += 1) {
+      const d = depositCentavos(189437, pct);
+      expect(Number.isInteger(d), `percent ${pct} produced ${d}`).toBe(true);
+      expect(d % 100 === 0 || d === 189437).toBe(true); // whole pesos, or the clamp
+    }
+  });
+});
+```
+
+- [ ] **Step 2: Run it and watch it fail** — `depositCentavos` is not exported.
+
+- [ ] **Step 3: Implement**
+
+```ts
+/**
+ * The deposit due now, in centavos, rounded UP to the next whole peso.
+ *
+ * BUILD_SPEC §5 says "ceil(total * deposit_percent / 100) to the nearest
+ * whole peso", which is two different instructions: on a ₱568.20 deposit,
+ * ceil gives ₱569 and nearest gives ₱568. The owner settled it on
+ * 2026-10-11 — **ceil**, so the business is never short.
+ *
+ * Clamped to the total: at 100% of a non-whole-peso total, ceiling would
+ * otherwise produce a deposit larger than the price.
+ *
+ * Integer arithmetic throughout. No floats touch money — `0.1 + 0.2` is the
+ * reason this function exists rather than a one-liner at each call site.
+ */
+export function depositCentavos(totalCentavos: number, depositPercent: number): number {
+  const raw = Math.ceil((totalCentavos * depositPercent) / 100); // centavos, not yet whole pesos
+  const wholePesos = Math.ceil(raw / 100) * 100;
+  return Math.min(wholePesos, totalCentavos);
+}
+```
+
+- [ ] **Step 4: Prove each boundary test can fail** — swap `Math.ceil` for `Math.round` in the
+      second ceil and confirm the "rounds UP even when the nearest whole peso is DOWN" case goes
+      red while the others stay green. Remove the clamp and confirm "never exceeds the total" goes
+      red. Restore.
+
+- [ ] **Step 5: Run the five checks and commit**
+
+```bash
+git commit -m "feat(money): deposit rounds up to the next whole peso"
+```
+
+**✅ DONE 19**
 
 ---
 
-## Open questions — ambiguities in the spec, NOT guessed
+### Task 20: an app-level Express error handler
 
-Each of these is a place where `BUILD_SPEC.md` admits more than one reading and the difference
-changes the schema or the money. Where this plan had to pick something to be writable at all, the
-pick is stated and marked **[provisional]** — it is a starting point for your answer, not a
-decision. Nothing here should be implemented until it is settled, because every one of them is
-expensive to change after data exists.
+**Files:**
+
+- Create: `server/src/middleware/error-handler.ts`
+- Modify: `server/src/app.ts`
+- Test: `server/src/__tests__/error-handler.test.ts`
+
+**Interfaces:**
+
+- Produces: `errorHandler(err, req, res, next)` — Express's four-argument error middleware.
+
+**Owner-approved addition, 2026-10-11.** Two leaks are already closed —
+`middleware/malformed-url.ts` (task 4.3b) handles undecodable URLs, and the tRPC `errorFormatter`
+(BUG-102) strips stacks from procedure errors. Neither covers an unhandled throw in plain Express:
+that still reaches **finalhandler**, which in a non-production `NODE_ENV` renders an HTML page
+**containing the stack trace**. This task closes that last door.
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+import request from 'supertest';
+
+describe('app-level error handler', () => {
+  it('turns an unhandled throw into a clean 500 with no stack and no paths', async () => {
+    const app = createApp(); // with a test-only route that throws
+    const res = await request(app).get('/__throw');
+
+    expect(res.status).toBe(500);
+    const body = JSON.stringify(res.body) + res.text;
+    expect(body).not.toMatch(/\bat \S+ \(/); // stack frames
+    expect(body).not.toMatch(/node_modules|[A-Za-z]:\\|\/(usr|var|home)\//); // paths
+    expect(body).not.toMatch(/\.[cm]?[jt]sx?:\d+:\d+/); // file:line:col
+    expect(body).not.toMatch(/Error: /); // the raw message
+    expect(res.body).toEqual({ error: 'Internal Server Error' });
+  });
+
+  it('answers JSON, never finalhandler HTML', async () => {
+    const res = await request(app).get('/__throw');
+    expect(res.headers['content-type']).toMatch(/application\/json/);
+    expect(res.text).not.toMatch(/<html|<pre>/i);
+  });
+
+  it('logs the real error server-side, with the stack intact', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await request(app).get('/__throw');
+    expect(spy, 'the error was swallowed entirely — nothing to debug from').toHaveBeenCalled();
+    expect(String(spy.mock.calls[0])).toMatch(/__throw|boom/);
+    spy.mockRestore();
+  });
+
+  it('leaves an already-sent response alone', async () => {
+    // A throw AFTER headers are flushed must delegate to Express's default
+    // handler, not try to write a second set of headers.
+    const res = await request(app).get('/__throw-after-send');
+    expect(res.status).toBe(200);
+  });
+
+  it('does not shadow the routes that handle their own errors', async () => {
+    expect((await request(app).get('/trpc/%zz')).status).toBe(400); // task 4.3b
+    expect((await request(app).get('/robots.txt')).status).toBe(200);
+    expect((await request(app).get('/api/health')).status).toBe(200);
+  });
+});
+```
+
+The third test matters as much as the first: an error handler that hides the error from the client
+**and** from the server log has not improved anything, it has only made the next outage harder.
+
+- [ ] **Step 2: Run it and watch it fail** — finalhandler returns HTML with a stack, so the first
+      two assertions go red.
+
+- [ ] **Step 3: Implement**
+
+```ts
+import type { ErrorRequestHandler } from 'express';
+
+/**
+ * The last middleware in the stack: anything thrown that nothing else caught
+ * ends here.
+ *
+ * Without it, Express hands the error to `finalhandler`, which outside
+ * `NODE_ENV=production` replies with an HTML page containing the stack trace
+ * — absolute filesystem paths included — to whoever made the request. That
+ * is the same leak BUG-102 closed for tRPC procedures and task 4.3b closed
+ * for malformed URLs, reached through a third door.
+ *
+ * Applied in EVERY environment, not just production. "It only leaks in
+ * development" stopped being a boundary the moment `pnpm dev:lan` existed.
+ *
+ * The real error is logged server-side with its stack. The client gets a
+ * fixed string and nothing else — no message, because an arbitrary internal
+ * error's message is not a safe-by-construction string (`ENOENT: ... open
+ * '/var/www/...'` is a message).
+ */
+export const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
+  // Headers already flushed: Express's default handler must take it from
+  // here, because writing a second status would throw inside the handler.
+  if (res.headersSent) return next(err);
+
+  console.error(`[error] ${req.method} ${req.path}`, err);
+  res.status(500).json({ error: 'Internal Server Error' });
+};
+```
+
+- [ ] **Step 4: Mount it LAST in `server/src/app.ts`**
+
+After every route, including the SPA catch-all. `app.ts` already carries a comment block explaining
+why `/robots.txt` and `/sitemap.xml` sit above `app.get('*splat')`; add a line there noting that the
+error handler must stay at the very bottom, because Express only treats a four-argument middleware
+as an error handler and only reaches it after the routes.
+
+- [ ] **Step 5: Prove each test can fail** — remove the mount and confirm the HTML/stack assertions
+      go red; remove the `console.error` and confirm the logging test goes red; remove the
+      `headersSent` guard and confirm the already-sent test goes red. Restore.
+
+- [ ] **Step 6: Run the five checks and commit**
+
+```bash
+git commit -m "fix(server): unhandled errors return a clean 500, never finalhandler's stack page"
+```
+
+**✅ DONE 20**
+
+## Which test proves which constraint
+
+| Constraint                                                        | Proven by                                                                                                                                                                 |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Money is centavos, no decimals                                    | Task 18 source guard + per-table `information_schema` assertions (Tasks 3, 5, 8, 12)                                                                                      |
+| Times are UTC `datetime`, never `timestamp`                       | Task 18 source guard + Task 7 `expires_at` assertion                                                                                                                      |
+| Booking refs are random, non-sequential, crypto-sourced           | Task 9 — four tests, including the `Math.random` spy                                                                                                                      |
+| A ref collision cannot lose a booking                             | Task 9 `insertBookingWithRef` retry test                                                                                                                                  |
+| Soft deletes only; bookings/payments never hard-deleted           | Task 18 source guard                                                                                                                                                      |
+| The capacity-holding status set is exactly the spec's             | Task 8                                                                                                                                                                    |
+| A coupon can never hold a malformed discount                      | Task 5 — four rejection tests against the database CHECK, issued as raw SQL so they bypass Zod                                                                            |
+| The deposit rounds UP to a whole peso and never exceeds the total | Task 19 — enumerated boundaries, including the ₱568.20 case where ceil and nearest disagree                                                                               |
+| An audit row shares the transaction it describes                  | Task 2 rollback test                                                                                                                                                      |
+| Payments name no gateway                                          | Task 12 column-name scan                                                                                                                                                  |
+| Webhook idempotency                                               | Task 6 unique index + Task 15 duplicate delivery                                                                                                                          |
+| A bad signature cannot pay                                        | Task 15, asserting on the `payments` row count                                                                                                                            |
+| An unknown provider cannot pay                                    | Tasks 13 and 15                                                                                                                                                           |
+| The Xendit stub cannot pay                                        | Tasks 13 and 15                                                                                                                                                           |
+| Only a verified webhook or an admin marks paid                    | Task 14 (two callers) + Task 15                                                                                                                                           |
+| The amount must match what the booking expects                    | Task 14                                                                                                                                                                   |
+| Role isolation, both directions                                   | Task 17 — 30 generated cases                                                                                                                                              |
+| A session token is never stored raw                               | Task 7                                                                                                                                                                    |
+| A driver PIN is never stored raw                                  | Task 4                                                                                                                                                                    |
+| No unhandled error ever returns a stack or a path                 | Task 20 — plus BUG-102's tRPC formatter and task 4.3b's URL guard, already shipped                                                                                        |
+| Capacity never oversells the fleet                                | **The capacity service is Week 3, not this plan.** This plan provides the lock rows and the status set it needs (Tasks 6, 8); the concurrency test lives with the service |
+
+---
+
+## Open questions
+
+Four are now **answered** and folded into the tasks above. Nine remain. Where this plan had to pick
+something to be writable at all, the pick is marked **[provisional]** — a starting point for your
+answer, not a decision.
+
+### ✅ ANSWERED — Q4: deposit rounding (owner, 2026-10-11)
+
+**Round the deposit UP to the next whole peso** (ceil to 100 centavos). Server-computed only, with
+boundary tests. Folded into **Task 19**, which pins the ₱568.20 case where the spec's own "ceil" and
+"to the nearest whole peso" disagree — ceil wins — and clamps the result so a 100% deposit on a
+non-whole-peso total cannot exceed the total.
+
+### ✅ ANSWERED — Q6: coupon discount shape (owner, 2026-10-11)
+
+The single `value` column is **replaced** by `discount_type enum('percent','fixed')`,
+`percent_bp int NULL` (basis points, 1000 = 10%) and `amount_centavos int NULL`, with a **CHECK**
+that exactly one is set and matches `discount_type`. Folded into **Task 5**, which verifies the
+constraint is actually live in `information_schema.check_constraints` (MySQL silently ignores CHECK
+before 8.0.16 — this server is 8.0.46, confirmed) and proves rejection with raw SQL that bypasses
+Zod entirely.
+
+### ✅ ANSWERED — Q7: capacity rule (owner, 2026-10-11) — _pending R&G confirmation_
+
+**Each booked group requires one van.** Per tour per day, accept bookings up to
+`MIN(tour.groups_per_day, vans free that day across all tours)`. **Never overbook automatically.**
+An admin may manually override with a reason, and the override writes to `audit_log`.
+
+Marked **"pending R&G confirmation"** in BUILD_SPEC §5, and built to this rule meanwhile.
+
+Two consequences, both folded in:
+
+1. **The fleet constraint is global across tours, so the lock must be too** — this is new, and it
+   is Q14 below.
+2. The override needs an audit action (`booking.capacity_override`) carrying the reason. No new
+   column: §10 gives `bookings` none, and `audit_log` already records actor, action and free-form
+   `data`. The cost is that "which bookings were overridden?" becomes an `audit_log` query rather
+   than a column filter — acceptable for what should be a rare, deliberate act.
+
+### ✅ APPROVED — app-level Express error handler (owner, 2026-10-11)
+
+Added as **Task 20**. No finalhandler dev HTML, no stack traces, server-side logging kept, with
+tests that can fail.
+
+---
+
+### 🔴 Q14 — NEW, raised by the Q7 answer: what serialises the cross-tour fleet check?
+
+**This one needs an answer before Task 6 is built**, because it decides whether there is a 17th
+table.
+
+"Vans free that day **across all tours**" makes the fleet a shared, date-global resource. The lock
+the spec designed is per **tour** and date — `tour_date_slots (tour_id, date)`. Two bookings for
+**different tours** on the same date lock **different rows**, so they do not exclude each other,
+and both can pass "a van is free" and take the same last van. The spec's lock cannot enforce the
+rule you have just chosen.
+
+Three ways out:
+
+| Option                                                                                                                 | What it costs                                                                                                                                                                                         |
+| ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **A. Add `fleet_date_slots (date)`** — one row per date, locked `FOR UPDATE` before any capacity check. _Recommended._ | A 17th table, beyond the 16 this plan scoped. Serialises all bookings sharing a date across tours — with six tours and a small fleet, that is a handful of rows a day, so the throughput cost is nil. |
+| **B. Repurpose `tour_date_slots`** to be keyed by date alone                                                           | Contradicts §10, which names it and keys it by `(tour_id, date)`. Drops the per-tour row the spec asked for.                                                                                          |
+| **C. Lock the `vans` rows** with `SELECT … FOR UPDATE`                                                                 | No new table, but it range-locks over "available vans" and InnoDB gap locks there deadlock readily under concurrent inserts. Hardest to get right and to test.                                        |
+
+**My recommendation is A**, with locks always taken in a fixed order (`fleet_date_slots` first, then
+`tour_date_slots`) so two concurrent bookings can never deadlock by grabbing them in opposite
+orders. **Confirm A, B or C** — the plan currently documents A as provisional in Task 6 and does not
+build it.
 
 ### Q1 — What is a customer session's `subject_id`? **[provisional: the booking id]**
 
@@ -2144,19 +2624,8 @@ both "how much through PayMongo" and "how much by GCash", which the single colum
 
 B1a asks for "a `payment_events` (or equivalent) table with UNIQUE(provider, provider_event_id)",
 which is incompatible with the spec's PayMongo-specific `paymongo_events (event_id unique)`. The
-plan renames it, and B1b below amends the spec to match. This is the **only** deviation from the §10
-table list. **Confirm.**
-
-### Q4 — How exactly does the deposit round? **[provisional: round UP to a whole peso]**
-
-§5 says `deposit = ceil(total * deposit_percent / 100) to the nearest whole peso`. In centavos, that
-reads as: compute `total * 30 / 100`, then round **up** to the next multiple of 100 centavos. On a
-₱1,890 total that gives ₱567.00 exactly; on ₱1,895 it gives ₱568.50 → **₱569.00**.
-
-Two things to confirm: that rounding is **up** rather than to-nearest (up favours the business and
-is what "ceil" says, but "to the nearest whole peso" says otherwise, and the two disagree on
-₱568.20); and that the guest's displayed balance is `total − deposit` using the **rounded** deposit,
-so the two figures always add back to the total.
+plan renames it, and the 2026-10-10 spec amendment already reflects that. This is the **only**
+deviation from the §10 table list. **Confirm.**
 
 ### Q5 — What exactly goes in `bookings.price_snapshot`? **[provisional: see below]**
 
@@ -2170,42 +2639,21 @@ fixing the shape. The plan proposes:
   "addons": [
     { "addonId": 3, "name": "Lunch", "priceCentavos": 35000, "perPerson": true, "qty": 4 }
   ],
-  "coupon": { "id": 7, "code": "SAVE10", "kind": "percent", "value": 10 },
+  "coupon": { "id": 7, "code": "SAVE10", "discountType": "percent", "percentBp": 1000 },
   "depositPercent": 30,
   "subtotalCentavos": 896000,
   "discountCentavos": 89600,
   "totalCentavos": 806400,
-  "computedAt": "2026-10-10T08:00:00.000Z"
+  "computedAt": "2026-10-11T08:00:00.000Z"
 }
 ```
+
+(The `coupon` block now carries `discountType`/`percentBp` per the Q6 answer.)
 
 Once bookings exist this shape is effectively permanent, because old rows keep whatever was written.
 **Confirm, or amend now.** In particular: should it also freeze `free_cancel_hours`, so a later
 change to the tour's cancellation window cannot alter an existing booking's refund rights? The plan
 thinks yes, and §6's "Free-cancellation policy window is a tour setting" does not say.
-
-### Q6 — What unit is `coupons.value`? **[provisional: percent points or centavos, by `kind`]**
-
-§10 gives `coupons` a single `value` column alongside `kind (percent/fixed)`. One column, two units.
-The plan documents it in the column comment and validates in Zod. **Confirm** — the alternative is
-two nullable columns (`percent_value`, `fixed_value_centavos`) with a constraint that exactly one is
-set, which is uglier but impossible to misread. Given this feeds discounts, the uglier option may be
-worth it.
-
-### Q7 — Does the van/driver capacity check mean per-day or per-trip? **BLOCKING, not guessed**
-
-§5 step 3–4 require "at least one van free that day" and "at least one driver free that day", and
-say unassigned-but-confirmed bookings each consume one van and one driver. But §4 also gives tours
-`groups_per_day`, implying a tour can run several trips a day.
-
-So: if a tour has `groups_per_day = 3` and the fleet has 2 vans, can 3 bookings be taken for that
-date? Reading A says no — 2 vans is 2 trips, full stop. Reading B says yes, because a van can run a
-morning and an afternoon trip. The spec supports both and they give different answers for every
-multi-group day.
-
-**This plan does not guess.** The schema is the same either way (the capacity _service_ differs, and
-that service is not in this plan), but the answer must be settled before Week 3 builds checkout on
-it. Related: §15 Q1 (assignment deadline) is already open and touches the same area.
 
 ### Q8 — When is a `tour_date_slots` row created? **[provisional: on demand, idempotently]**
 
@@ -2213,7 +2661,8 @@ it. Related: §15 Q1 (assignment deadline) is already open and touches the same 
 the start of the booking transaction with `INSERT … ON DUPLICATE KEY UPDATE tour_id = tour_id` (a
 no-op touch that is safe when two requests race), then `SELECT … FOR UPDATE`. The alternative —
 pre-creating a row per tour per bookable date — needs a job and a horizon and can run out.
-**Confirm the on-demand approach.**
+**Confirm the on-demand approach.** If Q14 resolves to option A, the same pattern applies to
+`fleet_date_slots`.
 
 ### Q9 — What are the driver lockout numbers? **Not guessed**
 
@@ -2246,19 +2695,18 @@ rows can exist for one booking and their sum must never exceed `amount_paid`).
 
 The column exists today as a bare nullable `int`. Wave 3 adds the FK. §10 describes it as "null if
 unverified", which the FK allows. The only risk is existing rows — all null in the seed, so the
-ALTER should apply cleanly. **Confirm you want the constraint**, rather than leaving it loose so
-that deleting a booking (which never happens — see the soft-delete rule) could not fail.
+ALTER should apply cleanly. **Confirm you want the constraint.**
 
 ### Q13 — Existing §15 open questions that block parts of this plan
 
-These are already in the spec's own Open questions list and now have schema consequences:
+Already in the spec's own Open questions list, now with schema consequences:
 
-| §15 item                                                                                         | Blocks                                                                                                                                                                                       |
-| ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Q2 QR payments** — static QR with manual verification, PayMongo QR Ph (auto-confirm), or both? | Whether `manual_qr` and `qrph` are both needed in `PAYMENT_METHODS`, and whether the manual-verification columns (`txn_ref`, `receipt_path`, `reject_reason`, `verified_by`) are dead weight |
-| **Q3 PayPal** — enabled on the PayMongo account?                                                 | Whether `PAYMENT_METHODS` needs a `paypal` value                                                                                                                                             |
-| **Q5 Cancellation policy** — window and refund rules per tour                                    | Q5 above (whether `free_cancel_hours` is frozen into `price_snapshot`)                                                                                                                       |
-| **Q1 Assignment deadline**                                                                       | Q7 above; same area, same unresolved reading                                                                                                                                                 |
+| §15 item                                                                                        | Blocks                                                                                                                                                                                       |
+| ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Q2 QR payments** — static QR with manual verification, gateway QR Ph (auto-confirm), or both? | Whether `manual_qr` and `qrph` are both needed in `PAYMENT_METHODS`, and whether the manual-verification columns (`txn_ref`, `receipt_path`, `reject_reason`, `verified_by`) are dead weight |
+| **Q3 PayPal** — enabled on the PayMongo account?                                                | Whether `PAYMENT_METHODS` needs a `paypal` value                                                                                                                                             |
+| **Q5 Cancellation policy** — window and refund rules per tour                                   | Q5 above (whether `free_cancel_hours` is frozen into `price_snapshot`)                                                                                                                       |
+| **Q1 Assignment deadline**                                                                      | Now partly settled by the Q7 answer, but the 48-hour reading is still open                                                                                                                   |
 
 ---
 
@@ -2272,10 +2720,16 @@ Run against the spec with fresh eyes, as the writing-plans skill requires.
 `trip_checkpoints` + `review_helpful_votes` (11), `payments` (12). That is 16. Both §10 index lists
 (`bookings` ×3, `payments` ×2) are transcribed into Tasks 8 and 12.
 
+Three further tasks carry owner decisions rather than tables: **19** (deposit rounding, Q4), **20**
+(the Express error handler), and the CHECK constraint folded into **5** (Q6). Twenty tasks total.
+
 **Deliberate gaps, stated rather than hidden:**
 
 - The **pricing, capacity and holds services** (§5) are not here. This plan builds the tables they
-  need and stops. They are Week 3 and depend on Q4 and Q7 being answered.
+  need and stops. They are Week 3. Q4 and Q7 are now answered, so the remaining blocker for the
+  capacity service is Q14 (what serialises the cross-tour fleet check).
+- The **`fleet_date_slots` table** that the Q7 answer implies is **not built** — it is a 17th table
+  beyond this plan's scope and waits on Q14. Task 6 carries the warning and the proposed shape.
 - The **expired-hold cron** (§5) is not here — no `jobs/` directory exists yet.
 - **Notifications** (§11) are not here; no table is required for them.
 - **Checkout, portals and admin screens** are not here by design (see Scope check).
