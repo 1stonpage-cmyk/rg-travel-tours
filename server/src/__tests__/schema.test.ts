@@ -26,6 +26,8 @@ const EXPECTED_TABLES = [
   'vans',
   'drivers',
   'driverLeaves',
+  // Core-schema plan, Task 5. Its own assertions live in schema-coupons.test.ts.
+  'coupons',
 ];
 
 describe('public content schema', () => {
@@ -34,7 +36,6 @@ describe('public content schema', () => {
     expect(schema).not.toHaveProperty('bookings');
     expect(schema).not.toHaveProperty('payments');
     expect(schema).not.toHaveProperty('sessions');
-    expect(schema).not.toHaveProperty('coupons');
     expect(schema).not.toHaveProperty('tourDateSlots');
   });
 

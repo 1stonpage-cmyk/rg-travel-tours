@@ -5,16 +5,17 @@
  *
  * Since the core-schema plan (docs/superpowers/plans/2026-10-10-core-schema.md)
  * this file also holds the transactional core, added one table per task.
- * Still out of scope: bookings, payments, sessions, coupons,
- * tour_date_slots.
+ * Still out of scope: bookings, payments, sessions, tour_date_slots.
  *
  * Conventions:
  * - Money is integer centavos (`int`), never DECIMAL/float.
  * - created_at/updated_at are produced in JS (UTC), not MySQL's SYSTEM
  *   timezone: `$defaultFn` on insert, `$onUpdateFn` on update for updated_at.
  */
+import { sql } from 'drizzle-orm';
 import {
   boolean,
+  check,
   date,
   datetime,
   index,
@@ -27,7 +28,7 @@ import {
   uniqueIndex,
   varchar,
 } from 'drizzle-orm/mysql-core';
-import { ADMIN_ROLES } from '@rg/shared';
+import { ADMIN_ROLES, DISCOUNT_TYPES } from '@rg/shared';
 
 export const settings = mysqlTable('settings', {
   key: varchar('key', { length: 64 }).primaryKey(),
@@ -477,4 +478,73 @@ export const driverLeaves = mysqlTable(
       .$defaultFn(() => new Date()),
   },
   (t) => [index('driver_leaves_driver_range_idx').on(t.driverId, t.startDate, t.endDate)],
+);
+
+/**
+ * Discount coupons (BUILD_SPEC §9 "Coupons").
+ *
+ * **The discount is three columns, not one (owner decision 2026-10-11, Q6).**
+ * The spec's single `value` column — one `int` meaning percent points or
+ * centavos depending on a sibling column — is replaced by `discount_type`
+ * plus a nullable `percent_bp` and a nullable `amount_centavos`, with a
+ * database CHECK that exactly one of the two is set and that it matches
+ * `discount_type`.
+ *
+ * `percent_bp` is BASIS POINTS: 1000 = 10%, 250 = 2.5%, 10000 = 100%. Whole
+ * percent, not basis points, is what forces a schema change the first time
+ * marketing asks for 2.5% off — and a `decimal` or a float is forbidden
+ * anywhere near money (CLAUDE.md).
+ */
+export const coupons = mysqlTable(
+  'coupons',
+  {
+    id: int('id').autoincrement().primaryKey(),
+    code: varchar('code', { length: 40 }).notNull().unique(),
+
+    discountType: mysqlEnum('discount_type', DISCOUNT_TYPES).notNull(),
+    /** Basis points: 1000 = 10%, 250 = 2.5%. Set iff discount_type='percent'. */
+    percentBp: int('percent_bp'),
+    /** Flat discount in centavos. Set iff discount_type='fixed'. */
+    amountCentavos: int('amount_centavos'),
+
+    /** Null means no minimum. Centavos, like every money column here. */
+    minSpendCentavos: int('min_spend_centavos'),
+    /** UTC instants; the admin UI converts to and from Asia/Manila. */
+    startsAt: datetime('starts_at', { mode: 'date' }),
+    endsAt: datetime('ends_at', { mode: 'date' }),
+    /** Null means unlimited. Enforced against used_count / coupon_redemptions. */
+    usageLimit: int('usage_limit'),
+    usedCount: int('used_count').notNull().default(0),
+    isActive: boolean('is_active').notNull().default(true),
+    createdAt: datetime('created_at', { mode: 'date' })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: datetime('updated_at', { mode: 'date' })
+      .notNull()
+      .$defaultFn(() => new Date())
+      .$onUpdateFn(() => new Date()),
+  },
+  (t) => [
+    index('coupons_active_window_idx').on(t.isActive, t.startsAt, t.endsAt),
+    /**
+     * Exactly one discount column is set, and it matches discount_type.
+     *
+     * In the database, not only in Zod: a seed script, a migration or a
+     * hand-written UPDATE all bypass application validation, and a coupon
+     * row with neither column set would make every discount silently zero
+     * while looking perfectly valid in the admin list.
+     *
+     * Enforced for real here — this server is MySQL 8.0.46 and CHECK has
+     * been enforced since 8.0.16. On 8.0.15 and earlier MySQL parses a CHECK
+     * and silently ignores it, which is why `schema-coupons.test.ts` asserts
+     * the constraint exists in `information_schema.check_constraints` and
+     * that four malformed rows are actually refused, rather than trusting
+     * that writing it down was enough.
+     */
+    check(
+      'coupons_discount_shape',
+      sql`(${t.discountType} = 'percent' AND ${t.percentBp} IS NOT NULL AND ${t.amountCentavos} IS NULL)
+       OR (${t.discountType} = 'fixed'   AND ${t.amountCentavos} IS NOT NULL AND ${t.percentBp} IS NULL)`,
+    ),
+  ],
 );
