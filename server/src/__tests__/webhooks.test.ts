@@ -21,18 +21,23 @@
  * strength: each fixture is unique to its test, so a guard that stops
  * working puts a row exactly where the scoped count is looking.
  *
- * **How the PayMongo placeholder is handled.** `services/payments/paymongo.ts`
- * is still a stub whose every method throws — Task 16 writes the real one —
- * so there is no signature to verify yet and `getProvider('paymongo')`
- * would answer every request here with a 503. Rather than sketch half a
- * PayMongo verifier (which is Task 16's security-critical work, not this
- * task's), the registry is mocked so `paymongo` resolves to the test double
- * below: a provider with its OWN hand-rolled HMAC scheme that resembles no
- * real gateway. The mock DELEGATES to the real registry for every other
- * name, so the `xendit` and `manual` cases exercise the genuine article,
- * and the route, the mount order in `app.ts` and the raw-body parser under
- * test are all the real ones. If the mock ever stopped intercepting, the
- * signed cases would get the stub's 503 and go red — it fails closed.
+ * **Why `paymongo` is a test double here.** This file tests the ROUTE, not
+ * a gateway: the registry is mocked so `paymongo` resolves to the double
+ * below — a provider with its OWN hand-rolled HMAC scheme that resembles no
+ * real gateway — and what is under test is the route's ordering, its
+ * refusals, its idempotency and the mount order in `app.ts`, none of which
+ * should change when a gateway does. The mock DELEGATES to the real
+ * registry for every other name, so the `xendit` and `manual` cases
+ * exercise the genuine article.
+ *
+ * It fails closed if the mock ever stops intercepting: the real PayMongo
+ * provider (Task 16) verifies against `PAYMONGO_WEBHOOK_SECRET`, which the
+ * test environment does not set, so it answers false and every signed case
+ * here gets a 400 instead of its expected 200. (Before Task 16 landed the
+ * real provider threw `ProviderNotEnabledError` and the same cases went red
+ * with a 503 — different code, same fail-closed direction.) What this file
+ * deliberately does NOT cover is PayMongo's own signature scheme and event
+ * shapes; those are unit-tested directly in `paymongo-provider.test.ts`.
  *
  * Fixtures are COMMITTED and torn down by id in `afterAll`, for the reason
  * `record-payment.test.ts` spells out: `recordPayment()` opens its own

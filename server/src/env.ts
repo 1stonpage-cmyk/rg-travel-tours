@@ -19,6 +19,16 @@ const schema = z.object({
   TEST_DATABASE_URL: z.string().optional(),
   UPLOADS_DIR: z.string().default('./uploads'),
   PUBLIC_BASE_URL: z.string().default('http://localhost:5180'),
+  // PayMongo (plan Task 16). BOTH OPTIONAL, deliberately: the app must still
+  // boot without payment credentials — that is how it runs today and how it
+  // runs during content work — so a missing key is not a startup failure.
+  // `createCheckout()` throws `PaymongoNotConfiguredError` instead, which
+  // makes a misconfigured deploy fail loudly at the first payment rather
+  // than silently at boot; and `verifyWebhook()` answers false with no
+  // webhook secret, so an unverifiable webhook can never mark a booking
+  // paid. Never logged, never sent to the client, never stored.
+  PAYMONGO_SECRET_KEY: z.string().optional(),
+  PAYMONGO_WEBHOOK_SECRET: z.string().optional(),
 });
 
 /**
