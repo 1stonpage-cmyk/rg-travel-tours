@@ -69,3 +69,43 @@ export function createProcedureRateLimit(
     },
   });
 }
+
+/**
+ * The per-IP third of the driver PIN lockout policy (BUILD_SPEC §8, owner
+ * decision Q9, task 21): **10 attempts per 15 minutes per IP**.
+ *
+ * The other two limits are per driver and live in
+ * `services/driver-lockout.ts`. This one is what makes a six-digit PIN safe
+ * at all: 1,000,000 combinations at 10 attempts per 15 minutes is centuries,
+ * and it is the only one of the three that costs an attacker anything when
+ * they spread their guesses across every driver code in turn.
+ *
+ * **A factory, not a module-level handler.** `rateLimit()` allocates a
+ * counter store on construction, so a module-level singleton would share one
+ * counter across every `createApp()` in the test suite — the kind of
+ * cross-test coupling that makes a limiter test pass or fail depending on
+ * file order. Every other limiter in this codebase is likewise built inside
+ * `createApp`.
+ *
+ * **Not mounted yet, deliberately.** There is no driver login route — that is
+ * Week 6 — and `'driver.login'` below is this task's *proposal* for its name,
+ * not an observed fact. Mounting a procedure-scoped limiter against a guessed
+ * procedure name would fail OPEN the moment the real name differs, while
+ * looking mounted. `driver-lockout.test.ts` carries a guard that fails the
+ * build if a driver-login procedure is added to the router without this
+ * limiter being mounted in `app.ts`, so the choice is "mount it with the
+ * route" rather than "hope someone remembers". Until then the generous
+ * unscoped `/trpc` backstop in `app.ts` still applies, so the failure mode is
+ * limited-generously, never unlimited.
+ */
+export const DRIVER_LOGIN_IP_WINDOW_MS = 15 * 60_000;
+export const DRIVER_LOGIN_IP_MAX = 10;
+/** The procedure name this limiter is scoped to. Confirm it in Week 6. */
+export const DRIVER_LOGIN_PROCEDURES = ['driver.login'] as const;
+
+export function createDriverLoginLimiter(): RequestHandler {
+  return createProcedureRateLimit([...DRIVER_LOGIN_PROCEDURES], {
+    windowMs: DRIVER_LOGIN_IP_WINDOW_MS,
+    max: DRIVER_LOGIN_IP_MAX,
+  });
+}
