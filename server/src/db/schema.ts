@@ -976,6 +976,40 @@ export const bookings = mysqlTable(
     index('bookings_driver_date_idx').on(t.driverId, t.tourDate),
     /** Added by the plan: the cron that expires holds scans this every minute. */
     index('bookings_hold_expiry_idx').on(t.status, t.holdExpiresAt),
+    /**
+     * **No booking money column may go negative** (owner decision
+     * 2026-10-11, task 16b-6). Four columns, four CHECKs, one rule.
+     *
+     * `>= 0`, NOT `> 0`, and the difference is the whole design: zero is
+     * legitimate in every one of them. A fresh booking has
+     * `amount_paid_centavos = 0`. An uncouponed booking has
+     * `discount_centavos = 0`. A 100% coupon takes the total — and
+     * therefore the subtotal's whole value — down to `total_centavos = 0`,
+     * which is a free trip an admin deliberately gave away, not a corrupt
+     * row. `payments_amount_positive` is strict (`> 0`) because a ₱0
+     * payment is money that did not move being recorded as if it had;
+     * these are balances, and a zero balance is a fact.
+     *
+     * What they refuse is the sign. Nothing in the application can produce
+     * a negative here — the server computes every figure and
+     * `priceSnapshotSchema` is non-negative throughout — but a seed script,
+     * a migration or a hand-written UPDATE at 2am goes through none of it,
+     * and `discount_centavos = -50000` is a "discount" that adds ₱500 to
+     * the bill while satisfying every declaration in this file. A negative
+     * `amount_paid_centavos` is worse: it makes `total - amount_paid` read
+     * as MORE owed than the booking costs, and it would let a refund
+     * written the wrong way silently invert a revenue `SUM()`.
+     *
+     * Four separately named constraints rather than one compound CHECK, so
+     * `information_schema.check_constraints` and the MySQL error name the
+     * column that was actually violated. `schema-bookings.test.ts` proves
+     * each with a raw INSERT that bypasses Zod entirely — the point is that
+     * the DATABASE refuses the row.
+     */
+    check('bookings_subtotal_non_negative', sql`${t.subtotalCentavos} >= 0`),
+    check('bookings_discount_non_negative', sql`${t.discountCentavos} >= 0`),
+    check('bookings_total_non_negative', sql`${t.totalCentavos} >= 0`),
+    check('bookings_amount_paid_non_negative', sql`${t.amountPaidCentavos} >= 0`),
   ],
 );
 

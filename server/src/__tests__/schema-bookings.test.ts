@@ -27,6 +27,7 @@
  *     silently.
  */
 import { describe, expect, it } from 'vitest';
+import { sql } from 'drizzle-orm';
 import { getTableConfig } from 'drizzle-orm/mysql-core';
 import {
   BOOKING_STATUSES,
@@ -36,8 +37,19 @@ import {
   priceSnapshotSchema,
   type PriceSnapshot,
 } from '@rg/shared';
-import { getPool } from '../db/client';
-import { bookings, coupons, drivers, tours, vans } from '../db/schema';
+import { getDb, getPool, type Transaction } from '../db/client';
+import { bookings, coupons, destinations, drivers, tours, vans } from '../db/schema';
+
+/**
+ * The four money columns, and the CHECK that keeps each of them from going
+ * negative (task 16b-6). One name per column, so a violation says which.
+ */
+const MONEY_CHECKS = [
+  ['subtotal_centavos', 'bookings_subtotal_non_negative'],
+  ['discount_centavos', 'bookings_discount_non_negative'],
+  ['total_centavos', 'bookings_total_non_negative'],
+  ['amount_paid_centavos', 'bookings_amount_paid_non_negative'],
+] as const;
 
 const config = getTableConfig(bookings);
 const column = (name: string) => config.columns.find((c) => c.name === name);
@@ -226,6 +238,21 @@ describe('bookings table', () => {
   });
 
   /**
+   * Task 16b-6, against the declaration — so removing a CHECK from
+   * `schema.ts` goes red before a migration is ever generated. The DB-backed
+   * twins below prove MySQL is actually enforcing them.
+   *
+   * One CHECK per column rather than one compound expression, so the
+   * constraint that fires names the column that was violated.
+   */
+  it('declares a non-negative CHECK on every money column', () => {
+    const declared = config.checks.map((c) => c.name);
+    for (const [col, name] of MONEY_CHECKS) {
+      expect(declared, `${col} is unconstrained — a negative amount is insertable`).toContain(name);
+    }
+  });
+
+  /**
    * The other half of the convention: no money column may hide behind a name
    * without the suffix. `price_snapshot` is the one documented exception —
    * it is a JSON blob, not an amount.
@@ -397,6 +424,108 @@ async function tableExists(name: string): Promise<boolean> {
 const bookingsExists = await tableExists('bookings');
 const dbIt = bookingsExists ? it : it.skip;
 
+/** Thrown to roll the fixture transaction back; never escapes `inRollback`. */
+const ROLLBACK = new Error('__rollback__');
+
+/**
+ * Runs `fn` in a transaction that is always rolled back — the pattern
+ * `schema-payments.test.ts` uses, and for the same reason: nothing is
+ * committed, so there is no `DELETE FROM bookings` anywhere in this file. A
+ * booking is never hard-deleted (Global Constraints), and a cleanup step
+ * that deletes them is how that rule gets normalised.
+ */
+async function inRollback(fn: (tx: Transaction) => Promise<void>): Promise<void> {
+  try {
+    await getDb().transaction(async (tx) => {
+      await fn(tx);
+      throw ROLLBACK;
+    });
+  } catch (error) {
+    if (error !== ROLLBACK) throw error;
+  }
+}
+
+/**
+ * Runs `run` and reports the MySQL error code it was refused with, or `null`
+ * when the database accepted it.
+ *
+ * The code, not the message: Drizzle wraps a mysql2 error in a
+ * `DrizzleQueryError` whose message is the SQL text, so matching on the
+ * message would pass or fail for reasons unrelated to the constraint.
+ */
+async function rejectionCode(run: () => Promise<unknown>): Promise<string | null> {
+  try {
+    await run();
+    return null;
+  } catch (error) {
+    let current: unknown = error;
+    for (let depth = 0; depth < 5 && current != null; depth += 1) {
+      if (typeof current !== 'object') break;
+      const code = (current as { code?: unknown }).code;
+      if (typeof code === 'string') return code;
+      current = (current as { cause?: unknown }).cause;
+    }
+    return 'UNRECOGNISED';
+  }
+}
+
+/** A tour and its destination, so the booking FK has something to point at. */
+async function makeTour(tx: Transaction): Promise<number> {
+  const unique = `__bk16b6__${Date.now()}_${Math.floor(Math.random() * 1e9)}`;
+  const [destination] = await tx.insert(destinations).values({ name: unique, slug: unique });
+  const [tour] = await tx
+    .insert(tours)
+    .values({ slug: unique, title: unique, destinationId: destination.insertId });
+  return tour.insertId;
+}
+
+/**
+ * A public ref for a raw insert. `ref` is UNIQUE, and every fixture here
+ * lives inside a rolled-back transaction, so a fresh random tail from the
+ * spec's unambiguous alphabet is enough — nothing it could collide with is
+ * ever committed.
+ */
+function nextRef(): string {
+  const alphabet = 'ABCDEFGHJKMNPQRSTVWXYZ23456789';
+  let tail = '';
+  for (let i = 0; i < 6; i += 1) {
+    tail += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  return `RG-${tail}`;
+}
+
+/**
+ * **A raw INSERT, bypassing Zod and Drizzle's own typing entirely** — which
+ * is the whole point of task 16b-6's tests. `priceSnapshotSchema` and the
+ * server's pricing code already make a negative impossible through the
+ * application, and none of that reaches a seed script, a migration or a
+ * hand-written UPDATE in a SQL client. These statements go straight at
+ * MySQL, so what they prove is that the DATABASE refuses the row.
+ */
+function insertBookingMoney(
+  tx: Transaction,
+  tourId: number,
+  money: { subtotal: number; discount: number; total: number; paid: number },
+): Promise<unknown> {
+  const snapshot = JSON.stringify(validSnapshot());
+  return tx.execute(
+    sql`INSERT INTO bookings
+          (ref, tour_id, tour_date, pax, lead_name, lead_email, lead_phone,
+           status, pay_mode, price_snapshot,
+           subtotal_centavos, discount_centavos, total_centavos, amount_paid_centavos,
+           created_at, updated_at)
+        VALUES
+          (${nextRef()}, ${tourId}, '2099-12-25', 2, 'Raw SQL Guest',
+           'raw@example.test', '09170000000',
+           'pending_payment', 'full', ${snapshot},
+           ${money.subtotal}, ${money.discount}, ${money.total}, ${money.paid},
+           UTC_TIMESTAMP(), UTC_TIMESTAMP())`,
+  );
+}
+
+/** The baseline the rejection cases below perturb one column at a time. */
+const VALID_MONEY = { subtotal: 1568000, discount: 156800, total: 1411200, paid: 0 };
+
 describe('bookings, as actually migrated', () => {
   dbIt('stores every money column as int centavos in the real table', async () => {
     const [rows] = (await getPool().query(
@@ -455,5 +584,89 @@ describe('bookings, as actually migrated', () => {
     ]) {
       expect(names, `${wanted} is missing`).toContain(wanted);
     }
+  });
+
+  /**
+   * Task 16b-6. The CHECKs must be LIVE, not merely written: MySQL 8.0.15
+   * and earlier parse a CHECK and silently ignore it, so a constraint absent
+   * from `information_schema.check_constraints` is decoration. This server is
+   * 8.0.46, which enforces them — proven here rather than assumed.
+   *
+   * The clause is asserted exactly, `>= 0` included: a CHECK that drifted to
+   * `> 0` would still appear in the catalogue and would still refuse every
+   * negative, while quietly making a 100%-coupon booking (`total_centavos`
+   * = 0) and every unpaid booking (`amount_paid_centavos` = 0) impossible to
+   * insert. The accept-zero test below is the other half of that.
+   */
+  dbIt('declares all four money CHECKs as real, enforced `>= 0` constraints', async () => {
+    const [rows] = (await getPool().query(
+      'SELECT CONSTRAINT_NAME, CHECK_CLAUSE FROM information_schema.check_constraints ' +
+        'WHERE CONSTRAINT_SCHEMA = DATABASE() AND CONSTRAINT_NAME IN (?, ?, ?, ?)',
+      MONEY_CHECKS.map(([, name]) => name),
+    )) as [Array<{ CONSTRAINT_NAME: string; CHECK_CLAUSE: string }>, unknown];
+    const clauses = Object.fromEntries(
+      rows.map((r) => [String(r.CONSTRAINT_NAME), String(r.CHECK_CLAUSE).replace(/[`\s]/g, '')]),
+    );
+    for (const [col, name] of MONEY_CHECKS) {
+      expect(clauses[name], `${name} was dropped or never migrated`).toBe(`(${col}>=0)`);
+    }
+  });
+
+  /**
+   * **The four rejections, by the DATABASE, through raw SQL that bypasses
+   * Zod entirely** (task 16b-6).
+   *
+   * One column at a time, off an otherwise valid row, so the constraint that
+   * fires is unambiguous — a row with all four negative would be refused by
+   * whichever CHECK MySQL evaluated first and would stay green with three of
+   * them dropped.
+   */
+  for (const [col, name] of MONEY_CHECKS) {
+    const key = col.replace(/_centavos$/, '').replace('amount_paid', 'paid') as
+      'subtotal' | 'discount' | 'total' | 'paid';
+    dbIt(`REFUSES a negative ${col}`, async () => {
+      await inRollback(async (tx) => {
+        const tourId = await makeTour(tx);
+        expect(
+          await rejectionCode(() => insertBookingMoney(tx, tourId, { ...VALID_MONEY, [key]: -1 })),
+          `a negative ${col} was accepted — ${name} is gone`,
+        ).toBe('ER_CHECK_CONSTRAINT_VIOLATED');
+
+        const [rows] = (await tx.execute(
+          sql`SELECT COUNT(*) AS n FROM bookings WHERE tour_id = ${tourId}`,
+        )) as unknown as [Array<{ n: number }>, unknown];
+        expect(Number(rows[0]?.n), `a booking with a negative ${col} was written`).toBe(0);
+      });
+    });
+  }
+
+  /**
+   * The other side of the same four CHECKs, and the reason they are `>= 0`
+   * and not `> 0`: **zero is legitimate in every one of them.** A 100%
+   * coupon discounts the whole subtotal and leaves `total_centavos = 0` — a
+   * free trip an admin deliberately gave away — and every booking starts
+   * with `amount_paid_centavos = 0`. A strict CHECK would refuse this row,
+   * so this test is what stops one being tightened by mistake.
+   */
+  dbIt('accepts zero in all four columns — a 100% coupon is a real booking', async () => {
+    await inRollback(async (tx) => {
+      const tourId = await makeTour(tx);
+      expect(
+        await rejectionCode(() =>
+          insertBookingMoney(tx, tourId, {
+            subtotal: 0,
+            discount: 0,
+            total: 0,
+            paid: 0,
+          }),
+        ),
+        'the CHECKs are too strict — they refused a legitimate zero-value booking',
+      ).toBeNull();
+
+      const [rows] = (await tx.execute(
+        sql`SELECT COUNT(*) AS n FROM bookings WHERE tour_id = ${tourId}`,
+      )) as unknown as [Array<{ n: number }>, unknown];
+      expect(Number(rows[0]?.n), 'the zero-value booking was not written').toBe(1);
+    });
   });
 });
