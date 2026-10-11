@@ -5,7 +5,7 @@
  *
  * Since the core-schema plan (docs/superpowers/plans/2026-10-10-core-schema.md)
  * this file also holds the transactional core, added one table per task.
- * Still out of scope: bookings, payments, sessions, vans, drivers, coupons,
+ * Still out of scope: bookings, payments, sessions, drivers, coupons,
  * tour_date_slots.
  *
  * Conventions:
@@ -334,5 +334,58 @@ export const auditLog = mysqlTable(
     index('audit_log_entity_idx').on(t.entity, t.entityId),
     index('audit_log_actor_idx').on(t.actorType, t.actorId),
     index('audit_log_created_idx').on(t.createdAt),
+  ],
+);
+
+export const VAN_STATUSES = ['available', 'on_trip', 'for_repair'] as const;
+
+/**
+ * The fleet (BUILD_SPEC §9 "Vans"). `capacity` feeds the §5 capacity check,
+ * which is why the index below leads with the two equality filters and ends
+ * on `capacity` — see the index comment.
+ *
+ * Soft-deleted through `is_active`: a van that carried a completed booking
+ * still has to be nameable on that booking and in the audit log, so a row is
+ * retired rather than removed.
+ *
+ * `status` and `is_active` are different questions. `for_repair` is a van
+ * that is temporarily out of service and will come back; `is_active = false`
+ * is a van that has left the fleet.
+ */
+export const vans = mysqlTable(
+  'vans',
+  {
+    id: int('id').autoincrement().primaryKey(),
+    plate: varchar('plate', { length: 20 }).notNull().unique(),
+    model: varchar('model', { length: 120 }).notNull(),
+    /** Seats available to GUESTS, not including the driver. Feeds the §5 capacity check. */
+    capacity: int('capacity').notNull(),
+    status: mysqlEnum('status', VAN_STATUSES).notNull().default('available'),
+    odometer: int('odometer'),
+    /** Civil dates in Asia/Manila — a van's papers expire on a day, not at an instant. */
+    lastService: date('last_service'),
+    nextService: date('next_service'),
+    orcrExpiry: date('orcr_expiry'),
+    franchiseNo: varchar('franchise_no', { length: 80 }),
+    franchiseExpiry: date('franchise_expiry'),
+    repairNotes: text('repair_notes'),
+    isActive: boolean('is_active').notNull().default(true),
+    createdAt: datetime('created_at', { mode: 'date' })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: datetime('updated_at', { mode: 'date' })
+      .notNull()
+      .$defaultFn(() => new Date())
+      .$onUpdateFn(() => new Date()),
+  },
+  (t) => [
+    /**
+     * Column order is deliberate and must not be rearranged. The §5 capacity
+     * query filters on `is_active` and `status` by equality and only then
+     * needs `capacity >= pax` as a range. A composite index serves a range
+     * only in its last position, so moving `capacity` earlier would stop
+     * MySQL using the index for the equality filters at all.
+     */
+    index('vans_active_status_idx').on(t.isActive, t.status, t.capacity),
   ],
 );
