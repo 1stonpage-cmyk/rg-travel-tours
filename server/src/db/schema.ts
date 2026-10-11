@@ -5,7 +5,7 @@
  *
  * Since the core-schema plan (docs/superpowers/plans/2026-10-10-core-schema.md)
  * this file also holds the transactional core, added one table per task.
- * Still out of scope: bookings, payments, sessions, drivers, coupons,
+ * Still out of scope: bookings, payments, sessions, coupons,
  * tour_date_slots.
  *
  * Conventions:
@@ -388,4 +388,93 @@ export const vans = mysqlTable(
      */
     index('vans_active_status_idx').on(t.isActive, t.status, t.capacity),
   ],
+);
+
+export const DRIVER_STATUSES = ['available', 'on_trip', 'off_duty'] as const;
+
+/**
+ * Drivers (BUILD_SPEC §9 "Drivers", §8 driver portal). A driver signs in to
+ * the portal with a short `code` and a SIX-digit PIN (owner decision
+ * 2026-10-11, Q9).
+ *
+ * A six-digit secret is a million guesses, so the five lockout columns below
+ * are the control that actually protects the portal, not the PIN's own
+ * entropy. They are all defined here, in Wave 1, precisely so that Task 21
+ * implements one policy against one fixed shape rather than adding counters
+ * as it discovers it needs them.
+ *
+ * Soft-deleted through `is_active`: a driver who drove a completed trip still
+ * has to be nameable on that booking, its checkpoints and the audit log.
+ */
+export const drivers = mysqlTable(
+  'drivers',
+  {
+    id: int('id').autoincrement().primaryKey(),
+    name: varchar('name', { length: 160 }).notNull(),
+    /** Short login code the driver types on the portal, e.g. "D07". */
+    code: varchar('code', { length: 20 }).notNull().unique(),
+    phone: varchar('phone', { length: 40 }).notNull(),
+    /**
+     * argon2id/bcrypt of the six-digit PIN. 255 fits an argon2id encoded
+     * hash with room to spare. The PIN itself is never stored, never logged
+     * and never put in an audit row — and no column here could hold one.
+     */
+    pinHash: varchar('pin_hash', { length: 255 }).notNull(),
+    /** Resets to 0 on a successful login, and when a lockout expires. */
+    failedAttempts: int('failed_attempts').notNull().default(0),
+    /** now + 15 minutes, set on the 5th consecutive failure. Null = not locked. */
+    lockedUntil: datetime('locked_until', { mode: 'date' }),
+    /** Lockouts inside the current 24h window. At 3, an admin must unlock. */
+    lockoutCount: int('lockout_count').notNull().default(0),
+    /** When the current 24h lockout window opened; null when there is none. */
+    lockoutWindowStartedAt: datetime('lockout_window_started_at', { mode: 'date' }),
+    /**
+     * True after the 3rd lockout in 24h. Only an admin clears it — never a
+     * timer, which is why there is deliberately no expiry column beside it.
+     * NOT NULL so there is no third, unknown state a check could read as
+     * "probably fine".
+     */
+    requiresAdminUnlock: boolean('requires_admin_unlock').notNull().default(false),
+    licenseNo: varchar('license_no', { length: 80 }),
+    /** Civil date in Asia/Manila — a licence expires on a day, not at an instant. */
+    licenseExpiry: date('license_expiry'),
+    languages: json('languages'),
+    emergencyContact: varchar('emergency_contact', { length: 200 }),
+    status: mysqlEnum('status', DRIVER_STATUSES).notNull().default('available'),
+    isActive: boolean('is_active').notNull().default(true),
+    createdAt: datetime('created_at', { mode: 'date' })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: datetime('updated_at', { mode: 'date' })
+      .notNull()
+      .$defaultFn(() => new Date())
+      .$onUpdateFn(() => new Date()),
+  },
+  (t) => [index('drivers_active_status_idx').on(t.isActive, t.status)],
+);
+
+/**
+ * A date range in which a driver is unavailable for dispatch.
+ *
+ * `start_date` and `end_date` are civil dates in Asia/Manila and INCLUSIVE
+ * at both ends — "off from the 24th to the 26th" covers all three days. They
+ * are `date`, not `datetime`, deliberately: a leave that ended at 00:00 on
+ * its last day is a driver dispatched on a day they are not working.
+ */
+export const driverLeaves = mysqlTable(
+  'driver_leaves',
+  {
+    id: int('id').autoincrement().primaryKey(),
+    driverId: int('driver_id')
+      .notNull()
+      .references(() => drivers.id),
+    /** Civil dates in Asia/Manila, inclusive both ends. */
+    startDate: date('start_date').notNull(),
+    endDate: date('end_date').notNull(),
+    reason: varchar('reason', { length: 300 }),
+    createdAt: datetime('created_at', { mode: 'date' })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [index('driver_leaves_driver_range_idx').on(t.driverId, t.startDate, t.endDate)],
 );
