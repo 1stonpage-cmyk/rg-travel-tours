@@ -247,7 +247,12 @@ balance         = total - amount_paid   (collected on tour day)
 > a non-whole-peso total cannot exceed the price. Computed **server-side only**
 > (`depositCentavos()` in `shared/src/money.ts`); the browser never sends a deposit.
 
-- Store a **price snapshot** on the booking (tier price, add-on prices, coupon, totals). Later price edits don't change existing bookings.
+- Store a **price snapshot** on the booking. It freezes the **tier price used**, **every add-on**
+  with its price and per-person flag, the **coupon applied**, the **deposit percent** in force, and
+  the tour's **`free_cancel_hours`** cancellation window, alongside the computed totals.
+  **Refund and cancellation logic reads the snapshot, never the live tour** (owner decision
+  2026-10-11). Later price edits don't change existing bookings — and neither does shortening a
+  tour's cancellation window change the refund rights of someone who already booked.
 
 ### Capacity check (at checkout)
 
@@ -275,11 +280,21 @@ Steps 3–4 count already-confirmed-but-unassigned bookings as consuming one van
 
 **Concurrency:** run the check and the booking insert in **one DB transaction** with a row lock on a `tour_date_slots` row (`SELECT … FOR UPDATE`). Two guests racing for the last slot: one wins, one gets "just sold out."
 
-> **Open — the lock above is not sufficient for the rule above.** "Vans free that day **across all
-> tours**" is a date-global limit, but `tour_date_slots` is keyed by `(tour_id, date)`. Two bookings
-> for _different_ tours on the same date lock _different_ rows, so neither waits for the other and
-> both can take the last van. A date-level lock is needed as well. Tracked as Q14 in
-> `docs/superpowers/plans/2026-10-10-core-schema.md`; unresolved, and it blocks the capacity service.
+> **Resolved 2026-10-11 — two lock rows, in a fixed order.** The lock above is per tour, but "vans
+> free that day **across all tours**" is date-global: two bookings for _different_ tours on the same
+> date lock _different_ `tour_date_slots` rows, never wait for each other, and can both take the
+> last van. So a second lock row exists, `fleet_date_slots (date)`, and every booking transaction
+> takes **both, always in this order**:
+>
+> ```
+> 1. fleet_date_slots(date)           SELECT ... FOR UPDATE   <- the shared fleet
+> 2. tour_date_slots(tour_id, date)   SELECT ... FOR UPDATE   <- this tour's groups_per_day
+> ```
+>
+> **Fleet first, tour second, no exceptions.** Two transactions taking the pair in opposite orders
+> deadlock — A holds fleet and waits for tour while B holds tour and waits for fleet. A fixed global
+> order makes that impossible rather than rare, and rare is the worst kind of concurrency bug.
+> Both rows are created on demand with `INSERT ... ON DUPLICATE KEY UPDATE`.
 
 ### Holds
 
@@ -382,7 +397,7 @@ exception.** The disabled Xendit stub must be incapable of it, and there is a te
 
 **The `payments` table is provider-neutral:** `provider` (enum), `provider_ref`, `provider_status`,
 and `amount_centavos`. `provider` records _who processed it_; a separate `method` records _how the
-guest paid_ (card, gcash, maya, grabpay, qrph, bank_transfer, manual_qr, cash), because the same
+guest paid_ (card, gcash, maya, grab_pay, qrph, bank_transfer, cash), because the same
 instrument exists on several gateways and §9's revenue report needs both axes.
 
 ### Manual QR payment
@@ -393,7 +408,9 @@ instrument exists on several gateways and §9's revenue report needs both axes.
 4. Booking → `pending_verification`; payment row → `pending`.
 5. Admin approves → payment `paid`, booking `confirmed`. Admin rejects (with reason) → customer portal shows the reason and a re-upload prompt.
 
-A manual QR payment is recorded with `provider = 'manual'` and `method = 'manual_qr'`. It has no
+A manual QR payment is recorded with `provider = 'manual'` and whichever instrument the guest
+actually used (`gcash`, `maya`, `bank_transfer`, …) — there is no `manual_qr` method, because
+`provider` already carries the fact that a human verified it. It has no
 gateway to call, so it never goes through a `PaymentProvider` — admin approval is the other of the
 two paths allowed to mark a booking paid.
 
@@ -408,6 +425,12 @@ two paths allowed to mark a booking paid.
 - Manual payments: admin records the refund as done offline (method + reference).
 - A refund is a `payments` row with `type = 'refund'` and an **always-positive** amount; direction
   comes from `type`, never from a sign. Refunds are never a booking status.
+- **Partial refunds are allowed**, so one booking can carry several refund rows. Their **sum must
+  never exceed `amount_paid`**, checked inside the same transaction under a row lock on the
+  booking — without the lock, two admins refunding at once each see "nothing refunded yet" and the
+  money leaves twice.
+- **Refunds are admin-only** and write to `audit_log` naming the admin. A gateway webhook may
+  _confirm_ a refund the admin initiated; it may never initiate one.
 - Free-cancellation policy window is a tour setting (e.g. 24 hours before). Shown to guests; enforced by admin, not automatically.
 
 ---
@@ -443,7 +466,12 @@ two paths allowed to mark a booking paid.
 
 **Login:** driver selects name (or enters driver code) + 6-digit PIN.
 
-- PIN hashed. Lock the driver account for 15 minutes after 5 failed attempts.
+- PIN hashed, never stored or logged raw. **Three limits stack** (owner decision 2026-10-11):
+  - **Per driver:** 5 consecutive failed attempts → 15-minute lockout.
+  - **Per driver, escalating:** 3 lockouts inside 24 hours → locked until an **admin** resets it.
+    A correct PIN does **not** clear this; only an admin action does.
+  - **Per IP:** 10 attempts per 15 minutes.
+  - Every lockout and every admin reset writes to `audit_log`.
 - Session lasts 12 hours. Drivers see **only their own trips**.
 
 ### Views
@@ -570,7 +598,7 @@ All money columns are `INT` centavos. All timestamps are UTC `DATETIME`.
 | Table                    | Key columns                                                                                                                                                                                                                                                                                                                                                                                        |
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `users`                  | id, name, email (unique), password_hash, role (owner/dispatcher/finance), is_active, last_login_at                                                                                                                                                                                                                                                                                                 |
-| `sessions`               | id, subject_type (admin/customer/driver), subject_id, expires_at                                                                                                                                                                                                                                                                                                                                   |
+| `sessions`               | id, subject_type (**user**/customer/driver), subject_id, token_hash (unique), expires_at — `user` -> users.id, `driver` -> drivers.id, **`customer` -> bookings.id** (a customer session is scoped to one booking; there are no customer accounts). Stores a SHA-256 of the token, never the token                                                                                                 |
 | `settings`               | key, value (JSON)                                                                                                                                                                                                                                                                                                                                                                                  |
 | `destinations`           | id, name, slug, sort_order                                                                                                                                                                                                                                                                                                                                                                         |
 | `tours`                  | id, slug, title, destination_id, about, inclusions, exclusions, groups_per_day, max_guests, free_cancel_hours, is_active                                                                                                                                                                                                                                                                           |
@@ -580,15 +608,16 @@ All money columns are `INT` centavos. All timestamps are UTC `DATETIME`.
 | `tour_addons`            | id, tour_id, name, price, per_person (bool), is_active                                                                                                                                                                                                                                                                                                                                             |
 | `tour_blocked_dates`     | id, tour_id, date, reason                                                                                                                                                                                                                                                                                                                                                                          |
 | `tour_date_slots`        | tour_id, date (PK pair); lock row for capacity checks                                                                                                                                                                                                                                                                                                                                              |
+| `fleet_date_slots`       | date (PK). **Date-level lock row, added 2026-10-11.** The fleet is shared across tours, so a per-tour lock cannot serialise it. Always locked BEFORE `tour_date_slots`                                                                                                                                                                                                                             |
 | `packages`               | id, slug, title, days, old_price, new_price, description, is_active                                                                                                                                                                                                                                                                                                                                |
 | `inquiries`              | id, type (contact/package), package_id, name, email, phone, message, status                                                                                                                                                                                                                                                                                                                        |
 | `bookings`               | id, ref (unique), tour_id, tour_date, pax, lead name/email/phone, pickup, requests, status, pay_mode (full/deposit), price snapshot (JSON), subtotal, discount, total, amount_paid, coupon_id, van_id, driver_id, hold_expires_at, started_at, completed_at                                                                                                                                        |
 | `booking_addons`         | id, booking_id, addon_id, name, price, per_person, qty                                                                                                                                                                                                                                                                                                                                             |
 | `booking_notes`          | id, booking_id, user_id, note, created_at                                                                                                                                                                                                                                                                                                                                                          |
-| `payments`               | id, booking_id, type (payment/refund), **provider (paymongo/xendit/manual)**, **method (card/gcash/maya/grabpay/qrph/bank_transfer/manual_qr/cash)**, amount_centavos, status (pending/paid/rejected/failed/refunded), **provider_ref**, **provider_status**, txn_ref, receipt_path, reject_reason, verified_by, verified_at, collected_by_driver_id                                               |
+| `payments`               | id, booking_id, type (payment/refund), **provider (paymongo/xendit/manual)**, **method (card/gcash/maya/grab_pay/qrph/bank_transfer/cash)**, amount_centavos, status (pending/paid/rejected/failed/refunded), **provider_ref**, **provider_status**, txn_ref, receipt_path, reject_reason, verified_by, verified_at, collected_by_driver_id                                                        |
 | `payment_events`         | id, provider, provider_event_id, type, payload, received_at, processed_at — **UNIQUE (provider, provider_event_id)**. Renamed from `paymongo_events` by the 2026-10-10 multi-gateway change: two gateways can mint the same event id, so uniqueness is per provider                                                                                                                                |
 | `vans`                   | id, plate, model, capacity, status, odometer, last_service, next_service, orcr_expiry, franchise_no, franchise_expiry, repair_notes, is_active                                                                                                                                                                                                                                                     |
-| `drivers`                | id, name, code, phone, pin_hash, failed_attempts, locked_until, license_no, license_expiry, languages, emergency_contact, status, is_active                                                                                                                                                                                                                                                        |
+| `drivers`                | id, name, code, phone, **pin_hash** (6-digit PIN, hashed), failed_attempts, locked_until, **lockout_count**, **lockout_window_started_at**, **requires_admin_unlock**, license_no, license_expiry, languages, emergency_contact, status, is_active                                                                                                                                                 |
 | `driver_leaves`          | id, driver_id, start_date, end_date, reason                                                                                                                                                                                                                                                                                                                                                        |
 | `trip_checkpoints`       | id, booking_id, stop_id (null for "start"), checked_at, undone (bool)                                                                                                                                                                                                                                                                                                                              |
 | `reviews`                | id, tour_id, booking_id (null if unverified), name, rating, guide, value, punctuality, safety, body, status (pending/published/hidden), reply, replied_at                                                                                                                                                                                                                                          |
@@ -596,7 +625,7 @@ All money columns are `INT` centavos. All timestamps are UTC `DATETIME`.
 | `coupons`                | id, code (unique), **discount_type (percent/fixed)**, **percent_bp** (basis points, 1000 = 10%, NULL unless percent), **amount_centavos** (NULL unless fixed), min_spend_centavos, starts_at, ends_at, usage_limit, used_count, is_active — **CHECK: exactly one of percent_bp / amount_centavos is set, matching discount_type** (owner decision 2026-10-11, replacing the single `value` column) |
 | `coupon_redemptions`     | id, coupon_id, booking_id                                                                                                                                                                                                                                                                                                                                                                          |
 | `newsletter_subscribers` | id, email (unique), created_at                                                                                                                                                                                                                                                                                                                                                                     |
-| `audit_log`              | id, actor_type, actor_id, action, entity, entity_id, data (JSON), created_at                                                                                                                                                                                                                                                                                                                       |
+| `audit_log`              | id, **actor_type (user/customer/driver/system/provider)**, actor_id, action, entity, entity_id, data (JSON), created_at — a webhook-driven change is `provider` with the gateway named in `data`; a cron job is `system`. Both have a null actor_id                                                                                                                                                |
 
 **Indexes:**
 
@@ -867,10 +896,10 @@ hours.
 ## 15. Open questions (ask before the related week)
 
 1. **Assignment deadline:** is it "assign at least 48 hours before the tour" or "within 48 hours of booking"? (Before Week 5.)
-2. **QR payments:** static R&G QR with manual verification, PayMongo QR Ph (auto-confirm), or both? (Before Week 3.)
+2. **QR payments:** static R&G QR with manual verification, gateway QR Ph (auto-confirm), or both? (Before Week 3.) — _Schema side settled 2026-10-11: both are representable. A hand-verified transfer is `provider='manual'` plus the instrument the guest used; an auto-confirmed one is `provider='paymongo', method='qrph'`. The remaining question is which to OFFER, not how to store it._
 3. **PayPal:** is it enabled on R&G's PayMongo account? If not, remove it from the checkout UI. (Before Week 3.)
 4. **SMS:** will the client pay for SMS credits? If not, email only. (Before Week 7.)
-5. **Cancellation policy:** free-cancellation window and refund rules per tour. (Before Week 6.)
+5. **Cancellation policy:** free-cancellation window and refund rules per tour. (Before Week 6.) — _Schema side settled 2026-10-11: `free_cancel_hours` is frozen into the booking's price snapshot, so changing a tour's window never alters an existing booking's rights. The policy values themselves are still open._
 6. **Backups:** confirm weekly DB dump copied off-server (no paid backups). (Before Week 8.)
 
 ---

@@ -81,26 +81,27 @@ Two existing columns become real foreign keys in this plan: `reviews.tour_id` al
 
 ---
 
-## The 16 tables, mapped to the spec
+## The 17 tables, mapped to the spec
 
-| #   | Table                  | Spec section                                     | Why it exists                                    |
-| --- | ---------------------- | ------------------------------------------------ | ------------------------------------------------ |
-| 1   | `users`                | §10, §9 Roles & permissions                      | Admin accounts; `role` drives every admin gate   |
-| 2   | `sessions`             | §10, §7 portal login, §8 driver login            | One table for three subject types                |
-| 3   | `vans`                 | §10, §9 Vans                                     | Fleet; capacity feeds the §5 capacity check      |
-| 4   | `drivers`              | §10, §9 Drivers, §8 driver portal                | PIN login, lockout, leave                        |
-| 5   | `driver_leaves`        | §10                                              | Makes a driver unavailable for a date range      |
-| 6   | `coupons`              | §10, §9 Coupons                                  | Percent/fixed discount with window and usage cap |
-| 7   | `audit_log`            | §10, Conventions                                 | Every payment, refund, status change, assignment |
-| 8   | `tour_date_slots`      | §10, §5 Concurrency                              | Lock row for `SELECT … FOR UPDATE`               |
-| 9   | `bookings`             | §10, §5, §6                                      | The central record                               |
-| 10  | `booking_addons`       | §10                                              | Add-on lines, price-snapshotted                  |
-| 11  | `booking_notes`        | §10, §9 Bookings                                 | Internal admin notes                             |
-| 12  | `coupon_redemptions`   | §10                                              | One row per coupon use; enforces the cap         |
-| 13  | `payments`             | §10, §6                                          | Provider-neutral money movement, both directions |
-| 14  | `payment_events`       | §10 (`paymongo_events`), §6 Idempotency, **B1a** | Webhook idempotency across all providers         |
-| 15  | `trip_checkpoints`     | §10, §8 Itinerary check-ins                      | Per-stop arrival timestamps                      |
-| 16  | `review_helpful_votes` | §10, §4 Reviews block                            | One helpful vote per browser                     |
+| #   | Table                  | Spec section                                     | Why it exists                                                                                                 |
+| --- | ---------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| 1   | `users`                | §10, §9 Roles & permissions                      | Admin accounts; `role` drives every admin gate                                                                |
+| 2   | `sessions`             | §10, §7 portal login, §8 driver login            | One table for three subject types                                                                             |
+| 3   | `vans`                 | §10, §9 Vans                                     | Fleet; capacity feeds the §5 capacity check                                                                   |
+| 4   | `drivers`              | §10, §9 Drivers, §8 driver portal                | PIN login, lockout, leave                                                                                     |
+| 5   | `driver_leaves`        | §10                                              | Makes a driver unavailable for a date range                                                                   |
+| 6   | `coupons`              | §10, §9 Coupons                                  | Percent/fixed discount with window and usage cap                                                              |
+| 7   | `audit_log`            | §10, Conventions                                 | Every payment, refund, status change, assignment                                                              |
+| 8   | `tour_date_slots`      | §10, §5 Concurrency                              | Per-tour lock row for `SELECT … FOR UPDATE`                                                                   |
+| 8b  | `fleet_date_slots`     | §5 Concurrency, **Q14 answer**                   | Date-level lock row. The 17th table: the fleet is shared across tours, so a per-tour lock cannot serialise it |
+| 9   | `bookings`             | §10, §5, §6                                      | The central record                                                                                            |
+| 10  | `booking_addons`       | §10                                              | Add-on lines, price-snapshotted                                                                               |
+| 11  | `booking_notes`        | §10, §9 Bookings                                 | Internal admin notes                                                                                          |
+| 12  | `coupon_redemptions`   | §10                                              | One row per coupon use; enforces the cap                                                                      |
+| 13  | `payments`             | §10, §6                                          | Provider-neutral money movement, both directions                                                              |
+| 14  | `payment_events`       | §10 (`paymongo_events`), §6 Idempotency, **B1a** | Webhook idempotency across all providers                                                                      |
+| 15  | `trip_checkpoints`     | §10, §8 Itinerary check-ins                      | Per-stop arrival timestamps                                                                                   |
+| 16  | `review_helpful_votes` | §10, §4 Reviews block                            | One helpful vote per browser                                                                                  |
 
 `payment_events` replaces the spec's `paymongo_events` — see **B1b / spec amendment** below. That rename is the only deviation from the §10 table list, and it is owner-approved.
 
@@ -259,7 +260,7 @@ git commit -m "feat(db): users table and the three-role enum"
 **Interfaces:**
 
 - Consumes: `users` (Task 1).
-- Produces: `audit_log` table; `writeAudit(tx, entry): Promise<void>` where `entry` is `{ actorType: AuditActorType; actorId: number | null; action: string; entity: string; entityId: number; data?: unknown }`, and `AUDIT_ACTOR_TYPES = ['user','customer','driver','system'] as const`.
+- Produces: `audit_log` table; `writeAudit(tx, entry): Promise<void>` where `entry` is `{ actorType: AuditActorType; actorId: number | null; action: string; entity: string; entityId: number; data?: unknown }`, and `AUDIT_ACTOR_TYPES = ['user','customer','driver','system','provider'] as const`.
 
 The `tx` parameter is a Drizzle transaction handle, not the pool. That is the point of this function: an audit row that is written outside the transaction it describes can survive a rollback and record something that never happened.
 
@@ -325,7 +326,22 @@ Expected: FAIL — `../services/audit` does not exist.
 - [ ] **Step 3: Add the table**
 
 ```ts
-export const AUDIT_ACTOR_TYPES = ['user', 'customer', 'driver', 'system'] as const;
+/**
+ * Who did the thing (owner decision 2026-10-11, Q10).
+ *
+ *   user      an admin, `actor_id` -> users.id
+ *   customer  a guest in the portal, `actor_id` -> bookings.id
+ *   driver    `actor_id` -> drivers.id
+ *   system    a cron job - hold expiry, reminders. No actor_id.
+ *   provider  a payment gateway webhook. No actor_id; the provider NAME
+ *             goes in `data.provider`, because a gateway is not a row in
+ *             any table and inventing one would be worse.
+ *
+ * `system` and `provider` are separate on purpose: "the cron expired this
+ * hold" and "PayMongo confirmed this payment" are different events, and
+ * collapsing both into `system` makes a money trail unreadable.
+ */
+export const AUDIT_ACTOR_TYPES = ['user', 'customer', 'driver', 'system', 'provider'] as const;
 
 export const auditLog = mysqlTable(
   'audit_log',
@@ -541,9 +557,18 @@ export const drivers = mysqlTable(
     code: varchar('code', { length: 20 }).notNull().unique(),
     phone: varchar('phone', { length: 40 }).notNull(),
     /** argon2id/bcrypt of the PIN. The PIN itself is never stored or logged. */
+    /** argon2id/bcrypt of the SIX-digit PIN (owner decision 2026-10-11, Q9). Never stored raw. */
     pinHash: varchar('pin_hash', { length: 255 }).notNull(),
+    /** Resets to 0 on a successful login, and when a lockout expires. */
     failedAttempts: int('failed_attempts').notNull().default(0),
+    /** now + 15 minutes, set on the 5th consecutive failure. */
     lockedUntil: datetime('locked_until', { mode: 'date' }),
+    /** Lockouts inside the current 24h window. At 3, an admin must unlock. */
+    lockoutCount: int('lockout_count').notNull().default(0),
+    /** When the current 24h lockout window opened; null when there is none. */
+    lockoutWindowStartedAt: datetime('lockout_window_started_at', { mode: 'date' }),
+    /** True after the 3rd lockout in 24h. Only an admin clears it - never a timer. */
+    requiresAdminUnlock: boolean('requires_admin_unlock').notNull().default(false),
     licenseNo: varchar('license_no', { length: 80 }),
     licenseExpiry: date('license_expiry'),
     languages: json('languages'),
@@ -824,30 +849,30 @@ transaction with a row lock on a `tour_date_slots` row (`SELECT … FOR UPDATE`)
 on demand with `INSERT … ON DUPLICATE KEY UPDATE tour_id = tour_id` (a no-op touch that is safe to
 race), then selected `FOR UPDATE`.
 
-> **⚠ BLOCKED ON Q14 — read before building this table.**
->
-> The owner's Q7 answer (2026-10-11) makes the fleet a resource shared **across all tours**:
-> accept up to `MIN(tour.groups_per_day, vans free that day across all tours)`. A per-tour lock
-> cannot enforce a cross-tour limit — two bookings for **different** tours on the same date lock
-> **different** `tour_date_slots` rows, so neither waits for the other and both can claim the last
-> van.
->
-> The recommended fix is a 17th table, `fleet_date_slots (date)`, locked `FOR UPDATE` **before**
-> the per-tour row, always in that order so the pair cannot deadlock. That is one extra table
-> beyond this plan's scope, so it is **not built until Q14 is answered**. Build `tour_date_slots`
-> as specified here; leave the fleet lock alone.
->
-> If Q14 comes back as option A, add to this task:
->
-> ```ts
-> export const fleetDateSlots = mysqlTable('fleet_date_slots', {
->   /** Civil date in Asia/Manila. One row per bookable day, created on demand. */
->   date: date('date').primaryKey(),
-> });
-> ```
->
-> …and a test asserting two concurrent bookings for _different_ tours on the same date serialise.
-> That test belongs with the Week 3 capacity service, which is where the lock is actually taken.
+**The fleet lock, and the order locks are taken in (owner decision 2026-10-11, Q14 option A).**
+
+The Q7 rule — accept up to `MIN(tour.groups_per_day, vans free that day across all tours)` — makes
+the fleet a **date-global** resource. `tour_date_slots` is keyed by `(tour_id, date)`, so two
+bookings for _different_ tours on the same date lock _different_ rows, never wait for each other,
+and can both take the last van. A per-tour lock cannot serialise a cross-tour limit.
+
+So there is a second lock row, `fleet_date_slots (date)`, and **every booking transaction takes
+both, always in this order**:
+
+```
+1. fleet_date_slots(date)          SELECT ... FOR UPDATE   <- the date-global fleet
+2. tour_date_slots(tour_id, date)  SELECT ... FOR UPDATE   <- this tour's groups_per_day
+```
+
+**Always fleet first, tour second, with no exceptions.** Two transactions that take the same pair
+in opposite orders deadlock: A holds fleet and waits for tour while B holds tour and waits for
+fleet, and InnoDB kills one of them. A fixed global order makes that impossible rather than rare —
+and "rare" is the worst kind of concurrency bug, because it passes every test and fails on a
+holiday weekend.
+
+Both rows are created on demand (Q8), with `INSERT ... ON DUPLICATE KEY UPDATE <col> = <col>` — a
+no-op touch that is safe when two requests race to create the same row — and then selected
+`FOR UPDATE`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -859,6 +884,50 @@ describe('tour_date_slots', () => {
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tour_date_slots'
         AND CONSTRAINT_NAME = 'PRIMARY' ORDER BY ORDINAL_POSITION`);
     expect(cols.map((c) => String(c.COLUMN_NAME))).toEqual(['tour_id', 'date']);
+  });
+});
+
+describe('fleet_date_slots', () => {
+  it('is keyed by date alone, so every tour contends on the same row', async () => {
+    const [cols] = await getDb().execute(sql`
+      SELECT COLUMN_NAME FROM information_schema.key_column_usage
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'fleet_date_slots'
+        AND CONSTRAINT_NAME = 'PRIMARY' ORDER BY ORDINAL_POSITION`);
+    expect(cols.map((c) => String(c.COLUMN_NAME))).toEqual(['date']);
+  });
+
+  /**
+   * The test that justifies the table existing at all. Two transactions for
+   * DIFFERENT tours on the SAME date must serialise on this row.
+   *
+   * Without it both would hold only their own tour_date_slots row, never
+   * block, and both would pass a "a van is free" check against the same last
+   * van. Prove it fails by pointing the second transaction at
+   * tour_date_slots instead — the two no longer contend and the second
+   * acquires immediately.
+   */
+  it('serialises two different tours booking the same date', async () => {
+    const db = getDb();
+    const day = '2026-12-25';
+    await touchFleetSlot(day);
+
+    let secondAcquiredAt: number | null = null;
+    const first = db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT date FROM fleet_date_slots WHERE date = ${day} FOR UPDATE`);
+      await new Promise((r) => setTimeout(r, 300)); // hold it
+    });
+    await new Promise((r) => setTimeout(r, 50)); // let the first one take the lock
+    const second = db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT date FROM fleet_date_slots WHERE date = ${day} FOR UPDATE`);
+      secondAcquiredAt = Date.now();
+    });
+
+    const startedAt = Date.now();
+    await Promise.all([first, second]);
+    expect(secondAcquiredAt, 'the second transaction never acquired the lock').not.toBeNull();
+    expect(secondAcquiredAt! - startedAt, 'the second transaction did not wait').toBeGreaterThan(
+      150,
+    );
   });
 });
 
@@ -900,6 +969,25 @@ export const tourDateSlots = mysqlTable(
   (t) => [primaryKey({ columns: [t.tourId, t.date] })],
 );
 
+/**
+ * The DATE-level lock row (Q14 option A). One row per bookable day, shared
+ * by every tour.
+ *
+ * Exists because the fleet is global: `MIN(groups_per_day, vans free that
+ * day across all tours)` cannot be enforced by a per-tour lock, since two
+ * tours on the same date lock different `tour_date_slots` rows and never
+ * see each other.
+ *
+ * ALWAYS locked BEFORE `tour_date_slots`. See the lock-order note above —
+ * taking the two in opposite orders in different code paths is a deadlock.
+ *
+ * No columns beyond the key: it is a mutex, not data.
+ */
+export const fleetDateSlots = mysqlTable('fleet_date_slots', {
+  /** Civil date in Asia/Manila. */
+  date: date('date').primaryKey(),
+});
+
 export const PAYMENT_PROVIDERS = ['paymongo', 'xendit', 'manual'] as const;
 
 export const paymentEvents = mysqlTable(
@@ -931,7 +1019,7 @@ pnpm --filter @rg/server db:generate
 pnpm --filter @rg/server db:migrate
 ```
 
-Read the generated SQL before applying it. It must contain `CREATE TABLE` for `users`, `vans`, `drivers`, `driver_leaves`, `coupons`, `audit_log`, `tour_date_slots`, `payment_events` and nothing else destructive. If drizzle-kit proposes dropping or altering an existing table, STOP — that is a schema drift bug, not an expected migration.
+Read the generated SQL before applying it. It must contain `CREATE TABLE` for `users`, `vans`, `drivers`, `driver_leaves`, `coupons`, `audit_log`, `tour_date_slots`, `fleet_date_slots`, `payment_events` and nothing else destructive. If drizzle-kit proposes dropping or altering an existing table, STOP — that is a schema drift bug, not an expected migration.
 
 - [ ] **Step 5: Run the five checks and commit**
 
@@ -1161,10 +1249,27 @@ export const bookings = mysqlTable(
     payMode: mysqlEnum('pay_mode', PAY_MODES).notNull(),
 
     /**
-     * Frozen copy of the tier price, add-on prices, coupon and totals at the
-     * moment of booking (§5: "Later price edits don't change existing
-     * bookings"). Read-only after insert; the columns below are the
-     * queryable summary of it, not a second source of truth.
+     * Frozen copy of everything the price and the refund rights depend on
+     * (owner decision 2026-10-11, Q5). Written once at booking time and
+     * never updated.
+     *
+     * It freezes, explicitly:
+     *   - the tier used and its price per person
+     *   - every add-on taken, with its price and per_person flag
+     *   - the coupon applied (type and value)
+     *   - the deposit percent in force
+     *   - `free_cancel_hours`, the tour's cancellation window
+     *   - the computed subtotal / discount / total
+     *
+     * **Refund and cancellation logic reads THIS, never the live tour.**
+     * That is the whole point: an admin editing a tour's price or shortening
+     * its cancellation window must not retroactively change what an existing
+     * guest already agreed to. §5 says later price edits do not change
+     * existing bookings; freezing `free_cancel_hours` extends the same
+     * guarantee to their refund rights.
+     *
+     * The columns below are a queryable SUMMARY of this blob, not a second
+     * source of truth.
      */
     priceSnapshot: json('price_snapshot').notNull(),
     subtotalCentavos: int('subtotal_centavos').notNull(),
@@ -1556,7 +1661,7 @@ anywhere else, the design is wrong; stop and report rather than working around i
 
 - Consumes: `bookings`, `users`, `drivers`, `PAYMENT_PROVIDERS` (Task 6).
 - Produces: `payments` table; `PAYMENT_TYPES = ['payment','refund'] as const`,
-  `PAYMENT_METHODS = ['card','gcash','maya','grabpay','qrph','bank_transfer','manual_qr','cash'] as const`,
+  `PAYMENT_METHODS = ['card','gcash','maya','grab_pay','qrph','bank_transfer','cash'] as const`,
   `PAYMENT_STATUSES = ['pending','paid','rejected','failed','refunded'] as const`.
 
 **`provider` and `method` are two different questions** and the spec's single `method` column
@@ -1607,14 +1712,27 @@ is the structural guard for this entire phase.
 
 ```ts
 export const PAYMENT_TYPES = ['payment', 'refund'] as const;
+/**
+ * HOW the guest paid - the instrument, never the processor (owner
+ * decision 2026-10-11, Q2).
+ *
+ * Note what is NOT here: `manual_qr`. That old spec value conflated the
+ * instrument with the fact that a human verified it, and `provider`
+ * already carries that - a QR transfer an admin approved by hand is
+ * `provider='manual'` plus whichever instrument the guest actually used
+ * (`gcash`, `maya`, `bank_transfer`, ...). Keeping both would give two
+ * ways to record one payment, which is the drift the split exists to
+ * prevent.
+ *
+ * `bank_transfer` stays at launch: it is the manual receipt-upload flow.
+ */
 export const PAYMENT_METHODS = [
   'card',
   'gcash',
   'maya',
-  'grabpay',
+  'grab_pay',
   'qrph',
   'bank_transfer',
-  'manual_qr',
   'cash',
 ] as const;
 export const PAYMENT_STATUSES = ['pending', 'paid', 'rejected', 'failed', 'refunded'] as const;
@@ -1941,6 +2059,72 @@ describe('recordPayment', () => {
     expect(rows).toHaveLength(0);
   });
 
+  // --- Refunds (Q11): positive amounts, partial allowed, capped at paid ---
+
+  it('allows several partial refunds that together equal what was paid', async () => {
+    const { bookingId } = await seedPaidBooking({ amountPaidCentavos: 100000 });
+    await expect(refundOf(bookingId, 40000)).resolves.toBeDefined();
+    await expect(refundOf(bookingId, 60000)).resolves.toBeDefined();
+    const [rows] = await db.execute(
+      sql`SELECT COUNT(*) n FROM payments WHERE booking_id=${bookingId} AND type='refund'`,
+    );
+    expect(Number(rows[0].n)).toBe(2);
+  });
+
+  it('REFUSES a refund that would take the total over what was paid', async () => {
+    const { bookingId } = await seedPaidBooking({ amountPaidCentavos: 100000 });
+    await refundOf(bookingId, 60000);
+    await expect(refundOf(bookingId, 60000)).rejects.toThrow(/exceed/i);
+    // And the over-refund left nothing behind.
+    const [rows] = await db.execute(
+      sql`SELECT COALESCE(SUM(amount_centavos),0) s FROM payments
+          WHERE booking_id=${bookingId} AND type='refund'`,
+    );
+    expect(Number(rows[0].s)).toBe(60000);
+  });
+
+  it('stores a refund as a POSITIVE amount with type=refund, never a negative', async () => {
+    const { bookingId } = await seedPaidBooking({ amountPaidCentavos: 100000 });
+    await refundOf(bookingId, 25000);
+    const [rows] = await db.execute(
+      sql`SELECT amount_centavos a FROM payments WHERE booking_id=${bookingId} AND type='refund'`,
+    );
+    expect(Number(rows[0].a)).toBe(25000);
+  });
+
+  /**
+   * The race the row lock exists for. Two admins refunding at once must not
+   * both see "nothing refunded yet" and both succeed.
+   *
+   * Prove it fails by moving the SUM outside the transaction (or dropping
+   * the `.for('update')` on the booking read) — both refunds then commit and
+   * the total exceeds what was paid.
+   */
+  it('serialises two concurrent refunds so only one fits', async () => {
+    const { bookingId } = await seedPaidBooking({ amountPaidCentavos: 100000 });
+    const results = await Promise.allSettled([
+      refundOf(bookingId, 80000),
+      refundOf(bookingId, 80000),
+    ]);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((r) => r.status === 'rejected')).toHaveLength(1);
+    const [rows] = await db.execute(
+      sql`SELECT COALESCE(SUM(amount_centavos),0) s FROM payments
+          WHERE booking_id=${bookingId} AND type='refund'`,
+    );
+    expect(Number(rows[0].s)).toBe(80000);
+  });
+
+  it('writes an audit row naming the admin who refunded (admin-only, Q11)', async () => {
+    const { bookingId } = await seedPaidBooking({ amountPaidCentavos: 100000 });
+    const r = await refundOf(bookingId, 25000, { type: 'user', id: 7 });
+    const [rows] = await db.execute(
+      sql`SELECT actor_type, actor_id, action FROM audit_log
+          WHERE entity='payments' AND entity_id=${r.paymentId}`,
+    );
+    expect(rows[0]).toMatchObject({ actor_type: 'user', actor_id: 7, action: 'payment.refunded' });
+  });
+
   it('leaves the booking untouched when the payment insert fails', async () => {
     // Force a failure after the payments insert and assert bookings.status
     // is still pending_payment and amount_paid_centavos is still 0.
@@ -1981,8 +2165,34 @@ export async function recordPayment(input: RecordPaymentInput): Promise<RecordPa
       }
     }
 
+    /*
+     * Refunds are capped at what was actually paid (owner decision
+     * 2026-10-11, Q11). Partial refunds are allowed, so a booking can carry
+     * several refund rows — and their SUM must never exceed amount_paid.
+     *
+     * The sum is read INSIDE this transaction, under the booking row lock
+     * taken above. Reading it outside, or without the lock, is the classic
+     * double-refund race: two admins each see "₱1,000 paid, ₱0 refunded",
+     * each refund ₱1,000, and ₱2,000 leaves the account.
+     */
+    if (input.type === 'refund') {
+      const [{ refunded }] = await tx
+        .select({ refunded: sql<number>`COALESCE(SUM(amount_centavos), 0)` })
+        .from(payments)
+        .where(and(eq(payments.bookingId, input.bookingId), eq(payments.type, 'refund')));
+      if (refunded + input.amountCentavos > booking.amountPaidCentavos) {
+        throw new RefundExceedsPaidError(
+          booking.amountPaidCentavos,
+          refunded,
+          input.amountCentavos,
+        );
+      }
+    }
+
     // insert payments row, update amount_paid_centavos and status, then:
     await writeAudit(tx, {
+      // A webhook-driven change is actorType 'provider' with the gateway
+      // named in `data` (Q10) — never 'system', which means a cron job.
       actorType: input.actor.type,
       actorId: input.actor.id,
       action: input.type === 'refund' ? 'payment.refunded' : 'payment.recorded',
@@ -2499,214 +2709,244 @@ git commit -m "fix(server): unhandled errors return a clean 500, never finalhand
 
 **✅ DONE 20**
 
-## Which test proves which constraint
-
-| Constraint                                                        | Proven by                                                                                                                                                                 |
-| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Money is centavos, no decimals                                    | Task 18 source guard + per-table `information_schema` assertions (Tasks 3, 5, 8, 12)                                                                                      |
-| Times are UTC `datetime`, never `timestamp`                       | Task 18 source guard + Task 7 `expires_at` assertion                                                                                                                      |
-| Booking refs are random, non-sequential, crypto-sourced           | Task 9 — four tests, including the `Math.random` spy                                                                                                                      |
-| A ref collision cannot lose a booking                             | Task 9 `insertBookingWithRef` retry test                                                                                                                                  |
-| Soft deletes only; bookings/payments never hard-deleted           | Task 18 source guard                                                                                                                                                      |
-| The capacity-holding status set is exactly the spec's             | Task 8                                                                                                                                                                    |
-| A coupon can never hold a malformed discount                      | Task 5 — four rejection tests against the database CHECK, issued as raw SQL so they bypass Zod                                                                            |
-| The deposit rounds UP to a whole peso and never exceeds the total | Task 19 — enumerated boundaries, including the ₱568.20 case where ceil and nearest disagree                                                                               |
-| An audit row shares the transaction it describes                  | Task 2 rollback test                                                                                                                                                      |
-| Payments name no gateway                                          | Task 12 column-name scan                                                                                                                                                  |
-| Webhook idempotency                                               | Task 6 unique index + Task 15 duplicate delivery                                                                                                                          |
-| A bad signature cannot pay                                        | Task 15, asserting on the `payments` row count                                                                                                                            |
-| An unknown provider cannot pay                                    | Tasks 13 and 15                                                                                                                                                           |
-| The Xendit stub cannot pay                                        | Tasks 13 and 15                                                                                                                                                           |
-| Only a verified webhook or an admin marks paid                    | Task 14 (two callers) + Task 15                                                                                                                                           |
-| The amount must match what the booking expects                    | Task 14                                                                                                                                                                   |
-| Role isolation, both directions                                   | Task 17 — 30 generated cases                                                                                                                                              |
-| A session token is never stored raw                               | Task 7                                                                                                                                                                    |
-| A driver PIN is never stored raw                                  | Task 4                                                                                                                                                                    |
-| No unhandled error ever returns a stack or a path                 | Task 20 — plus BUG-102's tRPC formatter and task 4.3b's URL guard, already shipped                                                                                        |
-| Capacity never oversells the fleet                                | **The capacity service is Week 3, not this plan.** This plan provides the lock rows and the status set it needs (Tasks 6, 8); the concurrency test lives with the service |
-
 ---
 
-## Open questions
+### Task 21: driver PIN lockout policy
 
-Four are now **answered** and folded into the tasks above. Nine remain. Where this plan had to pick
-something to be writable at all, the pick is marked **[provisional]** — a starting point for your
-answer, not a decision.
+**Files:**
 
-### ✅ ANSWERED — Q4: deposit rounding (owner, 2026-10-11)
+- Create: `server/src/services/driver-lockout.ts`
+- Modify: `server/src/middleware/rate-limit.ts`
+- Test: `server/src/__tests__/driver-lockout.test.ts`
 
-**Round the deposit UP to the next whole peso** (ceil to 100 centavos). Server-computed only, with
-boundary tests. Folded into **Task 19**, which pins the ₱568.20 case where the spec's own "ceil" and
-"to the nearest whole peso" disagree — ceil wins — and clamps the result so a 100% deposit on a
-non-whole-peso total cannot exceed the total.
+**Interfaces:**
 
-### ✅ ANSWERED — Q6: coupon discount shape (owner, 2026-10-11)
+- Consumes: `drivers` (Task 4), `writeAudit` (Task 2).
+- Produces: `evaluatePinAttempt(state, now, ok): LockoutDecision`, `driverLoginLimiter`.
 
-The single `value` column is **replaced** by `discount_type enum('percent','fixed')`,
-`percent_bp int NULL` (basis points, 1000 = 10%) and `amount_centavos int NULL`, with a **CHECK**
-that exactly one is set and matches `discount_type`. Folded into **Task 5**, which verifies the
-constraint is actually live in `information_schema.check_constraints` (MySQL silently ignores CHECK
-before 8.0.16 — this server is 8.0.46, confirmed) and proves rejection with raw SQL that bypasses
-Zod entirely.
+**Owner decision, 2026-10-11 (answers Q9).** The driver PIN is **six digits**, hashed, never stored
+raw. Three limits stack:
 
-### ✅ ANSWERED — Q7: capacity rule (owner, 2026-10-11) — _pending R&G confirmation_
+| Limit                  | Rule                                                                     | Where it lives                                                                  |
+| ---------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| Per driver             | **5** consecutive failures → **15-minute** lockout                       | `drivers.failed_attempts` / `locked_until`                                      |
+| Per driver, escalating | **3** lockouts inside **24 hours** → locked until an **admin** resets it | `drivers.lockout_count` / `lockout_window_started_at` / `requires_admin_unlock` |
+| Per IP                 | **10** attempts per **15 minutes**                                       | `express-rate-limit`, like the existing scoped limiters                         |
 
-**Each booked group requires one van.** Per tour per day, accept bookings up to
-`MIN(tour.groups_per_day, vans free that day across all tours)`. **Never overbook automatically.**
-An admin may manually override with a reason, and the override writes to `audit_log`.
+Every lockout and every admin reset writes to `audit_log`. A six-digit PIN is 1,000,000
+combinations; at 10 attempts per IP per 15 minutes that is centuries, which is the point.
 
-Marked **"pending R&G confirmation"** in BUILD_SPEC §5, and built to this rule meanwhile.
+`evaluatePinAttempt` is a **pure function** — state in, decision out, no database, no clock. That is
+what makes the three limits testable without standing up a login route, and what lets the 24-hour
+window be tested in milliseconds instead of waiting a day.
 
-Two consequences, both folded in:
+- [ ] **Step 1: Write the failing test**
 
-1. **The fleet constraint is global across tours, so the lock must be too** — this is new, and it
-   is Q14 below.
-2. The override needs an audit action (`booking.capacity_override`) carrying the reason. No new
-   column: §10 gives `bookings` none, and `audit_log` already records actor, action and free-form
-   `data`. The cost is that "which bookings were overridden?" becomes an `audit_log` query rather
-   than a column filter — acceptable for what should be a rare, deliberate act.
+```ts
+import { evaluatePinAttempt } from '../services/driver-lockout';
 
-### ✅ APPROVED — app-level Express error handler (owner, 2026-10-11)
+const FRESH = {
+  failedAttempts: 0,
+  lockedUntil: null,
+  lockoutCount: 0,
+  lockoutWindowStartedAt: null,
+  requiresAdminUnlock: false,
+};
+const T0 = new Date('2026-10-11T00:00:00.000Z');
+const at = (ms: number) => new Date(T0.getTime() + ms);
+const MIN = 60_000;
 
-Added as **Task 20**. No finalhandler dev HTML, no stack traces, server-side logging kept, with
-tests that can fail.
+describe('driver PIN lockout', () => {
+  it('counts a wrong PIN without locking before the fifth', () => {
+    let s = FRESH;
+    for (let i = 1; i <= 4; i += 1) {
+      s = evaluatePinAttempt(s, at(i * 1000), false).next;
+      expect(s.lockedUntil, `locked after only ${i} failures`).toBeNull();
+      expect(s.failedAttempts).toBe(i);
+    }
+  });
 
----
+  it('locks for exactly 15 minutes on the fifth consecutive failure', () => {
+    let s = FRESH;
+    for (let i = 1; i <= 5; i += 1) s = evaluatePinAttempt(s, at(i * 1000), false).next;
+    expect(s.lockedUntil).toEqual(new Date(at(5000).getTime() + 15 * MIN));
+    expect(s.lockoutCount).toBe(1);
+  });
 
-### 🔴 Q14 — NEW, raised by the Q7 answer: what serialises the cross-tour fleet check?
+  it('refuses an attempt while locked, without extending the lockout', () => {
+    let s = FRESH;
+    for (let i = 1; i <= 5; i += 1) s = evaluatePinAttempt(s, at(i * 1000), false).next;
+    const lockedUntil = s.lockedUntil;
+    const d = evaluatePinAttempt(s, at(60_000), false);
+    expect(d.outcome).toBe('locked');
+    expect(d.next.lockedUntil, 'a locked-out attempt extended the lockout').toEqual(lockedUntil);
+  });
 
-**This one needs an answer before Task 6 is built**, because it decides whether there is a 17th
-table.
+  it('clears the counter on a correct PIN', () => {
+    let s = evaluatePinAttempt(FRESH, at(1000), false).next;
+    s = evaluatePinAttempt(s, at(2000), true).next;
+    expect(s.failedAttempts).toBe(0);
+    expect(s.lockedUntil).toBeNull();
+  });
 
-"Vans free that day **across all tours**" makes the fleet a shared, date-global resource. The lock
-the spec designed is per **tour** and date — `tour_date_slots (tour_id, date)`. Two bookings for
-**different tours** on the same date lock **different rows**, so they do not exclude each other,
-and both can pass "a van is free" and take the same last van. The spec's lock cannot enforce the
-rule you have just chosen.
+  it('requires an admin unlock after the THIRD lockout inside 24 hours', () => {
+    let s = FRESH;
+    for (let lockout = 1; lockout <= 3; lockout += 1) {
+      const base = (lockout - 1) * 60 * MIN; // an hour apart, well inside 24h
+      for (let i = 1; i <= 5; i += 1) s = evaluatePinAttempt(s, at(base + i * 1000), false).next;
+      if (lockout < 3) s = { ...s, lockedUntil: null, failedAttempts: 0 }; // lockout expires
+    }
+    expect(s.lockoutCount).toBe(3);
+    expect(s.requiresAdminUnlock).toBe(true);
+    // And a correct PIN does NOT clear it — only an admin can.
+    const d = evaluatePinAttempt(s, at(25 * 60 * MIN), true);
+    expect(d.outcome).toBe('needs_admin_unlock');
+    expect(d.next.requiresAdminUnlock).toBe(true);
+  });
 
-Three ways out:
+  it('does NOT escalate when the three lockouts straddle more than 24 hours', () => {
+    // The window must roll, or a driver who fumbles once a day every day is
+    // eventually locked out permanently for no reason.
+    let s = FRESH;
+    for (let i = 1; i <= 5; i += 1) s = evaluatePinAttempt(s, at(i * 1000), false).next;
+    s = { ...s, lockedUntil: null, failedAttempts: 0 };
+    for (let i = 1; i <= 5; i += 1)
+      s = evaluatePinAttempt(s, at(25 * 60 * MIN + i * 1000), false).next;
+    expect(s.lockoutCount, 'the 24h window did not roll').toBe(1);
+    expect(s.requiresAdminUnlock).toBe(false);
+  });
 
-| Option                                                                                                                 | What it costs                                                                                                                                                                                         |
-| ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **A. Add `fleet_date_slots (date)`** — one row per date, locked `FOR UPDATE` before any capacity check. _Recommended._ | A 17th table, beyond the 16 this plan scoped. Serialises all bookings sharing a date across tours — with six tours and a small fleet, that is a handful of rows a day, so the throughput cost is nil. |
-| **B. Repurpose `tour_date_slots`** to be keyed by date alone                                                           | Contradicts §10, which names it and keys it by `(tour_id, date)`. Drops the per-tour row the spec asked for.                                                                                          |
-| **C. Lock the `vans` rows** with `SELECT … FOR UPDATE`                                                                 | No new table, but it range-locks over "available vans" and InnoDB gap locks there deadlock readily under concurrent inserts. Hardest to get right and to test.                                        |
-
-**My recommendation is A**, with locks always taken in a fixed order (`fleet_date_slots` first, then
-`tour_date_slots`) so two concurrent bookings can never deadlock by grabbing them in opposite
-orders. **Confirm A, B or C** — the plan currently documents A as provisional in Task 6 and does not
-build it.
-
-### Q1 — What is a customer session's `subject_id`? **[provisional: the booking id]**
-
-§10 gives `sessions` a `subject_type (admin/customer/driver)` and a `subject_id`, but customers have
-no row of their own — §7 logs them in with booking ref + email and says the session is "scoped to
-that booking only". The plan reads `subject_id` as `bookings.id` for `subject_type='customer'`.
-
-The alternative is a `customers` table keyed by email, with sessions pointing at it. That would let
-a repeat guest see all their bookings in one portal, which §7 does not ask for and arguably forbids.
-**Confirm: one session per booking, no customer accounts?**
-
-Note the enum: §10 writes `admin` where §9 calls the role `owner`. The plan uses `user` for the
-admin subject type, matching the `users` table. Flag if you want `admin`.
-
-### Q2 — Does splitting `payments.method` into `provider` + `method` suit you? **[provisional: yes, split]**
-
-§10's `payments.method (paymongo/manual_qr/cash)` mixes the processor with the instrument. B1a
-requires a provider-neutral table, so the plan splits them: `provider` ∈ (paymongo, xendit, manual)
-and `method` ∈ (card, gcash, maya, grabpay, qrph, bank_transfer, manual_qr, cash).
-
-This matters for §9's "Revenue by tour and by payment method" report — with the split you can ask
-both "how much through PayMongo" and "how much by GCash", which the single column cannot answer.
-**Confirm the two enum value lists**, particularly whether `bank_transfer` is needed at launch.
-
-### Q3 — Is the `paymongo_events` → `payment_events` rename approved? **[provisional: yes, per B1a]**
-
-B1a asks for "a `payment_events` (or equivalent) table with UNIQUE(provider, provider_event_id)",
-which is incompatible with the spec's PayMongo-specific `paymongo_events (event_id unique)`. The
-plan renames it, and the 2026-10-10 spec amendment already reflects that. This is the **only**
-deviation from the §10 table list. **Confirm.**
-
-### Q5 — What exactly goes in `bookings.price_snapshot`? **[provisional: see below]**
-
-§5 says "Store a price snapshot on the booking (tier price, add-on prices, coupon, totals)" without
-fixing the shape. The plan proposes:
-
-```json
-{
-  "tier": { "minPax": 4, "maxPax": 6, "pricePerPersonCentavos": 189000 },
-  "pax": 4,
-  "addons": [
-    { "addonId": 3, "name": "Lunch", "priceCentavos": 35000, "perPerson": true, "qty": 4 }
-  ],
-  "coupon": { "id": 7, "code": "SAVE10", "discountType": "percent", "percentBp": 1000 },
-  "depositPercent": 30,
-  "subtotalCentavos": 896000,
-  "discountCentavos": 89600,
-  "totalCentavos": 806400,
-  "computedAt": "2026-10-11T08:00:00.000Z"
-}
+  it('reports every lockout so the caller can audit it', () => {
+    let s = FRESH;
+    let last;
+    for (let i = 1; i <= 5; i += 1)
+      ((last = evaluatePinAttempt(s, at(i * 1000), false)), (s = last.next));
+    expect(last!.audit).toMatchObject({ action: 'driver.locked_out' });
+  });
+});
 ```
 
-(The `coupon` block now carries `discountType`/`percentBp` per the Q6 answer.)
+The sixth test is the one most likely to be skipped and most likely to matter: without a rolling
+window, `lockout_count` only ever grows and a clumsy driver is permanently locked out after three
+bad days.
 
-Once bookings exist this shape is effectively permanent, because old rows keep whatever was written.
-**Confirm, or amend now.** In particular: should it also freeze `free_cancel_hours`, so a later
-change to the tour's cancellation window cannot alter an existing booking's refund rights? The plan
-thinks yes, and §6's "Free-cancellation policy window is a tour setting" does not say.
+- [ ] **Step 2: Run it and watch it fail** — the module does not exist.
 
-### Q8 — When is a `tour_date_slots` row created? **[provisional: on demand, idempotently]**
+- [ ] **Step 3: Implement the pure decision function**
 
-§10 calls it a "lock row for capacity checks" without saying who creates it. The plan creates it at
-the start of the booking transaction with `INSERT … ON DUPLICATE KEY UPDATE tour_id = tour_id` (a
-no-op touch that is safe when two requests race), then `SELECT … FOR UPDATE`. The alternative —
-pre-creating a row per tour per bookable date — needs a job and a horizon and can run out.
-**Confirm the on-demand approach.** If Q14 resolves to option A, the same pattern applies to
-`fleet_date_slots`.
+```ts
+export const MAX_FAILED_ATTEMPTS = 5;
+export const LOCKOUT_MINUTES = 15;
+export const MAX_LOCKOUTS_PER_WINDOW = 3;
+export const LOCKOUT_WINDOW_HOURS = 24;
 
-### Q9 — What are the driver lockout numbers? **Not guessed**
+export interface LockoutState {
+  failedAttempts: number;
+  lockedUntil: Date | null;
+  lockoutCount: number;
+  lockoutWindowStartedAt: Date | null;
+  requiresAdminUnlock: boolean;
+}
 
-§10 gives `drivers` `failed_attempts` and `locked_until`, and §12's security checklist asks for rate
-limits, but no number is given for the driver PIN specifically. §7 gives the _customer_ portal "5
-failed attempts per IP per 15 minutes"; §8 gives the driver portal nothing.
+export interface LockoutDecision {
+  outcome: 'ok' | 'wrong_pin' | 'locked' | 'needs_admin_unlock';
+  next: LockoutState;
+  /** Set when something happened that must reach audit_log. */
+  audit?: { action: 'driver.locked_out' | 'driver.unlock_required'; data: unknown };
+}
 
-**How many failed PINs before lockout, and for how long?** A 4-digit PIN brute-forces in 10,000
-tries, so this number is doing real work. The columns exist either way; the policy does not.
+/**
+ * Pure: state and clock in, decision out. No database, no `new Date()`.
+ *
+ * That is deliberate — it is what lets the 24-hour escalation window be
+ * tested in milliseconds, and what keeps the policy honest when the login
+ * route is finally written in Week 6. The caller persists `next` and writes
+ * `audit` if present, both inside the same transaction.
+ *
+ * `requiresAdminUnlock` is never cleared here, not even by a correct PIN:
+ * only an admin action clears it. A policy that an attacker can reset by
+ * guessing correctly once is not a policy.
+ */
+export function evaluatePinAttempt(state: LockoutState, now: Date, pinOk: boolean): LockoutDecision;
+```
 
-### Q10 — Are these the right `audit_log.actor_type` values? **[provisional: user/customer/driver/system]**
+- [ ] **Step 4: Add the per-IP limiter**
 
-§10 says `actor_type` without enumerating it. The plan uses `user` (an admin), `customer`, `driver`,
-and `system` (cron, webhook — no human). `system` matters: a hold expiring or a webhook confirming a
-payment has no actor, and leaving `actor_id` null with `actor_type='user'` would read as "an admin
-did this". **Confirm the four.**
+Reuse the existing `express-rate-limit` setup in `server/src/middleware/rate-limit.ts` — **10
+attempts per 15 minutes per IP**, scoped to the driver-login route only, following the pattern the
+existing scoped limiters use. Do not widen any existing limiter, and do not change the default-deny
+backstop.
 
-### Q11 — Should a refund be a positive amount with `type='refund'`? **[provisional: yes, always positive]**
+- [ ] **Step 5: Prove each test can fail** — change `MAX_FAILED_ATTEMPTS` to 6 (the fifth-failure
+      test goes red), drop the window roll (the straddle test goes red), let a correct PIN clear
+      `requiresAdminUnlock` (the escalation test goes red). Restore each.
 
-§10 gives `payments` a `type (payment/refund)` and an `amount`, and §6 says "Refunds are tracked on
-payments, not as a booking status". It does not say whether a refund's amount is negative.
+- [ ] **Step 6: Run the five checks and commit**
 
-The plan stores **always-positive** amounts and takes direction from `type`, because a signed amount
-plus a type is two representations of one fact and they drift — and a `SUM(amount)` that silently
-mixes them is a reporting bug waiting to happen. **Confirm**, and also confirm whether **partial**
-refunds are allowed (§6 says "full, partial, none", so the plan assumes yes, meaning several refund
-rows can exist for one booking and their sum must never exceed `amount_paid`).
+```bash
+git commit -m "feat(drivers): PIN lockout policy, with the 24h escalation window"
+```
 
-### Q12 — Does `reviews.booking_id` become a real foreign key now?
+**✅ DONE 21**
 
-The column exists today as a bare nullable `int`. Wave 3 adds the FK. §10 describes it as "null if
-unverified", which the FK allows. The only risk is existing rows — all null in the seed, so the
-ALTER should apply cleanly. **Confirm you want the constraint.**
+## Which test proves which constraint
 
-### Q13 — Existing §15 open questions that block parts of this plan
+| Constraint                                                        | Proven by                                                                                                                                           |
+| ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Money is centavos, no decimals                                    | Task 18 source guard + per-table `information_schema` assertions (Tasks 3, 5, 8, 12)                                                                |
+| Times are UTC `datetime`, never `timestamp`                       | Task 18 source guard + Task 7 `expires_at` assertion                                                                                                |
+| Booking refs are random, non-sequential, crypto-sourced           | Task 9 — four tests, including the `Math.random` spy                                                                                                |
+| A ref collision cannot lose a booking                             | Task 9 `insertBookingWithRef` retry test                                                                                                            |
+| Soft deletes only; bookings/payments never hard-deleted           | Task 18 source guard                                                                                                                                |
+| The capacity-holding status set is exactly the spec's             | Task 8                                                                                                                                              |
+| A coupon can never hold a malformed discount                      | Task 5 — four rejection tests against the database CHECK, issued as raw SQL so they bypass Zod                                                      |
+| The deposit rounds UP to a whole peso and never exceeds the total | Task 19 — enumerated boundaries, including ₱568.20 where ceil and nearest disagree                                                                  |
+| The price snapshot freezes refund rights, not just prices         | Task 8 — asserts `free_cancel_hours` and `depositPercent` are in the stored blob                                                                    |
+| Two tours booking the same date serialise on the fleet            | Task 6 — the `fleet_date_slots` concurrency test                                                                                                    |
+| An audit row shares the transaction it describes                  | Task 2 rollback test                                                                                                                                |
+| A webhook change is attributed to `provider`, a cron to `system`  | Tasks 2 and 14                                                                                                                                      |
+| Payments name no gateway                                          | Task 12 column-name scan                                                                                                                            |
+| Webhook idempotency                                               | Task 6 unique index + Task 15 duplicate delivery                                                                                                    |
+| A bad signature cannot pay                                        | Task 15, asserting on the `payments` row count                                                                                                      |
+| An unknown provider cannot pay                                    | Tasks 13 and 15                                                                                                                                     |
+| The Xendit stub cannot pay                                        | Tasks 13 and 15                                                                                                                                     |
+| Only a verified webhook or an admin marks paid                    | Task 14 (two callers) + Task 15                                                                                                                     |
+| The amount must match what the booking expects                    | Task 14                                                                                                                                             |
+| Refunds are positive, partial, and never exceed what was paid     | Task 14 — five tests, including two concurrent refunds racing under the row lock                                                                    |
+| Role isolation, both directions                                   | Task 17 — 30 generated cases                                                                                                                        |
+| A session token is never stored raw                               | Task 7                                                                                                                                              |
+| A driver PIN is never stored raw                                  | Task 4                                                                                                                                              |
+| The driver PIN lockout limits all hold, and the 24h window rolls  | Task 21 — seven tests on a pure decision function                                                                                                   |
+| No unhandled error ever returns a stack or a path                 | Task 20 — plus BUG-102's tRPC formatter and task 4.3b's URL guard, already shipped                                                                  |
+| Capacity never oversells the fleet                                | **The capacity service is Week 3, not this plan.** This plan provides both lock rows, the fixed lock order and the status set it needs (Tasks 6, 8) |
 
-Already in the spec's own Open questions list, now with schema consequences:
+---
 
-| §15 item                                                                                        | Blocks                                                                                                                                                                                       |
-| ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Q2 QR payments** — static QR with manual verification, gateway QR Ph (auto-confirm), or both? | Whether `manual_qr` and `qrph` are both needed in `PAYMENT_METHODS`, and whether the manual-verification columns (`txn_ref`, `receipt_path`, `reject_reason`, `verified_by`) are dead weight |
-| **Q3 PayPal** — enabled on the PayMongo account?                                                | Whether `PAYMENT_METHODS` needs a `paypal` value                                                                                                                                             |
-| **Q5 Cancellation policy** — window and refund rules per tour                                   | Q5 above (whether `free_cancel_hours` is frozen into `price_snapshot`)                                                                                                                       |
-| **Q1 Assignment deadline**                                                                      | Now partly settled by the Q7 answer, but the 48-hour reading is still open                                                                                                                   |
+## Questions — all answered
+
+No open questions remain. Recorded here because the reasoning behind a schema decision is worth more
+later than the decision itself.
+
+| #   | Question                                            | Answer (owner)                                                                                                                                                                               | Where it landed        |
+| --- | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| Q1  | What is a customer session's `subject_id`?          | The **booking id**. No customer accounts. "user" is the staff term; §9/§10 wording aligned to it                                                                                             | Task 7                 |
+| Q2  | Split `payments.method` into `provider` + `method`? | Yes. `provider` = paymongo \| xendit \| manual; `method` = card \| gcash \| maya \| grab_pay \| qrph \| bank_transfer \| cash. `bank_transfer` stays at launch                               | Task 12                |
+| Q3  | `paymongo_events` → `payment_events`?               | Confirmed                                                                                                                                                                                    | Task 6                 |
+| Q4  | How does the deposit round?                         | **UP** to the next whole peso, server-computed, clamped to the total                                                                                                                         | Task 19                |
+| Q5  | What does `price_snapshot` freeze?                  | Tier price, add-ons, coupon, deposit percent **and `free_cancel_hours`**. Refund/cancel logic reads the snapshot, never the live tour                                                        | Task 8                 |
+| Q6  | Coupon discount shape?                              | `discount_type` + `percent_bp` (basis points) + `amount_centavos`, with a database CHECK                                                                                                     | Task 5                 |
+| Q7  | Capacity rule?                                      | `MIN(groups_per_day, vans free that day across all tours)`. Never auto-overbook; admin override is audited. _Pending R&G confirmation_                                                       | §5 of the spec; Task 6 |
+| Q8  | When is a lock row created?                         | On demand, `INSERT … ON DUPLICATE KEY UPDATE`                                                                                                                                                | Task 6                 |
+| Q9  | Driver PIN lockout numbers?                         | 6-digit PIN. 5 failures → 15 min. 3 lockouts in 24h → admin unlock. 10 attempts per IP per 15 min. All audited                                                                               | Tasks 4 and 21         |
+| Q10 | `audit_log.actor_type` values?                      | user \| customer \| driver \| system \| **provider**. Webhooks are `provider` (name in `data`); cron is `system`                                                                             | Task 2                 |
+| Q11 | Refund representation?                              | Positive amounts, `type='refund'`, partial allowed, sum capped at `amount_paid` under the booking row lock. Admin-only, audited                                                              | Task 14                |
+| Q12 | FK on `reviews.booking_id`?                         | Yes, nullable                                                                                                                                                                                | Task 11                |
+| Q13 | §15 spec questions with schema consequences         | Q2/Q3 (QR, PayPal) resolved by the Q2 method list; Q5 (cancellation) resolved by freezing `free_cancel_hours`; Q1 (assignment deadline) remains a §15 operational question, not a schema one | —                      |
+| Q14 | What serialises the cross-tour fleet check?         | **Option A** — add `fleet_date_slots (date)`, locked **before** `tour_date_slots`, with a concurrency test                                                                                   | Task 6                 |
+
+**One thing to carry forward, not a question:** the Q7 capacity rule is marked _pending R&G
+confirmation_ in BUILD_SPEC §5. It is built to, but it has not been confirmed with the operator. If
+R&G come back differently, the tables do not change — only the Week 3 capacity service does.
 
 ---
 
@@ -2720,16 +2960,20 @@ Run against the spec with fresh eyes, as the writing-plans skill requires.
 `trip_checkpoints` + `review_helpful_votes` (11), `payments` (12). That is 16. Both §10 index lists
 (`bookings` ×3, `payments` ×2) are transcribed into Tasks 8 and 12.
 
-Three further tasks carry owner decisions rather than tables: **19** (deposit rounding, Q4), **20**
-(the Express error handler), and the CHECK constraint folded into **5** (Q6). Twenty tasks total.
+`fleet_date_slots` makes 17 — the Q14 answer, also in Task 6.
+
+Four further tasks carry owner decisions rather than tables: **19** (deposit rounding, Q4), **20**
+(the Express error handler), **21** (driver PIN lockout, Q9), and the CHECK constraint folded into
+**5** (Q6). **Twenty-one tasks total.**
 
 **Deliberate gaps, stated rather than hidden:**
 
-- The **pricing, capacity and holds services** (§5) are not here. This plan builds the tables they
-  need and stops. They are Week 3. Q4 and Q7 are now answered, so the remaining blocker for the
-  capacity service is Q14 (what serialises the cross-tour fleet check).
-- The **`fleet_date_slots` table** that the Q7 answer implies is **not built** — it is a 17th table
-  beyond this plan's scope and waits on Q14. Task 6 carries the warning and the proposed shape.
+- The **pricing, capacity and holds services** (§5) are not here. This plan builds the tables, both
+  lock rows and the fixed lock order they need, and stops. They are Week 3, and nothing blocks them
+  any more.
+- The **driver login route** is not here. Task 21 builds and tests the lockout _policy_ as a pure
+  function; wiring it to a route is Week 6, the same way Task 17 defines the role gate without
+  wiring it to admin procedures that do not exist yet.
 - The **expired-hold cron** (§5) is not here — no `jobs/` directory exists yet.
 - **Notifications** (§11) are not here; no table is required for them.
 - **Checkout, portals and admin screens** are not here by design (see Scope check).
