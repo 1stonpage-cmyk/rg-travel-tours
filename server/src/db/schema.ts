@@ -919,6 +919,35 @@ export const bookings = mysqlTable(
     cancelledAt: datetime('cancelled_at', { mode: 'date' }),
     cancelReason: varchar('cancel_reason', { length: 400 }),
 
+    /**
+     * Money landed on a booking that was already dead (owner decision
+     * 2026-10-11, task 16b-3).
+     *
+     * A guest starts a GCash payment, the 15-minute hold lapses (or an admin
+     * cancels the booking) and the gateway's webhook arrives a minute later.
+     * The money is REAL, so `recordPayment()` still records the `payments`
+     * row and still moves `amount_paid_centavos` — but it must **NOT**
+     * change `status`, because the capacity that booking was holding has
+     * been released and re-confirming it could overbook the day.
+     *
+     * So it sets this flag and writes an `audit_log` row naming the prior
+     * status and the reason. An admin then decides: re-confirm if capacity
+     * allows, or refund. **Nothing auto-confirms** — that is an explicit
+     * owner DO-NOT, and the admin surface for this is a later week.
+     *
+     * A plain boolean rather than a status value: `BOOKING_STATUSES` is the
+     * §5 lifecycle and a "needs review" member would have to be threaded
+     * through every capacity query, portal view and driver filter that
+     * switches on it. This is orthogonal to the lifecycle — a cancelled
+     * booking with unreviewed money and an expired one are both still
+     * cancelled and expired.
+     *
+     * It is cleared only by the admin decision that resolves it, never by
+     * `recordPayment()`: a second late payment on an already-flagged booking
+     * must not look resolved.
+     */
+    paymentReviewRequired: boolean('payment_review_required').notNull().default(false),
+
     createdAt: datetime('created_at', { mode: 'date' })
       .notNull()
       .$defaultFn(() => new Date()),
@@ -1093,6 +1122,33 @@ export const tripCheckpoints = mysqlTable(
       .references(() => bookings.id),
     /** Null = the "start trip" event, which has no itinerary stop behind it (§8). */
     stopId: int('stop_id').references(() => tourItineraryStops.id),
+    /**
+     * `COALESCE(stop_id, 0)` — the column that makes the UNIQUE index below
+     * actually constrain the trip-start event (owner decision 2026-10-11,
+     * task 16b-2).
+     *
+     * **Why it has to exist.** `UNIQUE (booking_id, stop_id)` does not stop
+     * two trip-start rows for one booking, because `stop_id` is NULL for
+     * "trip start" and **MySQL permits unlimited NULLs in a unique index**.
+     * Mapping null to `0` gives every row a non-null key, so the two
+     * trip-start rows collide the same way two "Arrived at Kawasan" rows do.
+     *
+     * `0` is safe as the sentinel: `tour_itinerary_stops.id` is an
+     * AUTO_INCREMENT primary key and never issues 0, so no real stop can
+     * ever share the trip-start key.
+     *
+     * **STORED, not VIRTUAL** — MySQL cannot build a unique index on a
+     * virtual generated column in InnoDB without it being a secondary index
+     * on an unindexable expression; stored is the form the UNIQUE needs and
+     * the form task 11b proved on the test database.
+     *
+     * **Never written by application code.** It is `GENERATED ALWAYS`, so an
+     * INSERT that names it is rejected by MySQL. Write `stop_id`; this
+     * follows.
+     */
+    stopKey: int('stop_key')
+      .notNull()
+      .generatedAlwaysAs(sql`(coalesce(\`stop_id\`, 0))`, { mode: 'stored' }),
     /** Server time in UTC, never the driver's device clock. */
     checkedAt: datetime('checked_at', { mode: 'date' })
       .notNull()
@@ -1121,21 +1177,24 @@ export const tripCheckpoints = mysqlTable(
     /** One trip's checkpoints, in the order they happened. */
     index('trip_checkpoints_booking_idx').on(t.bookingId, t.checkedAt),
     /**
-     * One check-in per stop per trip (owner decision 2026-10-11, task
-     * 11b-2). A driver on a moving van double-taps "Arrived at Kawasan" and
-     * the tracker must not show the stop reached twice.
+     * One check-in per stop per trip, **trip start included** (owner
+     * decisions 2026-10-11: task 11b-2, closed by task 16b-2). A driver on a
+     * moving van double-taps "Arrived at Kawasan", or taps Start twice while
+     * the first request is still in flight, and the tracker must not show
+     * either event happening twice.
      *
-     * **This does NOT constrain the trip-start event.** `stop_id` is
-     * nullable and null means "trip start" (§8), and a MySQL UNIQUE index
-     * permits unlimited NULLs — so two `(booking_id, NULL)` rows are still
-     * accepted by this index. `schema-trips.test.ts` proves both halves:
-     * that a duplicate real stop is refused, and that a duplicate trip
-     * start is not. Closing that hole needs a stored generated column
-     * (`stop_key = COALESCE(stop_id, 0)`) with the UNIQUE on
-     * `(booking_id, stop_key)`; it is reported and awaiting the owner, and
-     * until then the driver portal must guard the Start tap itself.
+     * It is keyed on `stop_key`, not `stop_id`. That is the whole fix: the
+     * earlier `(booking_id, stop_id)` index constrained real stops only,
+     * because null means "trip start" and MySQL permits unlimited NULLs in a
+     * unique index. `stop_key` is `COALESCE(stop_id, 0)` (see the column
+     * above), so the trip-start rows have a real key to collide on.
+     *
+     * The index name is deliberately unchanged — it is the same constraint,
+     * now actually complete. `schema-trips.test.ts` proves both halves
+     * against the real database, with raw INSERTs: a duplicate real stop is
+     * refused, and so is a duplicate trip start.
      */
-    uniqueIndex('trip_checkpoints_booking_stop_unique').on(t.bookingId, t.stopId),
+    uniqueIndex('trip_checkpoints_booking_stop_unique').on(t.bookingId, t.stopKey),
   ],
 );
 
@@ -1302,5 +1361,23 @@ export const payments = mysqlTable(
      * webhook would reconcile against the wrong payment.
      */
     index('payments_provider_ref_idx').on(t.provider, t.providerRef),
+    /**
+     * The RANGE, in the database (owner decision 2026-10-11, task 16b-1).
+     * Mirrors `coupons_amount_positive`, and for the same reason.
+     *
+     * `amount_centavos` is always-positive BY DESIGN — direction comes from
+     * `type` (`payment` | `refund`), never from a sign (§6, Q11). The column
+     * comment above says so and `recordPaymentInputSchema` enforces
+     * `.positive()`, but neither is a constraint: a seed script, a migration
+     * or a hand-written UPDATE at 2am all bypass Zod entirely, and
+     * `type='refund', amount_centavos=-150000` would then satisfy every
+     * declaration in this file while quietly inverting a `SUM()`.
+     *
+     * Zero is refused too, not only negatives: a ₱0.00 payment row would
+     * read as money having landed and could mark a booking confirmed for
+     * nothing. `schema-payments.test.ts` proves BOTH with raw INSERTs that
+     * never touch Zod — the point is that MySQL refuses the row.
+     */
+    check('payments_amount_positive', sql`${t.amountCentavos} > 0`),
   ],
 );

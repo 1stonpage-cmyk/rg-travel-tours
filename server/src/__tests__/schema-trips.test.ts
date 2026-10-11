@@ -171,15 +171,18 @@ describe('trip_checkpoints', () => {
   });
 
   /**
-   * Task 11b-2, the double-tap guard. A driver on a moving van taps
-   * "Arrived at Kawasan" twice and the tracker must not show the stop
-   * reached twice.
+   * Task 11b-2, the double-tap guard, completed by task 16b-2. A driver on a
+   * moving van taps "Arrived at Kawasan" twice, or taps Start twice while the
+   * first request is in flight, and the tracker must not show either event
+   * twice.
    *
-   * See the caveat on the index in `schema.ts` and the pair of database
-   * tests below: this constrains real stops ONLY, because null `stop_id`
-   * means "trip start" and MySQL's UNIQUE permits unlimited NULLs.
+   * **Keyed on `stop_key`, not `stop_id` — that is the fix.** The original
+   * `(booking_id, stop_id)` index constrained real stops only, because null
+   * means "trip start" and MySQL permits unlimited NULLs in a unique index.
+   * This assertion goes red if anyone points the index back at `stop_id`,
+   * which would silently re-open the hole.
    */
-  it('declares one check-in per (booking, stop) as a UNIQUE index', () => {
+  it('declares one check-in per (booking, stop_key) as a UNIQUE index', () => {
     const config = getTableConfig(tripCheckpoints);
     const unique = config.indexes.find(
       (i) => i.config.name === 'trip_checkpoints_booking_stop_unique',
@@ -190,8 +193,42 @@ describe('trip_checkpoints', () => {
     );
     expect(checkpoints.indexes['trip_checkpoints_booking_stop_unique']).toEqual([
       'booking_id',
-      'stop_id',
+      'stop_key',
     ]);
+    expect(
+      checkpoints.indexes['trip_checkpoints_booking_stop_unique'],
+      'indexing stop_id again re-opens the NULL hole task 16b-2 closed',
+    ).not.toContain('stop_id');
+  });
+
+  /**
+   * Task 16b-2. `stop_key` is `COALESCE(stop_id, 0)`, STORED and NOT NULL —
+   * every one of those three matters:
+   *
+   *   - the COALESCE is what gives the trip-start rows a key to collide on;
+   *   - STORED because that is the form a unique index can be built on;
+   *   - NOT NULL because a nullable key would just move the hole.
+   *
+   * It is `GENERATED ALWAYS`, so application code can never write it. Write
+   * `stop_id`; this follows.
+   */
+  it('derives stop_key from stop_id as a stored, non-null generated column', () => {
+    const column = checkpoints.column('stop_key');
+    expect(column, 'stop_key is gone — the trip-start UNIQUE constrains nothing').toBeDefined();
+    expect(column?.getSQLType()).toBe('int');
+    expect(column?.notNull, 'a nullable key would move the NULL hole, not close it').toBe(true);
+    const generated = column?.generated;
+    expect(
+      generated,
+      'stop_key is a plain column — nothing keeps it in step with stop_id',
+    ).toBeDefined();
+    expect(generated?.type, 'GENERATED ALWAYS, so application code can never write it').toBe(
+      'always',
+    );
+    expect(generated?.mode, 'a virtual column cannot carry the UNIQUE index').toBe('stored');
+    // The COALESCE itself is asserted against the real database below, where
+    // `information_schema.columns.GENERATION_EXPRESSION` holds what MySQL
+    // actually stored rather than what Drizzle meant to say.
   });
 });
 
@@ -503,22 +540,20 @@ describe('trip_checkpoints, as actually migrated', () => {
   });
 
   /**
-   * **The hole in the constraint, asserted rather than hoped away.**
+   * **THE case the old index missed** (task 16b-2 — owner decision
+   * 2026-10-11, closing the hole task 11b reported).
    *
-   * `stop_id` is nullable and null means "trip start" (§8). A MySQL UNIQUE
-   * index permits UNLIMITED NULLs, so `UNIQUE (booking_id, stop_id)` does
-   * NOT stop two trip-start rows for the same booking — it constrains real
-   * stops only. This test documents the behaviour that actually exists:
-   * both inserts succeed and the trip has two starts.
+   * `stop_id` is nullable and null means "trip start" (§8), and **MySQL
+   * permits unlimited NULLs in a unique index** — so `UNIQUE (booking_id,
+   * stop_id)` refused a duplicate real stop but accepted two trip-start
+   * rows for one booking, which is a trip the tracker would show starting
+   * twice. The `stop_key = COALESCE(stop_id, 0)` stored generated column
+   * gives those rows a real key, and the UNIQUE now sits on it.
    *
-   * It is written to go red if the hole is ever closed, which is the point.
-   * Closing it needs a stored generated column
-   * (`stop_key = COALESCE(stop_id, 0)`) with the UNIQUE on
-   * `(booking_id, stop_key)` — reported to the owner in task 11b and NOT
-   * implemented here. Until then the Start tap is guarded in the driver
-   * portal, not by the schema.
+   * Raw `INSERT`s, so nothing in the service layer can be what makes this
+   * pass: the database must refuse the second row.
    */
-  dbIt('does NOT stop a duplicate trip-start — MySQL UNIQUE permits many NULLs', async () => {
+  dbIt('refuses a second trip-start for the same booking (the old NULL hole)', async () => {
     await inRollback(async (tx) => {
       const { bookingId } = await makeBooking(tx);
       const insertStart = () =>
@@ -529,16 +564,69 @@ describe('trip_checkpoints, as actually migrated', () => {
       expect(await rejectionCode(insertStart), 'the first trip-start was refused').toBeNull();
       expect(
         await rejectionCode(insertStart),
-        'the duplicate trip-start was refused — the NULL hole is CLOSED, so update ' +
-          'this test and the note on the index in schema.ts',
-      ).toBeNull();
+        'a double-tap on Start wrote two trip-start rows — the UNIQUE is back on ' +
+          'stop_id, or stop_key is gone',
+      ).toBe('ER_DUP_ENTRY');
 
       const [rows] = (await tx.execute(
         sql`SELECT COUNT(*) AS n FROM trip_checkpoints
             WHERE booking_id = ${bookingId} AND stop_id IS NULL`,
       )) as unknown as [Array<{ n: number }>, unknown];
-      expect(Number(rows[0]?.n), 'two trip-start rows are the documented limitation').toBe(2);
+      expect(Number(rows[0]?.n), 'exactly one trip-start survived').toBe(1);
     });
+  });
+
+  /**
+   * `stop_key` as MySQL actually stored it: STORED GENERATED, NOT NULL, and
+   * `coalesce(stop_id, 0)`. The Drizzle object says all three too, but a
+   * generator can emit DDL that disagrees with it, and a VIRTUAL column
+   * here would mean the UNIQUE index was built on something else entirely.
+   */
+  dbIt('stores stop_key as COALESCE(stop_id, 0), generated and not null', async () => {
+    const [rows] = (await getPool().query(
+      'SELECT IS_NULLABLE, EXTRA, GENERATION_EXPRESSION FROM information_schema.columns ' +
+        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'trip_checkpoints' " +
+        "AND COLUMN_NAME = 'stop_key'",
+    )) as [Array<{ IS_NULLABLE: string; EXTRA: string; GENERATION_EXPRESSION: string }>, unknown];
+    expect(rows, 'stop_key was never migrated').toHaveLength(1);
+    expect(rows[0]?.IS_NULLABLE).toBe('NO');
+    expect(rows[0]?.EXTRA, 'a VIRTUAL column cannot carry the UNIQUE index').toBe(
+      'STORED GENERATED',
+    );
+    expect(rows[0]?.GENERATION_EXPRESSION.toLowerCase().replace(/[`\s]/g, '')).toBe(
+      'coalesce(stop_id,0)',
+    );
+  });
+
+  /**
+   * The sentinel is safe: `tour_itinerary_stops.id` is an AUTO_INCREMENT
+   * primary key, which never issues 0, so no real stop can ever share the
+   * trip-start key and be refused for it. Asserted rather than assumed —
+   * a seed or an import that forced id 0 would make every trip-start on
+   * that stop's bookings impossible.
+   */
+  dbIt(
+    'never issues stop id 0, so the trip-start key cannot collide with a real stop',
+    async () => {
+      const [rows] = (await getPool().query(
+        'SELECT COUNT(*) AS n FROM tour_itinerary_stops WHERE id = 0',
+      )) as [Array<{ n: number }>, unknown];
+      expect(Number(rows[0]?.n), 'a stop with id 0 collides with the trip-start key').toBe(0);
+    },
+  );
+
+  /**
+   * And the index MySQL really built — on `stop_key`, unique, in that order.
+   * The declaration test above reads Drizzle's object; this reads the table.
+   */
+  dbIt('indexes (booking_id, stop_key) uniquely in the real table', async () => {
+    const [rows] = (await getPool().query(
+      'SELECT NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME FROM information_schema.statistics ' +
+        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'trip_checkpoints' " +
+        "AND INDEX_NAME = 'trip_checkpoints_booking_stop_unique' ORDER BY SEQ_IN_INDEX",
+    )) as [Array<{ NON_UNIQUE: number; COLUMN_NAME: string }>, unknown];
+    expect(rows.map((r) => r.COLUMN_NAME)).toEqual(['booking_id', 'stop_key']);
+    for (const r of rows) expect(Number(r.NON_UNIQUE), 'the index is not unique').toBe(0);
   });
 
   /**

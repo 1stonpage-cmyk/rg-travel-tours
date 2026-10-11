@@ -69,6 +69,18 @@ describe('payments table (declaration)', () => {
   });
 
   /**
+   * Task 16b-1, against the declaration — so removing the CHECK from
+   * `schema.ts` goes red before a migration is ever generated. The
+   * DB-backed twin below proves MySQL is actually enforcing it.
+   */
+  it('declares the always-positive amount CHECK', () => {
+    expect(
+      config.checks.map((c) => c.name),
+      'the amount range is unconstrained — a negative or zero payment is insertable',
+    ).toContain('payments_amount_positive');
+  });
+
+  /**
    * `provider` and `method` answer two different questions — WHO processed
    * it and HOW the guest paid. One column cannot carry both: GCash through
    * PayMongo and GCash through Xendit are the same instrument and different
@@ -406,6 +418,79 @@ describe('payments, against the real database', () => {
       expect(rows.map((r) => r.type)).toEqual(['payment', 'refund']);
       // Both positive. The refund is NOT -150000.
       for (const r of rows) expect(Number(r.amount_centavos)).toBe(150000);
+    });
+  });
+
+  /**
+   * Task 16b-1. The CHECK must be live, not merely written: MySQL 8.0.15 and
+   * earlier PARSE a CHECK and silently ignore it, so a constraint that is
+   * absent from `information_schema.check_constraints` is decoration. This
+   * server is 8.0.46, which enforces them — proven here rather than assumed.
+   */
+  dbIt('declares payments_amount_positive as a real, enforced CHECK', async () => {
+    const [rows] = (await getPool().query(
+      'SELECT CHECK_CLAUSE FROM information_schema.check_constraints ' +
+        'WHERE CONSTRAINT_SCHEMA = DATABASE() AND CONSTRAINT_NAME = ?',
+      ['payments_amount_positive'],
+    )) as [Array<{ CHECK_CLAUSE: string }>, unknown];
+    expect(rows, 'the CHECK was dropped or never migrated').toHaveLength(1);
+    expect(rows[0]?.CHECK_CLAUSE.replace(/[`\s]/g, '')).toBe('(amount_centavos>0)');
+  });
+
+  /**
+   * **The two rejections, by the DATABASE, through raw SQL that bypasses Zod
+   * entirely** (task 16b-1).
+   *
+   * `recordPaymentInputSchema` already requires `.positive()`, and that is
+   * the layer a webhook goes through — but a seed script, a migration or a
+   * hand-written UPDATE in a SQL client at 2am go through none of it. These
+   * tests exist to prove the row is refused when every application-level
+   * check has been skipped, which is why they are raw `INSERT`s and not
+   * Drizzle inserts through a validated service. A version that went through
+   * a validating helper would stay green with the CHECK dropped.
+   *
+   * Zero as well as a negative: direction comes from `type`, never a sign
+   * (§6, Q11), so a negative amount is a refund written the wrong way and a
+   * zero is money that did not move being recorded as if it had — which
+   * would let a ₱0 webhook confirm a booking for nothing.
+   */
+  for (const amount of [0, -150000]) {
+    dbIt(`REFUSES amount_centavos = ${amount}, whatever the type`, async () => {
+      await inRollback(async (tx) => {
+        const bookingId = await makeBooking(tx);
+        for (const type of ['payment', 'refund'] as const) {
+          expect(
+            await rejectionCode(() =>
+              tx.execute(
+                sql`INSERT INTO payments (booking_id, type, provider, method, amount_centavos, status, created_at, updated_at)
+                    VALUES (${bookingId}, ${type}, 'manual', 'gcash', ${amount}, 'paid', UTC_TIMESTAMP(), UTC_TIMESTAMP())`,
+              ),
+            ),
+            `a ${type} of ${amount} centavos was accepted — payments_amount_positive is gone`,
+          ).toBe('ER_CHECK_CONSTRAINT_VIOLATED');
+        }
+
+        const [rows] = (await tx.execute(
+          sql`SELECT COUNT(*) AS n FROM payments WHERE booking_id = ${bookingId}`,
+        )) as unknown as [Array<{ n: number }>, unknown];
+        expect(Number(rows[0]?.n), 'a non-positive payment row was written').toBe(0);
+      });
+    });
+  }
+
+  /** The other side of the same CHECK: one centavo is a real amount. */
+  dbIt('accepts the smallest positive amount, one centavo', async () => {
+    await inRollback(async (tx) => {
+      const bookingId = await makeBooking(tx);
+      expect(
+        await rejectionCode(() =>
+          tx.execute(
+            sql`INSERT INTO payments (booking_id, type, provider, method, amount_centavos, status, created_at, updated_at)
+                VALUES (${bookingId}, 'payment', 'manual', 'gcash', 1, 'paid', UTC_TIMESTAMP(), UTC_TIMESTAMP())`,
+          ),
+        ),
+        'the CHECK is too strict — it refused a legitimate one-centavo payment',
+      ).toBeNull();
     });
   });
 });

@@ -119,6 +119,13 @@ async function makeBooking(opts: {
   depositPercent?: number;
   amountPaidCentavos?: number;
   status?: BookingStatus;
+  /**
+   * Task 16b-3. Defaults to a hold far in the future — a LIVE booking, which
+   * is what every test written before 16b-3 assumes. Pass a past date for
+   * the lapsed-hold case, or `null` for a booking that has nothing left to
+   * expire (which is what `cancelled` and `expired` rows really look like).
+   */
+  holdExpiresAt?: Date | null;
 }): Promise<BookingFixture> {
   const db = getDb();
   const unique = `__rec__${Date.now()}_${Math.floor(Math.random() * 1e9)}`;
@@ -160,7 +167,8 @@ async function makeBooking(opts: {
     totalCentavos: opts.totalCentavos,
     amountPaidCentavos: opts.amountPaidCentavos ?? 0,
     // Set so the test can prove `recordPayment` clears it once money lands.
-    holdExpiresAt: new Date('2099-12-24T00:00:00Z'),
+    holdExpiresAt:
+      opts.holdExpiresAt === undefined ? new Date('2099-12-24T00:00:00Z') : opts.holdExpiresAt,
   });
   created.bookingIds.push(booking.insertId);
   return { bookingId: booking.insertId, ref };
@@ -213,8 +221,14 @@ async function one<T>(statement: Statement): Promise<T> {
 }
 
 const bookingRow = (bookingId: number) =>
-  one<{ status: string; amount_paid_centavos: number; hold_expires_at: Date | null }>(
-    sql`SELECT status, amount_paid_centavos, hold_expires_at FROM bookings WHERE id = ${bookingId}`,
+  one<{
+    status: string;
+    amount_paid_centavos: number;
+    hold_expires_at: Date | null;
+    payment_review_required: number;
+  }>(
+    sql`SELECT status, amount_paid_centavos, hold_expires_at, payment_review_required
+        FROM bookings WHERE id = ${bookingId}`,
   );
 
 const refundSum = async (bookingId: number) =>
@@ -280,6 +294,16 @@ describe('recordPayment', () => {
     expect(Number(booking.amount_paid_centavos)).toBe(189000);
     // Nothing left to expire once the money has landed.
     expect(booking.hold_expires_at).toBeNull();
+    /*
+     * Task 16b-3: the happy path must NOT be flagged. This is the half of
+     * that change that proves the dead-booking branch did not swallow the
+     * live one — a `lateMoneyReason()` that returned a reason for every
+     * booking would leave every other assertion in this test intact.
+     */
+    expect(result.paymentReviewRequired).toBe(false);
+    expect(Number(booking.payment_review_required), 'a live booking was flagged for review').toBe(
+      0,
+    );
 
     const payment = await one<{
       type: string;
@@ -575,5 +599,193 @@ describe('recordPayment', () => {
     expect(
       await rows(sql`SELECT id FROM payments WHERE provider_ref = 'pi_audit_boom'`),
     ).toHaveLength(0);
+  });
+
+  // --- Task 16b-3: a late payment must not resurrect a dead booking ---
+
+  /**
+   * The owner's decision, 2026-10-11: money arriving for a booking whose hold
+   * has expired or that was cancelled is still RECORDED — it is real money —
+   * but changes NO booking status. A flag goes up and an audit row explains
+   * why; an admin later re-confirms (if capacity allows) or refunds.
+   *
+   * Four things are asserted every time, because three of the four would
+   * each individually be a silent disaster: the status is unchanged (no
+   * resurrection, no overbooking), the flag is set (an admin will see it),
+   * the payment row EXISTS (the money is not lost), and the audit row
+   * carries the reason and the prior status (it is explainable months
+   * later).
+   */
+  const assertRecordedButNotResurrected = async (
+    bookingId: number,
+    ref: string,
+    expected: { status: BookingStatus; reason: string; amountCentavos: number },
+    providerRef: string,
+  ) => {
+    const result = await recordPayment({
+      bookingId,
+      type: 'payment',
+      provider: 'paymongo',
+      method: 'gcash',
+      amountCentavos: expected.amountCentavos,
+      providerRef,
+      providerStatus: 'paid',
+      actor: WEBHOOK_ACTOR,
+    });
+
+    // 1. The status did NOT move. Nothing auto-confirms (owner DO-NOT).
+    expect(result.bookingStatus).toBe(expected.status);
+    const booking = await bookingRow(bookingId);
+    expect(booking.status, 'a late payment resurrected a dead booking').toBe(expected.status);
+
+    // 2. The flag is up, for the admin decision a later week builds.
+    expect(result.paymentReviewRequired).toBe(true);
+    expect(Number(booking.payment_review_required), 'nobody will ever look at this money').toBe(1);
+
+    // 3. The money is recorded, not lost — and `amount_paid_centavos` moves
+    //    with it, because that is what a refund is measured against.
+    const payment = await one<{ amount_centavos: number; status: string; type: string }>(
+      sql`SELECT amount_centavos, status, type FROM payments WHERE id = ${result.paymentId}`,
+    );
+    expect(Number(payment.amount_centavos)).toBe(expected.amountCentavos);
+    expect(payment).toMatchObject({ type: 'payment', status: 'paid' });
+    expect(Number(booking.amount_paid_centavos)).toBe(expected.amountCentavos);
+
+    // 4. The audit row says WHY, and what the booking was before.
+    const auditRows = await rows<{ actor_type: string; action: string; data: unknown }>(
+      sql`SELECT actor_type, action, data FROM audit_log
+          WHERE entity = 'payments' AND entity_id = ${result.paymentId}`,
+    );
+    expect(auditRows).toHaveLength(1);
+    const audit = auditRows[0]!;
+    // A webhook is `provider`, never `system` — `system` means a cron job (Q10).
+    expect(audit.actor_type).toBe('provider');
+    expect(audit.action).toBe('payment.recorded');
+    const data = typeof audit.data === 'string' ? JSON.parse(audit.data) : audit.data;
+    expect(data).toMatchObject({
+      bookingRef: ref,
+      paymentReviewRequired: true,
+      reviewReason: expected.reason,
+      priorBookingStatus: expected.status,
+      // Equal to priorBookingStatus — and that equality IS the record that
+      // nothing was resurrected.
+      bookingStatus: expected.status,
+    });
+  };
+
+  /**
+   * (a) The hold lapsed while the guest was in the GCash app, and the
+   * hold-expiry cron has not run yet — so the row still says
+   * `pending_payment` with a `hold_expires_at` in the past. The decision
+   * must not depend on which of the two got there first.
+   */
+  dbIt('records a payment on a booking whose hold lapsed, and changes no status', async () => {
+    const { bookingId, ref } = await makeBooking({
+      totalCentavos: 189000,
+      status: 'pending_payment',
+      holdExpiresAt: new Date('2020-01-01T00:00:00Z'),
+    });
+    await assertRecordedButNotResurrected(
+      bookingId,
+      ref,
+      { status: 'pending_payment', reason: 'hold_expired', amountCentavos: 189000 },
+      'pi_late_hold',
+    );
+  });
+
+  /** (a, second flavour) The cron got there first and the row says `expired`. */
+  dbIt('records a payment on an already-expired booking, and changes no status', async () => {
+    const { bookingId, ref } = await makeBooking({
+      totalCentavos: 189000,
+      status: 'expired',
+      holdExpiresAt: null,
+    });
+    await assertRecordedButNotResurrected(
+      bookingId,
+      ref,
+      { status: 'expired', reason: 'booking_expired', amountCentavos: 189000 },
+      'pi_late_expired',
+    );
+  });
+
+  /** (b) A cancelled booking. Same rule, different reason in the audit row. */
+  dbIt('records a payment on a cancelled booking, and changes no status', async () => {
+    const { bookingId, ref } = await makeBooking({
+      totalCentavos: 189000,
+      status: 'cancelled',
+      holdExpiresAt: null,
+    });
+    await assertRecordedButNotResurrected(
+      bookingId,
+      ref,
+      { status: 'cancelled', reason: 'booking_cancelled', amountCentavos: 189000 },
+      'pi_late_cancelled',
+    );
+  });
+
+  /**
+   * The flag is not cleared by a later call, and `recordPayment()` is not
+   * the thing that resolves it — only the admin decision is. A second late
+   * payment on an already-flagged booking must not look resolved.
+   *
+   * It also pins that the amount check still applies to a dead booking: the
+   * second delivery here would overpay, and is refused, which is why the
+   * flag can only have come from the first call.
+   */
+  dbIt('leaves the flag up when a second late payment is refused', async () => {
+    const { bookingId, ref } = await makeBooking({
+      totalCentavos: 189000,
+      status: 'cancelled',
+      holdExpiresAt: null,
+    });
+    await assertRecordedButNotResurrected(
+      bookingId,
+      ref,
+      { status: 'cancelled', reason: 'booking_cancelled', amountCentavos: 189000 },
+      'pi_late_twice_first',
+    );
+    await expect(
+      recordPayment({
+        bookingId,
+        type: 'payment',
+        provider: 'paymongo',
+        method: 'gcash',
+        amountCentavos: 189000,
+        providerRef: 'pi_late_twice_second',
+        providerStatus: 'paid',
+        actor: WEBHOOK_ACTOR,
+      }),
+    ).rejects.toBeInstanceOf(PaymentOverpaysBookingError);
+
+    const booking = await bookingRow(bookingId);
+    expect(Number(booking.payment_review_required), 'the flag was cleared').toBe(1);
+    expect(booking.status).toBe('cancelled');
+    expect(
+      await rows(sql`SELECT id FROM payments WHERE provider_ref = 'pi_late_twice_second'`),
+    ).toHaveLength(0);
+  });
+
+  /**
+   * A refund against a flagged booking still works — that is half of the
+   * admin's choice (re-confirm, or refund), and it only works because the
+   * dead-booking path moved `amount_paid_centavos` rather than discarding
+   * the money. A path that recorded the payment row but left
+   * `amount_paid_centavos` at 0 would pass every assertion above and leave
+   * the admin unable to give the guest their money back.
+   */
+  dbIt('lets an admin refund the money a flagged booking took', async () => {
+    const { bookingId, ref } = await makeBooking({
+      totalCentavos: 189000,
+      status: 'cancelled',
+      holdExpiresAt: null,
+    });
+    await assertRecordedButNotResurrected(
+      bookingId,
+      ref,
+      { status: 'cancelled', reason: 'booking_cancelled', amountCentavos: 189000 },
+      'pi_late_refundable',
+    );
+    await expect(refundOf(bookingId, 189000, ADMIN_ACTOR)).resolves.toBeDefined();
+    expect(await refundSum(bookingId)).toBe(189000);
   });
 });

@@ -242,6 +242,30 @@ describe('bookings table', () => {
    * places that must agree about what a guest owes, and the day they
    * disagree someone is charged twice or waved through for free.
    */
+  /**
+   * Task 16b-3. The flag `recordPayment()` raises when money lands on a
+   * booking that was already cancelled, expired, or holding a lapsed hold.
+   *
+   * NOT NULL with a `false` default, so every existing row and every new one
+   * starts unflagged — a nullable flag would make "not reviewed" and "no
+   * review needed" the same value. A boolean rather than a ninth
+   * `BOOKING_STATUSES` member: this is orthogonal to the §5 lifecycle, and a
+   * new status would have to be threaded through every capacity query,
+   * portal view and driver filter that switches on it.
+   */
+  it('flags a booking whose payment needs an admin review, defaulting to false', () => {
+    expect(columnNames, 'late money has nowhere to be recorded as needing review').toContain(
+      'payment_review_required',
+    );
+    expect(column('payment_review_required')?.getSQLType()).toBe('boolean');
+    expect(column('payment_review_required')?.notNull).toBe(true);
+    expect(column('payment_review_required')?.default, 'a booking must start unflagged').toBe(
+      false,
+    );
+    // It is not a status. The §5 lifecycle is unchanged by 16b-3.
+    expect(column('status')?.enumValues).toEqual([...BOOKING_STATUSES]);
+  });
+
   it('has NO balance column — balance is total minus amount paid, computed at read time', () => {
     expect(columnNames).not.toContain('balance');
     expect(columnNames).not.toContain('balance_centavos');
