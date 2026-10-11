@@ -36,12 +36,17 @@ const EXPECTED_TABLES = [
   // Core-schema plan, Task 7 — the first Wave 2 table. Its own assertions
   // live in schema-sessions.test.ts.
   'sessions',
+  // Core-schema plan, Task 8 — the central record. Its own assertions live
+  // in schema-bookings.test.ts.
+  'bookings',
 ];
 
 describe('public content schema', () => {
-  it('exports every public content table and no booking tables yet', () => {
+  it('exports every table built so far and no payment tables yet', () => {
     for (const name of EXPECTED_TABLES) expect(schema).toHaveProperty(name);
-    expect(schema).not.toHaveProperty('bookings');
+    // Still ahead of us: Tasks 10-12. These negatives are what stop a task
+    // from quietly landing a table its own plan step has not reached yet.
+    expect(schema).not.toHaveProperty('bookingAddons');
     expect(schema).not.toHaveProperty('payments');
   });
 

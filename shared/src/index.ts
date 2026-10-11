@@ -1,3 +1,4 @@
+export * from './booking';
 export * from './constants';
 export * from './coupon';
 export * from './money';
