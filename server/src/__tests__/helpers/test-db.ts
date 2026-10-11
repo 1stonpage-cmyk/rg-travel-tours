@@ -15,9 +15,10 @@
  * the env-var fallback in client.ts, it cannot be fooled by a merely
  * correctly-spelled but misresolving TEST_DATABASE_URL.
  *
- * Deletion order, not TRUNCATE + FOREIGN_KEY_CHECKS: `tours.destination_id`
- * is the only real FK constraint in this schema (every "tourId" column on
- * the other tables is a plain int with no DB-level FK). MySQL/InnoDB
+ * Deletion order, not TRUNCATE + FOREIGN_KEY_CHECKS: these tables are tied
+ * together by real FK constraints — `tours.destination_id`, and since task
+ * 11b-4 `reviews.tour_id` too, which is why `reviews` is deleted before
+ * `tours` and `tours` before `destinations`. MySQL/InnoDB
  * refuses to TRUNCATE a table referenced by a FOREIGN KEY constraint from
  * another table — `destinations` specifically — regardless of whether the
  * referencing rows are already gone, so TRUNCATE would still fail here even

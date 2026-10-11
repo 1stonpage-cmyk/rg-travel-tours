@@ -19,7 +19,9 @@
  * pass because a table is missing.
  */
 import { describe, expect, it } from 'vitest';
-import { getTableConfig } from 'drizzle-orm/mysql-core';
+import { sql } from 'drizzle-orm';
+import { MySqlDialect, getTableConfig } from 'drizzle-orm/mysql-core';
+import { getDb, getPool, type Transaction } from '../db/client';
 import { DRIVER_STATUSES, VAN_STATUSES, driverLeaves, drivers, vans } from '../db/schema';
 
 /** The columns, indexes and constraints drizzle-kit will emit for a table. */
@@ -249,5 +251,170 @@ describe('driver_leaves table', () => {
   it('times the row itself in UTC, keeping the instant and the dates distinct', () => {
     expect(column('created_at')?.getSQLType()).toBe('datetime');
     expect(column('created_at')?.notNull).toBe(true);
+  });
+
+  /**
+   * Task 11b-3. The range must run forwards, enforced in the database and
+   * not only in Zod. The clause itself, not just the name: `CHECK (1 = 1)`
+   * is a constraint that exists, migrates cleanly and enforces nothing.
+   *
+   * `>=`, because the range is inclusive at both ends — a one-day leave is
+   * `start_date = end_date`, which `>` would refuse.
+   */
+  it('declares a CHECK that the range runs forwards, inclusive at both ends', () => {
+    expect(config.checks.map((c) => c.name)).toEqual(['driver_leaves_date_order']);
+    const clause = new MySqlDialect().sqlToQuery(config.checks[0]!.value).sql;
+    expect(clause).toContain('`driver_leaves`.`end_date` >= `driver_leaves`.`start_date`');
+  });
+});
+
+/**
+ * Task 11b-3: the `end_date >= start_date` CHECK, against the real database.
+ *
+ * `schema-fleet.test.ts` was until now a pure `getTableConfig()` file,
+ * because Wave 1 had not been migrated when Tasks 3 and 4 were written. It
+ * has since been applied, so the CHECK can be — and must be — proven live
+ * and enforcing, not merely declared: MySQL 8.0.15 and earlier PARSE a
+ * CHECK and silently ignore it, which is the difference between a
+ * constraint and a comment. (This server is 8.0.46.)
+ *
+ * Gated on the table existing, the same runtime probe
+ * `schema-coupons.test.ts` uses, so it reports SKIPPED rather than silently
+ * passing if the migration were ever lost.
+ */
+async function tableExists(name: string): Promise<boolean> {
+  try {
+    const [rows] = (await getPool().query(
+      'SELECT 1 FROM information_schema.tables WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',
+      [name],
+    )) as [unknown[], unknown];
+    return rows.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+const leavesExist = await tableExists('driver_leaves');
+const dbIt = leavesExist ? it : it.skip;
+
+/** Thrown to roll the fixture transaction back; never escapes `inRollback`. */
+const ROLLBACK = new Error('__rollback__');
+
+/**
+ * Runs `fn` in a transaction that is always rolled back, so these tests
+ * leave no driver and no leave behind — the same helper shape
+ * `schema-trips.test.ts` uses.
+ */
+async function inRollback(fn: (tx: Transaction) => Promise<void>): Promise<void> {
+  try {
+    await getDb().transaction(async (tx) => {
+      await fn(tx);
+      throw ROLLBACK;
+    });
+  } catch (error) {
+    if (error !== ROLLBACK) throw error;
+  }
+}
+
+/** A driver, for the `driver_id` foreign key to point at. */
+async function makeDriver(tx: Transaction): Promise<number> {
+  const unique = `__fleet__${Date.now() % 1e9}_${Math.floor(Math.random() * 1e4)}`;
+  const [driver] = await tx.insert(drivers).values({
+    name: 'Test Driver',
+    code: unique.slice(0, 20),
+    phone: '09170000000',
+    pinHash: 'x'.repeat(40),
+  });
+  return driver.insertId;
+}
+
+/**
+ * Runs `run` and reports the MySQL error code it was refused with, or `null`
+ * when the database accepted it. The code, not the message: Drizzle wraps a
+ * mysql2 error in a `DrizzleQueryError` whose message is the SQL text.
+ */
+async function rejectionCode(run: () => Promise<unknown>): Promise<string | null> {
+  try {
+    await run();
+    return null;
+  } catch (error) {
+    let current: unknown = error;
+    for (let depth = 0; depth < 5 && current != null; depth += 1) {
+      if (typeof current !== 'object') break;
+      const code = (current as { code?: unknown }).code;
+      if (typeof code === 'string') return code;
+      current = (current as { cause?: unknown }).cause;
+    }
+    return 'UNRECOGNISED';
+  }
+}
+
+describe('driver_leaves, as actually migrated', () => {
+  dbIt('has the date-order CHECK live in information_schema', async () => {
+    const [rows] = (await getPool().query(
+      'SELECT CONSTRAINT_NAME FROM information_schema.check_constraints ' +
+        'WHERE CONSTRAINT_SCHEMA = DATABASE() AND CONSTRAINT_NAME = ?',
+      ['driver_leaves_date_order'],
+    )) as [Array<{ CONSTRAINT_NAME: string }>, unknown];
+    expect(rows, 'driver_leaves_date_order is not an enforced constraint').toHaveLength(1);
+  });
+
+  /**
+   * The row this CHECK exists to stop. A backwards range is not untidy: the
+   * availability query asks `start_date <= :day AND end_date >= :day`, which
+   * a reversed range can NEVER satisfy — so the leave silently does nothing
+   * and the driver is dispatched on a day they said they were off.
+   *
+   * A raw `INSERT`, bypassing Zod entirely: the point is that the DATABASE
+   * refuses it, the way it must for a seed script or a hand-written UPDATE.
+   */
+  dbIt('REFUSES a leave that ends before it starts', async () => {
+    await inRollback(async (tx) => {
+      const driverId = await makeDriver(tx);
+      expect(
+        await rejectionCode(() =>
+          tx.execute(
+            sql`INSERT INTO driver_leaves (driver_id, start_date, end_date, created_at)
+                VALUES (${driverId}, '2026-12-26', '2026-12-24', UTC_TIMESTAMP())`,
+          ),
+        ),
+        'a backwards leave was stored — it will match no availability query',
+      ).toBe('ER_CHECK_CONSTRAINT_VIOLATED');
+    });
+  });
+
+  /**
+   * `>=`, not `>`. The range is inclusive at both ends, so a one-day leave
+   * is `start_date = end_date` — and a CHECK written with `>` would refuse
+   * the single commonest leave there is.
+   */
+  dbIt('ACCEPTS a single-day leave, where start_date = end_date', async () => {
+    await inRollback(async (tx) => {
+      const driverId = await makeDriver(tx);
+      expect(
+        await rejectionCode(() =>
+          tx.execute(
+            sql`INSERT INTO driver_leaves (driver_id, start_date, end_date, created_at)
+                VALUES (${driverId}, '2026-12-25', '2026-12-25', UTC_TIMESTAMP())`,
+          ),
+        ),
+        'a one-day leave was refused — the CHECK uses > instead of >=',
+      ).toBeNull();
+    });
+  });
+
+  dbIt('ACCEPTS a normal multi-day leave', async () => {
+    await inRollback(async (tx) => {
+      const driverId = await makeDriver(tx);
+      expect(
+        await rejectionCode(() =>
+          tx.execute(
+            sql`INSERT INTO driver_leaves (driver_id, start_date, end_date, created_at)
+                VALUES (${driverId}, '2026-12-24', '2026-12-26', UTC_TIMESTAMP())`,
+          ),
+        ),
+        'a normal leave was refused',
+      ).toBeNull();
+    });
   });
 });

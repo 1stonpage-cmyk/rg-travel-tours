@@ -207,7 +207,20 @@ export const reviews = mysqlTable(
   'reviews',
   {
     id: int('id').autoincrement().primaryKey(),
-    tourId: int('tour_id'),
+    /**
+     * The tour reviewed, or null for a review of the operator as a whole.
+     *
+     * Made a real foreign key in task 11b (owner decision 2026-10-11): it
+     * had been a bare int since the public-site plan, and a dangling
+     * `tour_id` points a five-star review at a tour that does not exist —
+     * which still raises the site-wide average while showing nowhere a
+     * reader could check it. That is the fake social proof CLAUDE.md
+     * forbids, arrived at by accident.
+     *
+     * Nullable stays, and nothing cascades: retiring a tour must not erase
+     * what guests said about it.
+     */
+    tourId: int('tour_id').references(() => tours.id),
     /**
      * The booking this review came from, or null for an admin-entered one.
      * Retro-fitted as a real foreign key in the core-schema plan's Task 11,
@@ -498,7 +511,24 @@ export const driverLeaves = mysqlTable(
       .notNull()
       .$defaultFn(() => new Date()),
   },
-  (t) => [index('driver_leaves_driver_range_idx').on(t.driverId, t.startDate, t.endDate)],
+  (t) => [
+    index('driver_leaves_driver_range_idx').on(t.driverId, t.startDate, t.endDate),
+    /**
+     * The range runs forwards (owner decision 2026-10-11, task 11b-2).
+     *
+     * A backwards row is not merely untidy: every availability query asks
+     * `start_date <= :day AND end_date >= :day`, which a reversed range can
+     * never satisfy — so the leave silently does nothing and the driver is
+     * dispatched on a day they told dispatch they were off. `>=`, not `>`:
+     * a single-day leave is `start_date = end_date` (the range is inclusive
+     * at both ends).
+     *
+     * This constrains ONE row. Two leaves for the same driver that overlap
+     * each other are still possible and are a service-layer concern — the
+     * owner has logged that separately; it is deliberately not built here.
+     */
+    check('driver_leaves_date_order', sql`${t.endDate} >= ${t.startDate}`),
+  ],
 );
 
 /**
@@ -567,6 +597,32 @@ export const coupons = mysqlTable(
       sql`(${t.discountType} = 'percent' AND ${t.percentBp} IS NOT NULL AND ${t.amountCentavos} IS NULL)
        OR (${t.discountType} = 'fixed'   AND ${t.amountCentavos} IS NOT NULL AND ${t.percentBp} IS NULL)`,
     ),
+    /**
+     * The RANGE, which the shape CHECK above does not constrain (owner
+     * decision 2026-10-11, task 11b-1). `coupons_discount_shape` asks only
+     * *which* column is set, so `percent_bp = 999999` — a 9999.99% discount
+     * that pays the guest to travel — satisfies it perfectly, as does
+     * `amount_centavos = -5000`, a "discount" that adds ₱50 to the bill.
+     *
+     * 1..10000 basis points is 0.01%..100%: a coupon must take something off
+     * and cannot take off more than the whole price. The bound mirrors
+     * `couponDiscountSchema` in `/shared` exactly — Zod guards the API, this
+     * guards the seed script, the migration and the 2am UPDATE.
+     *
+     * `IS NULL OR` is explicit rather than relying on MySQL treating a NULL
+     * CHECK result as satisfied: the null case is the normal one for a fixed
+     * coupon, and it should be legible in the DDL rather than implied.
+     */
+    check(
+      'coupons_percent_bp_range',
+      sql`${t.percentBp} IS NULL OR (${t.percentBp} >= 1 AND ${t.percentBp} <= 10000)`,
+    ),
+    /**
+     * A fixed discount is strictly positive centavos. Zero is not a coupon
+     * (it would show as applied and take nothing off), and a negative one is
+     * a surcharge wearing a coupon's name.
+     */
+    check('coupons_amount_positive', sql`${t.amountCentavos} IS NULL OR ${t.amountCentavos} > 0`),
   ],
 );
 
@@ -1043,10 +1099,43 @@ export const tripCheckpoints = mysqlTable(
       .$defaultFn(() => new Date()),
     /** §8: "Undo last check-in … marked undone, not deleted". */
     undone: boolean('undone').notNull().default(false),
+    /**
+     * WHEN the undo happened, and WHO did it (owner decision 2026-10-11,
+     * task 11b-2).
+     *
+     * `undone` alone records that a tap was retracted but not when — and
+     * "the van arrived at 10:15, then that was retracted at 10:16" and
+     * "… retracted three days later, after the complaint came in" are very
+     * different facts in a refund argument. Both columns stay null while
+     * `undone` is false.
+     *
+     * `undone_by` is a DRIVER, not an admin user: §8 scopes undo to the
+     * driver portal ("Undo last check-in — only the most recent"). If the
+     * admin/dispatch surface ever gains the same power it needs its own
+     * column, not a second meaning for this one.
+     */
+    undoneAt: datetime('undone_at', { mode: 'date' }),
+    undoneBy: int('undone_by').references(() => drivers.id),
   },
   (t) => [
     /** One trip's checkpoints, in the order they happened. */
     index('trip_checkpoints_booking_idx').on(t.bookingId, t.checkedAt),
+    /**
+     * One check-in per stop per trip (owner decision 2026-10-11, task
+     * 11b-2). A driver on a moving van double-taps "Arrived at Kawasan" and
+     * the tracker must not show the stop reached twice.
+     *
+     * **This does NOT constrain the trip-start event.** `stop_id` is
+     * nullable and null means "trip start" (§8), and a MySQL UNIQUE index
+     * permits unlimited NULLs — so two `(booking_id, NULL)` rows are still
+     * accepted by this index. `schema-trips.test.ts` proves both halves:
+     * that a duplicate real stop is refused, and that a duplicate trip
+     * start is not. Closing that hole needs a stored generated column
+     * (`stop_key = COALESCE(stop_id, 0)`) with the UNIQUE on
+     * `(booking_id, stop_key)`; it is reported and awaiting the owner, and
+     * until then the driver portal must guard the Start tap itself.
+     */
+    uniqueIndex('trip_checkpoints_booking_stop_unique').on(t.bookingId, t.stopId),
   ],
 );
 

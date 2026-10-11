@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
-import { afterEach, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
 import { getDb } from '../db/client';
-import { reviews, tours } from '../db/schema';
+import { destinations, reviews, tours } from '../db/schema';
 import { displayAggregate, realAggregate } from '../services/ratings';
 import { describeWithDb } from './helpers/db';
 
@@ -33,18 +33,59 @@ describeWithDb('rating aggregates — seeded baseline (D1)', () => {
 });
 
 describeWithDb('rating aggregates — fixtures', () => {
-  // Fake tour ids well outside the seeded range (seeded tours are low
-  // auto-increment ints) so these rows never overlap real tours and never
-  // need resetTestDb() — plain per-test cleanup by id is enough.
-  const TOUR_A = 900_001;
-  const TOUR_B = 900_002;
+  // Two REAL tours, created for this suite and removed after it.
+  //
+  // These used to be invented ids (900_001 / 900_002) well outside the
+  // seeded range — which `reviews.tour_id` happily stored, because it was a
+  // bare int. Task 11b-4 made it a foreign key to `tours.id`, so a review
+  // of a tour that does not exist is now refused by the database: the very
+  // property the FK was added for, and the reason this fixture had to
+  // change. The ids are still unrelated to the seeded tours, so the
+  // per-tour assertions below stay isolated and no resetTestDb() is needed.
+  let TOUR_A = 0;
+  let TOUR_B = 0;
+  let destinationId = 0;
   const insertedIds: number[] = [];
+
+  beforeAll(async () => {
+    const db = getDb();
+    const unique = `__ratings__${Date.now() % 1e9}`;
+    const [destination] = await db
+      .insert(destinations)
+      .values({ name: unique, slug: unique, isActive: false });
+    destinationId = destination.insertId;
+    // Inactive, so no public query, sitemap or aggregate that filters on
+    // is_active can see them while this file is the one running.
+    for (const suffix of ['a', 'b']) {
+      const [tour] = await db.insert(tours).values({
+        slug: `${unique}-${suffix}`,
+        title: `Fixture tour ${suffix}`,
+        destinationId,
+        isActive: false,
+      });
+      if (suffix === 'a') TOUR_A = tour.insertId;
+      else TOUR_B = tour.insertId;
+    }
+  });
 
   afterEach(async () => {
     const db = getDb();
     for (const id of insertedIds.splice(0)) {
       await db.delete(reviews).where(eq(reviews.id, id));
     }
+  });
+
+  afterAll(async () => {
+    const db = getDb();
+    // Reviews first, then tours, then the destination — the FKs that now
+    // exist are the reason this order matters.
+    for (const id of insertedIds.splice(0)) {
+      await db.delete(reviews).where(eq(reviews.id, id));
+    }
+    for (const id of [TOUR_A, TOUR_B]) {
+      if (id) await db.delete(tours).where(eq(tours.id, id));
+    }
+    if (destinationId) await db.delete(destinations).where(eq(destinations.id, destinationId));
   });
 
   async function insertReview(row: {

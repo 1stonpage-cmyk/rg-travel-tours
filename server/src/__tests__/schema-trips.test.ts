@@ -2,6 +2,7 @@
  * Task 11 of the core-schema plan: `trip_checkpoints`,
  * `review_helpful_votes`, and the two foreign keys retro-fitted onto
  * tables that already existed (`reviews.booking_id` → `bookings.id`,
+ * `reviews.tour_id` → `tours.id` (task 11b),
  * `inquiries.package_id` → `packages.id`).
  *
  * Two layers, the split `schema-sessions.test.ts` and
@@ -25,6 +26,7 @@ import { getDb, getPool, type Transaction } from '../db/client';
 import {
   bookings,
   destinations,
+  drivers,
   inquiries,
   packages,
   reviewHelpfulVotes,
@@ -126,10 +128,10 @@ describe('trip_checkpoints', () => {
    * A cascade from `tour_itinerary_stops` would erase the check-ins of
    * completed trips the moment an admin reordered a tour's itinerary.
    */
-  it('references bookings and tour_itinerary_stops, and cascades nothing', () => {
+  it('references bookings, tour_itinerary_stops and the undoing driver, and cascades nothing', () => {
     expect(
       checkpoints.foreignKeys.map((fk) => `${fk.columns.join(',')}->${fk.table}`).sort(),
-    ).toEqual(['booking_id->bookings', 'stop_id->tour_itinerary_stops']);
+    ).toEqual(['booking_id->bookings', 'stop_id->tour_itinerary_stops', 'undone_by->drivers']);
     for (const fk of checkpoints.foreignKeys) {
       expect(fk.foreignColumns).toEqual(['id']);
       expect(fk.onDelete, `${fk.columns} must not cascade`).toBeUndefined();
@@ -141,6 +143,54 @@ describe('trip_checkpoints', () => {
     expect(checkpoints.indexes['trip_checkpoints_booking_idx']).toEqual([
       'booking_id',
       'checked_at',
+    ]);
+  });
+
+  /**
+   * Task 11b-2. `undone` alone records that a tap was retracted but not
+   * when or by whom — and "arrived at 10:15, retracted at 10:16" and
+   * "… retracted three days later, after the complaint arrived" are very
+   * different facts in a refund argument.
+   *
+   * `undone_by` is a DRIVER: §8 scopes undo to the driver portal ("Undo
+   * last check-in — only the most recent"). Both columns are nullable
+   * because they are empty for the normal, un-retracted check-in.
+   */
+  it('records when an undo happened and which driver did it', () => {
+    expect(checkpoints.column('undone_at')?.getSQLType()).toBe('datetime');
+    expect(
+      checkpoints.column('undone_at')?.notNull,
+      'a live check-in has no undo time',
+    ).toBeFalsy();
+    expect(checkpoints.column('undone_by')?.getSQLType()).toBe('int');
+    expect(checkpoints.column('undone_by')?.notNull).toBeFalsy();
+    const fk = checkpoints.foreignKeys.find((f) => f.columns.join(',') === 'undone_by');
+    expect(fk, 'undone_by is a bare int, not a real driver reference').toBeDefined();
+    expect(fk?.table, 'undo is the driver portal’s, not an admin user’s').toBe('drivers');
+    expect(fk?.onDelete, 'a retired driver must not erase the check-in').toBeUndefined();
+  });
+
+  /**
+   * Task 11b-2, the double-tap guard. A driver on a moving van taps
+   * "Arrived at Kawasan" twice and the tracker must not show the stop
+   * reached twice.
+   *
+   * See the caveat on the index in `schema.ts` and the pair of database
+   * tests below: this constrains real stops ONLY, because null `stop_id`
+   * means "trip start" and MySQL's UNIQUE permits unlimited NULLs.
+   */
+  it('declares one check-in per (booking, stop) as a UNIQUE index', () => {
+    const config = getTableConfig(tripCheckpoints);
+    const unique = config.indexes.find(
+      (i) => i.config.name === 'trip_checkpoints_booking_stop_unique',
+    );
+    expect(unique, 'the double-tap guard is gone').toBeDefined();
+    expect(unique?.config.unique, 'the index exists but is not unique — it guards nothing').toBe(
+      true,
+    );
+    expect(checkpoints.indexes['trip_checkpoints_booking_stop_unique']).toEqual([
+      'booking_id',
+      'stop_id',
     ]);
   });
 });
@@ -190,7 +240,7 @@ describe('review_helpful_votes', () => {
   });
 });
 
-describe('the two retro-fitted foreign keys', () => {
+describe('the retro-fitted foreign keys', () => {
   /**
    * `reviews.booking_id` has been a bare nullable int since the public-site
    * plan, because `bookings` did not exist yet. It is what makes a review
@@ -209,6 +259,28 @@ describe('the two retro-fitted foreign keys', () => {
     expect(
       reviewsShape.column('booking_id')?.notNull,
       'an admin-entered review has no booking',
+    ).toBeFalsy();
+  });
+
+  /**
+   * Task 11b-4. `reviews.tour_id` has been a bare nullable int since the
+   * public-site plan. A dangling id is a review of a tour that does not
+   * exist — it still counts toward a rating while showing on no page a
+   * reader could check, which is fake social proof reached by accident.
+   *
+   * Nullable stays (a review of the operator as a whole names no tour), and
+   * nothing cascades: retiring a tour must not erase what guests said.
+   */
+  it('points reviews.tour_id at a real tour, or at nothing', () => {
+    const fk = reviewsShape.foreignKeys.find((f) => f.columns.join(',') === 'tour_id');
+    expect(fk, 'reviews.tour_id is still a bare int').toBeDefined();
+    expect(fk?.table).toBe('tours');
+    expect(fk?.foreignColumns).toEqual(['id']);
+    expect(fk?.onDelete, 'a retired tour must not delete its reviews').toBeUndefined();
+    expect(fk?.onUpdate).toBeUndefined();
+    expect(
+      reviewsShape.column('tour_id')?.notNull,
+      'a review of the operator as a whole names no tour',
     ).toBeFalsy();
   });
 
@@ -403,6 +475,116 @@ describe('trip_checkpoints, as actually migrated', () => {
       ).toBe('ER_NO_REFERENCED_ROW_2');
     });
   });
+
+  /**
+   * Task 11b-2. The double-tap the UNIQUE index is for: a driver taps
+   * "Arrived at Kawasan", the request is slow, and they tap again.
+   *
+   * Raw `INSERT`s, so no service-layer guard can be what makes this pass —
+   * the database must be the thing that refuses the second row.
+   */
+  dbIt('refuses a second check-in for the same (booking, real stop)', async () => {
+    await inRollback(async (tx) => {
+      const { bookingId, tourId } = await makeBooking(tx);
+      const [stop] = await tx
+        .insert(tourItineraryStops)
+        .values({ tourId, sortOrder: 1, name: 'Kawasan Falls' });
+      const insert = () =>
+        tx.execute(
+          sql`INSERT INTO trip_checkpoints (booking_id, stop_id, checked_at, undone)
+              VALUES (${bookingId}, ${stop.insertId}, UTC_TIMESTAMP(), 0)`,
+        );
+      expect(await rejectionCode(insert), 'the first check-in was refused').toBeNull();
+      expect(
+        await rejectionCode(insert),
+        'a double-tap wrote the stop twice — the UNIQUE index is gone or not unique',
+      ).toBe('ER_DUP_ENTRY');
+    });
+  });
+
+  /**
+   * **The hole in the constraint, asserted rather than hoped away.**
+   *
+   * `stop_id` is nullable and null means "trip start" (§8). A MySQL UNIQUE
+   * index permits UNLIMITED NULLs, so `UNIQUE (booking_id, stop_id)` does
+   * NOT stop two trip-start rows for the same booking — it constrains real
+   * stops only. This test documents the behaviour that actually exists:
+   * both inserts succeed and the trip has two starts.
+   *
+   * It is written to go red if the hole is ever closed, which is the point.
+   * Closing it needs a stored generated column
+   * (`stop_key = COALESCE(stop_id, 0)`) with the UNIQUE on
+   * `(booking_id, stop_key)` — reported to the owner in task 11b and NOT
+   * implemented here. Until then the Start tap is guarded in the driver
+   * portal, not by the schema.
+   */
+  dbIt('does NOT stop a duplicate trip-start — MySQL UNIQUE permits many NULLs', async () => {
+    await inRollback(async (tx) => {
+      const { bookingId } = await makeBooking(tx);
+      const insertStart = () =>
+        tx.execute(
+          sql`INSERT INTO trip_checkpoints (booking_id, stop_id, checked_at, undone)
+              VALUES (${bookingId}, NULL, UTC_TIMESTAMP(), 0)`,
+        );
+      expect(await rejectionCode(insertStart), 'the first trip-start was refused').toBeNull();
+      expect(
+        await rejectionCode(insertStart),
+        'the duplicate trip-start was refused — the NULL hole is CLOSED, so update ' +
+          'this test and the note on the index in schema.ts',
+      ).toBeNull();
+
+      const [rows] = (await tx.execute(
+        sql`SELECT COUNT(*) AS n FROM trip_checkpoints
+            WHERE booking_id = ${bookingId} AND stop_id IS NULL`,
+      )) as unknown as [Array<{ n: number }>, unknown];
+      expect(Number(rows[0]?.n), 'two trip-start rows are the documented limitation').toBe(2);
+    });
+  });
+
+  /**
+   * The undo columns, end to end. `undone_by` must accept a real driver id
+   * and refuse one that does not exist — an undo attributed to nobody is an
+   * undo nobody can be asked about.
+   */
+  dbIt('records an undo against a real driver, and refuses an unknown one', async () => {
+    await inRollback(async (tx) => {
+      const { bookingId, tourId } = await makeBooking(tx);
+      const [stop] = await tx
+        .insert(tourItineraryStops)
+        .values({ tourId, sortOrder: 1, name: 'Kawasan Falls' });
+      const unique = `__trips__${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+      const [driver] = await tx.insert(drivers).values({
+        name: 'Test Driver',
+        code: unique.slice(0, 20),
+        phone: '09170000000',
+        pinHash: 'x'.repeat(40),
+      });
+      await tx.execute(
+        sql`INSERT INTO trip_checkpoints (booking_id, stop_id, checked_at, undone)
+            VALUES (${bookingId}, ${stop.insertId}, UTC_TIMESTAMP(), 0)`,
+      );
+      expect(
+        await rejectionCode(() =>
+          tx.execute(
+            sql`UPDATE trip_checkpoints
+                SET undone = 1, undone_at = UTC_TIMESTAMP(), undone_by = ${driver.insertId}
+                WHERE booking_id = ${bookingId}`,
+          ),
+        ),
+        'a legitimate driver undo was refused',
+      ).toBeNull();
+
+      expect(
+        await rejectionCode(() =>
+          tx.execute(
+            sql`UPDATE trip_checkpoints SET undone_by = 2147483600
+                WHERE booking_id = ${bookingId}`,
+          ),
+        ),
+        'an undo was attributed to a driver who does not exist',
+      ).toBe('ER_NO_REFERENCED_ROW_2');
+    });
+  });
 });
 
 describe('review_helpful_votes, as actually migrated', () => {
@@ -505,6 +687,52 @@ describe('the retro-fitted foreign keys, as actually migrated', () => {
         ),
         'the FK made an admin-entered review impossible',
       ).toBeNull();
+    });
+  });
+
+  /**
+   * Task 11b-4. `reviews.tour_id` was a bare int until now, so
+   * `tour_id = 99999` stored fine — a five-star review of a tour that does
+   * not exist, lifting the site-wide average while appearing on no page a
+   * reader could check. CLAUDE.md forbids exactly that, and this is how it
+   * arrives by accident rather than by intent.
+   */
+  dbIt('refuses a review of a tour that does not exist', async () => {
+    await inRollback(async (tx) => {
+      expect(
+        await rejectionCode(() =>
+          tx.execute(
+            sql`INSERT INTO reviews (tour_id, name, rating, body, created_at, updated_at)
+                VALUES (2147483600, 'Fake Guest', 5, 'Great trip', UTC_TIMESTAMP(), UTC_TIMESTAMP())`,
+          ),
+        ),
+        'a review was stored against a non-existent tour',
+      ).toBe('ER_NO_REFERENCED_ROW_2');
+    });
+  });
+
+  /**
+   * Both legitimate states survive the new FK: a review of a real tour, and
+   * a review of the operator as a whole with no tour behind it.
+   */
+  dbIt('still accepts a review of a real tour, and one of no tour at all', async () => {
+    await inRollback(async (tx) => {
+      const unique = `__trips__${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+      const [destination] = await tx.insert(destinations).values({ name: unique, slug: unique });
+      const [tour] = await tx
+        .insert(tours)
+        .values({ slug: unique, title: unique, destinationId: destination.insertId });
+      for (const tourId of [null, tour.insertId]) {
+        expect(
+          await rejectionCode(() =>
+            tx.execute(
+              sql`INSERT INTO reviews (tour_id, name, rating, body, created_at, updated_at)
+                  VALUES (${tourId}, 'Guest', 5, 'Great trip', UTC_TIMESTAMP(), UTC_TIMESTAMP())`,
+            ),
+          ),
+          `a valid review with tour_id=${tourId} was refused`,
+        ).toBeNull();
+      }
     });
   });
 

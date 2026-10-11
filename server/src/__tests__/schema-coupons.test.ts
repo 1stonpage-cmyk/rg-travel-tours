@@ -155,8 +155,35 @@ describe('couponDiscountSchema', () => {
 });
 
 describe('coupons table', () => {
-  it('declares the discount-shape CHECK constraint', () => {
-    expect(config.checks.map((c) => c.name)).toEqual(['coupons_discount_shape']);
+  it('declares the discount-shape CHECK and both range CHECKs', () => {
+    expect(config.checks.map((c) => c.name).sort()).toEqual([
+      'coupons_amount_positive',
+      'coupons_discount_shape',
+      'coupons_percent_bp_range',
+    ]);
+  });
+
+  /**
+   * Task 11b-1. The shape CHECK asks only WHICH column is set, never what
+   * is in it — so `percent_bp = 999999` and `amount_centavos = -5000` both
+   * satisfied it, and the second is a surcharge wearing a coupon's name.
+   *
+   * The clauses, not just the names: a range CHECK gutted to `1 = 1` exists,
+   * migrates cleanly, and enforces nothing. Both bounds must appear.
+   */
+  it('bounds percent_bp to 1..10000 basis points in the CHECK clause itself', () => {
+    const check = config.checks.find((c) => c.name === 'coupons_percent_bp_range');
+    const clause = new MySqlDialect().sqlToQuery(check!.value).sql;
+    for (const fragment of ['`percent_bp` >= 1', '`percent_bp` <= 10000']) {
+      expect(clause, `the range CHECK no longer bounds ${fragment}`).toContain(fragment);
+    }
+  });
+
+  it('requires a fixed discount to be strictly positive in the CHECK clause itself', () => {
+    const check = config.checks.find((c) => c.name === 'coupons_amount_positive');
+    const clause = new MySqlDialect().sqlToQuery(check!.value).sql;
+    // `> 0`, not `>= 0`: a zero discount shows as applied and takes nothing off.
+    expect(clause).toContain('`amount_centavos` > 0');
   });
 
   /**
@@ -322,6 +349,19 @@ describe('coupons, against the real database', () => {
     expect(rows, 'coupons_discount_shape is not an enforced constraint').toHaveLength(1);
   });
 
+  /** The same question for the two range CHECKs added in task 11b-1. */
+  dbIt('has both range CHECKs live in information_schema', async () => {
+    const [rows] = (await getPool().query(
+      'SELECT CONSTRAINT_NAME FROM information_schema.check_constraints ' +
+        'WHERE CONSTRAINT_SCHEMA = DATABASE() AND CONSTRAINT_NAME IN (?) ORDER BY CONSTRAINT_NAME',
+      [['coupons_amount_positive', 'coupons_percent_bp_range']],
+    )) as [Array<{ CONSTRAINT_NAME: string }>, unknown];
+    expect(rows.map((r) => r.CONSTRAINT_NAME)).toEqual([
+      'coupons_amount_positive',
+      'coupons_percent_bp_range',
+    ]);
+  });
+
   dbIt('stores the discount as basis points or centavos, never a float', async () => {
     const [cols] = (await getPool().query(
       'SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE FROM information_schema.columns ' +
@@ -384,6 +424,61 @@ describe('coupons, against the real database', () => {
     await expect(
       insertCoupon({ discountType: 'percent', percentBp: null, amountCentavos: null }),
     ).rejects.toThrow(/check constraint/i);
+  });
+
+  /**
+   * Task 11b-1, the range. Every one of these rows satisfies
+   * `coupons_discount_shape` — the right column is set and it matches
+   * `discount_type` — so before the range CHECKs existed the database took
+   * all five without complaint.
+   *
+   * Raw `INSERT`s, bypassing Zod entirely: the point is that the DATABASE
+   * refuses them, the way it must when a seed script, a migration or a hand
+   * -written UPDATE skips the API.
+   */
+  dbIt('REFUSES a percentage above 100% (10000 bp), the 9999.99% coupon', async () => {
+    await expect(
+      insertCoupon({ discountType: 'percent', percentBp: 999999, amountCentavos: null }),
+    ).rejects.toThrow(/check constraint/i);
+  });
+
+  dbIt('REFUSES a zero or negative percentage, which is not a discount', async () => {
+    for (const percentBp of [0, -100]) {
+      await expect(
+        insertCoupon({ discountType: 'percent', percentBp, amountCentavos: null }),
+        `${percentBp} bp was accepted`,
+      ).rejects.toThrow(/check constraint/i);
+    }
+  });
+
+  /** A negative "discount" ADDS ₱50 to the bill. */
+  dbIt('REFUSES a negative fixed discount, which is a surcharge', async () => {
+    await expect(
+      insertCoupon({ discountType: 'fixed', percentBp: null, amountCentavos: -5000 }),
+    ).rejects.toThrow(/check constraint/i);
+  });
+
+  dbIt('REFUSES a zero fixed discount, which applies and takes nothing off', async () => {
+    await expect(
+      insertCoupon({ discountType: 'fixed', percentBp: null, amountCentavos: 0 }),
+    ).rejects.toThrow(/check constraint/i);
+  });
+
+  /**
+   * The bounds themselves are INCLUSIVE: 1 bp (0.01%) and 10000 bp (100%)
+   * are both real coupons, and a range CHECK written with `>` instead of
+   * `>=` would quietly refuse a 100%-off comp the owner meant to issue.
+   */
+  dbIt('ACCEPTS both ends of the range — 1 bp and 10000 bp, and 1 centavo', async () => {
+    for (const percentBp of [1, 10000]) {
+      await expect(
+        insertCoupon({ discountType: 'percent', percentBp, amountCentavos: null }),
+        `${percentBp} bp was refused`,
+      ).resolves.toBeDefined();
+    }
+    await expect(
+      insertCoupon({ discountType: 'fixed', percentBp: null, amountCentavos: 1 }),
+    ).resolves.toBeDefined();
   });
 
   dbIt('refuses a duplicate code', async () => {
