@@ -2416,7 +2416,7 @@ for (const [area, allowed] of Object.entries(ROLE_MATRIX)) {
 
 The denial direction is the one that matters, and it is the one a hand-written test set usually
 omits. Prove the loop can fail by making `requireRole` always pass — exactly the 13 denial cases go
-red while the 17 allow cases stay green.
+red while the 20 allow cases stay green. (An earlier revision of this plan said "13 denial / 17 allow" — wrong arithmetic. §9 holds 20 ✅ and 10 ❌, so the split is **20 allow / 10 deny**. Task 17 caught it by parsing §9 rather than trusting the number, and its test keeps comparing the matrix to the spec cell by cell so the two cannot drift.)
 
 - [ ] **Steps 2–4: Implement, verify, commit**
 
