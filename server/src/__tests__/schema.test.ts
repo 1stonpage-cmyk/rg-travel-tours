@@ -39,14 +39,18 @@ const EXPECTED_TABLES = [
   // Core-schema plan, Task 8 — the central record. Its own assertions live
   // in schema-bookings.test.ts.
   'bookings',
+  // Core-schema plan, Task 10 — the three tables that hang off a booking.
+  // Their own assertions live in schema-booking-lines.test.ts.
+  'bookingAddons',
+  'bookingNotes',
+  'couponRedemptions',
 ];
 
 describe('public content schema', () => {
   it('exports every table built so far and no payment tables yet', () => {
     for (const name of EXPECTED_TABLES) expect(schema).toHaveProperty(name);
-    // Still ahead of us: Tasks 10-12. These negatives are what stop a task
+    // Still ahead of us: Tasks 11-12. This negative is what stops a task
     // from quietly landing a table its own plan step has not reached yet.
-    expect(schema).not.toHaveProperty('bookingAddons');
     expect(schema).not.toHaveProperty('payments');
   });
 

@@ -879,3 +879,115 @@ export const bookings = mysqlTable(
     index('bookings_hold_expiry_idx').on(t.status, t.holdExpiresAt),
   ],
 );
+
+/**
+ * One add-on line on a booking (BUILD_SPEC §10).
+ *
+ * **The line snapshots the add-on's name and price instead of trusting the
+ * foreign key** — the same reason `bookings.price_snapshot` exists. An
+ * add-on gets renamed from "Island lunch" to "Lunch (buffet)" and repriced
+ * from ₱350 to ₱500 next season; a booking taken this season must still say
+ * what the guest actually agreed to pay for, and a join to `tour_addons`
+ * would quietly rewrite it. `addon_id` is kept for reporting ("how often is
+ * the lunch taken?"), never for money.
+ *
+ * `price_centavos` is written from server-side data only. The browser sends
+ * which add-ons it wants and nothing else: never a price, never a quantity's
+ * worth of pesos (CLAUDE.md — the server computes all money).
+ *
+ * `per_person` decides whether the price multiplies by `pax`, so it is part
+ * of the snapshot too: the flag can be edited on the add-on as easily as the
+ * price, and a line without it is unpriceable.
+ */
+export const bookingAddons = mysqlTable(
+  'booking_addons',
+  {
+    id: int('id').autoincrement().primaryKey(),
+    bookingId: int('booking_id')
+      .notNull()
+      .references(() => bookings.id),
+    /** Which add-on this was. Kept for reporting; the row does not trust it for money. */
+    addonId: int('addon_id')
+      .notNull()
+      .references(() => tourAddons.id),
+    /** Snapshot: the add-on may be renamed later (§5 price snapshot). */
+    name: varchar('name', { length: 200 }).notNull(),
+    /** Snapshot, in centavos. Server-computed; never a browser-supplied value. */
+    priceCentavos: int('price_centavos').notNull(),
+    /** Snapshot: true when the price multiplies by `pax`, false when per booking. */
+    perPerson: boolean('per_person').notNull(),
+    qty: int('qty').notNull().default(1),
+  },
+  (t) => [
+    /** The only way these rows are ever read: all the lines of one booking. */
+    index('booking_addons_booking_idx').on(t.bookingId),
+  ],
+);
+
+/**
+ * An internal admin note on a booking (BUILD_SPEC §10, §9 Bookings).
+ * Never shown to the guest.
+ *
+ * **`user_id` is NOT NULL.** A note is read months later to reconstruct why
+ * a booking was moved, refunded or argued about, and an unattributed note
+ * cannot be audited — "someone decided to waive the balance" records
+ * nothing. Nullable would also be the path of least resistance for a bulk
+ * import, which is exactly how a table fills up with anonymous notes.
+ *
+ * Notes are append-only in practice: there is no `updated_at`, because an
+ * edited audit trail is not one. A correction is a new note.
+ */
+export const bookingNotes = mysqlTable(
+  'booking_notes',
+  {
+    id: int('id').autoincrement().primaryKey(),
+    bookingId: int('booking_id')
+      .notNull()
+      .references(() => bookings.id),
+    /** The admin who wrote it. Never null — an unattributed note is not auditable. */
+    userId: int('user_id')
+      .notNull()
+      .references(() => users.id),
+    note: text('note').notNull(),
+    createdAt: datetime('created_at', { mode: 'date' })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [
+    /** One booking's note thread, in the order it is displayed. */
+    index('booking_notes_booking_idx').on(t.bookingId, t.createdAt),
+  ],
+);
+
+/**
+ * One row per coupon use (BUILD_SPEC §10). This is what enforces a coupon's
+ * `usage_limit`: `coupons.used_count` is a cached counter, these rows are
+ * the record.
+ *
+ * **Unique on `(coupon_id, booking_id)`, in that order.** Not `booking_id`
+ * alone — that would stop a booking ever using a second coupon, which is a
+ * pricing decision this table has no business making. Not `coupon_id`
+ * alone — that would cap every coupon at one redemption in total, which is
+ * not what `usage_limit` means. The pair is the thing that must not repeat:
+ * one booking must not count twice against one coupon's cap.
+ */
+export const couponRedemptions = mysqlTable(
+  'coupon_redemptions',
+  {
+    id: int('id').autoincrement().primaryKey(),
+    couponId: int('coupon_id')
+      .notNull()
+      .references(() => coupons.id),
+    bookingId: int('booking_id')
+      .notNull()
+      .references(() => bookings.id),
+    createdAt: datetime('created_at', { mode: 'date' })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [
+    uniqueIndex('coupon_redemptions_unique').on(t.couponId, t.bookingId),
+    /** Counting a coupon's redemptions against its cap. */
+    index('coupon_redemptions_coupon_idx').on(t.couponId),
+  ],
+);
