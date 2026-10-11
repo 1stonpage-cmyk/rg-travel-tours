@@ -51,6 +51,19 @@ export interface ParsedPaymentEvent {
   amountCentavos: number | null;
   providerRef: string | null;
   providerStatus: string | null;
+  /**
+   * HOW the guest paid, mapped from the gateway's own wording onto our
+   * instrument enum — `gcash`, `card`, `qrph`, … — or null when the event
+   * does not say.
+   *
+   * Added by plan Task 15, which found it missing: `payments.method` is NOT
+   * NULL and `recordPayment()` requires it, so without this the webhook
+   * route would have to invent an instrument for every gateway payment, and
+   * "how did this guest pay" would be a guess in the one table §9's revenue
+   * report reads. Null is honest and fails closed — the route refuses to
+   * record a payment it cannot describe rather than defaulting to `card`.
+   */
+  method: PaymentMethod | null;
 }
 
 export interface RefundInput {

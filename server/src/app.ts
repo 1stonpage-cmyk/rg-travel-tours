@@ -9,6 +9,7 @@ import { rejectMalformedUrl } from './middleware/malformed-url';
 import { createProcedureRateLimit } from './middleware/rate-limit';
 import { robotsHeader } from './middleware/robots-header';
 import { appRouter } from './routers/_app';
+import { createWebhookRouter } from './routers/webhooks';
 import { robotsTxtHandler, sitemapXmlHandler } from './seo/sitemap';
 
 /**
@@ -41,7 +42,6 @@ export function createApp(
 ) {
   const app = express();
 
-  app.use(express.json());
   // Pinned to the known client origin, not `origin: true` (which reflects
   // any requesting origin). Reflecting + credentials:true lets any website
   // make credentialed cross-origin requests; harmless with no cookies today,
@@ -59,6 +59,38 @@ export function createApp(
   // middleware/malformed-url.ts for why the query string is NOT checked and
   // why skipping the rate limiters is safe here.
   app.use(rejectMalformedUrl());
+
+  // -------------------------------------------------------------------------
+  // Gateway webhooks (plan Task 15). MOUNTED HERE, AND THE POSITION IS THE
+  // SECURITY PROPERTY — it is sandwiched deliberately:
+  //
+  //  * ABOVE `express.json()`, which is why that parser moved below this
+  //    line. `verifyWebhook` has to hash the EXACT bytes the gateway signed,
+  //    and a JSON parser that has already consumed the stream leaves only a
+  //    re-serialised object, whose key order and spacing are not what was
+  //    signed. Every signature check would then be unverifiable — and a
+  //    webhook route that cannot verify a signature is a public endpoint for
+  //    marking bookings paid. The route brings its own `express.raw()`.
+  //
+  //  * BELOW `rejectMalformedUrl()` (task 4.3b), because Express
+  //    percent-decodes `:provider` to populate `req.params` and
+  //    `/api/webhooks/%zz` would otherwise throw inside the router and leak
+  //    finalhandler's error page.
+  //
+  //  * ABOVE the `app.get('*splat')` catch-all further down, like
+  //    /robots.txt and /sitemap.xml. (It is a POST route, so the GET
+  //    catch-all would not actually swallow it today — but the ordering rule
+  //    in that block's comment is absolute and this route is not the place
+  //    to start relying on an exception to it.)
+  //
+  // Deliberately NOT rate-limited: a gateway retries a delivery until it
+  // gets a 2xx, and a limiter here would turn a burst of legitimate retries
+  // into lost payment confirmations. The idempotency index (Task 6) is what
+  // makes repeated deliveries harmless.
+  // -------------------------------------------------------------------------
+  app.use('/api/webhooks', createWebhookRouter());
+
+  app.use(express.json());
 
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true, service: 'rg-travel-tours', timezone: TIMEZONE });
