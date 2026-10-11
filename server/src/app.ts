@@ -5,6 +5,7 @@ import { rateLimit } from 'express-rate-limit';
 import { TIMEZONE } from '@rg/shared';
 import type { SiteEnv } from './env';
 import { createHtmlHandler } from './html';
+import { errorHandler } from './middleware/error-handler';
 import { rejectMalformedUrl } from './middleware/malformed-url';
 import { createProcedureRateLimit } from './middleware/rate-limit';
 import { robotsHeader } from './middleware/robots-header';
@@ -142,13 +143,16 @@ export function createApp(
   app.get('/sitemap.xml', sitemapXmlHandler());
 
   // -------------------------------------------------------------------------
-  // Static client + SEO-injected HTML shell (task 4.1). MOUNTED LAST, AND IT
-  // MUST STAY LAST.
+  // Static client + SEO-injected HTML shell (task 4.1). MOUNTED LAST OF THE
+  // ROUTES, AND IT MUST STAY LAST OF THEM — only the error handler below it.
   //
   // Everything above owns a specific prefix (`/api/health`, `/trpc`). The
   // handler below is a CATCH-ALL: `app.get('*splat', ...)` answers every
   // remaining GET path, so anything mounted after it is dead code it has
-  // already swallowed.
+  // already swallowed. The error handler after it is the one exception, and
+  // not an exception at all: Express treats a four-argument middleware as an
+  // error handler and reaches it only when something threw, so the catch-all
+  // has nothing to swallow from it.
   //
   // (Task 4.3's /robots.txt and /sitemap.xml are mounted above, as that
   // instruction required. Anything else that answers a path must go there
@@ -164,6 +168,35 @@ export function createApp(
     app.use(express.static(clientDistDir, { index: false }));
     app.get('*splat', serveHtml); // Express 5 wildcard syntax
   }
+
+  // -------------------------------------------------------------------------
+  // Plan Task 20 — the app-level error handler. BELOW EVERYTHING, INCLUDING
+  // THE SPA CATCH-ALL, AND IT MUST STAY THERE.
+  //
+  // Express only treats a four-argument middleware as an error handler, and
+  // only hands it errors thrown by middleware mounted ABOVE it. Mounted any
+  // higher, every route below it keeps leaking finalhandler's HTML error
+  // page — which, outside `NODE_ENV=production`, contains the stack trace
+  // and absolute filesystem paths. Measured on this app before the mount:
+  // `POST /trpc/health` with the body `{bad` answered with
+  // `<pre>SyntaxError: ...<br> at parse (C:\dev\rg-travel-tours\
+  // node_modules\...\body-parser\lib\types\json.js:91:21)`.
+  //
+  // It is the third of three doors onto the same leak, and the only one
+  // left: `rejectMalformedUrl()` at the top of this function closes the
+  // undecodable-URL door (task 4.3b), and tRPC's `errorFormatter` closes the
+  // procedure door (BUG-102). This one closes every remaining plain-Express
+  // throw.
+  //
+  // Mounted in EVERY environment, not only production — `pnpm dev:lan`
+  // serves the dev app to the LAN, so "it only leaks in development" is not
+  // a boundary.
+  //
+  // It shadows nothing: a route that answers for itself (the 400 above, the
+  // webhook route's 404/400/503, /robots.txt) never throws, so this is never
+  // reached for it. See __tests__/error-handler.test.ts.
+  // -------------------------------------------------------------------------
+  app.use(errorHandler);
 
   return app;
 }
