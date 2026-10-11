@@ -50,6 +50,18 @@ export function getDb(): MySql2Database<typeof schema> {
   return db;
 }
 
+/**
+ * A Drizzle transaction handle — the thing `db.transaction(async (tx) => …)`
+ * hands its callback.
+ *
+ * Derived from `getDb()` rather than written out as `MySql2Transaction<…>`
+ * so it cannot drift from the real database type when the schema or the
+ * driver changes. A service that must write inside the caller's transaction
+ * (see `services/audit.ts`) takes this type, never `getDb()`'s return value:
+ * the difference is whether its row can survive a rollback.
+ */
+export type Transaction = Parameters<Parameters<ReturnType<typeof getDb>['transaction']>[0]>[0];
+
 export async function closeDb(): Promise<void> {
   if (!pool) return;
   const current = pool;

@@ -19,6 +19,8 @@ const EXPECTED_TABLES = [
   'newsletterSubscribers',
   // Core-schema plan, Task 1. Its own assertions live in schema-users.test.ts.
   'users',
+  // Core-schema plan, Task 2. Its own assertions live in audit.test.ts.
+  'auditLog',
 ];
 
 describe('public content schema', () => {
@@ -30,7 +32,6 @@ describe('public content schema', () => {
     expect(schema).not.toHaveProperty('vans');
     expect(schema).not.toHaveProperty('drivers');
     expect(schema).not.toHaveProperty('coupons');
-    expect(schema).not.toHaveProperty('auditLog');
     expect(schema).not.toHaveProperty('tourDateSlots');
   });
 

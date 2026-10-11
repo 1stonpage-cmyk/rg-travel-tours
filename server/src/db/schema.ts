@@ -6,7 +6,7 @@
  * Since the core-schema plan (docs/superpowers/plans/2026-10-10-core-schema.md)
  * this file also holds the transactional core, added one table per task.
  * Still out of scope: bookings, payments, sessions, vans, drivers, coupons,
- * audit_log, tour_date_slots.
+ * tour_date_slots.
  *
  * Conventions:
  * - Money is integer centavos (`int`), never DECIMAL/float.
@@ -285,4 +285,54 @@ export const users = mysqlTable(
       .$onUpdateFn(() => new Date()),
   },
   (t) => [index('users_role_active_idx').on(t.role, t.isActive)],
+);
+
+/**
+ * Who did the thing (owner decision 2026-10-11, Q10).
+ *
+ *   user      an admin, `actor_id` -> users.id
+ *   customer  a guest in the portal, `actor_id` -> bookings.id
+ *   driver    `actor_id` -> drivers.id
+ *   system    a cron job - hold expiry, reminders. No actor_id.
+ *   provider  a payment gateway webhook. No actor_id; the provider NAME
+ *             goes in `data.provider`, because a gateway is not a row in
+ *             any table and inventing one would be worse.
+ *
+ * `system` and `provider` are separate on purpose: "the cron expired this
+ * hold" and "PayMongo confirmed this payment" are different events, and
+ * collapsing both into `system` makes a money trail unreadable.
+ */
+export const AUDIT_ACTOR_TYPES = ['user', 'customer', 'driver', 'system', 'provider'] as const;
+
+/**
+ * Every payment, refund, status change and assignment writes a row here
+ * (CLAUDE.md Conventions), and only ever through `writeAudit()` in
+ * `services/audit.ts` — which takes a transaction handle, so the row lives
+ * and dies with the change it describes.
+ *
+ * Append-only by intent: nothing in this codebase updates or deletes an
+ * audit row.
+ */
+export const auditLog = mysqlTable(
+  'audit_log',
+  {
+    id: int('id').autoincrement().primaryKey(),
+    /** Which table `actor_id` points at. No FK — see "Polymorphic columns" in the plan. */
+    actorType: mysqlEnum('actor_type', AUDIT_ACTOR_TYPES).notNull(),
+    /** Null for `system` and `provider` (cron, or a webhook with no human behind it). */
+    actorId: int('actor_id'),
+    /** Dotted verb: `payment.verified`, `booking.cancelled`, `driver.assigned`. */
+    action: varchar('action', { length: 80 }).notNull(),
+    entity: varchar('entity', { length: 40 }).notNull(),
+    entityId: int('entity_id').notNull(),
+    data: json('data'),
+    createdAt: datetime('created_at', { mode: 'date' })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [
+    index('audit_log_entity_idx').on(t.entity, t.entityId),
+    index('audit_log_actor_idx').on(t.actorType, t.actorId),
+    index('audit_log_created_idx').on(t.createdAt),
+  ],
 );
