@@ -1416,7 +1416,13 @@ export async function insertBookingWithRef(
         .where(eq(bookings.ref, ref));
       return { id: row!.id, ref };
     } catch (error) {
-      if ((error as { code?: string }).code !== 'ER_DUP_ENTRY') throw error;
+      // PLAN DEFECT, found by Task 9 and corrected in 7a4d061: this does NOT
+      // work. mysql2 sets code='ER_DUP_ENTRY' on its own error, but Drizzle
+      // wraps it in a DrizzleQueryError and moves the original to `.cause`,
+      // so `error.code` one level up is undefined, the retry never fires and
+      // the first collision surfaces as a 500. Walk a BOUNDED cause chain
+      // instead, as server/src/routers/public/newsletter.ts already does.
+      if (!isDuplicateKeyError(error)) throw error;
     }
   }
   throw new Error('Could not allocate a unique booking reference after 5 attempts.');
