@@ -48,14 +48,18 @@ const EXPECTED_TABLES = [
   // assertions live in schema-trips.test.ts.
   'tripCheckpoints',
   'reviewHelpfulVotes',
+  // Core-schema plan, Task 12 — the 17th and last table, and the first of
+  // Phase 3. Its own assertions live in schema-payments.test.ts, including
+  // the structural guard that no column names a gateway.
+  'payments',
 ];
 
 describe('public content schema', () => {
-  it('exports every table built so far and no payment tables yet', () => {
+  it('exports every table built so far', () => {
     for (const name of EXPECTED_TABLES) expect(schema).toHaveProperty(name);
-    // Still ahead of us: Task 12. This negative is what stops a task from
-    // quietly landing a table its own plan step has not reached yet.
-    expect(schema).not.toHaveProperty('payments');
+    // The negative that used to stand here ("no payments table yet") was the
+    // last of the plan's look-ahead guards; Task 12 landed the table, so the
+    // assertion moved into the list above.
   });
 
   it('carries the columns the public site depends on', () => {

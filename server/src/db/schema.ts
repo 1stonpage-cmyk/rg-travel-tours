@@ -4,8 +4,8 @@
  * of docs/superpowers/plans/2026-10-09-dynamic-site-and-seo.md.
  *
  * Since the core-schema plan (docs/superpowers/plans/2026-10-10-core-schema.md)
- * this file also holds the transactional core, added one table per task.
- * Still out of scope: payments.
+ * this file also holds the transactional core, added one table per task —
+ * `payments` (task 12) included, which completes the plan's 17 tables.
  *
  * Conventions:
  * - Money is integer centavos (`int`), never DECIMAL/float.
@@ -1168,4 +1168,139 @@ export const reviewHelpfulVotes = mysqlTable(
       .$defaultFn(() => new Date()),
   },
   (t) => [primaryKey({ columns: [t.reviewId, t.voterHash] })],
+);
+
+/** Money IN or money OUT. A refund is a row here, never a booking status (BUILD_SPEC §6). */
+export const PAYMENT_TYPES = ['payment', 'refund'] as const;
+
+/**
+ * HOW the guest paid — the instrument, never the processor (owner decision
+ * 2026-10-11, plan Q2).
+ *
+ * `provider` and `method` are two different questions, and §10's single
+ * `method` column conflated them: it listed `(paymongo/manual_qr/cash)`,
+ * mixing who processed the money with how the guest handed it over. They are
+ * split because GCash through PayMongo and GCash through Xendit are the same
+ * instrument and different processors, and §9's "revenue by payment method"
+ * report needs both axes.
+ *
+ * Note what is NOT here: `manual_qr`. That old spec value conflated the
+ * instrument with the fact that a human verified it, and `provider` already
+ * carries that — a QR transfer an admin approved by hand is
+ * `provider='manual'` plus whichever instrument the guest actually used
+ * (`gcash`, `maya`, `bank_transfer`, ...). Keeping both would give two ways
+ * to record one payment, which is the drift the split exists to prevent.
+ *
+ * `bank_transfer` stays at launch: it is the manual receipt-upload flow.
+ */
+export const PAYMENT_METHODS = [
+  'card',
+  'gcash',
+  'maya',
+  'grab_pay',
+  'qrph',
+  'bank_transfer',
+  'cash',
+] as const;
+
+/**
+ * OUR normalised status, never a gateway's wording. The gateways disagree
+ * with each other and with themselves over time ("succeeded", "paid",
+ * "PAID", "settled"); mapping their string onto one of these five is the
+ * payment service's job, and the raw original is kept verbatim in
+ * `provider_status` for support and reconciliation.
+ */
+export const PAYMENT_STATUSES = ['pending', 'paid', 'rejected', 'failed', 'refunded'] as const;
+
+/**
+ * Every payment and every refund, for every provider (BUILD_SPEC §10, §6).
+ *
+ * **Provider-neutral by construction** (plan amendment B1a, Phase 3's design
+ * rule): there is no `paymongo_id` column and no gateway name anywhere in
+ * this declaration. A gateway's own identifiers go in `provider_ref` /
+ * `provider_status`, and `provider` is an enum value. Adding Xendit later
+ * touches a new file in `server/src/services/payments/` and one line in the
+ * registry — never this table. `schema-payments.test.ts` reads the real
+ * column list out of `information_schema` and fails on any name matching
+ * /paymongo|xendit|stripe/, so that property is enforced rather than
+ * remembered.
+ *
+ * **Never hard-deleted** (Global Constraints). Nothing cascades into this
+ * table: every foreign key is RESTRICT, which is precisely the mechanism
+ * that would otherwise delete a payment quietly along with its booking.
+ */
+export const payments = mysqlTable(
+  'payments',
+  {
+    id: int('id').autoincrement().primaryKey(),
+    bookingId: int('booking_id')
+      .notNull()
+      .references(() => bookings.id),
+
+    /** Money IN or money OUT. A refund is a row here, never a booking status (§6). */
+    type: mysqlEnum('type', PAYMENT_TYPES).notNull(),
+    /** WHO processed it. Adding a gateway adds an enum value, not a column. */
+    provider: mysqlEnum('provider', PAYMENT_PROVIDERS).notNull(),
+    /** HOW the guest paid. Orthogonal to `provider` — GCash exists on several. */
+    method: mysqlEnum('method', PAYMENT_METHODS).notNull(),
+
+    /**
+     * ALWAYS POSITIVE, in centavos — refunds too. Direction comes from
+     * `type`, never from a sign: a negative amount plus a `refund` type is
+     * two ways of saying the same thing and they drift, and a `SUM()` that
+     * silently mixes them is a reporting bug waiting to happen. A refund of
+     * ₱1,500 is `type='refund', amount_centavos=150000`.
+     */
+    amountCentavos: int('amount_centavos').notNull(),
+    /** OUR normalised status. Never the gateway's wording. */
+    status: mysqlEnum('status', PAYMENT_STATUSES).notNull().default('pending'),
+
+    /**
+     * The gateway's own id for this charge or refund — opaque to us, so a
+     * plain varchar rather than anything we parse. 191 characters for the
+     * same indexable-prefix reason as `payment_events.provider_event_id`:
+     * this column sits in an index.
+     */
+    providerRef: varchar('provider_ref', { length: 191 }),
+    /** The gateway's raw status string, kept verbatim for support and reconciliation. */
+    providerStatus: varchar('provider_status', { length: 80 }),
+
+    /** Manual QR flow (§6): the guest-entered transaction reference. */
+    txnRef: varchar('txn_ref', { length: 191 }),
+    /**
+     * A PATH under /uploads, which is OUTSIDE the web root and served
+     * through an authenticated route (CLAUDE.md Security). Never a public
+     * URL — a receipt carries a guest's name and amount, and this table
+     * deliberately has no `*_url` column to put one in.
+     */
+    receiptPath: varchar('receipt_path', { length: 300 }),
+    /** Why an admin rejected a manual payment, shown to the guest in the portal. */
+    rejectReason: varchar('reject_reason', { length: 400 }),
+
+    /** Set only by an admin approval path — null on every gateway payment. */
+    verifiedBy: int('verified_by').references(() => users.id),
+    verifiedAt: datetime('verified_at', { mode: 'date' }),
+    /** Driver who took cash on tour day (§8). */
+    collectedByDriverId: int('collected_by_driver_id').references(() => drivers.id),
+
+    createdAt: datetime('created_at', { mode: 'date' })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: datetime('updated_at', { mode: 'date' })
+      .notNull()
+      .$defaultFn(() => new Date())
+      .$onUpdateFn(() => new Date()),
+  },
+  (t) => [
+    /** The two indexes BUILD_SPEC §10 names. */
+    index('payments_booking_idx').on(t.bookingId),
+    index('payments_status_idx').on(t.status),
+    /**
+     * Added by the plan: reconciling an incoming webhook against an existing
+     * row. It covers BOTH columns — `provider_ref` alone would let two
+     * gateways' identical reference strings collide in the lookup, and the
+     * webhook would reconcile against the wrong payment.
+     */
+    index('payments_provider_ref_idx').on(t.provider, t.providerRef),
+  ],
 );
