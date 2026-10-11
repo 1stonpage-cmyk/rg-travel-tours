@@ -57,7 +57,7 @@ Phase 3 (payments) is the part most likely to be wanted as a separate plan later
 
 12 of the spec's 28 tables exist: `destinations`, `tours`, `tour_images`, `tour_price_tiers`, `tour_itinerary_stops`, `tour_addons`, `tour_blocked_dates`, `packages`, `reviews`, `inquiries`, `newsletter_subscribers`, `settings` (plus `__drizzle_migrations`). Verified against `information_schema` on 2026-10-10.
 
-Two existing columns become real foreign keys in this plan: `reviews.tour_id` already has one, but `reviews.booking_id` is a bare nullable `int` and gains an FK in Wave 3; `inquiries.package_id` is likewise bare and gains one in Wave 1.
+Two existing columns become real foreign keys in this plan: `reviews.tour_id` already has one, but `reviews.booking_id` is a bare nullable `int` and gains an FK in Wave 3; `inquiries.package_id` is likewise bare and gains one in **Wave 3, via Task 11** — not Wave 1. (An earlier revision of this plan listed it under Wave 1 while Task 11's body did the work; Task 6 caught the contradiction. Task 11 is correct, and it adds both retro-fitted FKs together so there is one ALTER on existing tables, not two.)
 
 ---
 
@@ -120,7 +120,7 @@ WAVE 1  (no FKs to new tables)
   audit_log        —           (actor_id is polymorphic: NO FK, see note)
   tour_date_slots  → tours
   payment_events   —           (provider + provider_event_id only)
-  inquiries.package_id → packages          [FK added to an existing table]
+  (none - see the note below about inquiries.package_id)
 
 WAVE 2
   sessions         → users (nullable), drivers (nullable)   (polymorphic, see note)
