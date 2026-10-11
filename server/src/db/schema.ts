@@ -3,8 +3,10 @@
  * site + SEO plan). Transcribed verbatim from the "Database schema" section
  * of docs/superpowers/plans/2026-10-09-dynamic-site-and-seo.md.
  *
- * Out of scope here (Week 3+): bookings, payments, users, sessions, vans,
- * drivers, coupons, audit_log, tour_date_slots.
+ * Since the core-schema plan (docs/superpowers/plans/2026-10-10-core-schema.md)
+ * this file also holds the transactional core, added one table per task.
+ * Still out of scope: bookings, payments, sessions, vans, drivers, coupons,
+ * audit_log, tour_date_slots.
  *
  * Conventions:
  * - Money is integer centavos (`int`), never DECIMAL/float.
@@ -25,6 +27,7 @@ import {
   uniqueIndex,
   varchar,
 } from 'drizzle-orm/mysql-core';
+import { ADMIN_ROLES } from '@rg/shared';
 
 export const settings = mysqlTable('settings', {
   key: varchar('key', { length: 64 }).primaryKey(),
@@ -248,3 +251,38 @@ export const newsletterSubscribers = mysqlTable('newsletter_subscribers', {
     .notNull()
     .$defaultFn(() => new Date()),
 });
+
+/**
+ * Admin accounts. `role` drives every admin gate (BUILD_SPEC §9), and the
+ * enum comes from `@rg/shared` so the database, the server middleware and
+ * the client all read the same three values.
+ *
+ * Soft-deleted through `is_active`: an account that signed off a payment or
+ * a refund still has to be nameable in the audit log, so a row is never
+ * removed.
+ */
+export const users = mysqlTable(
+  'users',
+  {
+    id: int('id').autoincrement().primaryKey(),
+    name: varchar('name', { length: 160 }).notNull(),
+    email: varchar('email', { length: 200 }).notNull().unique(),
+    /**
+     * argon2id or bcrypt output — 255 fits an argon2id encoded hash with room
+     * to spare, and bcrypt's 60 fits trivially. The password itself is never
+     * stored, never logged and never put in an audit row.
+     */
+    passwordHash: varchar('password_hash', { length: 255 }).notNull(),
+    role: mysqlEnum('role', ADMIN_ROLES).notNull(),
+    isActive: boolean('is_active').notNull().default(true),
+    lastLoginAt: datetime('last_login_at', { mode: 'date' }),
+    createdAt: datetime('created_at', { mode: 'date' })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: datetime('updated_at', { mode: 'date' })
+      .notNull()
+      .$defaultFn(() => new Date())
+      .$onUpdateFn(() => new Date()),
+  },
+  (t) => [index('users_role_active_idx').on(t.role, t.isActive)],
+);
