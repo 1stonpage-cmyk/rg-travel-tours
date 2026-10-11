@@ -3014,3 +3014,68 @@ implemented by 13's stub and 16's PayMongo. No name appears in two spellings.
    separate, dedicated deployment prompt — and after any schema change, the user must be reminded to
    apply the migration on the server (CLAUDE.md Workflow).
 4. Expect roughly 120–160 new tests from the 18 tasks, every one proven able to fail.
+
+---
+
+## Carry-forward constraints for later weeks
+
+Three obligations this plan created for work it does not itself build. Each is a correctness
+requirement, not a preference, and each is invisible from inside the task that will need it — so
+they are recorded here rather than left to be rediscovered.
+
+### 1. The hold-expiry cron MUST skip `payment_review_required = 1`
+
+**Where it lands:** Week 3, the expired-hold cron (BUILD_SPEC §5: "Cron (every minute) moves
+expired, unpaid holds to `expired` and frees capacity").
+
+When money arrives for a booking whose hold has already lapsed, `recordPayment()` records the
+payment, leaves the status untouched, and raises `payment_review_required` (owner decision
+2026-10-11, item 16b-3). It deliberately does **not** clear `hold_expires_at` on that path — that
+column still holds a past timestamp.
+
+So a naive cron, selecting on `status = 'pending_payment' AND hold_expires_at < NOW()`, will pick
+that booking up and flip it to `expired` — **after the guest has paid**. The payment row survives
+(nothing hard-deletes it) but the booking silently reads as expired, and the admin review queue
+below is looking for flagged bookings that a cron has quietly moved on from.
+
+**The cron's `WHERE` clause must exclude `payment_review_required = 1`**, and its task needs a test
+for exactly that case: a lapsed hold that has been paid is not expired by the cron.
+
+### 2. The admin dashboard needs a review queue that clears the flag, with audit
+
+**Where it lands:** Weeks 5–7, admin & dispatch (BUILD_SPEC §9).
+
+`payment_review_required` is set by `recordPayment()` and **nothing clears it**, by design — the
+decision belongs to a human. But today the flag is discoverable only by direct SQL, which means a
+guest who paid after their hold lapsed is invisible to everyone running the business.
+
+The queue must:
+
+- list every booking with `payment_review_required = 1`, with the audit row's `reviewReason` and
+  `priorBookingStatus` (both already recorded in `audit_log.data`), the amount paid, and the tour date;
+- let an admin **re-confirm** — which must re-run the §5 capacity check, because the capacity that
+  booking was holding was released when the hold lapsed, and confirming blind is how a day gets
+  oversold — **or refund**, through the existing admin refund path;
+- clear the flag only as part of that decision, and **write an audit row either way** (CLAUDE.md:
+  every payment, refund and status change writes to `audit_log`).
+
+Access is `verifyPayments` / `cancelRefund` in the §9 role matrix — owner and finance, not dispatcher.
+
+### 3. The driver portal writes `stop_id` only, never `stop_key`
+
+**Where it lands:** Week 6, the driver portal's itinerary check-ins (BUILD_SPEC §8).
+
+`trip_checkpoints.stop_key` is a **stored generated column**, `COALESCE(stop_id, 0)`, added so the
+`UNIQUE (booking_id, stop_key)` index also constrains trip-start rows — MySQL's unique indexes
+permit unlimited NULLs, so the original `UNIQUE (booking_id, stop_id)` silently allowed two "trip
+start" rows for one booking (owner decision 2026-10-11, item 16b-2).
+
+Two consequences for anything that writes this table:
+
+- **An INSERT that names `stop_key` is rejected by MySQL**, even with the value the database would
+  have computed itself. Insert `stop_id` and let the column derive.
+- `stop_key` appears in `SELECT *`, so a `SELECT *` round-tripped back into an INSERT will fail.
+  Name the columns.
+
+The double-tap protection this buys is real: a driver tapping "Start trip" twice on a bad
+connection now gets one row, not two.

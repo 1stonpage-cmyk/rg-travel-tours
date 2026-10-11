@@ -299,3 +299,36 @@ Still outstanding:
 - [ ] `/uploads` is outside the web root and reachable only through the authenticated route.
 - [ ] Rate limits active on logins, coupon checks, reviews, inquiries and helpful votes.
 - [ ] Basic auth credentials for the preview host rotated or the host retired.
+
+### Payments — operational, before the first real charge
+
+These four came out of the core-schema build (Tasks 14–16b, October 2026). Each one is a way the
+payment path can fail **quietly** — money that looks fine in the gateway dashboard and never lands
+correctly here — so none of them is visible without an explicit check.
+
+- [ ] **Server time is NTP-synchronised, and verified.** PayMongo signatures are only accepted
+      inside a **±300-second window**, and the timestamp is inside the signed payload so it cannot
+      be adjusted in flight. A deploy clock more than five minutes out therefore rejects **every
+      genuine webhook**, and the failure looks like "PayMongo never called us". Check with
+      `timedatectl status` (expect `System clock synchronized: yes`) and keep `systemd-timesyncd`
+      or `chrony` running. Re-check after any VPS migration or restore from snapshot.
+- [ ] **A daily check or alert on `payment_events` where `processed_at IS NULL`.** A row with a
+      null `processed_at` is an event that arrived, was stored, and was never applied — a guest who
+      paid and is not confirmed. The webhook deliberately fails closed in several places (an
+      unmappable payment method, a refund event with no admin flow yet), and every one of those
+      leaves exactly this trace. Nothing surfaces it on its own.
+      `SELECT provider, provider_event_id, type, received_at FROM payment_events WHERE processed_at IS NULL ORDER BY received_at;`
+- [ ] **Confirm PayMongo's real field names on the first test-mode transaction.** The provider's
+      field mapping was written from PayMongo's published documentation, not from a live payload.
+      Before trusting it, run one test-mode payment and check the webhook body actually uses
+      `payment_method_used` (versus `source.type`) and the instrument strings the mapping expects
+      (`gcash`, `paymaya`, `grab_pay`, `qrph`, `dob`, `brankas_*`). An unrecognised string maps to
+      `null` rather than a guess, so a mismatch is safe but will block the payment.
+- [ ] **An admin review queue for `bookings.payment_review_required = 1` exists.** When money
+      arrives for a booking whose hold had already expired or that was cancelled, the payment is
+      recorded and the booking is **deliberately not confirmed** — confirming it could oversell the
+      day. The booking is flagged instead and an audit row records why. **Nothing clears that flag
+      today and nothing displays it**, so without a queue those guests are invisible: they have
+      paid, and no one is looking at them. The queue must let an admin re-confirm (if capacity
+      allows) or refund, and must write an audit row either way.
+      `SELECT id, ref, status, amount_paid_centavos FROM bookings WHERE payment_review_required = 1;`
