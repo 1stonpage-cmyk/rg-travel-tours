@@ -208,7 +208,15 @@ export const reviews = mysqlTable(
   {
     id: int('id').autoincrement().primaryKey(),
     tourId: int('tour_id'),
-    bookingId: int('booking_id'),
+    /**
+     * The booking this review came from, or null for an admin-entered one.
+     * Retro-fitted as a real foreign key in the core-schema plan's Task 11,
+     * once `bookings` existed: this column is what makes a review
+     * "verified", and a review claiming a booking nobody ever took is
+     * exactly the fake social proof CLAUDE.md forbids. Nullable stays —
+     * an admin-entered review has no booking behind it.
+     */
+    bookingId: int('booking_id').references(() => bookings.id),
     name: varchar('name', { length: 120 }).notNull(),
     rating: tinyint('rating').notNull(),
     guide: tinyint('guide'),
@@ -239,7 +247,13 @@ export const inquiries = mysqlTable(
   {
     id: int('id').autoincrement().primaryKey(),
     type: mysqlEnum('type', ['contact', 'package']).notNull(),
-    packageId: int('package_id'),
+    /**
+     * The package this enquiry is about; null for a general contact form.
+     * Retro-fitted as a real foreign key in the core-schema plan's Task 11.
+     * A dangling id renders as "enquiry about (nothing)" in the admin list,
+     * which is how a real customer's question gets lost.
+     */
+    packageId: int('package_id').references(() => packages.id),
     name: varchar('name', { length: 160 }).notNull(),
     email: varchar('email', { length: 200 }).notNull(),
     phone: varchar('phone', { length: 40 }),
@@ -990,4 +1004,79 @@ export const couponRedemptions = mysqlTable(
     /** Counting a coupon's redemptions against its cap. */
     index('coupon_redemptions_coupon_idx').on(t.couponId),
   ],
+);
+
+/**
+ * One itinerary check-in on a running trip (BUILD_SPEC §10, §8 "Itinerary
+ * check-ins"). The driver taps Start, then each stop as the van reaches it,
+ * and these rows are what the customer portal's live tracker reads.
+ *
+ * **`stop_id` is nullable, and null means "trip start".** The Start tap
+ * happens before any itinerary stop is reached, so that event has no stop
+ * behind it. The alternative — a synthetic "Trip start" row in
+ * `tour_itinerary_stops` for every tour — would put a fake entry in the
+ * itinerary guests read on the tour page.
+ *
+ * **`undone` is a boolean, not a DELETE.** §8: "Undo last check-in …
+ * marked undone, not deleted". A driver who taps the wrong stop corrects it
+ * without the trip's timeline losing the fact that a tap happened — and
+ * that timeline is what answers "when did this van actually arrive?" months
+ * later, in a complaint or a refund argument.
+ *
+ * **`checked_at` is server time, never the device's.** A phone clock is
+ * settable, and a check-in timestamp is evidence that a trip ran. There is
+ * deliberately no second column for a handset-supplied time: one would
+ * immediately become the one everybody reads.
+ */
+export const tripCheckpoints = mysqlTable(
+  'trip_checkpoints',
+  {
+    id: int('id').autoincrement().primaryKey(),
+    bookingId: int('booking_id')
+      .notNull()
+      .references(() => bookings.id),
+    /** Null = the "start trip" event, which has no itinerary stop behind it (§8). */
+    stopId: int('stop_id').references(() => tourItineraryStops.id),
+    /** Server time in UTC, never the driver's device clock. */
+    checkedAt: datetime('checked_at', { mode: 'date' })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    /** §8: "Undo last check-in … marked undone, not deleted". */
+    undone: boolean('undone').notNull().default(false),
+  },
+  (t) => [
+    /** One trip's checkpoints, in the order they happened. */
+    index('trip_checkpoints_booking_idx').on(t.bookingId, t.checkedAt),
+  ],
+);
+
+/**
+ * One "was this helpful?" vote on a review (BUILD_SPEC §10, §4 Reviews).
+ *
+ * **The composite primary key `(review_id, voter_hash)` IS the one-vote
+ * rule** (§4: "one per browser via cookie + IP rate limit"). There is no
+ * surrogate `id`: the pair is the identity of the row, so a second vote is
+ * refused by the key itself rather than by an index somebody could forget
+ * to write an INSERT against. Keyed on the pair, not `voter_hash` alone —
+ * one visitor gets one vote per review, not one vote for the whole site.
+ *
+ * **`voter_hash` is a hash of the cookie id plus the IP, never the IP.** A
+ * raw address is personal data under RA 10173 (CLAUDE.md Security), and
+ * this table has no admin screen, no retention rule and no subject-access
+ * path behind it — so it must not hold one. The hash is enough: all it is
+ * ever asked is "has this browser already voted here?".
+ */
+export const reviewHelpfulVotes = mysqlTable(
+  'review_helpful_votes',
+  {
+    reviewId: int('review_id')
+      .notNull()
+      .references(() => reviews.id),
+    /** SHA-256 of cookie id + IP. Never the address itself (RA 10173). */
+    voterHash: varchar('voter_hash', { length: 64 }).notNull(),
+    createdAt: datetime('created_at', { mode: 'date' })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [primaryKey({ columns: [t.reviewId, t.voterHash] })],
 );

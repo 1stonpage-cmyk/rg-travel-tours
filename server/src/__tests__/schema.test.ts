@@ -44,13 +44,17 @@ const EXPECTED_TABLES = [
   'bookingAddons',
   'bookingNotes',
   'couponRedemptions',
+  // Core-schema plan, Task 11 — the last two tables of Phase 2. Their own
+  // assertions live in schema-trips.test.ts.
+  'tripCheckpoints',
+  'reviewHelpfulVotes',
 ];
 
 describe('public content schema', () => {
   it('exports every table built so far and no payment tables yet', () => {
     for (const name of EXPECTED_TABLES) expect(schema).toHaveProperty(name);
-    // Still ahead of us: Tasks 11-12. This negative is what stops a task
-    // from quietly landing a table its own plan step has not reached yet.
+    // Still ahead of us: Task 12. This negative is what stops a task from
+    // quietly landing a table its own plan step has not reached yet.
     expect(schema).not.toHaveProperty('payments');
   });
 
