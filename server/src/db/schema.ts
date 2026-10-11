@@ -5,7 +5,7 @@
  *
  * Since the core-schema plan (docs/superpowers/plans/2026-10-10-core-schema.md)
  * this file also holds the transactional core, added one table per task.
- * Still out of scope: bookings, payments, sessions.
+ * Still out of scope: bookings, payments.
  *
  * Conventions:
  * - Money is integer centavos (`int`), never DECIMAL/float.
@@ -656,5 +656,76 @@ export const paymentEvents = mysqlTable(
   (t) => [
     uniqueIndex('payment_events_provider_event_unique').on(t.provider, t.providerEventId),
     index('payment_events_unprocessed_idx').on(t.processedAt),
+  ],
+);
+
+/**
+ * Who a session belongs to. Three subject types, one table (BUILD_SPEC §10;
+ * §7 portal login, §8 driver login).
+ *
+ *   user      an admin signing in with email + password -> users.id
+ *   customer  a guest in the portal -> bookings.id
+ *   driver    a driver signing in with code + PIN -> drivers.id
+ *
+ * The staff type is `user`, matching the `users` table, NOT `admin`: a
+ * second name for the same thing is how a role check ends up comparing
+ * against a string nothing ever sets.
+ *
+ * `customer` points at a BOOKING, not at an account, because there are no
+ * customer accounts — §7: a portal session is "scoped to that booking only"
+ * (plan Q1). A customer with two bookings has two sessions, and neither can
+ * see the other's trip.
+ */
+export const SESSION_SUBJECTS = ['user', 'customer', 'driver'] as const;
+
+/**
+ * Server-side session records for all three portals. The cookie carries an
+ * opaque random token; this table carries only its SHA-256, so a stolen
+ * database yields no usable session — there is nothing in here to replay.
+ *
+ * There is deliberately NO column that could hold a raw token, and no
+ * `password`, `pin` or `secret` column either: a session row is a pointer to
+ * a subject plus an expiry, and nothing else.
+ */
+export const sessions = mysqlTable(
+  'sessions',
+  {
+    id: int('id').autoincrement().primaryKey(),
+    /** Which table `subject_id` points at. No FK — see "Polymorphic columns" in the plan. */
+    subjectType: mysqlEnum('subject_type', SESSION_SUBJECTS).notNull(),
+    /**
+     * users.id | bookings.id | drivers.id, per `subject_type`.
+     *
+     * Polymorphic, so it carries no foreign key: MySQL cannot express "this
+     * int references one of three tables depending on a sibling column". A
+     * pair of nullable FK columns would not fix it — it would let both be
+     * set at once and still leave the customer case unconstrained. The
+     * integrity a FK would have given is enforced in the session service and
+     * pinned by the tests in `schema-sessions.test.ts`.
+     */
+    subjectId: int('subject_id').notNull(),
+    /**
+     * SHA-256 of the session token, as 64 hex characters. The raw token
+     * exists only in the cookie and is never written anywhere — not to this
+     * table, not to a log, not to an audit row.
+     *
+     * Unique, so one token can never resolve to two sessions, and so a
+     * lookup is a single index hit on the hash rather than a scan.
+     */
+    tokenHash: varchar('token_hash', { length: 64 }).notNull().unique(),
+    /**
+     * Non-nullable on purpose: a session with no expiry is a permanent
+     * credential. Every row says when it dies, in UTC.
+     */
+    expiresAt: datetime('expires_at', { mode: 'date' }).notNull(),
+    createdAt: datetime('created_at', { mode: 'date' })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [
+    /** "Log this subject out everywhere", and "list a driver's live sessions". */
+    index('sessions_subject_idx').on(t.subjectType, t.subjectId),
+    /** The sweep that deletes expired rows (a §13 cron job). */
+    index('sessions_expiry_idx').on(t.expiresAt),
   ],
 );

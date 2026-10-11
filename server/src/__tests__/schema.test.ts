@@ -33,6 +33,9 @@ const EXPECTED_TABLES = [
   'tourDateSlots',
   'fleetDateSlots',
   'paymentEvents',
+  // Core-schema plan, Task 7 — the first Wave 2 table. Its own assertions
+  // live in schema-sessions.test.ts.
+  'sessions',
 ];
 
 describe('public content schema', () => {
@@ -40,7 +43,6 @@ describe('public content schema', () => {
     for (const name of EXPECTED_TABLES) expect(schema).toHaveProperty(name);
     expect(schema).not.toHaveProperty('bookings');
     expect(schema).not.toHaveProperty('payments');
-    expect(schema).not.toHaveProperty('sessions');
   });
 
   it('carries the columns the public site depends on', () => {
