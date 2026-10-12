@@ -88,9 +88,9 @@ Two tasks are **blocked on a dependency decision** and are marked so: Task 5 (ex
 
 ## Questions — answer before execution
 
-Listed, not guessed. The first two **block tasks**; the rest change behaviour and are cheaper to settle now than after guests have booked.
+Listed, not guessed. The first two **block tasks** (Task 11, the expiry sweep, and Task 12, the confirmation email — an earlier draft of these two headers pointed at Tasks 5 and 11, which was off by one; Task 5 is `createHold()` and was never blocked); the rest change behaviour and are cheaper to settle now than after guests have booked.
 
-### Q1 — `node-cron` is not installed. How should the hold-expiry sweep run? **BLOCKS Task 5**
+### Q1 — `node-cron` is not installed. How should the hold-expiry sweep run? **BLOCKS Task 11**
 
 §2's stack names `node-cron`, but `server/package.json` has no scheduler: deps are `@rg/shared, @trpc/server, cors, dotenv, drizzle-orm, express, express-rate-limit, mysql2, zod`. Three options:
 
@@ -100,7 +100,7 @@ Listed, not guessed. The first two **block tasks**; the rest change behaviour an
 | **B. Install `node-cron`**                                 | A dependency the spec already names, so arguably pre-approved — but it needs your explicit yes.                                                                |
 | **C. An OS-level cron hitting an authenticated endpoint**  | No dependency, but needs deploy wiring that does not exist and an endpoint that must be protected.                                                             |
 
-### Q2 — No email library is installed. How do confirmation emails send? **BLOCKS Task 11**
+### Q2 — No email library is installed. How do confirmation emails send? **BLOCKS Task 12**
 
 §2 names "SMTP via a transactional provider" and §11 lists seven notification events, but nothing is installed and Node has no built-in SMTP client. Options: install `nodemailer`; use a provider's REST API over plain `fetch` (no dependency, same pattern as the PayMongo provider); or **defer email to Week 4** and ship Week 3 with on-screen confirmation only. **I recommend deferring** — the booking is confirmed and visible on screen without it, and §11's other six events all belong to later weeks anyway, so building the email layer once with all of them is less work than building it twice.
 
