@@ -69,7 +69,16 @@ export interface PriceQuoteInput {
   freeCancelHours: number | null;
 }
 
-export interface QuoteResult {
+/**
+ * What `priceQuote()` returns.
+ *
+ * Named `PriceQuoteResult`, not `QuoteResult`, because `@rg/shared`'s
+ * `checkout.ts` exports a DIFFERENT `QuoteResult` — the wire shape, which is
+ * this plus `quoteId`. `createHold()` (Task 5) was the first consumer that
+ * needed both in scope, and two same-named types one import apart is a bug
+ * waiting for a careless auto-import.
+ */
+export interface PriceQuoteResult {
   tier: PriceTier;
   subtotalCentavos: number;
   discountCentavos: number;
@@ -118,7 +127,7 @@ function discountCentavosFor(
  * The pure arithmetic. No database, no clock — every input is a plain value
  * the caller already has in hand (directly, or via `loadQuoteInputs`).
  */
-export function priceQuote(input: PriceQuoteInput): QuoteResult {
+export function priceQuote(input: PriceQuoteInput): PriceQuoteResult {
   const { tiers, pax, addons = [], coupon = null, depositPercent } = input;
 
   const tier = selectTier(tiers, pax);
