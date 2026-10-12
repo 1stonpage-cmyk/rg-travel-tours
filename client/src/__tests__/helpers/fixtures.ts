@@ -220,6 +220,13 @@ export const SETTINGS_FIXTURE: SettingsPayload = {
    * into-one-paragraph path is exercised through the real page here and not
    * only in markdown.test.tsx.
    */
+  /**
+   * The bookable date window, already resolved server-side (the client never
+   * evaluates the Manila clock itself). Fixed dates, not `new Date()`-derived:
+   * a fixture that moved with the real clock would make any test that renders
+   * a date picker depend on the day it runs.
+   */
+  bookingWindow: { earliest: '2026-07-02', latest: '2026-12-28' },
   legal: {
     privacy: {
       markdown:

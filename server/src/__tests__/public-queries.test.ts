@@ -1,3 +1,4 @@
+import { manilaCivilDate } from '@rg/shared';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeAll, expect, it } from 'vitest';
 import { getDb } from '../db/client';
@@ -20,6 +21,32 @@ describeWithDb('public queries', () => {
     expect(s.permits).toEqual({ dot: null, dti: null, bir: null });
     expect(s.paymentMethods.every((m) => typeof m.label === 'string')).toBe(true);
     expect(typeof s.openState.isOpen).toBe('boolean');
+  });
+
+  /**
+   * The bookable window reaches the browser RESOLVED — two civil dates — and
+   * the raw policy does not. This is what lets the date picker disable a
+   * closed date by string comparison while computing nothing: a browser clock
+   * in the wrong time zone must never evaluate a Manila rule, the same reason
+   * the announcement's schedule fields never ship either.
+   *
+   * Asserted against the live seed rather than a fixture, so it also proves
+   * the `booking` settings row actually exists — `readSettings()` throws on a
+   * missing key, so a seed that forgot it would take the whole payload down.
+   */
+  it('settings.get resolves the booking window, and never ships the raw policy', async () => {
+    const s = await caller.settings.get();
+
+    for (const date of [s.bookingWindow.earliest, s.bookingWindow.latest]) {
+      expect(date, `${date} is not a YYYY-MM-DD civil date`).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    }
+    // A window that runs forwards, and one the seeded 180 days can fit in.
+    expect(s.bookingWindow.earliest < s.bookingWindow.latest).toBe(true);
+    // Today is outside it (`minLeadDays: 1`), which is the whole policy.
+    expect(manilaCivilDate(new Date()) < s.bookingWindow.earliest).toBe(true);
+    // The knobs stay on the server.
+    expect(s).not.toHaveProperty('booking');
+    expect(JSON.stringify(s)).not.toContain('minLeadDays');
   });
 
   it('tours.list returns a lowest-tier price', async () => {

@@ -8,6 +8,7 @@
  * forbids. Errors name the key, never the value.
  */
 import { eq } from 'drizzle-orm';
+import { bookableDateRange, type BookableDateRange } from '@rg/shared';
 import { getDb } from '../db/client';
 import { settings } from '../db/schema';
 import { resolveOpenState, type OpenState } from '../services/hours';
@@ -180,6 +181,16 @@ export interface SettingsPayload {
   whyBookDirect: SettingsBlocks['why_book_direct'];
   faqs: SettingsBlocks['faqs'];
   contact: SettingsBlocks['contact'];
+  /**
+   * The bookable date window, **already resolved** against the Manila clock
+   * — two civil dates, inclusive. The raw `booking` block (`minLeadDays`,
+   * `nextDayCutoffTime`, `maxAdvanceDays`) never reaches the client, for the
+   * same reason the announcement's schedule fields never do: a browser clock
+   * in the wrong time zone must not evaluate a Manila rule. The date picker
+   * disables anything outside these two dates by string comparison and
+   * computes nothing.
+   */
+  bookingWindow: BookableDateRange;
   legal: {
     privacy: SettingsBlocks['legal_privacy'];
     terms: SettingsBlocks['legal_terms'];
@@ -235,6 +246,9 @@ export function toSettingsPayload(blocks: SettingsBlocks, now: Date): SettingsPa
     whyBookDirect: blocks.why_book_direct,
     faqs: blocks.faqs,
     contact: blocks.contact,
+    // Resolved here, beside `openState` and the announcement window, and for
+    // the same reason: Manila-clock logic belongs on the server.
+    bookingWindow: bookableDateRange(blocks.booking, now),
     legal: { privacy: blocks.legal_privacy, terms: blocks.legal_terms },
   };
 }

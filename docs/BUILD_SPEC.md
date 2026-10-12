@@ -258,12 +258,39 @@ balance         = total - amount_paid   (collected on tour day)
 
 A booking is allowed when **all** are true for the tour + date:
 
-1. Date is not past, not blocked for the tour, and the tour is active.
+1. Date is not past, not blocked for the tour, and the tour is active, and it falls inside the
+   **bookable date window** (see below).
 2. Bookings for that tour/date (statuses that hold capacity) < `groups_per_day`.
 3. At least one **van** is free that day: active, not `for_repair`, `capacity >= pax`, not already assigned to a trip that date.
 4. At least one **driver** is free that day: active, not on leave, not already assigned that date.
 
 Steps 3–4 count already-confirmed-but-unassigned bookings as consuming one van and one driver each, so we never sell more trips than the fleet can run.
+
+#### The bookable date window
+
+The spec above says only "not past", which left today, the night before, and how far ahead a
+guest may book undecided. These three are **settings**, not constants and not schema
+(`settings.booking`, validated in `settings-schema.ts`, seeded in `SEED_SETTINGS`):
+
+| Setting                     | Default   | Meaning                                                             |
+| --------------------------- | --------- | ------------------------------------------------------------------- |
+| `booking.minLeadDays`       | `1`       | Today is **not** bookable; tomorrow is the earliest date.           |
+| `booking.nextDayCutoffTime` | `"18:00"` | Asia/Manila. At or after it, tomorrow stops being bookable too.     |
+| `booking.maxAdvanceDays`    | `180`     | The furthest ahead a guest may book, counted from the Manila today. |
+
+> **Proposed by developer 2026-10-13 — not yet confirmed with R&G.** All three defaults, and the
+> decision to stop same-day bookings at all, are the developer's proposal standing in for a rule
+> the spec never stated. Confirm each with R&G before launch; `nextDayCutoffTime` is the one that
+> most needs a real answer, because it is the line between "we can still crew a van for tomorrow"
+> and "we cannot", and `tours` has no departure-time column to anchor a per-tour cutoff to.
+
+`bookableDateRange()` in `shared/src/time.ts` is the **only** definition of the window: the date
+picker, the quote and `createHold()` all answer from it, so the UI cannot offer a date the server
+will refuse. The window is resolved **server-side** into `SettingsPayload.bookingWindow` (two
+civil dates) — the raw settings never reach the browser, for the same reason announcement
+schedules do not: a browser clock in the wrong time zone must never evaluate a Manila rule.
+`createHold()` re-checks it inside the locked transaction, after `takeSlotLocks()`, and refuses
+with its own reason (`date_not_bookable`) rather than a capacity one.
 
 > **Owner decision, 2026-10-11 — _pending R&G confirmation_.** The rule above left open whether
 > `groups_per_day` or the fleet is the binding limit. It is **both, whichever is smaller**:

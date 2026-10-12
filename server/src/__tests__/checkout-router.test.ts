@@ -14,7 +14,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 import express from 'express';
 import request from 'supertest';
-import { bookingRefSchema, quoteResultSchema } from '@rg/shared';
+import { bookingRefSchema, manilaCivilDate, quoteResultSchema } from '@rg/shared';
 import { createApp } from '../app';
 import { getDb, getPool } from '../db/client';
 import { destinations, drivers, tourPriceTiers, tours, vans } from '../db/schema';
@@ -29,8 +29,24 @@ import { describeWithDb } from './helpers/db';
 
 const caller = appRouter.createCaller({});
 
-/** This file's own tour day — distinct from other suites' fixture days. */
-const DAY = '2099-12-10';
+/**
+ * This file's own tour day, **relative to the real clock** rather than a
+ * fixed far-future date.
+ *
+ * It used to be `'2099-12-10'`. The booking window (owner decision
+ * 2026-10-13, pending R&G) caps bookings at `maxAdvanceDays` — 180 in the
+ * seed — and these resolvers take no `now` parameter: `availability` and
+ * `createHold` both run against the server's own clock, by design, because
+ * nothing on the wire may decide what "today" is. So a fixture date decades
+ * out is now correctly refused, and a date thirty days out is the honest way
+ * to test the path a guest actually takes. (The SERVICE-level suites —
+ * `create-hold.test.ts` — keep their fixed 2099 dates: `createHold()` does
+ * take `now`, so they pin exact instants instead.)
+ *
+ * Computed once at module load, so every test in the file and the teardown
+ * below agree on it.
+ */
+const DAY = manilaCivilDate(new Date(Date.now() + 30 * 86_400_000));
 
 const created = {
   bookingIds: [] as number[],
@@ -323,6 +339,39 @@ describeWithDb('checkout router', () => {
     await makeFleet();
     const verdict = await caller.checkout.availability({ tourSlug: tour.slug, date: DAY, pax: 2 });
     expect(verdict).toEqual({ ok: true });
+  });
+
+  /**
+   * The booking window (owner decision 2026-10-13, pending R&G). `availability`
+   * answers it BEFORE the capacity check, so the date picker greys a closed
+   * date out instead of calling it "fully booked" — two different sentences to
+   * a guest, and only one of them is true.
+   *
+   * Today is the case the owner's `minLeadDays: 1` turns off, and it is worth
+   * asserting through the router rather than only in the service: the reason
+   * has to survive onto the wire for the amber copy to be able to branch on
+   * it. A date far beyond `maxAdvanceDays` gets the same reason from the other
+   * end of the window.
+   */
+  it('availability reports date_not_bookable for today and for a date past the window', async () => {
+    const tour = await makeTour();
+    await makeFleet();
+    const today = manilaCivilDate(new Date());
+
+    expect(
+      await caller.checkout.availability({ tourSlug: tour.slug, date: today, pax: 2 }),
+      'today is not bookable under minLeadDays: 1',
+    ).toEqual({ ok: false, reason: 'date_not_bookable' });
+
+    /*
+     * The other end of the window. A fixed 2099 date is safe here precisely
+     * BECAUSE it is refused: the window check returns before any transaction,
+     * so no lock row is created for it and there is nothing to clean up.
+     */
+    expect(
+      await caller.checkout.availability({ tourSlug: tour.slug, date: '2099-12-10', pax: 2 }),
+      'a date beyond maxAdvanceDays is not bookable either',
+    ).toEqual({ ok: false, reason: 'date_not_bookable' });
   });
 
   it('availability reports tour_unavailable for an unknown slug, not an error', async () => {

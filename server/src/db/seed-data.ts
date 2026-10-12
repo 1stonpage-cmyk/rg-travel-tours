@@ -602,6 +602,23 @@ export const SEED_SETTINGS: SettingsBlocks = {
     },
   },
 
+  /*
+   * The bookable date window. Owner decision 2026-10-13 — PROPOSED BY
+   * DEVELOPER, NOT YET CONFIRMED WITH R&G, and recorded as such in
+   * BUILD_SPEC §5. Settings rather than constants so the owner can tune all
+   * three from the admin surface without a deploy.
+   *
+   * `minLeadDays: 1` means today is never bookable; `nextDayCutoffTime`
+   * takes tomorrow off the table too once 18:00 Manila passes, which is the
+   * half that needs R&G's confirmation most — it is the line between "we can
+   * still crew a van for tomorrow" and "we cannot".
+   */
+  booking: {
+    minLeadDays: 1,
+    nextDayCutoffTime: '18:00',
+    maxAdvanceDays: 180,
+  },
+
   // Placeholder legal copy — not legal advice, flagged for client review.
   legal_privacy: {
     markdown: `${LEGAL_TODO_LINE}

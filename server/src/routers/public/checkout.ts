@@ -60,14 +60,17 @@ import { TRPCError } from '@trpc/server';
 import { and, eq, lt } from 'drizzle-orm';
 import { z } from 'zod';
 import {
+  bookableDateRange,
   bookingPagePath,
   bookingRefSchema,
   createHoldInput,
   depositCentavos,
   formatPeso,
+  isDateBookable,
   quoteInput,
   type QuoteResult,
 } from '@rg/shared';
+import { readSettingBlock } from '../../content/settings';
 import { getDb } from '../../db/client';
 import { bookings, tours } from '../../db/schema';
 import { env } from '../../env';
@@ -95,10 +98,23 @@ import {
   HoldLimitReachedError,
   PriceChangedError,
   TourDateBlockedError,
+  TourDateNotBookableError,
   TourDatePastError,
 } from '../../services/create-hold';
 import { loadQuoteInputs, priceQuote, quoteDigest } from '../../services/pricing';
 import { publicProcedure, router } from '../../trpc';
+
+/**
+ * What `checkout.availability` answers with: every capacity reason, plus the
+ * booking window's own (owner decision 2026-10-13, pending R&G).
+ *
+ * `date_not_bookable` is deliberately NOT a member of
+ * `CapacityRefusalReason`: `assessCapacity()` has no clock and must not grow
+ * one, so the window is evaluated here and in `createHold()`, never inside
+ * the capacity service. Keeping the vocabularies separate is what stops a
+ * later reader assuming capacity decides it.
+ */
+type AvailabilityVerdict = CapacityVerdict | { ok: false; reason: 'date_not_bookable' };
 
 /**
  * `checkout.availability`'s own input — a date and a head count against one
@@ -281,6 +297,20 @@ function translateHoldError(error: unknown): TRPCError {
   if (error instanceof TourDatePastError) {
     return new TRPCError({ code: 'BAD_REQUEST', message: 'That date has already passed.' });
   }
+  /*
+   * The booking window (owner decision 2026-10-13, pending R&G). Its own
+   * message, naming the dates that ARE open: a guest told only "not
+   * available" at 18:05 for tomorrow will retry, and a guest told "fully
+   * booked" will give up on a tour that has seats.
+   */
+  if (error instanceof TourDateNotBookableError) {
+    return new TRPCError({
+      code: 'BAD_REQUEST',
+      message:
+        `We're not taking bookings for that date. ` +
+        `Please pick a date between ${error.earliest} and ${error.latest}.`,
+    });
+  }
   if (error instanceof TourDateBlockedError) {
     return new TRPCError({
       code: 'BAD_REQUEST',
@@ -459,7 +489,7 @@ export const checkoutRouter = router({
    */
   availability: publicProcedure
     .input(availabilityInput)
-    .query(async ({ input }): Promise<CapacityVerdict> => {
+    .query(async ({ input }): Promise<AvailabilityVerdict> => {
       try {
         const [tour] = await getDb()
           .select({ id: tours.id })
@@ -467,6 +497,19 @@ export const checkoutRouter = router({
           .where(and(eq(tours.slug, input.tourSlug), eq(tours.isActive, true)));
         // A legitimate answer, not a failure — returned, never thrown.
         if (!tour) return { ok: false, reason: 'tour_unavailable' };
+
+        /*
+         * The booking window first, and WITHOUT the locks: it is a pure
+         * function of the settings and the clock, so it needs no transaction
+         * — and answering it here means the date picker greys a closed date
+         * out rather than showing it as "fully booked". `createHold()`
+         * re-checks it under the locks; this is the friendly early answer,
+         * exactly as `validateCoupon()` is for coupons.
+         */
+        const window = bookableDateRange(await readSettingBlock('booking'), new Date());
+        if (!isDateBookable(input.date, window)) {
+          return { ok: false, reason: 'date_not_bookable' };
+        }
 
         return await getDb().transaction((tx) =>
           assessCapacity(tx, tour.id, input.date, input.pax),

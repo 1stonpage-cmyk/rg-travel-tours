@@ -34,7 +34,7 @@
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { ZodError } from 'zod';
 import { eq, sql } from 'drizzle-orm';
-import { BOOKING_PAGE_ROUTE, bookingPagePath, depositCentavos } from '@rg/shared';
+import { BOOKING_PAGE_ROUTE, bookingPagePath, depositCentavos, manilaCivilDate } from '@rg/shared';
 import { getDb, getPool } from '../db/client';
 import { bookings, destinations, drivers, tourPriceTiers, tours, vans } from '../db/schema';
 import { env } from '../env';
@@ -134,8 +134,18 @@ afterAll(() => {
 
 const caller = appRouter.createCaller({});
 
-/** This file's own tour day — distinct from other suites' fixture days. */
-const DAY = '2099-12-18';
+/**
+ * This file's own tour day, **relative to the real clock**.
+ *
+ * It was `'2099-12-18'`. These tests hold a booking through
+ * `checkout.createHold`, which takes no `now` parameter — the server's own
+ * clock decides what "today" is, by design — and the booking window (owner
+ * decision 2026-10-13, pending R&G) caps dates at `maxAdvanceDays`, 180 in
+ * the seed. A fixture date in 2099 is now correctly refused, so the date has
+ * to be one a guest could really pick. Forty days out: clear of the lead day
+ * and the 18:00 cutoff at one end, well inside 180 at the other.
+ */
+const DAY = manilaCivilDate(new Date(Date.now() + 40 * 86_400_000));
 
 const created = {
   bookingIds: [] as number[],

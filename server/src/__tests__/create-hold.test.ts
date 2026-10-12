@@ -39,6 +39,7 @@ import {
   couponRedemptions,
   destinations,
   drivers,
+  settings,
   tourAddons,
   tourBlockedDates,
   tourPriceTiers,
@@ -56,6 +57,7 @@ import {
   MAX_ACTIVE_HOLDS_PER_GUEST,
   PriceChangedError,
   TourDateBlockedError,
+  TourDateNotBookableError,
   TourDatePastError,
   createHold,
 } from '../services/create-hold';
@@ -662,30 +664,151 @@ describeWithDb('createHold', () => {
   });
 
   /**
-   * And the midnight case the civil-date rule exists for. At
-   * 2099-12-05T16:30Z it is already 00:30 on the 6th in Cebu: the 5th is
-   * yesterday there and must be refused, the 6th is today and must be
-   * allowed. An implementation that took "today" from the UTC clock would
-   * accept the 5th.
+   * And the midnight case the civil-date rule exists for, now carrying the
+   * booking window too (owner decision 2026-10-13, pending R&G). At
+   * 2099-12-04T16:30Z it is already 00:30 on the 5th in Cebu, so:
+   *
+   *   - the 4th is YESTERDAY there  -> past
+   *   - the 5th is TODAY            -> not past, but `minLeadDays: 1` refuses it
+   *   - the 6th is TOMORROW         -> bookable (00:30 is before the 18:00 cutoff)
+   *
+   * An implementation that took "today" from the UTC clock would put today on
+   * the 4th, make the earliest date the 5th and ACCEPT the 5th — so the
+   * middle assertion is what pins the Manila calendar, exactly as it did
+   * before the window existed.
    */
   it('takes "today" from the Manila calendar, not the UTC clock', async () => {
     const tour = await makeTour({ groupsPerDay: 1 });
     await makeFleet(2);
-    const justAfterManilaMidnight = new Date('2099-12-05T16:30:00Z');
+    const justAfterManilaMidnight = new Date('2099-12-04T16:30:00Z');
 
-    const yesterday = await quoteFor(tour.slug, DAY, 2);
-    const error = await hold(
-      holdInput({ tourSlug: tour.slug, date: DAY, pax: 2, quoteId: yesterday.quoteId }),
+    const yesterday = await quoteFor(tour.slug, DAY_BEFORE, 2);
+    const past = await hold(
+      holdInput({ tourSlug: tour.slug, date: DAY_BEFORE, pax: 2, quoteId: yesterday.quoteId }),
       justAfterManilaMidnight,
     ).catch((e: unknown) => e);
-    expect(error, `${DAY} is yesterday in Manila`).toBeInstanceOf(TourDatePastError);
+    expect(past, `${DAY_BEFORE} is yesterday in Manila`).toBeInstanceOf(TourDatePastError);
 
-    const today = await quoteFor(tour.slug, DAY_AFTER, 2);
+    const today = await quoteFor(tour.slug, DAY, 2);
+    const sameDay = await hold(
+      holdInput({ tourSlug: tour.slug, date: DAY, pax: 2, quoteId: today.quoteId }),
+      justAfterManilaMidnight,
+    ).catch((e: unknown) => e);
+    expect(sameDay, `${DAY} is TODAY in Manila, and today is not bookable`).toBeInstanceOf(
+      TourDateNotBookableError,
+    );
+    // The window it reports is the one the date picker would have shown.
+    expect((sameDay as TourDateNotBookableError).earliest).toBe(DAY_AFTER);
+
+    const tomorrow = await quoteFor(tour.slug, DAY_AFTER, 2);
     const result = await hold(
-      holdInput({ tourSlug: tour.slug, date: DAY_AFTER, pax: 2, quoteId: today.quoteId }),
+      holdInput({ tourSlug: tour.slug, date: DAY_AFTER, pax: 2, quoteId: tomorrow.quoteId }),
       justAfterManilaMidnight,
     );
     expect((await bookingRow(result.bookingId)).status).toBe('pending_payment');
+  });
+
+  /**
+   * The cutoff, at the hold. 2099-12-04T10:00Z is 18:00 Manila exactly, at
+   * which point tomorrow (the 5th) stops being bookable and the earliest date
+   * becomes the 6th. One minute earlier the 5th is still on sale.
+   *
+   * This is the half of the policy that most needs R&G's confirmation, so it
+   * is pinned here and not only in the pure `shared/src/time.test.ts` cases:
+   * this asserts that `createHold` actually READS the settings block and
+   * enforces it under the locks, not merely that the arithmetic is right.
+   */
+  it('stops taking tomorrow at the 18:00 Manila cutoff', async () => {
+    const tour = await makeTour({ groupsPerDay: 1 });
+    await makeFleet(2);
+    const { quoteId } = await quoteFor(tour.slug, DAY, 2);
+
+    const atCutoff = await hold(
+      holdInput({ tourSlug: tour.slug, date: DAY, pax: 2, quoteId }),
+      new Date('2099-12-04T10:00:00Z'),
+    ).catch((e: unknown) => e);
+    expect(atCutoff, 'the 18:00 cutoff itself must refuse tomorrow').toBeInstanceOf(
+      TourDateNotBookableError,
+    );
+    expect((atCutoff as TourDateNotBookableError).earliest).toBe(DAY_AFTER);
+
+    // 17:59 Manila, same Manila day: tomorrow is still bookable.
+    const result = await hold(
+      holdInput({ tourSlug: tour.slug, date: DAY, pax: 2, quoteId }),
+      new Date('2099-12-04T09:59:00Z'),
+    );
+    expect((await bookingRow(result.bookingId)).status).toBe('pending_payment');
+  });
+
+  /**
+   * The far end of the window — the owner's day-180 / day-181 case. `NOW` is
+   * 2099-12-01 12:00 Manila, so day 180 is 2100-05-30 and day 181 is the
+   * first date outside.
+   *
+   * Nothing may be written on the refusal, asserted the way every other
+   * refusal in this file is: a date guard that refuses but leaves a booking
+   * row behind is worse than one that accepts.
+   */
+  it('accepts day 180 and refuses day 181', async () => {
+    const tour = await makeTour({ groupsPerDay: 1 });
+    await makeFleet(2);
+
+    const inside = '2100-05-30';
+    const outside = '2100-05-31';
+
+    const before = await writtenRowCounts();
+    const far = await quoteFor(tour.slug, outside, 2);
+    const error = await hold(
+      holdInput({ tourSlug: tour.slug, date: outside, pax: 2, quoteId: far.quoteId }),
+    ).catch((e: unknown) => e);
+    expect(error, `${outside} is day 181 and must be refused`).toBeInstanceOf(
+      TourDateNotBookableError,
+    );
+    expect((error as TourDateNotBookableError).latest).toBe(inside);
+    expect(await writtenRowCounts(), 'a refused date still wrote something').toEqual(before);
+
+    const edge = await quoteFor(tour.slug, inside, 2);
+    const result = await hold(
+      holdInput({ tourSlug: tour.slug, date: inside, pax: 2, quoteId: edge.quoteId }),
+    );
+    expect((await bookingRow(result.bookingId)).status).toBe('pending_payment');
+  });
+
+  /**
+   * Fails CLOSED. A malformed `booking` block is a policy nobody can
+   * evaluate, so it must refuse bookings rather than fall back to an open
+   * window — the direction that would quietly sell tomorrow's last van at
+   * 23:00 because an admin saved a bad value.
+   */
+  it('refuses the hold when the booking settings block is malformed', async () => {
+    const tour = await makeTour({ groupsPerDay: 1 });
+    await makeFleet(1);
+    const { quoteId } = await quoteFor(tour.slug, DAY, 2);
+
+    const [stored] = await getDb()
+      .select({ value: settings.value })
+      .from(settings)
+      .where(eq(settings.key, 'booking'));
+    await getDb()
+      .update(settings)
+      .set({ value: { minLeadDays: 'soon' } })
+      .where(eq(settings.key, 'booking'));
+
+    try {
+      const before = await writtenRowCounts();
+      const error = await hold(
+        holdInput({ tourSlug: tour.slug, date: DAY, pax: 2, quoteId }),
+      ).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(Error);
+      // Names the key, never the stored value.
+      expect((error as Error).message).toBe('Invalid setting: "booking"');
+      expect(await writtenRowCounts()).toEqual(before);
+    } finally {
+      await getDb()
+        .update(settings)
+        .set({ value: stored!.value })
+        .where(eq(settings.key, 'booking'));
+    }
   });
 
   /** Ruling 15 / §5 step 1, second half: `tour_blocked_dates`. */

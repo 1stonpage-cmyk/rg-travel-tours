@@ -102,7 +102,14 @@ describe('settings schemas', () => {
     expect(SETTING_SCHEMAS.content_unverified.safeParse('true').success).toBe(false);
   });
 
-  it('covers all 15 settings keys from the plan', () => {
+  /**
+   * Fifteen from the dynamic-site plan, plus `booking` — the bookable date
+   * window (owner decision 2026-10-13, proposed by developer and pending
+   * R&G). Listed out rather than derived, so ADDING a key is a deliberate
+   * edit here: every key is a row `readSettings()` requires, and a key added
+   * without a seed row takes the whole public site down until the seed runs.
+   */
+  it('covers all 16 settings keys — the 15 from the plan, plus booking', () => {
     const expectedKeys = [
       'content_unverified',
       'site_seo',
@@ -119,6 +126,7 @@ describe('settings schemas', () => {
       'contact',
       'legal_privacy',
       'legal_terms',
+      'booking',
     ];
     expect(Object.keys(SETTING_SCHEMAS).sort()).toEqual(expectedKeys.sort());
   });

@@ -83,8 +83,11 @@
 import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import {
   HOLD_MINUTES,
-  manilaParts,
+  bookableDateRange,
+  isDateBookable,
+  manilaCivilDate,
   priceSnapshotSchema,
+  type BookableDateRange,
   type CreateHoldInput,
   type PriceSnapshot,
 } from '@rg/shared';
@@ -165,6 +168,34 @@ export class TourDateBlockedError extends Error {
     super(`The tour is not running on ${date}`);
     this.name = 'TourDateBlockedError';
     this.date = date;
+  }
+}
+
+/**
+ * The date is outside the bookable window — the `booking` settings block
+ * (owner decision 2026-10-13, _proposed by developer, pending R&G_):
+ * `minLeadDays`, `nextDayCutoffTime` and `maxAdvanceDays`.
+ *
+ * Distinct from `TourDatePastError` (which is the more specific "that day is
+ * gone") and from every capacity reason: "we stopped taking bookings for
+ * tomorrow at 18:00" is not "that day is fully booked", and a guest who is
+ * told the wrong one of those will either give up or keep retrying. It
+ * carries the window so the copy can say WHICH dates are open rather than
+ * only refusing.
+ */
+export class TourDateNotBookableError extends Error {
+  /** The router's refusal vocabulary — separate from the capacity reasons. */
+  readonly reason = 'date_not_bookable' as const;
+  readonly date: string;
+  readonly earliest: string;
+  readonly latest: string;
+
+  constructor(date: string, range: BookableDateRange) {
+    super(`Tour date ${date} is outside the bookable window ${range.earliest}..${range.latest}`);
+    this.name = 'TourDateNotBookableError';
+    this.date = date;
+    this.earliest = range.earliest;
+    this.latest = range.latest;
   }
 }
 
@@ -318,12 +349,6 @@ async function resolveActiveTourId(slug: string): Promise<number> {
   return tour.id;
 }
 
-/** `YYYY-MM-DD` for `now` in Asia/Manila. */
-function manilaCivilDate(now: Date): string {
-  const { year, month, day } = manilaParts(now);
-  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-}
-
 /**
  * §5 step 1, first half. A tour date is a CIVIL date in Asia/Manila, so
  * "today" comes from the Manila calendar and the comparison is a string
@@ -334,6 +359,51 @@ function manilaCivilDate(now: Date): string {
 function assertDateNotPast(date: string, now: Date): void {
   const today = manilaCivilDate(now);
   if (date < today) throw new TourDatePastError(date, today);
+}
+
+/**
+ * ONE settings block, read through the caller's transaction.
+ *
+ * Not `readSettingBlock()` from content/settings.ts: that one reads through
+ * `getDb()`, i.e. a second pooled connection, which inside this transaction
+ * is both a read outside the locks and — as `df8b38d` had to fix — a second
+ * connection taken while the first is held. Every read in this module goes
+ * through `tx`.
+ *
+ * Names the key and never the stored value, exactly as `readSettingBlock`
+ * does: a settings value can contain anything an admin typed.
+ */
+async function readSettingBlockTx<K extends keyof typeof SETTING_SCHEMAS>(
+  tx: Transaction,
+  key: K,
+): Promise<ReturnType<(typeof SETTING_SCHEMAS)[K]['parse']>> {
+  const [row] = await tx
+    .select({ value: settings.value })
+    .from(settings)
+    .where(eq(settings.key, key))
+    .limit(1);
+  if (!row) throw new Error(`Missing setting: "${key}"`);
+  const parsed = SETTING_SCHEMAS[key].safeParse(row.value);
+  if (!parsed.success) throw new Error(`Invalid setting: "${key}"`);
+  return parsed.data as ReturnType<(typeof SETTING_SCHEMAS)[K]['parse']>;
+}
+
+/**
+ * The bookable window (owner decision 2026-10-13, pending R&G). Read from
+ * settings INSIDE the transaction and AFTER the locks — a settings read
+ * before them would pin the REPEATABLE READ snapshot and silently defeat
+ * every capacity count that follows (`services/capacity.ts`, THE
+ * PRECONDITION).
+ *
+ * The window itself is computed by `bookableDateRange()` in @rg/shared, the
+ * same function the date picker and the quote use, so a date the UI offers
+ * is a date this check accepts. A missing or malformed `booking` block
+ * THROWS rather than defaulting to an open window: an unreadable policy must
+ * refuse bookings, not wave them through.
+ */
+async function assertDateBookable(tx: Transaction, date: string, now: Date): Promise<void> {
+  const range = bookableDateRange(await readSettingBlockTx(tx, 'booking'), now);
+  if (!isDateBookable(date, range)) throw new TourDateNotBookableError(date, range);
 }
 
 /**
@@ -430,21 +500,13 @@ async function loadRecomputeInputs(
             ),
           );
 
-  const [trustRow] = await tx
-    .select({ value: settings.value })
-    .from(settings)
-    .where(eq(settings.key, 'trust'))
-    .limit(1);
-  if (!trustRow) throw new Error('Missing setting: "trust"');
-  const trust = SETTING_SCHEMAS.trust.safeParse(trustRow.value);
-  // Names the key, never the stored value — as `readSettingBlock` does.
-  if (!trust.success) throw new Error('Invalid setting: "trust"');
+  const trust = await readSettingBlockTx(tx, 'trust');
 
   return {
     tiers,
     addons,
     coupon: couponCode ? await loadCoupon(tx, couponCode) : null,
-    depositPercent: trust.data.depositPercent,
+    depositPercent: trust.depositPercent,
     freeCancelHours: tour.freeCancelHours,
   };
 }
@@ -618,9 +680,15 @@ export async function createHold(
       const verdict = await assessCapacity(tx, tourId, input.date, input.pax);
       if (!verdict.ok) throw new CapacityRefusedError(verdict.reason);
 
-      // 3. §5 step 1's two date guards (Ruling 15).
+      /*
+       * 3. §5 step 1's date guards (Ruling 15), most specific first, so the
+       *    guest gets the sharpest true sentence: "that date has passed"
+       *    before "we are not taking bookings for it yet", and the tour's own
+       *    blocked day before either.
+       */
       assertDateNotPast(input.date, now);
       await assertDateNotBlocked(tx, tourId, input.date);
+      await assertDateBookable(tx, input.date, now);
 
       // 4. The money — recomputed from the database, then the digest
       //    compared. The client's `quoteId` is a change detector and never

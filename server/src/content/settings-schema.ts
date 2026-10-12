@@ -140,6 +140,34 @@ const contactSchema = z.object({
   }),
 });
 
+/**
+ * The bookable date window (owner decision 2026-10-13 — **proposed by
+ * developer, not yet confirmed with R&G**). Settings, deliberately, not a
+ * schema change: these are business policy the owner will tune, and
+ * `tours` has no departure-time column to anchor a per-tour cutoff to.
+ *
+ * The shape mirrors `BookingWindowSettings` in @rg/shared, which
+ * `bookableDateRange()` consumes — one definition of the window, used by the
+ * date picker, the quote and `createHold()` alike.
+ *
+ * `maxAdvanceDays` below `minLeadDays` would leave NO bookable date at all,
+ * which is a typo rather than a policy, so the refinement refuses it here
+ * instead of letting the site quietly sell nothing. (`isDateBookable()` also
+ * fails closed on such a window, so the two layers agree.)
+ */
+const bookingSchema = z
+  .object({
+    /** 0 = today is bookable; 1 = tomorrow is the earliest. */
+    minLeadDays: z.number().int().min(0).max(30),
+    /** Asia/Manila. At or after it, the earliest bookable date moves out one more day. */
+    nextDayCutoffTime: clockTime,
+    /** How far ahead a guest may book, in days from the Manila today. */
+    maxAdvanceDays: z.number().int().min(1).max(730),
+  })
+  .refine((booking) => booking.maxAdvanceDays >= booking.minLeadDays, {
+    message: 'maxAdvanceDays must not be below minLeadDays: no date would be bookable',
+  });
+
 const legalDocSchema = z.object({
   markdown: z.string(),
   updatedAt: z.string(),
@@ -159,6 +187,7 @@ export const SETTING_SCHEMAS = {
   why_book_direct: z.array(whyBookDirectItemSchema),
   faqs: z.array(faqSchema),
   contact: contactSchema,
+  booking: bookingSchema,
   legal_privacy: legalDocSchema,
   legal_terms: legalDocSchema,
 } satisfies Record<string, z.ZodType>;

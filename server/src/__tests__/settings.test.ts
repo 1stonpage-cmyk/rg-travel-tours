@@ -84,6 +84,8 @@ function validValueFor(key: string): unknown {
         motto: '',
         otherServices: { before: '', link: '', after: '' },
       };
+    case 'booking':
+      return { minLeadDays: 1, nextDayCutoffTime: '18:00', maxAdvanceDays: 180 };
     case 'legal_privacy':
       return { markdown: '# Privacy', updatedAt: '2026-01-01T00:00:00.000Z' };
     case 'legal_terms':
