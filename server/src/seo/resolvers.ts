@@ -133,7 +133,7 @@ export interface TourSeoRow {
   ogImage: string | null;
   destinationName: string;
   destinationSlug: string;
-  /** Integer centavos — MIN(price_per_person) across tiers. Null when a tour has no tiers. */
+  /** Integer centavos — MIN(price_per_person_centavos) across tiers. Null when a tour has no tiers. */
   fromPriceCentavos: number | null;
   /** `tour_images.path` of the lowest-sorted image, or null. */
   firstImagePath: string | null;
@@ -179,7 +179,7 @@ export async function loadTourSeo(slug: string): Promise<TourSeoRow | null> {
       ogImage: tours.ogImage,
       destinationName: destinations.name,
       destinationSlug: destinations.slug,
-      fromPriceCentavos: sql<string | null>`min(${tourPriceTiers.pricePerPerson})`,
+      fromPriceCentavos: sql<string | null>`min(${tourPriceTiers.pricePerPersonCentavos})`,
     })
     .from(tours)
     .innerJoin(destinations, eq(tours.destinationId, destinations.id))
@@ -232,8 +232,8 @@ export async function loadPackageSeo(slug: string): Promise<PackageSeoRow | null
       seoDescription: packages.seoDescription,
       ogImage: packages.ogImage,
       imagePath: packages.imagePath,
-      newPriceCentavos: packages.newPrice,
-      oldPriceCentavos: packages.oldPrice,
+      newPriceCentavos: packages.newPriceCentavos,
+      oldPriceCentavos: packages.oldPriceCentavos,
     })
     .from(packages)
     .where(and(eq(packages.slug, slug), eq(packages.isActive, true)));
@@ -540,7 +540,7 @@ const resolvePackage: Resolver = async (params) => {
         url: canonical,
         description,
         imageUrl: ogImage,
-        // The discounted price guests actually pay. `old_price` is a
+        // The discounted price guests actually pay. `old_price_centavos` is a
         // strike-through display figure, not an offer.
         priceCentavos: pkg.newPriceCentavos,
         siteUrl: absoluteUrl('/'),

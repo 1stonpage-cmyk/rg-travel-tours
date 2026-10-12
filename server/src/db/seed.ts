@@ -108,7 +108,7 @@ async function upsertTour(db: Db, tour: SeedTour, destinationId: number): Promis
         tourId,
         minPax: tier.minPax,
         maxPax: tier.maxPax,
-        pricePerPerson: tier.pricePerPerson,
+        pricePerPersonCentavos: tier.pricePerPersonCentavos,
       })),
     );
   }
@@ -134,8 +134,8 @@ async function upsertPackage(db: Db, pkg: SeedPackage): Promise<void> {
   const values = {
     title: pkg.title,
     days: pkg.days,
-    oldPrice: pkg.oldPrice,
-    newPrice: pkg.newPrice,
+    oldPriceCentavos: pkg.oldPriceCentavos,
+    newPriceCentavos: pkg.newPriceCentavos,
     description: pkg.description,
     imagePath: pkg.imagePath,
     imageAlt: pkg.imageAlt,

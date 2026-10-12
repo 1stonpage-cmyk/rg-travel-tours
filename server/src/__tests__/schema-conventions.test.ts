@@ -15,8 +15,9 @@
  *     read, so the same row reads differently from two connections. This
  *     project stores UTC and computes business dates in Asia/Manila, in JS.
  *  3. Every money column is named `*_centavos`, so a bare `price` can never
- *     be read as pesos by mistake. Four legacy columns predate the rule and
- *     are exempted explicitly below — see LEGACY_UNSUFFIXED.
+ *     be read as pesos by mistake. Four legacy columns used to be exempted
+ *     here (BUG-106); cleanup A3 renamed them, so the rule now holds with no
+ *     exemptions at all and this guard carries no allow-list to rot.
  *  4. Nothing hard-deletes a booking or a payment.
  *
  * **The vacuity trap.** A scan that stops matching — a renamed file, a
@@ -136,31 +137,14 @@ describe('schema conventions, read from the real source', () => {
     expect(money.length).toBeGreaterThan(5);
 
     /**
-     * Four money columns predate this convention. They ARE centavos — the
-     * seed stores `newPrice: 980_000` for ₱9,800 and the API renames them
-     * to `newPriceCentavos` on the way out — but the DB column names lack
-     * the suffix. Renaming them needs a migration plus a seed, router and
-     * client sweep, which task 18 (a test-only task) must not do. Logged as
-     * BUG-106; the owner decides.
-     *
-     * This is an exemption, not a loophole: the exhaustiveness assertion
-     * below fails if one of these is renamed or dropped, so the list cannot
-     * rot, and any NEW unsuffixed money column still goes red.
+     * NO EXEMPTIONS. `LEGACY_UNSUFFIXED` used to sit here holding
+     * `price_per_person`, `price`, `old_price` and `new_price` — four columns
+     * that predated the convention (BUG-106). Cleanup A3 renamed all four
+     * (migration 0008), so the list is gone rather than empty: an empty
+     * allow-list is an invitation to add to it, and its own exhaustiveness
+     * assertion would have been vacuous.
      */
-    const LEGACY_UNSUFFIXED = [
-      'price_per_person', // tour_price_tiers
-      'price', // tour_addons
-      'old_price', // packages
-      'new_price', // packages
-    ];
-    expect(
-      LEGACY_UNSUFFIXED.filter((name) => !money.includes(name)),
-      'a legacy exemption no longer exists in schema.ts — delete it from LEGACY_UNSUFFIXED',
-    ).toEqual([]);
-
-    const offenders = money.filter(
-      (name) => !name.endsWith('_centavos') && !LEGACY_UNSUFFIXED.includes(name),
-    );
+    const offenders = money.filter((name) => !name.endsWith('_centavos'));
     expect(
       offenders,
       `money columns must be named *_centavos (CLAUDE.md): ${offenders.join(', ')}`,

@@ -100,17 +100,17 @@ describe('seeded tours (Ruling 1 — price tiers)', () => {
 
   it.each(SEED_TOURS)('$slug has three tiers whose minimum is today\'s "from" price', (tour) => {
     expect(tour.priceTiers).toHaveLength(3);
-    const min = Math.min(...tour.priceTiers.map((t) => t.pricePerPerson));
+    const min = Math.min(...tour.priceTiers.map((t) => t.pricePerPersonCentavos));
     expect(min).toBe(todaysFromPrice[tour.slug]);
     // Descending with group size.
     const [low, mid, high] = [...tour.priceTiers].sort((a, b) => a.minPax - b.minPax);
-    expect(low!.pricePerPerson).toBeGreaterThan(mid!.pricePerPerson);
-    expect(mid!.pricePerPerson).toBeGreaterThan(high!.pricePerPerson);
+    expect(low!.pricePerPersonCentavos).toBeGreaterThan(mid!.pricePerPersonCentavos);
+    expect(mid!.pricePerPersonCentavos).toBeGreaterThan(high!.pricePerPersonCentavos);
   });
 
   it('Oslob tier prices match the brief exactly', () => {
     const oslob = SEED_TOURS.find((t) => t.slug === 'oslob-whale-shark-tumalog-falls');
-    const prices = oslob?.priceTiers.map((t) => t.pricePerPerson).sort((a, b) => b - a);
+    const prices = oslob?.priceTiers.map((t) => t.pricePerPersonCentavos).sort((a, b) => b - a);
     expect(prices).toEqual([229_000, 209_000, 189_000]);
   });
 

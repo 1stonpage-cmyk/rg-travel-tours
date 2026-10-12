@@ -57,6 +57,13 @@
       "when": 1791733696044,
       "tag": "0007_icy_sphinx",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1791768319299,
+      "tag": "0008_money_columns_centavos",
+      "breakpoints": true
     }
   ]
 }

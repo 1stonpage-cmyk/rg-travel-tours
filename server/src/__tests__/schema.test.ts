@@ -114,7 +114,7 @@ describeWithDb('public content schema (DB-backed)', () => {
       tourId,
       minPax: 7,
       maxPax: 12,
-      pricePerPerson: 189000,
+      pricePerPersonCentavos: 189000,
     });
     tierId = tierResult.insertId;
 
@@ -123,7 +123,7 @@ describeWithDb('public content schema (DB-backed)', () => {
       .from(schema.tourPriceTiers)
       .where(eq(schema.tourPriceTiers.id, tierId));
 
-    expect(row?.pricePerPerson).toBe(189000);
-    expect(Number.isInteger(row?.pricePerPerson)).toBe(true);
+    expect(row?.pricePerPersonCentavos).toBe(189000);
+    expect(Number.isInteger(row?.pricePerPersonCentavos)).toBe(true);
   });
 });

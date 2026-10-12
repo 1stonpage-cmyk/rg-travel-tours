@@ -124,7 +124,7 @@ export const SEED_DESTINATIONS: SeedDestination[] = [
 export interface SeedPriceTier {
   minPax: number;
   maxPax: number;
-  pricePerPerson: number;
+  pricePerPersonCentavos: number;
 }
 
 export interface SeedTourImage {
@@ -168,9 +168,9 @@ export interface SeedTour {
 /** Ruling 1: lowest tier equals `base` exactly — the displayed "from" price. */
 function priceTiersFrom(base: number): SeedPriceTier[] {
   return [
-    { minPax: 1, maxPax: 2, pricePerPerson: base + 40_000 },
-    { minPax: 3, maxPax: 6, pricePerPerson: base + 20_000 },
-    { minPax: 7, maxPax: 12, pricePerPerson: base },
+    { minPax: 1, maxPax: 2, pricePerPersonCentavos: base + 40_000 },
+    { minPax: 3, maxPax: 6, pricePerPersonCentavos: base + 20_000 },
+    { minPax: 7, maxPax: 12, pricePerPersonCentavos: base },
   ];
 }
 
@@ -275,8 +275,8 @@ export interface SeedPackage {
   slug: string;
   title: string;
   days: number;
-  oldPrice: number;
-  newPrice: number;
+  oldPriceCentavos: number;
+  newPriceCentavos: number;
   description: string;
   imagePath: string;
   imageAlt: string;
@@ -289,8 +289,8 @@ export const SEED_PACKAGES: SeedPackage[] = [
     slug: 'cebu-highlights-3d2n',
     title: 'Cebu Highlights',
     days: 3,
-    oldPrice: 1_250_000,
-    newPrice: 980_000,
+    oldPriceCentavos: 1_250_000,
+    newPriceCentavos: 980_000,
     description:
       'City heritage, Oslob whale sharks and Kawasan canyoneering with hotel transfers included.',
     imagePath: placeholderImage('package-cebu-highlights'),
@@ -302,8 +302,8 @@ export const SEED_PACKAGES: SeedPackage[] = [
     slug: 'cebu-bohol-5d4n',
     title: 'Cebu & Bohol Explorer',
     days: 5,
-    oldPrice: 2_450_000,
-    newPrice: 1_890_000,
+    oldPriceCentavos: 2_450_000,
+    newPriceCentavos: 1_890_000,
     description:
       'South Cebu plus a Bohol countryside crossing — Chocolate Hills, tarsiers and the Loboc River.',
     imagePath: placeholderImage('package-cebu-bohol'),
@@ -315,8 +315,8 @@ export const SEED_PACKAGES: SeedPackage[] = [
     slug: 'south-cebu-escape-4d3n',
     title: 'South Cebu Escape',
     days: 4,
-    oldPrice: 1_680_000,
-    newPrice: 1_340_000,
+    oldPriceCentavos: 1_680_000,
+    newPriceCentavos: 1_340_000,
     description: 'Moalboal sardines, Badian canyoneering and Osmeña Peak sunrise at a slower pace.',
     imagePath: placeholderImage('package-south-cebu'),
     imageAlt: 'Placeholder image for the 4-day South Cebu Escape package',

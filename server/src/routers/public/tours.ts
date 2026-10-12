@@ -39,7 +39,7 @@ export interface TourListItem {
   title: string;
   destination: { id: number; name: string; slug: string };
   image: TourImage | null;
-  /** Integer centavos — MIN(price_per_person) across tiers. Null when a tour somehow has none. */
+  /** Integer centavos — MIN(price_per_person_centavos) across tiers. Null when a tour somehow has none. */
   fromPriceCentavos: number | null;
   durationHours: number | null;
   /** The display aggregate — ALL published reviews, samples included (D1). */
@@ -59,9 +59,9 @@ export interface TourDetail extends TourListItem {
   inclusions: unknown;
   exclusions: unknown;
   images: TourImage[];
-  priceTiers: Array<{ minPax: number; maxPax: number; pricePerPerson: number }>;
+  priceTiers: Array<{ minPax: number; maxPax: number; pricePerPersonCentavos: number }>;
   itinerary: Array<{ name: string; description: string | null; sortOrder: number }>;
-  addons: Array<{ name: string; price: number; perPerson: boolean }>;
+  addons: Array<{ name: string; priceCentavos: number; perPerson: boolean }>;
   maxGuests: number;
   freeCancelHours: number | null;
   seoTitle: string | null;
@@ -149,7 +149,7 @@ async function listRows(destinationSlug: string | undefined): Promise<ListRow[]>
       badge: tours.badge,
       alertNote: tours.alertNote,
       historicalTripsCount: tours.historicalTripsCount,
-      fromPriceCentavos: sql<string | null>`min(${tourPriceTiers.pricePerPerson})`,
+      fromPriceCentavos: sql<string | null>`min(${tourPriceTiers.pricePerPersonCentavos})`,
     })
     .from(tours)
     .innerJoin(destinations, eq(tours.destinationId, destinations.id))
@@ -269,7 +269,7 @@ export const toursRouter = router({
         .select({
           minPax: tourPriceTiers.minPax,
           maxPax: tourPriceTiers.maxPax,
-          pricePerPerson: tourPriceTiers.pricePerPerson,
+          pricePerPersonCentavos: tourPriceTiers.pricePerPersonCentavos,
         })
         .from(tourPriceTiers)
         .where(eq(tourPriceTiers.tourId, row.id))
@@ -295,7 +295,11 @@ export const toursRouter = router({
         .where(eq(tourItineraryStops.tourId, row.id))
         .orderBy(asc(tourItineraryStops.sortOrder)),
       db
-        .select({ name: tourAddons.name, price: tourAddons.price, perPerson: tourAddons.perPerson })
+        .select({
+          name: tourAddons.name,
+          priceCentavos: tourAddons.priceCentavos,
+          perPerson: tourAddons.perPerson,
+        })
         .from(tourAddons)
         .where(and(eq(tourAddons.tourId, row.id), eq(tourAddons.isActive, true))),
       displayAggregate(row.id),
@@ -303,7 +307,9 @@ export const toursRouter = router({
     ]);
 
     const fromPriceCentavos =
-      priceTiers.length > 0 ? Math.min(...priceTiers.map((tier) => tier.pricePerPerson)) : null;
+      priceTiers.length > 0
+        ? Math.min(...priceTiers.map((tier) => tier.pricePerPersonCentavos))
+        : null;
 
     const listItem = toListItem(
       {

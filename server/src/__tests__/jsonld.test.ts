@@ -343,7 +343,7 @@ describeWithDb('tour and package JSON-LD', () => {
       'TouristTrip',
     );
     expect(node.name).toBe('Cebu Highlights');
-    expect(sub(node, 'offers').price).toBe('9800.00'); // new_price 980000, not old_price 1250000
+    expect(sub(node, 'offers').price).toBe('9800.00'); // new_price_centavos 980000, not old_price_centavos 1250000
     expect(JSON.stringify(node)).not.toContain('12500');
     expect(Object.keys(node)).not.toContain('aggregateRating');
   });
@@ -368,7 +368,7 @@ describeWithDb('aggregateRating — real reviews', () => {
       .values({ id: TOUR_ID, slug: SLUG, title: 'Fixture Tour', destinationId: DESTINATION_ID });
     await db
       .insert(tourPriceTiers)
-      .values({ tourId: TOUR_ID, minPax: 1, maxPax: 4, pricePerPerson: 250_000 });
+      .values({ tourId: TOUR_ID, minPax: 1, maxPax: 4, pricePerPersonCentavos: 250_000 });
   });
 
   afterAll(async () => {

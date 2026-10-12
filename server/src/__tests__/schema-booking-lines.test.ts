@@ -361,7 +361,7 @@ describe('the booking lines, as actually migrated', () => {
       const bookingId = await makeBooking(tx);
       const [addon] = await tx
         .insert(tourAddons)
-        .values({ tourId: 1, name: 'Island lunch', price: 35000, perPerson: true });
+        .values({ tourId: 1, name: 'Island lunch', priceCentavos: 35000, perPerson: true });
       await tx.insert(bookingAddons).values({
         bookingId,
         addonId: addon.insertId,
@@ -373,7 +373,7 @@ describe('the booking lines, as actually migrated', () => {
 
       // The add-on is renamed and repriced, the way next season's admin would.
       await tx.execute(
-        sql`UPDATE tour_addons SET name = 'Lunch (buffet)', price = 50000 WHERE id = ${addon.insertId}`,
+        sql`UPDATE tour_addons SET name = 'Lunch (buffet)', price_centavos = 50000 WHERE id = ${addon.insertId}`,
       );
 
       const [rows] = (await tx.execute(

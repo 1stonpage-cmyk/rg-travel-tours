@@ -192,7 +192,7 @@ describeWithDb('page resolution — fallback fixtures', () => {
     });
     await db
       .insert(tourPriceTiers)
-      .values({ tourId: TOUR_ID, minPax: 1, maxPax: 4, pricePerPerson: 250_000 });
+      .values({ tourId: TOUR_ID, minPax: 1, maxPax: 4, pricePerPersonCentavos: 250_000 });
   });
 
   afterAll(async () => {

@@ -845,7 +845,7 @@ describe('the retro-fitted foreign keys, as actually migrated', () => {
         slug: `__trips__${Date.now()}`,
         title: 'Test package',
         days: 3,
-        newPrice: 1500000,
+        newPriceCentavos: 1500000,
       });
       for (const packageId of [null, pkg.insertId]) {
         expect(
