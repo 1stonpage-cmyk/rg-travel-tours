@@ -27,8 +27,14 @@
  * better message — an unexpected internal error still reports the
  * underlying error's own text verbatim. Every branch below picks the
  * message a guest should see, and anything not recognised falls through to
- * a generic `INTERNAL_SERVER_ERROR` with the real error kept only as
- * `cause` (server-side logging, never serialised to the client).
+ * `internalError()`'s fixed `INTERNAL_SERVER_ERROR`, with the real error
+ * kept only as `cause` (server-side logging, never serialised to the
+ * client). **All three procedures wrap their entire body in try/catch for
+ * this** — `availability` included, even though its typed outcome
+ * (`{ ok: false, reason }`) is a normal RETURN, never a throw. A procedure
+ * with no `catch` at all is not "nothing to translate", it is an open door:
+ * the thrown error's own `.message` becomes `shape.message` verbatim, and
+ * nothing here would have caught it (round 1 review).
  *
  * **The coupon check on `quote` is deliberately a second call.**
  * `loadQuoteInputs()`'s own coupon lookup (shared with `createHold()`'s
@@ -103,6 +109,24 @@ const CAPACITY_MESSAGES: Record<CapacityRefusalReason, string> = {
 };
 
 /**
+ * The one fallback for anything this router does not recognise — a dropped
+ * connection, a query timeout, a service throwing something new. ALL THREE
+ * procedures route every unrecognised error through this, not just the ones
+ * with a typed vocabulary to translate: a procedure with no `catch` at all
+ * lets the thrown error's own `.message` become `shape.message` verbatim,
+ * which `trpc.ts`'s `errorFormatter` only path-scrubs — it never replaces
+ * it. The real error survives only as `cause` (server-side logging; never
+ * part of the response shape tRPC builds).
+ */
+function internalError(error: unknown): TRPCError {
+  return new TRPCError({
+    code: 'INTERNAL_SERVER_ERROR',
+    message: 'Could not complete the request.',
+    cause: error,
+  });
+}
+
+/**
  * Every coupon rule's typed error (coupons.ts), translated. Returns `null`
  * for anything else, so callers can fall through to their own cases.
  *
@@ -164,11 +188,7 @@ function translateQuoteError(error: unknown): TRPCError {
       message: 'No pricing is available for that group size.',
     });
   }
-  return new TRPCError({
-    code: 'INTERNAL_SERVER_ERROR',
-    message: 'Could not complete the request.',
-    cause: error,
-  });
+  return internalError(error);
 }
 
 /** Every typed refusal `createHold()` (create-hold.ts) can throw, translated. */
@@ -207,11 +227,7 @@ function translateHoldError(error: unknown): TRPCError {
       message: 'This date is very busy right now. Please try again in a moment.',
     });
   }
-  return new TRPCError({
-    code: 'INTERNAL_SERVER_ERROR',
-    message: 'Could not complete the request.',
-    cause: error,
-  });
+  return internalError(error);
 }
 
 export const checkoutRouter = router({
@@ -270,13 +286,20 @@ export const checkoutRouter = router({
   availability: publicProcedure
     .input(availabilityInput)
     .query(async ({ input }): Promise<CapacityVerdict> => {
-      const [tour] = await getDb()
-        .select({ id: tours.id })
-        .from(tours)
-        .where(and(eq(tours.slug, input.tourSlug), eq(tours.isActive, true)));
-      if (!tour) return { ok: false, reason: 'tour_unavailable' };
+      try {
+        const [tour] = await getDb()
+          .select({ id: tours.id })
+          .from(tours)
+          .where(and(eq(tours.slug, input.tourSlug), eq(tours.isActive, true)));
+        // A legitimate answer, not a failure — returned, never thrown.
+        if (!tour) return { ok: false, reason: 'tour_unavailable' };
 
-      return getDb().transaction((tx) => assessCapacity(tx, tour.id, input.date, input.pax));
+        return await getDb().transaction((tx) =>
+          assessCapacity(tx, tour.id, input.date, input.pax),
+        );
+      } catch (error) {
+        throw internalError(error);
+      }
     }),
 
   /**

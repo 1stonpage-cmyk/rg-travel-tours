@@ -10,7 +10,7 @@
  * capacity number in this file.
  */
 import { ZodError } from 'zod';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 import express from 'express';
 import request from 'supertest';
@@ -18,6 +18,7 @@ import { bookingRefSchema, quoteResultSchema } from '@rg/shared';
 import { createApp } from '../app';
 import { getDb, getPool } from '../db/client';
 import { destinations, drivers, tourPriceTiers, tours, vans } from '../db/schema';
+import { loadQuoteInputs, priceQuote } from '../services/pricing';
 import {
   CHECKOUT_HOLD_MAX,
   CHECKOUT_HOLD_PROCEDURES,
@@ -49,8 +50,8 @@ async function countBookings(): Promise<number> {
   return Number(rows[0]?.n ?? -1);
 }
 
-/** A tour with one price tier covering 1-12 pax at a round ₱1,000/person. */
-async function makeTour() {
+/** A tour with one price tier spanning [minPax, maxPax] at a round ₱1,000/person. */
+async function makeTourWithTier(minPax: number, maxPax: number) {
   const db = getDb();
   const slug = `__checkout_router__${unique()}`;
   const [destination] = await db.insert(destinations).values({ name: slug, slug });
@@ -66,11 +67,16 @@ async function makeTour() {
   created.tourIds.push(tour.insertId);
   await db.insert(tourPriceTiers).values({
     tourId: tour.insertId,
-    minPax: 1,
-    maxPax: 12,
+    minPax,
+    maxPax,
     pricePerPersonCentavos: 100000,
   });
   return { tourId: tour.insertId, slug };
+}
+
+/** A tour with one price tier covering 1-12 pax at a round ₱1,000/person. */
+async function makeTour() {
+  return makeTourWithTier(1, 12);
 }
 
 /** One van, one driver — enough fleet that capacity is never what refuses. */
@@ -191,6 +197,56 @@ describeWithDb('checkout router', () => {
     expect((error as Error).message.toLowerCase()).toContain('coupon');
   });
 
+  // Round 1 review: the two `translateQuoteError` branches that read
+  // pricing.ts's plain-Error text had no test at all — neither proven to
+  // land on its intended code rather than falling through to the generic
+  // INTERNAL_SERVER_ERROR branch.
+
+  it('quote returns NOT_FOUND for a slug that names no active tour', async () => {
+    const error = await caller.checkout
+      .quote({
+        tourSlug: `__checkout_router_missing__${unique()}`,
+        date: DAY,
+        pax: 2,
+        addonIds: [],
+      })
+      .catch((e: unknown) => e);
+    expect(error).toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('quote returns BAD_REQUEST for a head count no tier covers', async () => {
+    // A tier that starts at 4 pax leaves 1-3 valid per quoteInput's own
+    // Zod bounds (1-12) but uncovered by this tour's own pricing — exactly
+    // priceQuote()'s "No price tier covers a head count of N" throw site.
+    const tour = await makeTourWithTier(4, 12);
+    const error = await caller.checkout
+      .quote({ tourSlug: tour.slug, date: DAY, pax: 2, addonIds: [] })
+      .catch((e: unknown) => e);
+    expect(error).toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  /**
+   * Ruling 24: `translateQuoteError` matches these two `pricing.ts` throw
+   * sites by exact substring, because that file is CLAUDE.md "do not
+   * modify" and carries no typed error for either case. Round 1 review:
+   * that match is a real contract, and nothing pinned it — a wording
+   * change in pricing.ts would silently degrade NOT_FOUND/BAD_REQUEST into
+   * a generic INTERNAL_SERVER_ERROR with no test going red. This does not
+   * reopen pricing.ts (a money file, out of scope); it only pins the two
+   * wordings the router's regexes depend on, so drift shows up here first.
+   */
+  it('Ruling 24 — pins the exact pricing.ts wording checkout.ts depends on', async () => {
+    await expect(
+      loadQuoteInputs(`__checkout_router_missing__${unique()}`, DAY, [], undefined),
+    ).rejects.toThrow(/^No active tour found for slug "/);
+
+    const tour = await makeTourWithTier(4, 12);
+    const inputs = await loadQuoteInputs(tour.slug, DAY, [], undefined);
+    expect(() => priceQuote({ ...inputs, pax: 2 })).toThrow(
+      /^No price tier covers a head count of 2$/,
+    );
+  });
+
   // -------------------------------------------------------------------------
   // checkout.createHold
   // -------------------------------------------------------------------------
@@ -276,6 +332,34 @@ describeWithDb('checkout router', () => {
       pax: 2,
     });
     expect(verdict).toEqual({ ok: false, reason: 'tour_unavailable' });
+  });
+
+  /**
+   * Round 1 review (Important): `availability` had no try/catch at all, so
+   * an unexpected failure's raw `.message` would have reached the client
+   * verbatim — `trpc.ts`'s `errorFormatter` only path-scrubs a message, it
+   * never replaces it. Injects a failure the same way `create-hold.test.ts`
+   * simulates a MySQL deadlock: `vi.spyOn` on the real, singleton `getDb()`
+   * instance's `transaction` method (not a mock db), so the tour lookup
+   * still succeeds for real and only the capacity read fails.
+   */
+  it('availability falls through to the fixed message on an unexpected failure, never the raw one', async () => {
+    const tour = await makeTour();
+    const db = getDb();
+    const spy = vi
+      .spyOn(db, 'transaction')
+      .mockRejectedValueOnce(new Error('ECONNRESET: pretend a connection dropped'));
+
+    try {
+      const error = await caller.checkout
+        .availability({ tourSlug: tour.slug, date: DAY, pax: 2 })
+        .catch((e: unknown) => e);
+      expect(error).toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
+      expect((error as Error).message).toBe('Could not complete the request.');
+      expect((error as Error).message).not.toContain('ECONNRESET');
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
