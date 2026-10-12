@@ -38,6 +38,7 @@ import { depositCentavos, type CouponDiscount } from '@rg/shared';
 import { readSettingBlock } from '../content/settings';
 import { getDb } from '../db/client';
 import { coupons, tourAddons, tourPriceTiers, tours } from '../db/schema';
+import { normalizeCouponCode } from './coupons';
 
 export interface PriceTier {
   id: number;
@@ -162,7 +163,9 @@ async function loadCoupon(couponCode: string): Promise<QuoteCoupon | null> {
   // Codes are compared case-insensitively — the brief's own fixtures
   // ('SAVE10', 'BIG') are uppercase, and quoteDigest() below applies the same
   // normalisation so a code's case can never desync a quote from its digest.
-  const normalized = couponCode.trim().toUpperCase();
+  // Shares `normalizeCouponCode` with `services/coupons.ts`'s `validateCoupon`
+  // (Week 3, Task 3) so the two cannot drift on what counts as "the same code".
+  const normalized = normalizeCouponCode(couponCode);
   const db = getDb();
   const [row] = await db
     .select({
