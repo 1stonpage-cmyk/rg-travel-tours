@@ -50,6 +50,8 @@ import { takeSlotLocks } from '../services/capacity';
 import { CouponUsageLimitReachedError } from '../services/coupons';
 import {
   CapacityRefusedError,
+  CouponExhaustedUnderLockError,
+  HoldContentionError,
   HoldLimitReachedError,
   MAX_ACTIVE_HOLDS_PER_GUEST,
   PriceChangedError,
@@ -361,6 +363,36 @@ function rejections(results: PromiseSettledResult<unknown>[]) {
     .map((r) => r.reason as unknown);
 }
 
+/**
+ * Opens `n` pool connections and gives them straight back, so the pool has
+ * them live.
+ *
+ * Not an optimisation. A `Promise.allSettled` pair where the second call has
+ * to open a TCP connection and complete a MySQL handshake — while the first
+ * runs sub-millisecond statements on a warm one — is a SEQUENTIAL pair
+ * wearing a costume: MEASURED on the coupon race below, where it hid a
+ * missing lock entirely. Every concurrency test in this file warms the pool
+ * first rather than inheriting whatever state the previous test left.
+ */
+async function warmPool(n = 4) {
+  const held = await Promise.all(Array.from({ length: n }, () => getPool().getConnection()));
+  for (const connection of held) connection.release();
+}
+
+/**
+ * The pool's own `connectionLimit`, read from the live pool rather than
+ * restated here — a copy of the number would silently stop matching
+ * `db/client.ts` and the exhaustion test below would then prove nothing.
+ */
+function poolConnectionLimit(): number {
+  const core = (getPool() as unknown as { pool?: { config?: { connectionLimit?: number } } }).pool;
+  const limit = core?.config?.connectionLimit;
+  if (typeof limit !== 'number') {
+    throw new Error('could not read the pool connectionLimit — mysql2 internals moved');
+  }
+  return limit;
+}
+
 /** Booking ids a concurrent pair actually created, so teardown can reach them. */
 function registerFulfilled(results: PromiseSettledResult<{ bookingId: number }>[]) {
   for (const r of results) {
@@ -407,6 +439,10 @@ describeWithDb('createHold', () => {
     );
 
     expect(result.ref).toMatch(/^RG-[ABCDEFGHJKMNPQRSTVWXYZ23456789]{6}$/);
+    // §5 says FIFTEEN minutes. Both expiry assertions below are written as
+    // `NOW + HOLD_MINUTES`, so without this line a constant changed to 30
+    // would keep them green and "15 minutes out" would be asserted nowhere.
+    expect(HOLD_MINUTES).toBe(15);
     expect(result.holdExpiresAt.getTime()).toBe(NOW.getTime() + HOLD_MINUTES * 60_000);
 
     const row = await bookingRow(result.bookingId);
@@ -780,18 +816,64 @@ describeWithDb('createHold', () => {
    * guest can be shown — a deadlock or a lock-wait timeout satisfies
    * "exactly one rejected" identically, and that is the failure this test
    * exists to catch, so the reason is asserted too.
+   *
+   * **The overlap is CONSTRUCTED, not hoped for.** A bare `Promise.allSettled`
+   * leaves it to the pool's warmth — measured on the coupon race below, where
+   * the pair ran one after another and a missing lock went unnoticed. This
+   * test is the only thing pinning "no plain read before the locks" (the
+   * REPEATABLE READ snapshot hazard `capacity.ts` documents), so an overlap
+   * that depends on machine, CI, file order or pool size would let a snapshot
+   * regression ship behind a green run. So: the pool is warmed, the slot rows
+   * are pre-created, a third connection holds the TOUR row so both holds
+   * must stall inside `takeSlotLocks`, and the CHECKPOINT asserts that
+   * neither call had settled while that lock was held — i.e. both were
+   * genuinely in flight — before the holder lets go and the race runs.
    */
   it('lets only one of two concurrent guests hold the last slot', async () => {
     const tour = await makeTour({ groupsPerDay: 1 });
     await makeFleet(2);
     const a = await quoteFor(tour.slug, DAY, 2);
+    await warmPool();
+    // Pre-created, so the two holds contend on the LOCK rather than on each
+    // other's `INSERT … ON DUPLICATE KEY UPDATE` of a new key (Ruling 20).
+    await getDb().transaction((tx) => takeSlotLocks(tx, tour.tourId, DAY));
 
-    const results = await Promise.allSettled([
-      createHold(holdInput({ tourSlug: tour.slug, date: DAY, pax: 2, quoteId: a.quoteId }), NOW),
-      createHold(holdInput({ tourSlug: tour.slug, date: DAY, pax: 2, quoteId: a.quoteId }), NOW),
-    ]);
+    const settled = [false, false];
+    let race: Promise<PromiseSettledResult<{ bookingId: number }>[]>;
+    let settledAtCheckpoint: boolean[] = [];
+    const holder = await getPool().getConnection();
+    try {
+      await holder.beginTransaction();
+      await holder.query(
+        'SELECT tour_id FROM tour_date_slots WHERE tour_id = ? AND date = ? FOR UPDATE',
+        [tour.tourId, DAY],
+      );
+
+      race = Promise.allSettled(
+        [0, 1].map((i) =>
+          createHold(
+            holdInput({ tourSlug: tour.slug, date: DAY, pax: 2, quoteId: a.quoteId }),
+            NOW,
+          ).finally(() => {
+            settled[i] = true;
+          }),
+        ),
+      );
+      // Long enough that a connection handshake cannot explain a stall.
+      await new Promise((r) => setTimeout(r, 300));
+      settledAtCheckpoint = [...settled];
+    } finally {
+      await holder.rollback();
+      holder.release();
+    }
+
+    const results = await race;
     registerFulfilled(results);
 
+    expect(
+      settledAtCheckpoint,
+      'a hold finished before the race started — the two never overlapped, so this test proves nothing',
+    ).toEqual([false, false]);
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
     const [refusal] = rejections(results);
     expect(refusal, `the loser was killed, not refused: ${String(refusal)}`).toBeInstanceOf(
@@ -804,9 +886,17 @@ describeWithDb('createHold', () => {
   /**
    * **A single-use coupon cannot be held twice.** Two guests, two DIFFERENT
    * dates — so nothing but the coupon row can serialise them — and one
-   * coupon with `usage_limit = 1`. Both pass the unlocked `validateCoupon`
-   * (each reads `used_count = 0`); the authoritative re-check under the
-   * coupon's own `FOR UPDATE` is what refuses the loser.
+   * coupon with `usage_limit = 1`. Both pass the early `validateCoupon`
+   * (each reads `used_count = 0` from its own snapshot); the authoritative
+   * re-check under the coupon's own `FOR UPDATE` is what refuses the loser.
+   *
+   * **The refusal is told apart STRUCTURALLY, by class.** The two checks
+   * produce the same message, so asserting the message proves nothing: if
+   * either hold had not reached the lock when the holder let go, the loser
+   * would be refused by the early read and this test would pass while the
+   * lock was missing entirely. `reserveCouponUnderLock` throws
+   * `CouponExhaustedUnderLockError` — a subclass, so a caller still sees a
+   * usage-limit refusal — and only the under-lock path can produce it.
    */
   it('lets only one of two concurrent guests hold a single-use coupon', async () => {
     const tour = await makeTour({ groupsPerDay: 3 });
@@ -849,64 +939,60 @@ describeWithDb('createHold', () => {
       await getDb().transaction((tx) => takeSlotLocks(tx, tour.tourId, date));
     }
 
-    /*
-     * Counts how many TRANSACTIONS the race ran. Two guests, two
-     * transactions: the loser must be refused by the re-check under the
-     * coupon lock, not killed as a deadlock victim and re-run — a deadlock
-     * kill followed by a retry lands on the same `CouponUsageLimitReached`
-     * message (MEASURED), so the message alone cannot tell the two apart.
-     */
-    const db = getDb();
-    const realTransaction = db.transaction.bind(db);
-    let attempts = 0;
-    const spy = vi.spyOn(db, 'transaction').mockImplementation(((...args: unknown[]) => {
-      attempts += 1;
-      return (realTransaction as (...a: unknown[]) => unknown)(...args);
-    }) as typeof db.transaction);
+    await warmPool();
 
+    const settled = [false, false];
+    let settledAtCheckpoint: boolean[] = [];
     const holder = await getPool().getConnection();
     let race: Promise<PromiseSettledResult<{ bookingId: number }>[]>;
     try {
       await holder.beginTransaction();
       await holder.query('SELECT used_count FROM coupons WHERE id = ? FOR UPDATE', [coupon.id]);
 
-      race = Promise.allSettled([
-        createHold(
-          holdInput({
-            tourSlug: tour.slug,
-            date: DAY,
-            pax: 2,
-            couponCode: coupon.code,
-            quoteId: first.quoteId,
+      race = Promise.allSettled(
+        [
+          { date: DAY, quoteId: first.quoteId },
+          { date: DAY_AFTER, quoteId: second.quoteId },
+        ].map((leg, i) =>
+          createHold(
+            holdInput({
+              tourSlug: tour.slug,
+              date: leg.date,
+              pax: 2,
+              couponCode: coupon.code,
+              quoteId: leg.quoteId,
+            }),
+            NOW,
+          ).finally(() => {
+            settled[i] = true;
           }),
-          NOW,
         ),
-        createHold(
-          holdInput({
-            tourSlug: tour.slug,
-            date: DAY_AFTER,
-            pax: 2,
-            couponCode: coupon.code,
-            quoteId: second.quoteId,
-          }),
-          NOW,
-        ),
-      ]);
+      );
       await new Promise((r) => setTimeout(r, 400));
+      settledAtCheckpoint = [...settled];
     } finally {
       await holder.rollback();
       holder.release();
     }
 
     const results = await race;
-    spy.mockRestore();
     registerFulfilled(results);
 
+    expect(
+      settledAtCheckpoint,
+      'a hold finished while the coupon row was held — the two never reached the lock together',
+    ).toEqual([false, false]);
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
     const [refusal] = rejections(results);
-    expect(refusal, `the loser was killed, not refused: ${String(refusal)}`).toBeInstanceOf(
-      CouponUsageLimitReachedError,
-    );
+    // The subclass: refused by the re-check UNDER THE LOCK, not by the early
+    // read and not by a deadlock kill followed by a retry.
+    expect(
+      refusal,
+      `the loser was not refused under the coupon lock: ${String(refusal)}`,
+    ).toBeInstanceOf(CouponExhaustedUnderLockError);
+    expect((refusal as CouponExhaustedUnderLockError).underLock).toBe(true);
+    // And it is still a usage-limit refusal to anyone catching the base class.
+    expect(refusal).toBeInstanceOf(CouponUsageLimitReachedError);
     expect(
       await count(sql`SELECT used_count n FROM coupons WHERE id = ${coupon.id}`),
       'the coupon was spent twice',
@@ -914,7 +1000,6 @@ describeWithDb('createHold', () => {
     expect(
       await count(sql`SELECT COUNT(*) n FROM coupon_redemptions WHERE coupon_id = ${coupon.id}`),
     ).toBe(1);
-    expect(attempts, 'the loser was killed and re-run rather than cleanly refused').toBe(2);
   });
 
   /**
@@ -1016,6 +1101,74 @@ describeWithDb('createHold', () => {
   });
 
   // -------------------------------------------------------------------------
+  // The pool. Nothing inside the transaction may check out a second
+  // connection — see the module note on `create-hold.ts`.
+  // -------------------------------------------------------------------------
+
+  /**
+   * **The regression test for the Critical fix (Ruling 19).** A hold runs
+   * inside a transaction, which holds one of the pool's ten connections. If
+   * anything inside that transaction then checks out a SECOND connection —
+   * `validateCoupon` did, through `getDb()` — then ten concurrent
+   * coupon-bearing holds hold all ten connections and each wait for an
+   * eleventh. mysql2's connection queue is unbounded and untimed, so nothing
+   * releases and nothing times out: the process wedges until it is
+   * restarted, taking every other database request with it.
+   *
+   * Ten concurrent holds is not a thing a test suite can stage reliably, so
+   * this stages the same condition deterministically from the other end:
+   * check out `connectionLimit - 1` connections by hand, leaving exactly
+   * one, and run ONE coupon-bearing hold. With every read going through
+   * `tx`, that one connection is enough and the hold completes. Before the
+   * fix it waits forever — the race below turns that into a 2-second
+   * failure with a message rather than a hung suite.
+   *
+   * The 2-second ceiling also keeps the hogged connections from leaking: the
+   * attempt is awaited again after they are released, so a slow pass and a
+   * real regression both end with the pool as they found it.
+   */
+  it('holds a coupon-bearing booking with only one pool connection left', async () => {
+    const tour = await makeTour({ groupsPerDay: 1 });
+    await makeFleet(1);
+    const coupon = await makeCoupon({ percentBp: 1000 });
+    const { quoteId } = await quoteFor(tour.slug, DAY, 2, [], coupon.code);
+
+    const limit = poolConnectionLimit();
+    expect(limit, 'a pool of one cannot stage this').toBeGreaterThan(1);
+    const hogged = [];
+    for (let i = 0; i < limit - 1; i += 1) hogged.push(await getPool().getConnection());
+
+    // One promise, awaited twice: `hold` registers its booking for teardown.
+    const attempt = hold(
+      holdInput({ tourSlug: tour.slug, date: DAY, pax: 2, couponCode: coupon.code, quoteId }),
+    )
+      .then(() => 'held' as const)
+      .catch((error: unknown) => `failed: ${String(error)}`);
+
+    const outcome = await Promise.race([
+      attempt,
+      new Promise<string>((resolve) =>
+        setTimeout(
+          () =>
+            resolve(
+              'timed out: the hold is waiting for a pool connection it can never get — something inside the transaction took a second connection',
+            ),
+          2000,
+        ),
+      ),
+    ]);
+    for (const connection of hogged) connection.release();
+    await attempt;
+
+    expect(outcome).toBe('held');
+    expect(await heldOnDate(DAY)).toBe(1);
+    expect(
+      await count(sql`SELECT used_count n FROM coupons WHERE id = ${coupon.id}`),
+      'the coupon was not reserved',
+    ).toBe(1);
+  });
+
+  // -------------------------------------------------------------------------
   // The ER_LOCK_DEADLOCK retry
   // -------------------------------------------------------------------------
 
@@ -1057,6 +1210,46 @@ describeWithDb('createHold', () => {
       expect((await bookingRow(result.bookingId)).status).toBe('pending_payment');
       expect(await auditRowsFor(result.bookingId), 'the retry wrote a second audit row').toBe(1);
       expect(await heldOnDate(DAY), 'the retry booked the slot twice').toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  /**
+   * And after {@link MAX_DEADLOCK_ATTEMPTS} it gives up with a TYPED error
+   * rather than Drizzle's opaque `Failed query`: the router next task needs
+   * one vocabulary for every way a hold can fail, and "the date is being
+   * hammered, try again" is a different sentence to a guest than a 500. The
+   * killed transaction is kept as `cause` so the log still names the MySQL
+   * error, and nothing is written.
+   */
+  it('gives up with a typed HoldContentionError after three deadlocks', async () => {
+    const tour = await makeTour({ groupsPerDay: 1 });
+    await makeFleet(1);
+    const { quoteId } = await quoteFor(tour.slug, DAY, 2);
+
+    const db = getDb();
+    let attempts = 0;
+    const spy = vi.spyOn(db, 'transaction').mockImplementation(((...args: unknown[]) => {
+      void args;
+      attempts += 1;
+      return Promise.reject(mysqlError(1213, 'ER_LOCK_DEADLOCK'));
+    }) as typeof db.transaction);
+
+    try {
+      const error = await createHold(
+        holdInput({ tourSlug: tour.slug, date: DAY, pax: 2, quoteId }),
+        NOW,
+      ).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(HoldContentionError);
+      expect((error as HoldContentionError).attempts).toBe(3);
+      expect(attempts, 'the retry is not bounded at three attempts').toBe(3);
+      expect(
+        (error as Error).cause,
+        'the killed transaction must survive as `cause` for the log',
+      ).toBeDefined();
+      expect(await heldOnDate(DAY)).toBe(0);
     } finally {
       spy.mockRestore();
     }

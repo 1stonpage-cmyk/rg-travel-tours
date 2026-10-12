@@ -62,6 +62,21 @@ export function getDb(): MySql2Database<typeof schema> {
  */
 export type Transaction = Parameters<Parameters<ReturnType<typeof getDb>['transaction']>[0]>[0];
 
+/**
+ * The pool-backed Drizzle instance `getDb()` returns.
+ *
+ * Exists so a read-only service can accept **either** handle —
+ * `db: Database | Transaction = getDb()` — and be callable both from a
+ * router (on the pool) and from inside a transaction that already holds a
+ * connection. That second case is not a nicety: the pool is
+ * `connectionLimit: 10` with mysql2's default unbounded, untimed queue, so a
+ * function that grabs its own connection while its caller's transaction
+ * holds one deadlocks the POOL once enough requests do it at the same time —
+ * nothing releases and nothing times out. See `validateCoupon` in
+ * `services/coupons.ts`, the first service to take this.
+ */
+export type Database = ReturnType<typeof getDb>;
+
 export async function closeDb(): Promise<void> {
   if (!pool) return;
   const current = pool;

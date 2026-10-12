@@ -39,7 +39,9 @@
  *  5. The hold caps (Ruling 5): at most two active unpaid holds per email
  *     AND per phone, counted **here, under the locks** — counted outside
  *     them, two concurrent submits both read "one active hold" and both win.
- *  6. The coupon: validate the rules, then take its row `FOR UPDATE` —
+ *  6. The coupon: validate the rules **through `tx`** (Ruling 19 — see the
+ *     call site; a second pooled connection taken while this transaction
+ *     holds one can wedge the pool), then take its row `FOR UPDATE` —
  *     **LAST in the lock order, fleet → tour → coupon** — and re-check the
  *     usage cap under that lock. Taking the coupon lock any earlier lets two
  *     guests holding DIFFERENT tours with the SAME coupon deadlock.
@@ -56,6 +58,17 @@
  * been rolled back by InnoDB, so every statement has to be re-issued, and
  * re-running from the top also re-reads capacity rather than trusting a
  * verdict from the dead attempt.
+ *
+ * ## Every read in the transaction goes through `tx`
+ *
+ * Not only for the snapshot's sake (`capacity.ts`'s precondition) but for
+ * the POOL's: `getDb()` inside this transaction means a second connection
+ * checked out while this one is held, and ten concurrent holds doing that
+ * leave all ten connections held by transactions each waiting for an
+ * eleventh, in a queue mysql2 leaves unbounded and untimed. Nothing
+ * releases, nothing times out, and the process needs restarting. The only
+ * pool read left is `resolveActiveTourId`, which runs BEFORE the transaction
+ * opens and has released its connection by the time one is held.
  *
  * ## Why a refusal is a throw
  *
@@ -91,6 +104,7 @@ import { writeAudit } from './audit';
 import { insertBookingWithRef } from './booking-ref';
 import { assessCapacity, takeSlotLocks, type CapacityRefusalReason } from './capacity';
 import {
+  CouponNotFoundError,
   CouponUsageLimitReachedError,
   normalizeCouponCode,
   recordRedemption,
@@ -185,6 +199,48 @@ export class HoldLimitReachedError extends Error {
   }
 }
 
+/**
+ * The booking lost {@link MAX_DEADLOCK_ATTEMPTS} deadlocks in a row — the
+ * day is being hammered, and the honest answer to the guest is "try again",
+ * not a 500.
+ *
+ * Typed, like every other refusal here, so the router (next task) has one
+ * vocabulary instead of a `catch` that sniffs Drizzle's "Failed query" by
+ * string. The killed transaction is kept as `cause`, so the log still names
+ * the MySQL error.
+ */
+export class HoldContentionError extends Error {
+  readonly attempts: number;
+
+  constructor(attempts: number, cause: unknown) {
+    super(`Could not hold this slot after ${attempts} attempts — the date is busy`, { cause });
+    this.name = 'HoldContentionError';
+    this.attempts = attempts;
+  }
+}
+
+/**
+ * `reserveCouponUnderLock`'s refusal, as distinct from `validateCoupon`'s.
+ *
+ * Both mean "this coupon is spent", and the router treats them alike — hence
+ * the subclass rather than a separate error, so `instanceof
+ * CouponUsageLimitReachedError` still catches both. The marker exists
+ * because the difference is invisible from the message and the two are NOT
+ * equivalent evidence: only this one proves the refusal came from the
+ * authoritative re-read under `SELECT … FOR UPDATE`. The concurrency test
+ * asserts this class, so a run where the two guests failed to overlap — and
+ * the loser was refused by the early read instead — fails loudly rather than
+ * passing vacuously.
+ */
+export class CouponExhaustedUnderLockError extends CouponUsageLimitReachedError {
+  readonly underLock = true as const;
+
+  constructor(code: string, usageLimit: number) {
+    super(code, usageLimit);
+    this.name = 'CouponExhaustedUnderLockError';
+  }
+}
+
 // ---------------------------------------------------------------------------
 // The 1213 retry
 // ---------------------------------------------------------------------------
@@ -222,13 +278,20 @@ function isDeadlockError(err: unknown): boolean {
  * Runs `attempt` again from the beginning if InnoDB killed it as a deadlock
  * victim. `attempt` must be the WHOLE transaction — a deadlocked transaction
  * is already rolled back, so there is nothing to resume.
+ *
+ * Retries immediately, with no backoff: the victim's locks are already gone
+ * and a guest is waiting on an HTTP request. After
+ * {@link MAX_DEADLOCK_ATTEMPTS} it gives up with a TYPED
+ * {@link HoldContentionError}, so this module has no failure mode the router
+ * has to recognise by string.
  */
 async function withDeadlockRetry<T>(attempt: () => Promise<T>): Promise<T> {
   for (let tries = 1; ; tries += 1) {
     try {
       return await attempt();
     } catch (error) {
-      if (tries >= MAX_DEADLOCK_ATTEMPTS || !isDeadlockError(error)) throw error;
+      if (!isDeadlockError(error)) throw error;
+      if (tries >= MAX_DEADLOCK_ATTEMPTS) throw new HoldContentionError(tries, error);
     }
   }
 }
@@ -311,9 +374,10 @@ interface RecomputeInputs {
  * Deliberately not `pricing.ts`'s `loadQuoteInputs()`, for two reasons that
  * are both about this transaction: that function is keyed by SLUG (Ruling 17
  * resolved the slug before the transaction opened) and it reads through
- * `getDb()` — the pool — which would be a second connection taken while this
- * one holds three row locks, and a price read outside the locks that
- * protect it. The queries below are the same queries; the handle is not.
+ * `getDb()` — the pool — which would be several connections checked out
+ * while this one holds three row locks (the pool-starvation hazard the note
+ * at the top of this file spells out), and a price read outside the locks
+ * that protect it. The queries below are the same queries; the handle is not.
  *
  * Only ACTIVE add-ons belonging to THIS tour count, and an id for another
  * tour or a retired add-on is ignored rather than rejected — the same
@@ -443,12 +507,14 @@ async function loadCoupon(tx: Transaction, code: string): Promise<QuoteCoupon | 
  * ordered: on a pooled connection, or before the locks, two concurrent
  * submits both read "one active hold" and both pass.
  *
- * **Residual, and deliberately not fixed here:** the locks only serialise
- * holds for the same tour and DATE. Two submits by the same guest for
+ * **Residual — PARKED by Ruling 21, do not "fix" it in passing:** the locks
+ * only serialise holds for the same tour and DATE. Two submits by the same guest for
  * different dates contend for nothing, so a determined guest can still land
  * a third hold by racing two different dates. Closing that needs a
- * guest-level lock row, which would add a fourth lock to a lock order this
- * task was given as fixed — so it is reported rather than invented.
+ * guest-level lock row (or `GET_LOCK`), i.e. a fourth lock in a lock order
+ * only the owner can change — and the damage is bounded to one extra
+ * 15-minute hold that expires on its own, with the per-IP limiter covering
+ * the scripted case. Surfaced to the owner; not built here.
  */
 async function assertUnderHoldCaps(tx: Transaction, email: string, phone: string): Promise<void> {
   const [counts] = await tx
@@ -476,32 +542,42 @@ async function assertUnderHoldCaps(tx: Transaction, email: string, phone: string
 
 /**
  * Takes the coupon row `FOR UPDATE` and re-checks the usage cap under that
- * lock — the authoritative check `validateCoupon()`'s own is only an early,
- * friendly preview of (it reads through the pool, unlocked, so two guests
- * can both see "one use left").
+ * lock — the authoritative check that `validateCoupon()`'s own is only an
+ * early, friendly preview of. That earlier read is answered from this
+ * transaction's consistent-read snapshot, so two guests can both see "one
+ * use left"; a locking read always sees the latest committed row.
  *
  * **THIRD and LAST in the lock order: fleet → tour → coupon.** Taking it any
  * earlier would let two guests holding different tours with the same coupon
  * each hold one lock the other needs.
  *
  * `used_count` is read with the same `FOR UPDATE` that takes the lock, so
- * there is no window between locking the row and reading it.
+ * there is no window between locking the row and reading it. The refusal is
+ * {@link CouponExhaustedUnderLockError} — a subclass, so callers still see a
+ * usage-limit refusal, and tests can tell the two checks apart.
+ *
+ * Takes the whole coupon rather than its id so a refusal can name the CODE
+ * the guest typed: a message built from the internal id would read `Coupon
+ * "37" has reached its usage limit`, which is both the wrong vocabulary for
+ * a guest and an internal identifier in guest-facing copy.
  */
-async function reserveCouponUnderLock(tx: Transaction, couponId: number): Promise<void> {
+async function reserveCouponUnderLock(tx: Transaction, coupon: QuoteCoupon): Promise<void> {
   const [rows] = (await tx.execute(
-    sql`SELECT code, usage_limit, used_count FROM coupons WHERE id = ${couponId} FOR UPDATE`,
-  )) as unknown as [
-    Array<{ code: string; usage_limit: number | null; used_count: number }>,
-    unknown,
-  ];
+    sql`SELECT usage_limit, used_count FROM coupons WHERE id = ${coupon.id} FOR UPDATE`,
+  )) as unknown as [Array<{ usage_limit: number | null; used_count: number }>, unknown];
   const row = rows[0];
-  // Fail closed: the row was there a moment ago, so its disappearance is a
-  // concurrent delete, not a reason to book an unpriced discount.
-  if (!row) throw new CouponUsageLimitReachedError(String(couponId), 0);
+  /*
+   * Fail closed. The row was there when the quote was recomputed moments
+   * ago, so its disappearance is a concurrent delete — and an admin deleting
+   * a coupon mid-checkout is "that code is gone", not "that code is spent".
+   * Either way the hold is refused rather than booked with an unpriced
+   * discount.
+   */
+  if (!row) throw new CouponNotFoundError(coupon.code);
 
   const usageLimit = row.usage_limit === null ? null : Number(row.usage_limit);
   if (usageLimit !== null && Number(row.used_count) >= usageLimit) {
-    throw new CouponUsageLimitReachedError(row.code, usageLimit);
+    throw new CouponExhaustedUnderLockError(coupon.code, usageLimit);
   }
 }
 
@@ -567,11 +643,24 @@ export async function createHold(
       // 6. The coupon: rules first, then its row locked LAST and the usage
       //    cap re-checked under that lock.
       if (input.couponCode) {
-        await validateCoupon(input.couponCode, quote.subtotalCentavos, now);
+        /*
+         * `tx`, NOT the pool (Ruling 19, fix round 1). This transaction is
+         * already holding one of the pool's ten connections; a second
+         * connection checked out here would, at ten concurrent
+         * coupon-bearing holds, leave all ten held by transactions each
+         * waiting for an eleventh — and mysql2's connection queue is
+         * unbounded and untimed, so nothing releases and nothing times out.
+         * A transaction queueing for a connection is also one still holding
+         * the fleet, tour and coupon locks, which turns a competitor's wait
+         * into the 1205 this module deliberately does not retry.
+         */
+        await validateCoupon(input.couponCode, quote.subtotalCentavos, now, tx);
         // `inputs.coupon` is what the money above was actually computed
-        // from, and it is the same row `validateCoupon` just approved.
+        // from, and — both reads now going through `tx`, i.e. one snapshot —
+        // it is the same row version `validateCoupon` just approved. The
+        // guard stays as fail-closed defence, not as a live branch.
         if (!inputs.coupon) throw new PriceChangedError();
-        await reserveCouponUnderLock(tx, inputs.coupon.id);
+        await reserveCouponUnderLock(tx, inputs.coupon);
       }
 
       // 7. The writes.

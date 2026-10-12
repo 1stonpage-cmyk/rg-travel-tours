@@ -5,8 +5,9 @@
  * into the checkout form gets back a specific reason — "that code expired",
  * not "that code is invalid" — because §6 requires each rule (active,
  * within dates, under usage limit, minimum spend) to be checked and
- * reported separately. It reads through `getDb()` (the pool), not a
- * transaction, because nothing here writes.
+ * reported separately. It reads through whichever handle it is given —
+ * `getDb()` (the pool) by default, or the caller's transaction, which a
+ * caller that holds one MUST pass (Ruling 19; see the note on the function).
  *
  * The AUTHORITATIVE re-check of the same rules happens later, under a row
  * lock, inside `createHold()` (a later task) — this module's job is only to
@@ -25,7 +26,7 @@
 import { and, eq, sql } from 'drizzle-orm';
 import type { CouponDiscount } from '@rg/shared';
 import { getDb } from '../db/client';
-import type { Transaction } from '../db/client';
+import type { Database, Transaction } from '../db/client';
 import { coupons, couponRedemptions } from '../db/schema';
 
 /**
@@ -144,14 +145,31 @@ export class CouponMinimumSpendNotMetError extends Error {
  * `now` is a parameter and this function never calls `new Date()` itself,
  * so the window checks (`starts_at`/`ends_at`) run in milliseconds in a
  * test and are not at the mercy of the real clock.
+ *
+ * **`db` takes either handle, and a caller already inside a transaction
+ * MUST pass its `tx`** (Ruling 19, Task 5 fix round 1). Defaulting to
+ * `getDb()` keeps every router call unchanged, but a caller that holds a
+ * transaction holds one of the pool's ten connections: if this function then
+ * checks out an eleventh, ten concurrent callers hold all ten and each wait
+ * for one more — and mysql2's connection queue is unbounded and untimed, so
+ * nothing releases and nothing times out. That is a permanent liveness
+ * failure recoverable only by restarting the process, which is why the
+ * handle is a parameter rather than a `getDb()` call inside.
+ *
+ * Reading through the caller's transaction means `used_count` is answered
+ * from that transaction's consistent-read snapshot. That weakens nothing:
+ * this is the early, friendly refusal, and the authoritative check is
+ * `createHold`'s re-read under `SELECT … FOR UPDATE`, which — being a
+ * locking read — always sees the latest committed row rather than the
+ * snapshot.
  */
 export async function validateCoupon(
   code: string,
   subtotalCentavos: number,
   now: Date,
+  db: Database | Transaction = getDb(),
 ): Promise<ValidCoupon> {
   const normalized = normalizeCouponCode(code);
-  const db = getDb();
   const [row] = await db
     .select({
       id: coupons.id,

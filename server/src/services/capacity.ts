@@ -55,12 +55,25 @@
  * ranged locking read on `bookings` takes GAP locks, and the other
  * transaction's own `INSERT` into that gap needs an insert-intention lock
  * that conflicts with it. Two bookings for the same tour on DIFFERENT dates
- * contend for nothing today; with `FOR SHARE` they died with
- * `ER_LOCK_DEADLOCK` (1213). Trading a precondition for a deadlock between
- * unrelated bookings is not a fix. Both halves of that measurement are
- * pinned by tests: `does NOT serialise two bookings on different dates`
- * (which `FOR SHARE` turns red) and the hazard guard
- * `HAZARD: a consistent read taken BEFORE the locks …`.
+ * both SUCCEED today; with `FOR SHARE` they died with `ER_LOCK_DEADLOCK`
+ * (1213). Trading a precondition for a deadlock between unrelated bookings
+ * is not a fix. Both halves of that measurement are pinned by tests: `does
+ * NOT serialise two bookings on different dates` (which `FOR SHARE` turns
+ * red) and the hazard guard `HAZARD: a consistent read taken BEFORE the
+ * locks …`.
+ *
+ * "Both succeed", deliberately, rather than "contend for nothing" (Ruling
+ * 20, corrected from a Task 5 measurement): until a date's lock rows exist,
+ * the `INSERT … ON DUPLICATE KEY UPDATE` below inserts a NEW key and takes a
+ * next-key lock on it, so a second transaction inserting a neighbouring date
+ * — in either table — WAITS for the first to commit. It then proceeds and
+ * books its own day, which is why the test above is green and why the
+ * difference matters: waiting costs latency, whereas the `FOR SHARE`
+ * variant killed one of the two outright. Once the rows exist (every date
+ * after its first booking) the two contend for nothing at all. Anything
+ * engineering a race between two neighbouring dates has to pre-create the
+ * rows first, or it is measuring this insert serialisation instead of
+ * whatever it meant to measure (see `create-hold.test.ts`'s coupon race).
  *
  * ## Everything reads through `tx`
  *
