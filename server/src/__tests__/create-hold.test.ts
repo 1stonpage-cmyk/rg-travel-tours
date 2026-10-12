@@ -775,6 +775,36 @@ describeWithDb('createHold', () => {
   });
 
   /**
+   * **Precedence, and it is a guest-facing choice rather than a tidiness
+   * one.** Both refusals are true here: the date is closed (it is "today"
+   * under `NOW`) AND the tour is sold out for it. Only one of the two
+   * sentences helps — told "fully booked", a guest abandons a tour that has
+   * seats on every other day; told "we're not taking bookings for that date",
+   * they pick another day. So the window wins, and `checkout.availability`
+   * answers in the same order so the two surfaces cannot disagree about the
+   * same request.
+   */
+  it('reports the closed date, not "sold out", when both are true', async () => {
+    const tour = await makeTour({ groupsPerDay: 1 });
+    await makeFleet(1);
+    // `NOW` is 2099-12-01 noon Manila, so this is today: outside the window.
+    const today = '2099-12-01';
+    // ...and the tour's single group for that day is already taken.
+    await makeBooking({ tourId: tour.tourId, date: today, status: 'confirmed' });
+
+    const { quoteId } = await quoteFor(tour.slug, today, 2);
+    const error = await hold(
+      holdInput({ tourSlug: tour.slug, date: today, pax: 2, quoteId }),
+    ).catch((e: unknown) => e);
+
+    expect(
+      error,
+      'capacity answered first — the guest is told the less useful truth',
+    ).toBeInstanceOf(TourDateNotBookableError);
+    expect(error).not.toBeInstanceOf(CapacityRefusedError);
+  });
+
+  /**
    * Fails CLOSED. A malformed `booking` block is a policy nobody can
    * evaluate, so it must refuse bookings rather than fall back to an open
    * window — the direction that would quietly sell tomorrow's last van at

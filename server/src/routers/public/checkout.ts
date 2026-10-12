@@ -93,6 +93,7 @@ import {
 } from '../../services/coupons';
 import {
   CapacityRefusedError,
+  DATE_NOT_BOOKABLE,
   createHold as createHoldService,
   HoldContentionError,
   HoldLimitReachedError,
@@ -114,7 +115,7 @@ import { publicProcedure, router } from '../../trpc';
  * the capacity service. Keeping the vocabularies separate is what stops a
  * later reader assuming capacity decides it.
  */
-type AvailabilityVerdict = CapacityVerdict | { ok: false; reason: 'date_not_bookable' };
+type AvailabilityVerdict = CapacityVerdict | { ok: false; reason: typeof DATE_NOT_BOOKABLE };
 
 /**
  * `checkout.availability`'s own input — a date and a head count against one
@@ -508,7 +509,7 @@ export const checkoutRouter = router({
          */
         const window = bookableDateRange(await readSettingBlock('booking'), new Date());
         if (!isDateBookable(input.date, window)) {
-          return { ok: false, reason: 'date_not_bookable' };
+          return { ok: false, reason: DATE_NOT_BOOKABLE };
         }
 
         return await getDb().transaction((tx) =>

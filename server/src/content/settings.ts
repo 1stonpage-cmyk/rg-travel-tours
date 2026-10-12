@@ -186,9 +186,10 @@ export interface SettingsPayload {
    * — two civil dates, inclusive. The raw `booking` block (`minLeadDays`,
    * `nextDayCutoffTime`, `maxAdvanceDays`) never reaches the client, for the
    * same reason the announcement's schedule fields never do: a browser clock
-   * in the wrong time zone must not evaluate a Manila rule. The date picker
-   * disables anything outside these two dates by string comparison and
-   * computes nothing.
+   * in the wrong time zone must not evaluate a Manila rule. It is published
+   * FOR a date picker to consume — disabling anything outside these two
+   * dates by string comparison, computing nothing — but no client code reads
+   * it yet; that wiring is its own task.
    */
   bookingWindow: BookableDateRange;
   legal: {

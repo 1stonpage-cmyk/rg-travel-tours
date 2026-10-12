@@ -103,6 +103,73 @@ describe('settings schemas', () => {
   });
 
   /**
+   * The `booking` block (owner decision 2026-10-13, pending R&G), and in
+   * particular the refinement that `maxAdvanceDays` cannot sit below
+   * `minLeadDays`.
+   *
+   * That combination is a typo rather than a policy: it leaves NO bookable
+   * date at all, so the site would quietly sell nothing. `isDateBookable()`
+   * also fails closed on such a window, which is the second of the two layers
+   * — but a layer with no test is an unproven control, and this is the one
+   * that stops the bad value being stored in the first place.
+   */
+  it('accepts a well-formed booking window', () => {
+    expect(
+      SETTING_SCHEMAS.booking.safeParse({
+        minLeadDays: 1,
+        nextDayCutoffTime: '18:00',
+        maxAdvanceDays: 180,
+      }).success,
+    ).toBe(true);
+    // A zero lead (same-day booking allowed) is a legitimate policy too.
+    expect(
+      SETTING_SCHEMAS.booking.safeParse({
+        minLeadDays: 0,
+        nextDayCutoffTime: '00:00',
+        maxAdvanceDays: 1,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('refuses a booking window that cannot contain a single date', () => {
+    expect(
+      SETTING_SCHEMAS.booking.safeParse({
+        minLeadDays: 5,
+        nextDayCutoffTime: '18:00',
+        maxAdvanceDays: 1,
+      }).success,
+      'maxAdvanceDays below minLeadDays leaves no bookable date',
+    ).toBe(false);
+  });
+
+  it('refuses a cutoff that is not a zero-padded 24-hour HH:MM', () => {
+    for (const nextDayCutoffTime of ['6pm', '18:00:00', '8:00', '24:00', '18.00', '']) {
+      expect(
+        SETTING_SCHEMAS.booking.safeParse({
+          minLeadDays: 1,
+          nextDayCutoffTime,
+          maxAdvanceDays: 180,
+        }).success,
+        `"${nextDayCutoffTime}" was accepted as a cutoff`,
+      ).toBe(false);
+    }
+  });
+
+  it('refuses a fractional or negative lead, and a zero-day window', () => {
+    const base = { nextDayCutoffTime: '18:00', maxAdvanceDays: 180 };
+    expect(SETTING_SCHEMAS.booking.safeParse({ ...base, minLeadDays: 1.5 }).success).toBe(false);
+    expect(SETTING_SCHEMAS.booking.safeParse({ ...base, minLeadDays: -1 }).success).toBe(false);
+    expect(
+      SETTING_SCHEMAS.booking.safeParse({
+        minLeadDays: 0,
+        nextDayCutoffTime: '18:00',
+        maxAdvanceDays: 0,
+      }).success,
+      'a zero-day window is not a window',
+    ).toBe(false);
+  });
+
+  /**
    * Fifteen from the dynamic-site plan, plus `booking` — the bookable date
    * window (owner decision 2026-10-13, proposed by developer and pending
    * R&G). Listed out rather than derived, so ADDING a key is a deliberate

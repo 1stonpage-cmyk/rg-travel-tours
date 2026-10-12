@@ -172,6 +172,16 @@ export class TourDateBlockedError extends Error {
 }
 
 /**
+ * The one spelling of the "that date is closed" refusal reason.
+ *
+ * It is a WIRE contract — `checkout.availability` returns it to the browser
+ * and `TourDateNotBookableError` carries it — so it was spelled twice for one
+ * contract, in two files, with nothing to catch a typo in either. Now the
+ * router imports this and a misspelling fails `pnpm typecheck`.
+ */
+export const DATE_NOT_BOOKABLE = 'date_not_bookable' as const;
+
+/**
  * The date is outside the bookable window — the `booking` settings block
  * (owner decision 2026-10-13, _proposed by developer, pending R&G_):
  * `minLeadDays`, `nextDayCutoffTime` and `maxAdvanceDays`.
@@ -185,7 +195,7 @@ export class TourDateBlockedError extends Error {
  */
 export class TourDateNotBookableError extends Error {
   /** The router's refusal vocabulary — separate from the capacity reasons. */
-  readonly reason = 'date_not_bookable' as const;
+  readonly reason = DATE_NOT_BOOKABLE;
   readonly date: string;
   readonly earliest: string;
   readonly latest: string;
@@ -395,11 +405,13 @@ async function readSettingBlockTx<K extends keyof typeof SETTING_SCHEMAS>(
  * every capacity count that follows (`services/capacity.ts`, THE
  * PRECONDITION).
  *
- * The window itself is computed by `bookableDateRange()` in @rg/shared, the
- * same function the date picker and the quote use, so a date the UI offers
- * is a date this check accepts. A missing or malformed `booking` block
- * THROWS rather than defaulting to an open window: an unreadable policy must
- * refuse bookings, not wave them through.
+ * The window itself is computed by `bookableDateRange()` in @rg/shared — the
+ * same function `checkout.availability` answers from, so the advisory answer
+ * and this authoritative one cannot disagree. **This is the only enforcement
+ * point**: `checkout.quote` does not check the window, so a guest can hold a
+ * valid `quoteId` for a date that is refused here. A missing or malformed
+ * `booking` block THROWS rather than defaulting to an open window: an
+ * unreadable policy must refuse bookings, not wave them through.
  */
 async function assertDateBookable(tx: Transaction, date: string, now: Date): Promise<void> {
   const range = bookableDateRange(await readSettingBlockTx(tx, 'booking'), now);
@@ -676,19 +688,41 @@ export async function createHold(
       //    guard test pins.
       await takeSlotLocks(tx, tourId, input.date);
 
-      // 2. Capacity.
-      const verdict = await assessCapacity(tx, tourId, input.date, input.pax);
-      if (!verdict.ok) throw new CapacityRefusedError(verdict.reason);
-
       /*
-       * 3. §5 step 1's date guards (Ruling 15), most specific first, so the
-       *    guest gets the sharpest true sentence: "that date has passed"
-       *    before "we are not taking bookings for it yet", and the tour's own
-       *    blocked day before either.
+       * 2. §5 step 1's date guards (Ruling 15) — BEFORE capacity, and the
+       *    order inside them is most-specific-first, so a guest always gets
+       *    the sharpest true sentence: "that date has passed", then "the tour
+       *    is not running that day", then "we are not taking bookings for
+       *    that date".
+       *
+       *    **Why the whole group goes before capacity.** Both are true for a
+       *    guest who picks today on a tour that is also sold out, and only
+       *    one of the two sentences is useful: told "fully booked", they
+       *    abandon a tour that has seats on every other day; told "we're not
+       *    taking bookings for that date, pick one between X and Y", they
+       *    pick another day. `checkout.availability` answers in this same
+       *    order for the same reason, and that agreement is the point —
+       *    before this, the two surfaces gave different reasons for the same
+       *    request.
+       *
+       *    This now contains the transaction's FIRST non-locking read (the
+       *    `booking` settings block, and the blocked-dates lookup before it),
+       *    which is what pins the REPEATABLE READ snapshot. That is still
+       *    safe, and for the only reason that matters: it is after
+       *    `takeSlotLocks()`. The loser of a race is granted the fleet row
+       *    only once the winner has committed, so its snapshot — pinned here,
+       *    after that grant — already contains the winner's booking, and the
+       *    capacity counts below read it. See THE PRECONDITION in
+       *    `services/capacity.ts`: the rule is "locks before any consistent
+       *    read", never "capacity must read first".
        */
       assertDateNotPast(input.date, now);
       await assertDateNotBlocked(tx, tourId, input.date);
       await assertDateBookable(tx, input.date, now);
+
+      // 3. Capacity.
+      const verdict = await assessCapacity(tx, tourId, input.date, input.pax);
+      if (!verdict.ok) throw new CapacityRefusedError(verdict.reason);
 
       // 4. The money — recomputed from the database, then the digest
       //    compared. The client's `quoteId` is a change detector and never

@@ -10,7 +10,7 @@
  * capacity number in this file.
  */
 import { ZodError } from 'zod';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 import express from 'express';
 import request from 'supertest';
@@ -177,6 +177,25 @@ async function cleanup() {
 }
 
 describeWithDb('checkout router', () => {
+  /**
+   * The premise `DAY` rests on, proven rather than assumed.
+   *
+   * `DAY` is today + 30 days, which is inside the window only because the
+   * seeded `maxAdvanceDays` is 180. If a later task tightens that setting,
+   * every booking test in this file would otherwise fail with an opaque
+   * "We're not taking bookings for that date" and nothing naming the cause.
+   * A `beforeAll` failure aborts the file with the reason instead.
+   */
+  beforeAll(async () => {
+    const { bookingWindow } = await caller.settings.get();
+    expect(
+      DAY >= bookingWindow.earliest && DAY <= bookingWindow.latest,
+      `this suite's fixture day ${DAY} is outside the booking window ` +
+        `${bookingWindow.earliest}..${bookingWindow.latest} — the booking settings changed, ` +
+        `so DAY's offset needs to change with them`,
+    ).toBe(true);
+  });
+
   afterEach(cleanup);
 
   // -------------------------------------------------------------------------

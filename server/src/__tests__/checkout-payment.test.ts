@@ -278,6 +278,23 @@ async function cleanup() {
 }
 
 describeWithDb('checkout.startPayment', () => {
+  /**
+   * The premise `DAY` rests on, proven rather than assumed. `DAY` is
+   * today + 40 days, inside the window only because the seeded
+   * `maxAdvanceDays` is 180 — tighten that setting and every hold in this
+   * file would otherwise fail with an opaque "We're not taking bookings for
+   * that date". This aborts the file with the reason instead.
+   */
+  beforeAll(async () => {
+    const { bookingWindow } = await caller.settings.get();
+    expect(
+      DAY >= bookingWindow.earliest && DAY <= bookingWindow.latest,
+      `this suite's fixture day ${DAY} is outside the booking window ` +
+        `${bookingWindow.earliest}..${bookingWindow.latest} — the booking settings changed, ` +
+        `so DAY's offset needs to change with them`,
+    ).toBe(true);
+  });
+
   afterEach(cleanup);
 
   // -----------------------------------------------------------------------

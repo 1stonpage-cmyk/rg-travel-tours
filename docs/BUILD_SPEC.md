@@ -284,11 +284,18 @@ guest may book undecided. These three are **settings**, not constants and not sc
 > most needs a real answer, because it is the line between "we can still crew a van for tomorrow"
 > and "we cannot", and `tours` has no departure-time column to anchor a per-tour cutoff to.
 
-`bookableDateRange()` in `shared/src/time.ts` is the **only** definition of the window: the date
-picker, the quote and `createHold()` all answer from it, so the UI cannot offer a date the server
-will refuse. The window is resolved **server-side** into `SettingsPayload.bookingWindow` (two
-civil dates) — the raw settings never reach the browser, for the same reason announcement
+`bookableDateRange()` in `shared/src/time.ts` is the **only** definition of the window. What
+answers from it **today**: `createHold()` (the authority — inside the locked transaction) and
+`checkout.availability` (the early, friendly answer a picker can call per date). The window is
+also published to the browser, resolved **server-side**, as `SettingsPayload.bookingWindow` (two
+civil dates) — the raw settings never reach the client, for the same reason announcement
 schedules do not: a browser clock in the wrong time zone must never evaluate a Manila rule.
+
+**Not yet wired, and deliberately listed so nobody assumes otherwise:** the date picker does not
+consume `bookingWindow` yet, and `checkout.quote` does **not** enforce the window — a quote for a
+closed date still returns a price and a `quoteId`, and the hold then refuses it. So the quote is
+not a gate, and `createHold()`'s check is not redundant with anything. Wiring the picker is a
+separate task.
 `createHold()` re-checks it inside the locked transaction, after `takeSlotLocks()`, and refuses
 with its own reason (`date_not_bookable`) rather than a capacity one.
 

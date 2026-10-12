@@ -133,9 +133,17 @@ function addCivilDays(date: string, days: number): string {
 }
 
 /**
- * **The one definition of "which dates may a guest book".** The date picker,
- * the quote and `createHold()` all answer that question from this function,
- * so the UI cannot offer a date the server will refuse.
+ * **The one definition of "which dates may a guest book".**
+ *
+ * Callers today: `createHold()`, which is the authority and checks it inside
+ * the locked transaction, and `checkout.availability`, the early friendly
+ * answer. The resolved window is also published to the browser as
+ * `SettingsPayload.bookingWindow` so a date picker can grey out what is
+ * closed — **that wiring does not exist yet**, and `checkout.quote` does not
+ * enforce the window either: a quote for a closed date still returns a
+ * price, and the hold refuses it. Said plainly here because the opposite
+ * claim invites someone to treat the quote as a gate, or to delete the hold's
+ * check as redundant.
  *
  * `now` is a parameter and this never calls `new Date()` itself: the cutoff
  * is a clock comparison, so a test for "17:59 versus 18:00 Manila" has to be
