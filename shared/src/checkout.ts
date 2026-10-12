@@ -8,8 +8,11 @@
  * key (e.g. a client-supplied `totalCentavos`) is a rejection, not a
  * silently dropped field.
  *
- * `quoteResultSchema` is defined in Task 2 alongside the pricing service
- * that produces it, not here.
+ * `quoteResultSchema` (Task 2) lives at the bottom of this file: it is the
+ * wire shape the pricing service's pure `priceQuote()` return value is
+ * assembled into, plus the `quoteId` digest — `priceQuote()` itself stays in
+ * `server/src/services/pricing.ts` and knows nothing about either this
+ * schema or a quote id.
  */
 import { z } from 'zod';
 import { PAY_MODES } from './booking';
@@ -81,3 +84,38 @@ export type CreateHoldInput = z.infer<typeof createHoldInput>;
 export const bookingLookupInput = z
   .object({ ref: z.string().min(1).max(12), email: z.email().max(200) })
   .strict();
+
+/** The tier a quote resolved to, mirroring `server/src/services/pricing.ts`'s `PriceTier`. */
+const quoteTierSchema = z.object({
+  id: z.number().int().positive(),
+  minPax: z.number().int().positive(),
+  maxPax: z.number().int().positive(),
+  pricePerPersonCentavos: z.number().int().nonnegative(),
+});
+
+/**
+ * The wire shape of a quote (Task 2) — every money field `priceQuote()`
+ * returns, plus `quoteId`: the short-lived server-side digest (owner
+ * decision Q3, `quoteDigest()` in `server/src/services/pricing.ts`) that the
+ * client echoes back in `createHoldInput.quoteId` so a price cannot be
+ * replayed after an admin edits a price tier. The router (a later task)
+ * assembles this from `priceQuote()` + `quoteDigest()`; `priceQuote()`
+ * itself stays pure and never produces a `quoteId`.
+ */
+export const quoteResultSchema = z.object({
+  tier: quoteTierSchema,
+  subtotalCentavos: z.number().int().nonnegative(),
+  discountCentavos: z.number().int().nonnegative(),
+  totalCentavos: z.number().int().nonnegative(),
+  depositCentavos: z.number().int().nonnegative(),
+  amountDueNowCentavos: z.object({
+    full: z.number().int().nonnegative(),
+    deposit: z.number().int().nonnegative(),
+  }),
+  balanceCentavos: z.object({
+    full: z.number().int().nonnegative(),
+    deposit: z.number().int().nonnegative(),
+  }),
+  quoteId: z.string().regex(/^[0-9a-f]{32}$/, 'Expected a 32-character lowercase hex quote id'),
+});
+export type QuoteResult = z.infer<typeof quoteResultSchema>;
