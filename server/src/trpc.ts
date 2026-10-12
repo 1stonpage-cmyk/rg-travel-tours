@@ -44,6 +44,13 @@
  */
 import { initTRPC } from '@trpc/server';
 import { ZodError, z } from 'zod';
+import type { AdminRole } from '@rg/shared';
+import {
+  ROLE_MATRIX,
+  requireRole,
+  type AdminArea,
+  type StaffSession,
+} from './middleware/require-role';
 
 /**
  * Shapes a filesystem location takes in an error message. Each entry exists
@@ -76,7 +83,31 @@ export function scrubPaths(message: string): string {
   return PATH_LIKE.reduce((text, pattern) => text.replace(pattern, REDACTED_PATH), message);
 }
 
-const t = initTRPC.create({
+/**
+ * What every procedure must declare about who may call it (task A4).
+ *
+ * A discriminated union, not two optional fields: there is no third state and
+ * no "unset". `publicProcedure` stamps the first variant, `adminProcedure()`
+ * stamps the second, and because `t` is never exported those are the only two
+ * ways a procedure on this server can come into existence. That is what makes
+ * the metadata a FACT about the procedure rather than a label someone
+ * remembered to apply — and what lets `procedure-role-metadata.test.ts`
+ * enumerate `appRouter` and refuse anything carrying neither.
+ *
+ * `roles` is denormalised into the meta on purpose. The gate already spreads
+ * `ROLE_MATRIX[area]`, so this copy is redundant at runtime — but it means the
+ * enumeration guard can compare what a procedure CLAIMS against §9's matrix
+ * without re-deriving it, and a procedure whose two halves disagree fails.
+ */
+export type ProcedureAccess =
+  | { readonly access: 'public' }
+  | {
+      readonly access: 'admin';
+      readonly area: AdminArea;
+      readonly roles: readonly AdminRole[];
+    };
+
+const t = initTRPC.meta<ProcedureAccess>().create({
   errorFormatter({ shape, error }) {
     /*
      * Input validation failures arrive as a BAD_REQUEST whose `cause` is the
@@ -118,4 +149,67 @@ function flatten(error: ZodError): {
 }
 
 export const router = t.router;
-export const publicProcedure = t.procedure;
+
+/**
+ * An unauthenticated procedure, open to the internet.
+ *
+ * Carries `{ access: 'public' }` so that "this is public" is something the
+ * procedure SAYS, in the codebase, next to the code — rather than something a
+ * test file remembers about it in a list somewhere else.
+ *
+ * Its context stays `object`: no `session` field exists on it, so a resolver
+ * built here that reaches for `ctx.session` is a TYPE ERROR, not a runtime
+ * surprise. Any admin handler needs the actor (an audit row, a
+ * `verified_by`), which is exactly the thing this builder cannot give it.
+ */
+export const publicProcedure = t.procedure.meta({ access: 'public' });
+
+/**
+ * The ONLY way to build an admin procedure (task A4).
+ *
+ * CLAUDE.md: "Role middleware on every admin procedure" and "Hiding a button
+ * is not access control." Task 17 built the gate; this is what makes calling
+ * it impossible to forget. `area` is a REQUIRED positional argument of type
+ * `AdminArea`, so:
+ *
+ *   - `adminProcedure()` with no area is `error TS2554: Expected 1 arguments,
+ *     but got 0` — the gate cannot be omitted, only mis-chosen.
+ *   - `adminProcedure('tours')` (a typo, or an area §9 does not have) is
+ *     `error TS2345` — the area cannot be invented.
+ *   - the resolver receives `ctx.session` typed as `StaffSession`, already
+ *     validated by the gate, which is the only place on this server such a
+ *     value exists. An ungated copy of the same handler cannot type-check.
+ *
+ * What types cannot reach — somebody building a procedure that IS
+ * administrative out of `publicProcedure` and never touching `ctx` — is the
+ * backstop's job, not this one's. See `procedure-role-metadata.test.ts`.
+ *
+ * The validated session this installs is also where a service-layer actor
+ * comes from. `verifyCashPayment()` (A5b) takes a
+ * `verifier: { type, id, role }` and re-checks the role itself; its Week 5
+ * procedure is `adminProcedure('verifyPayments')` and passes
+ * `{ type: 'user', id: ctx.session.subjectId, role: ctx.session.role }` —
+ * from this gate, never from the request payload. The service keeps its own
+ * check (it is also callable from a job or a script, where there is no tRPC
+ * context); this builder is what guarantees the HTTP door cannot supply a
+ * role the caller merely claimed.
+ *
+ * The area names itself and the roles come from `ROLE_MATRIX`, never from the
+ * caller: task 17's rule that §9's table is transcribed exactly once. There is
+ * deliberately NO overload taking a role list, because a per-procedure role
+ * list is a second copy of the matrix and the first thing to drift from it.
+ */
+export function adminProcedure(area: AdminArea) {
+  return t.procedure.meta({ access: 'admin', area, roles: ROLE_MATRIX[area] }).use(
+    /*
+     * `ctx` is widened to `unknown` by the gate itself, which re-validates the
+     * role rather than believing a type annotation. What comes back is the
+     * narrowed session, and it REPLACES whatever `session` the incoming
+     * context carried — a procedure downstream can never read an unvalidated
+     * one.
+     */
+    ({ ctx, next }) => next({ ctx: { session: requireRole(...ROLE_MATRIX[area])(ctx) } }),
+  );
+}
+
+export type { AdminArea, StaffSession };
