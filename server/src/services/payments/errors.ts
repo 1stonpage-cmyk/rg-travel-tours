@@ -203,3 +203,94 @@ export class RefundNotAdminInitiatedError extends Error {
     this.actorType = actor;
   }
 }
+
+/* -------------------------------------------------------------------------
+ * A5b — the refusals of the driver-cash pair.
+ *
+ * `recordPendingCash()` writes a `pending` row and credits nothing, so its
+ * only refusal is a booking that does not exist (`BookingNotFoundError`,
+ * above). Everything here belongs to `verifyCashPayment()`, which is the
+ * call that actually moves money, and all three fail CLOSED: the transaction
+ * aborts before `amount_paid_centavos` is touched, so the pending row stays
+ * pending and is still there for the next attempt.
+ * ---------------------------------------------------------------------- */
+
+/**
+ * `verifyCashPayment()` was given an id that is not a driver-collected cash
+ * row.
+ *
+ * The lookup is scoped to `type='payment' AND provider='manual' AND
+ * method='cash'`, so this is also what a GATEWAY payment id gets: a PayMongo
+ * charge is not a handful of cash and must not be verifiable through the
+ * cash path, however pending its row looks. Its own class so a later admin
+ * procedure can answer "that row is not yours to verify" distinctly from
+ * "that row has already been verified".
+ */
+export class CashPaymentNotFoundError extends Error {
+  readonly paymentId: number;
+
+  constructor(paymentId: number) {
+    super(`No driver-collected cash payment with id ${paymentId}`);
+    this.name = 'CashPaymentNotFoundError';
+    this.paymentId = paymentId;
+  }
+}
+
+/**
+ * The cash row exists but is no longer `pending` — already verified, or
+ * refunded, rejected or failed.
+ *
+ * **This is the double-credit refusal**, and it is thrown from under the
+ * booking row lock. Two finance users clicking "verify" on the same row at
+ * once both read `pending` before either commits; serialised by the lock,
+ * the second one re-reads the row the first one wrote and lands here. The
+ * alternative — treating a second verify as a silent success — credits one
+ * handful of cash to `amount_paid_centavos` twice, and the booking total
+ * then looks wrong in the one direction nobody notices: too paid.
+ *
+ * A no-op ERROR rather than a no-op return, because the caller clicked a
+ * button and is owed an answer: this money was already counted, by someone.
+ */
+export class CashPaymentNotPendingError extends Error {
+  readonly paymentId: number;
+  readonly status: string;
+
+  constructor(paymentId: number, status: unknown) {
+    const current = safeName(status);
+    super(
+      `Cash payment ${paymentId} is "${current}", not "pending", so it cannot be verified again`,
+    );
+    this.name = 'CashPaymentNotPendingError';
+    this.paymentId = paymentId;
+    this.status = current;
+  }
+}
+
+/**
+ * Something other than an owner or a finance user tried to verify cash.
+ *
+ * BUILD_SPEC §9: "Verify payments, record payments — Owner ✅, Dispatcher ❌,
+ * Finance ✅", which is `ROLE_MATRIX.verifyPayments`. Modelled on
+ * `RefundNotAdminInitiatedError`: only an `actor_type` of `user` carrying a
+ * real `users.id` AND a role in that matrix entry gets through, so a driver
+ * session, a dispatcher, a webhook, a cron job, an unrecognised role string
+ * and a user with no id are all refused.
+ *
+ * The driver case is the one that matters most. A driver who could verify
+ * their own collection could pocket the cash and still leave the booking
+ * reading "paid in full" — which is exactly why §8 says the row is "for
+ * admin to reconcile" rather than for the driver to settle.
+ */
+export class PaymentVerificationNotPermittedError extends Error {
+  readonly actorType: string;
+
+  constructor(actorType: unknown) {
+    const actor = safeName(actorType);
+    super(
+      `Verifying a payment is owner/finance only: actor_type "${actor}" may not. ` +
+        'A driver records the cash as pending; only finance turns it into money received.',
+    );
+    this.name = 'PaymentVerificationNotPermittedError';
+    this.actorType = actor;
+  }
+}

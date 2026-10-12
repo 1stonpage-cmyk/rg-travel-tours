@@ -19,6 +19,11 @@
  *     here (BUG-106); cleanup A3 renamed them, so the rule now holds with no
  *     exemptions at all and this guard carries no allow-list to rot.
  *  4. Nothing hard-deletes a booking or a payment.
+ *  5. Nothing writes `bookings.amount_paid_centavos` except the payments
+ *     service that owns `recordPayment()` (A5b). That column IS the money
+ *     the business believes it has received, and the whole "only a verified
+ *     webhook or an admin approval marks a booking paid" rule is only as
+ *     strong as the number of places that can move it.
  *
  * **The vacuity trap.** A scan that stops matching — a renamed file, a
  * tightened regex, a moved directory — passes on an empty array and reports
@@ -177,6 +182,90 @@ describe('schema conventions, read from the real source', () => {
     expect(
       rawOffenders,
       'bookings and payments are never hard-deleted, in SQL either (CLAUDE.md)',
+    ).toEqual([]);
+  });
+
+  /**
+   * A5b. `bookings.amount_paid_centavos` is the one number that says how
+   * much money the business believes it has received, and CLAUDE.md's rule —
+   * "only a verified PayMongo webhook or an admin approval" marks a booking
+   * paid — is enforced by `recordPayment()` and its A5b sibling
+   * `verifyCashPayment()`, both in `record-payment.ts`. That enforcement is
+   * worth exactly as much as the number of places that can move the column.
+   *
+   * A5b is why this guard exists now. Driver-collected cash needed a second
+   * way into that column, and the tempting shortcut was a `status` parameter
+   * on `recordPayment()` or a quiet `UPDATE bookings SET amount_paid...` in
+   * a driver service. Either would have been invisible in review a month
+   * later. So the rule is written down where it cannot rot.
+   *
+   * **The unit is the module, not the function.** A regex over source text
+   * cannot tell which function body a line sits in, and a guard that
+   * pretended otherwise would be lying about what it checks. The file is the
+   * honest boundary: `record-payment.ts` contains `recordPayment()` and
+   * `verifyCashPayment()`, nothing else, and both are reviewed as the money
+   * path. Add a third writer to that file and this guard will not stop you —
+   * the code review is what stops you, and this test is what keeps the
+   * question inside one file where a reviewer will see it.
+   */
+  it('writes amount_paid_centavos from one module only — the one that owns recordPayment()', () => {
+    /**
+     * Drizzle's write form, `.set({ amountPaidCentavos: ... })` or
+     * `.values({ amountPaidCentavos: ... })`.
+     *
+     * Two things are excluded, and both are the colon meaning something
+     * other than "assign this value":
+     *
+     *  - a TYPE annotation (`amountPaidCentavos: number`) in an interface, a
+     *    class field or a constructor parameter. `RefundExceedsPaidError`
+     *    legitimately carries the paid amount as a readonly field, and
+     *    reporting an error class as a writer of the column would train
+     *    readers to ignore this guard.
+     *  - the column DECLARATION in `schema.ts` (`amountPaidCentavos:
+     *    int('amount_paid_centavos')`). Defining the column is not moving
+     *    it. Excluded by shape rather than by exempting the file, so a
+     *    second declaration is still fine and a real write smuggled INTO
+     *    `schema.ts` is still caught.
+     *
+     * `\s*` lives inside the lookahead, not before it. Outside, it
+     * backtracks to zero characters when the lookahead fails and the
+     * exclusion stops working — which is exactly what this guard did on its
+     * first run, reporting `errors.ts` and `schema.ts` as writers.
+     */
+    const drizzleWrite = /\bamountPaidCentavos\s*:(?!\s*(?:number|string|bigint)\b|\s*int\()/;
+    expectPatternIsLive(
+      drizzleWrite,
+      'set({ amountPaidCentavos: booking.amountPaidCentavos + 100 })',
+      'amount_paid_centavos Drizzle write',
+    );
+    // And the raw-SQL form, for the same reason the hard-delete guard above
+    // scans for one: `.set()` is not the only way to move a column.
+    const rawWrite = /\bamount_paid_centavos\s*=/i;
+    expectPatternIsLive(
+      rawWrite,
+      'UPDATE bookings SET amount_paid_centavos = 0',
+      'amount_paid_centavos raw SQL write',
+    );
+
+    /** The one module allowed to move the column. */
+    const OWNER = 'src/services/payments/record-payment.ts';
+    // Vacuity, both halves: the tree was scanned, and the owning module is
+    // really in it. A renamed or moved `record-payment.ts` must fail here
+    // rather than leave the guard quietly watching nothing.
+    expect(appFiles.length).toBeGreaterThan(30);
+    expect(appFiles, 'the module that owns recordPayment() was not scanned').toContain(OWNER);
+    // It writes the column, so the patterns above are proven against the
+    // real source and not only against their samples.
+    const owner = readStripped(OWNER);
+    expect(drizzleWrite.test(owner) || rawWrite.test(owner)).toBe(true);
+
+    const writers = appFiles.filter(
+      (f) => f !== OWNER && (drizzleWrite.test(readStripped(f)) || rawWrite.test(readStripped(f))),
+    );
+    expect(
+      writers,
+      'only the payments service that owns recordPayment() may write ' +
+        `bookings.amount_paid_centavos (CLAUDE.md, A5b): ${writers.join(', ')}`,
     ).toEqual([]);
   });
 });

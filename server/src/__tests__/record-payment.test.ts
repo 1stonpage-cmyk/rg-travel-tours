@@ -28,7 +28,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { sql } from 'drizzle-orm';
 import type { BookingStatus, PayMode } from '@rg/shared';
 import { getDb, getPool } from '../db/client';
-import { bookings, destinations, tours } from '../db/schema';
+import { bookings, destinations, drivers, tours, users } from '../db/schema';
 import { generateBookingRef } from '../services/booking-ref';
 
 /**
@@ -58,11 +58,15 @@ vi.mock('../services/audit', async (importOriginal) => {
   };
 });
 
-const { recordPayment } = await import('../services/payments/record-payment');
+const { recordPayment, recordPendingCash, verifyCashPayment } =
+  await import('../services/payments/record-payment');
 const {
   BookingNotFoundError,
+  CashPaymentNotFoundError,
+  CashPaymentNotPendingError,
   PaymentAmountMismatchError,
   PaymentOverpaysBookingError,
+  PaymentVerificationNotPermittedError,
   RefundExceedsPaidError,
   RefundNotAdminInitiatedError,
 } = await import('../services/payments/errors');
@@ -77,6 +81,9 @@ const created = {
   bookingIds: [] as number[],
   tourIds: [] as number[],
   destinationIds: [] as number[],
+  /** A5b: `payments.collected_by_driver_id` and `verified_by` are real FKs. */
+  driverIds: [] as number[],
+  userIds: [] as number[],
 };
 
 /**
@@ -185,6 +192,49 @@ const seedPaidBooking = (amountPaidCentavos: number) =>
     status: 'confirmed',
   });
 
+/**
+ * A5b fixtures. `payments.collected_by_driver_id` -> `drivers.id` and
+ * `payments.verified_by` -> `users.id` are both real foreign keys, so the
+ * cash tests cannot use the invented id 7 the audit assertions get away
+ * with (`audit_log.actor_id` is polymorphic and has no FK).
+ *
+ * Neither is read out of the seed. `rg_travel_test` carries migrations, not
+ * seed data, so "find any driver" would find none and the tests would pass
+ * vacuously — the same trap this file's header describes for bookings.
+ */
+const uniqueSuffix = () => `${Date.now()}_${Math.floor(Math.random() * 1e9)}`;
+
+async function makeDriver(): Promise<number> {
+  const unique = uniqueSuffix();
+  const [driver] = await getDb()
+    .insert(drivers)
+    .values({
+      name: `A5b Driver ${unique}`,
+      // 20 characters max, and unique.
+      code: `A5B${unique}`.slice(0, 20),
+      phone: '09170000001',
+      // Not a real hash and not a real PIN: nothing here logs in.
+      pinHash: '__a5b_not_a_pin_hash__',
+    });
+  created.driverIds.push(driver.insertId);
+  return driver.insertId;
+}
+
+/** A staff user in the given role, for `verified_by` and the role guard. */
+async function makeStaff(role: 'owner' | 'dispatcher' | 'finance'): Promise<number> {
+  const unique = uniqueSuffix();
+  const [user] = await getDb()
+    .insert(users)
+    .values({
+      name: `A5b ${role} ${unique}`,
+      email: `a5b_${role}_${unique}@example.test`,
+      passwordHash: '__a5b_not_a_password_hash__',
+      role,
+    });
+  created.userIds.push(user.insertId);
+  return user.insertId;
+}
+
 /** An admin-initiated refund, the only kind §6 allows. */
 const refundOf = (
   bookingId: number,
@@ -266,6 +316,17 @@ describe('recordPayment', () => {
     }
     for (const destinationId of created.destinationIds) {
       await pool.query('DELETE FROM destinations WHERE id = ?', [destinationId]);
+    }
+    /*
+     * A5b. After the payments, which carry the two foreign keys that point
+     * here — `collected_by_driver_id` and `verified_by`. Exactly the ids
+     * this file created, same as every loop above.
+     */
+    for (const driverId of created.driverIds) {
+      await pool.query('DELETE FROM drivers WHERE id = ?', [driverId]);
+    }
+    for (const userId of created.userIds) {
+      await pool.query('DELETE FROM users WHERE id = ?', [userId]);
     }
   });
 
@@ -787,5 +848,531 @@ describe('recordPayment', () => {
     );
     await expect(refundOf(bookingId, 189000, ADMIN_ACTOR)).resolves.toBeDefined();
     expect(await refundSum(bookingId)).toBe(189000);
+  });
+
+  /* ---------------------------------------------------------------------
+   * A5b — driver-collected cash: pending on collection, finance converts
+   * the SAME row.
+   *
+   * Nested inside this describe on purpose, so the `afterAll` above tears
+   * down these fixtures too. A sibling describe would have its rows
+   * deleted before its tests ran.
+   * ------------------------------------------------------------------ */
+  describe('driver-collected cash', () => {
+    const paymentRow = (paymentId: number) =>
+      one<{
+        status: string;
+        type: string;
+        provider: string;
+        method: string;
+        amount_centavos: number;
+        collected_by_driver_id: number | null;
+        verified_by: number | null;
+        verified_at: Date | null;
+      }>(
+        sql`SELECT status, type, provider, method, amount_centavos,
+                   collected_by_driver_id, verified_by, verified_at
+            FROM payments WHERE id = ${paymentId}`,
+      );
+
+    const paymentCount = async (bookingId: number) =>
+      Number(
+        (
+          await one<{ n: number }>(
+            sql`SELECT COUNT(*) n FROM payments WHERE booking_id = ${bookingId}`,
+          )
+        ).n,
+      );
+
+    const auditRowsFor = (paymentId: number) =>
+      rows<{ action: string; actor_type: string; actor_id: number | null; data: unknown }>(
+        sql`SELECT action, actor_type, actor_id, data FROM audit_log
+            WHERE entity = 'payments' AND entity_id = ${paymentId}`,
+      );
+
+    /**
+     * 1. THE point of the split. The driver's tap writes a `pending` row
+     *    and the booking does not move at all.
+     *
+     * All three booking columns are asserted, not just `amount_paid`: a
+     * version that credited nothing but flipped `status` to `confirmed`, or
+     * one that raised `payment_review_required`, would be just as wrong and
+     * would pass a single-column assertion. The guest's booking must read
+     * exactly as it did before a driver touched anything.
+     */
+    dbIt('records a PENDING row and leaves the booking completely untouched', async () => {
+      const driverId = await makeDriver();
+      const { bookingId, ref } = await makeBooking({
+        totalCentavos: 100000,
+        amountPaidCentavos: 40000,
+        status: 'in_progress',
+        holdExpiresAt: null,
+      });
+      const before = await bookingRow(bookingId);
+
+      const { paymentId } = await recordPendingCash({
+        bookingId,
+        amountCentavos: 60000,
+        collectedByDriverId: driverId,
+      });
+
+      // The booking: not one of the three columns moved.
+      const after = await bookingRow(bookingId);
+      expect(Number(after.amount_paid_centavos), 'a driver credited the booking').toBe(40000);
+      expect(Number(after.amount_paid_centavos)).toBe(Number(before.amount_paid_centavos));
+      expect(after.status, 'a driver moved the booking status').toBe('in_progress');
+      expect(Number(after.payment_review_required), 'a driver raised the review flag').toBe(0);
+
+      // The row: pending, cash, manual, the driver named, nothing verified.
+      const payment = await paymentRow(paymentId);
+      expect(payment).toMatchObject({
+        status: 'pending',
+        type: 'payment',
+        provider: 'manual',
+        method: 'cash',
+      });
+      expect(Number(payment.amount_centavos)).toBe(60000);
+      expect(Number(payment.collected_by_driver_id)).toBe(driverId);
+      expect(payment.verified_by, 'unverified cash carries a verifier').toBeNull();
+      expect(payment.verified_at).toBeNull();
+      // ONE row, not two.
+      expect(await paymentCount(bookingId)).toBe(1);
+
+      // The audit row: `driver`, naming the driver (§10).
+      const auditRows = await auditRowsFor(paymentId);
+      expect(auditRows).toHaveLength(1);
+      const audit = auditRows[0]!;
+      expect(audit.actor_type).toBe('driver');
+      expect(Number(audit.actor_id)).toBe(driverId);
+      expect(audit.action).toBe('payment.cash_collected');
+      const data = typeof audit.data === 'string' ? JSON.parse(audit.data) : audit.data;
+      expect(data).toMatchObject({
+        bookingRef: ref,
+        amountCentavos: 60000,
+        method: 'cash',
+        paymentStatus: 'pending',
+      });
+    });
+
+    /**
+     * 2. Finance verifies, and the money lands — ONCE, on the same row.
+     *
+     * The `paymentCount` assertion is the one that would catch the obvious
+     * wrong implementation: calling `recordPayment()`, which INSERTs. That
+     * version would leave `amount_paid_centavos` looking correct while the
+     * trail showed two payments for one handful of cash, and the pending
+     * row orphaned forever.
+     */
+    dbIt('converts the SAME row to paid, credits once, and confirms the booking', async () => {
+      const driverId = await makeDriver();
+      const financeId = await makeStaff('finance');
+      const { bookingId, ref } = await seedPendingBooking(100000);
+
+      const { paymentId } = await recordPendingCash({
+        bookingId,
+        amountCentavos: 100000,
+        collectedByDriverId: driverId,
+      });
+
+      const result = await verifyCashPayment({
+        paymentId,
+        verifier: { type: 'user', id: financeId, role: 'finance' },
+      });
+      expect(result.paymentId).toBe(paymentId);
+      expect(result.bookingId).toBe(bookingId);
+      expect(result.bookingStatus).toBe('confirmed');
+      expect(result.paymentReviewRequired).toBe(false);
+
+      // The booking now holds the money.
+      const booking = await bookingRow(bookingId);
+      expect(Number(booking.amount_paid_centavos)).toBe(100000);
+      expect(booking.status).toBe('confirmed');
+      expect(Number(booking.payment_review_required)).toBe(0);
+
+      // THE SAME ROW, converted in place.
+      const payment = await paymentRow(paymentId);
+      expect(payment.status).toBe('paid');
+      expect(Number(payment.verified_by)).toBe(financeId);
+      expect(payment.verified_at, 'a verifier with no timestamp').not.toBeNull();
+      // The driver is still named on it — the collection is not erased by
+      // the verification.
+      expect(Number(payment.collected_by_driver_id)).toBe(driverId);
+
+      // **No second row.** One handful of cash is one payments row.
+      expect(await paymentCount(bookingId), 'verification inserted a second payment').toBe(1);
+
+      // Two audit rows against this payment, in order: the claim, then the
+      // receipt. Each is a real event and neither replaces the other.
+      const auditRows = await auditRowsFor(paymentId);
+      expect(auditRows).toHaveLength(2);
+      const verified = auditRows.find((r) => r.action === 'payment.verified');
+      expect(verified, 'no audit row for the verification').toBeDefined();
+      expect(verified!.actor_type).toBe('user');
+      expect(Number(verified!.actor_id)).toBe(financeId);
+      const data = typeof verified!.data === 'string' ? JSON.parse(verified!.data) : verified!.data;
+      expect(data).toMatchObject({
+        bookingRef: ref,
+        amountCentavos: 100000,
+        priorPaymentStatus: 'pending',
+        paymentStatus: 'paid',
+        priorBookingStatus: 'pending_payment',
+        bookingStatus: 'confirmed',
+      });
+    });
+
+    /**
+     * 3. **The most important test in A5b.** Two finance users click
+     *    "verify" on the same row at the same moment, and both read
+     *    `pending` before either commits.
+     *
+     * Driven CONCURRENTLY, not sequentially. A sequential double-verify
+     * passes against broken code: the first call has already committed by
+     * the time the second one reads, so even a status check taken before
+     * the lock sees `paid`. The race is the only thing that distinguishes
+     * them.
+     *
+     * The cash here is 20,000 of a 100,000 booking, so a double credit
+     * would be 40,000 — comfortably UNDER the total. That is deliberate:
+     * with the full balance, `PaymentOverpaysBookingError` would refuse the
+     * second credit as a side effect and the test would stay green with the
+     * real guard removed. The overpay cap must not be allowed to stand in
+     * for the pending check.
+     */
+    dbIt('serialises two concurrent verifications so the cash is credited once', async () => {
+      const driverId = await makeDriver();
+      const ownerId = await makeStaff('owner');
+      const financeId = await makeStaff('finance');
+      const { bookingId } = await seedPendingBooking(100000);
+
+      const { paymentId } = await recordPendingCash({
+        bookingId,
+        amountCentavos: 20000,
+        collectedByDriverId: driverId,
+      });
+
+      const results = await Promise.allSettled([
+        verifyCashPayment({
+          paymentId,
+          verifier: { type: 'user', id: ownerId, role: 'owner' },
+        }),
+        verifyCashPayment({
+          paymentId,
+          verifier: { type: 'user', id: financeId, role: 'finance' },
+        }),
+      ]);
+
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      const rejected = results.filter((r) => r.status === 'rejected');
+      expect(fulfilled, 'both verifications succeeded').toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      /*
+       * And refused for the RIGHT reason. Without this, a version whose
+       * only net was the overpay cap would still show one-and-one on a
+       * fixture where the double credit happened not to fit.
+       */
+      expect(
+        (rejected[0] as PromiseRejectedResult).reason,
+        'the loser was refused by something other than the pending check',
+      ).toBeInstanceOf(CashPaymentNotPendingError);
+
+      // Credited exactly once.
+      expect(Number((await bookingRow(bookingId)).amount_paid_centavos)).toBe(20000);
+      // Still one row, and it is `paid` once.
+      expect(await paymentCount(bookingId)).toBe(1);
+      expect((await paymentRow(paymentId)).status).toBe('paid');
+      // One claim + one receipt. A third would mean the trail double-counted.
+      expect(await auditRowsFor(paymentId)).toHaveLength(2);
+    });
+
+    /**
+     * 3b. The sequential case, kept beside the race because it is the one a
+     * human actually does: double-click, or re-open the tab and click
+     * again. A no-op ERROR, never a second credit.
+     */
+    dbIt('REFUSES a second verification of an already-paid row, crediting nothing', async () => {
+      const driverId = await makeDriver();
+      const financeId = await makeStaff('finance');
+      const { bookingId } = await seedPendingBooking(100000);
+
+      const { paymentId } = await recordPendingCash({
+        bookingId,
+        amountCentavos: 30000,
+        collectedByDriverId: driverId,
+      });
+      const verifier = { type: 'user' as const, id: financeId, role: 'finance' };
+
+      await expect(verifyCashPayment({ paymentId, verifier })).resolves.toBeDefined();
+      await expect(verifyCashPayment({ paymentId, verifier })).rejects.toBeInstanceOf(
+        CashPaymentNotPendingError,
+      );
+
+      expect(Number((await bookingRow(bookingId)).amount_paid_centavos)).toBe(30000);
+      expect(await paymentCount(bookingId)).toBe(1);
+      expect(await auditRowsFor(paymentId)).toHaveLength(2);
+    });
+
+    /**
+     * 4. §9's "Verify payments, record payments" row: Owner ✅, Dispatcher
+     *    ❌, Finance ✅ — `ROLE_MATRIX.verifyPayments`.
+     *
+     * Both halves are asserted. A gate that refused everyone would pass a
+     * test that only checked the refusals, and a gate that admitted
+     * everyone would pass one that only checked the admissions.
+     */
+    dbIt('lets only owner and finance verify; everyone else is refused', async () => {
+      const driverId = await makeDriver();
+      const ownerId = await makeStaff('owner');
+      const financeId = await makeStaff('finance');
+      const dispatcherId = await makeStaff('dispatcher');
+      const { bookingId } = await seedPendingBooking(100000);
+
+      const cash = () =>
+        recordPendingCash({ bookingId, amountCentavos: 10000, collectedByDriverId: driverId });
+      const refusedRow = (await cash()).paymentId;
+
+      // Dispatcher: explicitly ❌ in §9's table.
+      await expect(
+        verifyCashPayment({
+          paymentId: refusedRow,
+          verifier: { type: 'user', id: dispatcherId, role: 'dispatcher' },
+        }),
+      ).rejects.toBeInstanceOf(PaymentVerificationNotPermittedError);
+
+      // An unrecognised role string, a missing role, and a user with no id.
+      for (const verifier of [
+        { type: 'user' as const, id: ownerId, role: 'admin' },
+        { type: 'user' as const, id: ownerId, role: '__proto__' },
+        { type: 'user' as const, id: ownerId, role: undefined },
+        { type: 'user' as const, id: null, role: 'owner' },
+        { type: 'provider' as const, id: null, role: 'owner' },
+        { type: 'system' as const, id: null, role: 'owner' },
+      ]) {
+        await expect(verifyCashPayment({ paymentId: refusedRow, verifier })).rejects.toBeInstanceOf(
+          PaymentVerificationNotPermittedError,
+        );
+      }
+
+      // Every refusal failed closed: the row is untouched and so is the booking.
+      expect((await paymentRow(refusedRow)).status).toBe('pending');
+      expect((await paymentRow(refusedRow)).verified_by).toBeNull();
+      expect(Number((await bookingRow(bookingId)).amount_paid_centavos)).toBe(0);
+      expect((await bookingRow(bookingId)).status).toBe('pending_payment');
+
+      // And the two roles §9 allows both get through.
+      await expect(
+        verifyCashPayment({
+          paymentId: refusedRow,
+          verifier: { type: 'user', id: financeId, role: 'finance' },
+        }),
+      ).resolves.toMatchObject({ bookingStatus: 'confirmed' });
+      await expect(
+        verifyCashPayment({
+          paymentId: (await cash()).paymentId,
+          verifier: { type: 'user', id: ownerId, role: 'owner' },
+        }),
+      ).resolves.toBeDefined();
+      expect(Number((await bookingRow(bookingId)).amount_paid_centavos)).toBe(20000);
+    });
+
+    /**
+     * 5. A driver cannot verify their own collection — the point of §8's
+     *    "for admin to reconcile".
+     *
+     * The verifier here carries `role: 'owner'`, because the dangerous
+     * version of this bug is not a driver with no role: it is a driver
+     * session whose payload was trusted, or a context-building bug that
+     * copied a role onto one. `subject_type` is what refuses it, exactly as
+     * `requireRole` refuses a driver session at the tRPC door.
+     *
+     * A driver who could verify their own cash could pocket it and leave
+     * the booking reading "paid in full".
+     */
+    dbIt('REFUSES a driver verifying their own collection, even claiming a role', async () => {
+      const driverId = await makeDriver();
+      const { bookingId } = await seedPendingBooking(100000);
+      const { paymentId } = await recordPendingCash({
+        bookingId,
+        amountCentavos: 100000,
+        collectedByDriverId: driverId,
+      });
+
+      await expect(
+        verifyCashPayment({
+          paymentId,
+          verifier: { type: 'driver', id: driverId, role: 'owner' },
+        }),
+      ).rejects.toBeInstanceOf(PaymentVerificationNotPermittedError);
+      await expect(
+        verifyCashPayment({
+          paymentId,
+          verifier: { type: 'customer', id: bookingId, role: 'finance' },
+        }),
+      ).rejects.toBeInstanceOf(PaymentVerificationNotPermittedError);
+
+      // Fail closed: still pending, nothing credited, nothing verified.
+      const payment = await paymentRow(paymentId);
+      expect(payment.status).toBe('pending');
+      expect(payment.verified_by).toBeNull();
+      const booking = await bookingRow(bookingId);
+      expect(Number(booking.amount_paid_centavos)).toBe(0);
+      expect(booking.status).toBe('pending_payment');
+      // Only the collection audit row. No verification was audited.
+      expect(await auditRowsFor(paymentId)).toHaveLength(1);
+    });
+
+    /**
+     * The cash path must not be a back door onto a GATEWAY payment row.
+     * `verifyCashPayment()` scopes its lookup to
+     * `provider='manual' AND method='cash'`, so a PayMongo charge's id is
+     * simply not found here — it cannot be marked paid, re-credited, or
+     * stamped with a `verified_by` it never had.
+     */
+    dbIt('REFUSES an id that is not a driver-cash row', async () => {
+      const financeId = await makeStaff('finance');
+      const { bookingId } = await seedPendingBooking(100000);
+      const gateway = await recordPayment({
+        bookingId,
+        type: 'payment',
+        provider: 'paymongo',
+        method: 'gcash',
+        amountCentavos: 100000,
+        providerRef: 'pi_a5b_not_cash',
+        providerStatus: 'paid',
+        actor: WEBHOOK_ACTOR,
+      });
+      const verifier = { type: 'user' as const, id: financeId, role: 'finance' };
+
+      await expect(
+        verifyCashPayment({ paymentId: gateway.paymentId, verifier }),
+      ).rejects.toBeInstanceOf(CashPaymentNotFoundError);
+      await expect(verifyCashPayment({ paymentId: 987654321, verifier })).rejects.toBeInstanceOf(
+        CashPaymentNotFoundError,
+      );
+
+      // The gateway row was not restamped, and the money did not move again.
+      const payment = await paymentRow(gateway.paymentId);
+      expect(payment.verified_by).toBeNull();
+      expect(Number((await bookingRow(bookingId)).amount_paid_centavos)).toBe(100000);
+    });
+
+    /**
+     * Cash that would take the booking past its total is refused, failing
+     * closed — `recordPayment()`'s overpay invariant, which this path
+     * credits through and so must keep. A driver mistyping 600,000 for
+     * 60,000 is the realistic version, and it must not be creditable.
+     *
+     * The PENDING row is deliberately still allowed in: the driver's claim
+     * is a claim, and finance needs to see the wrong number in order to
+     * resolve it. It simply never becomes money.
+     */
+    dbIt('REFUSES verifying cash that would overpay the booking', async () => {
+      const driverId = await makeDriver();
+      const financeId = await makeStaff('finance');
+      const { bookingId } = await makeBooking({
+        totalCentavos: 100000,
+        amountPaidCentavos: 40000,
+        status: 'confirmed',
+        holdExpiresAt: null,
+      });
+      const { paymentId } = await recordPendingCash({
+        bookingId,
+        amountCentavos: 600000,
+        collectedByDriverId: driverId,
+      });
+
+      await expect(
+        verifyCashPayment({
+          paymentId,
+          verifier: { type: 'user', id: financeId, role: 'finance' },
+        }),
+      ).rejects.toBeInstanceOf(PaymentOverpaysBookingError);
+
+      expect((await paymentRow(paymentId)).status).toBe('pending');
+      expect(Number((await bookingRow(bookingId)).amount_paid_centavos)).toBe(40000);
+    });
+
+    /**
+     * Cash on a booking that was cancelled while the van was out gets
+     * `recordPayment()`'s dead-booking treatment, unchanged: the money is
+     * credited (it is real, and a refund is measured against it), the
+     * review flag goes up, and the status is left exactly as it was.
+     * Nothing auto-confirms.
+     */
+    dbIt('credits cash on a cancelled booking but changes no status', async () => {
+      const driverId = await makeDriver();
+      const financeId = await makeStaff('finance');
+      const { bookingId } = await makeBooking({
+        totalCentavos: 100000,
+        status: 'cancelled',
+        holdExpiresAt: null,
+      });
+      const { paymentId } = await recordPendingCash({
+        bookingId,
+        amountCentavos: 100000,
+        collectedByDriverId: driverId,
+      });
+
+      const result = await verifyCashPayment({
+        paymentId,
+        verifier: { type: 'user', id: financeId, role: 'finance' },
+      });
+      expect(result.bookingStatus).toBe('cancelled');
+      expect(result.paymentReviewRequired).toBe(true);
+
+      const booking = await bookingRow(bookingId);
+      expect(booking.status, 'verified cash resurrected a dead booking').toBe('cancelled');
+      expect(Number(booking.amount_paid_centavos)).toBe(100000);
+      expect(Number(booking.payment_review_required)).toBe(1);
+    });
+
+    /**
+     * A tour-day collection arrives when the trip is `in_progress` or
+     * `completed`, and verifying it must not walk the booking BACKWARDS to
+     * `confirmed` — that would un-finish a tour that ran and hand its
+     * capacity back to the §5 availability check.
+     */
+    dbIt('does not walk a completed booking back to confirmed', async () => {
+      const driverId = await makeDriver();
+      const financeId = await makeStaff('finance');
+      const { bookingId } = await makeBooking({
+        totalCentavos: 100000,
+        amountPaidCentavos: 30000,
+        status: 'completed',
+        holdExpiresAt: null,
+      });
+      const { paymentId } = await recordPendingCash({
+        bookingId,
+        amountCentavos: 70000,
+        collectedByDriverId: driverId,
+      });
+
+      const result = await verifyCashPayment({
+        paymentId,
+        verifier: { type: 'user', id: financeId, role: 'finance' },
+      });
+      expect(result.bookingStatus).toBe('completed');
+
+      const booking = await bookingRow(bookingId);
+      expect(booking.status, 'a finished trip was walked back to confirmed').toBe('completed');
+      // The money still lands, and the flag stays down — a completed
+      // booking is not a dead one.
+      expect(Number(booking.amount_paid_centavos)).toBe(100000);
+      expect(Number(booking.payment_review_required)).toBe(0);
+    });
+
+    /** Nothing is written for a booking that does not exist. */
+    dbIt('REFUSES pending cash for a booking that does not exist', async () => {
+      const driverId = await makeDriver();
+      await expect(
+        recordPendingCash({
+          bookingId: 987654321,
+          amountCentavos: 10000,
+          collectedByDriverId: driverId,
+        }),
+      ).rejects.toBeInstanceOf(BookingNotFoundError);
+      expect(
+        await rows(sql`SELECT id FROM payments WHERE collected_by_driver_id = ${driverId}`),
+      ).toHaveLength(0);
+    });
   });
 });

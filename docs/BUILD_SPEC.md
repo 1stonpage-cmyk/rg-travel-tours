@@ -493,7 +493,30 @@ two paths allowed to mark a booking paid.
 2. Tap each stop on arrival → `trip_checkpoints` row with server timestamp.
 3. Last stop → booking `completed`, van freed.
 4. **Undo last check-in** (only the most recent; marked `undone`, not deleted).
-5. Driver can mark "cash collected" with the amount → creates a `payments` row (`cash`, collected_by driver) for admin to reconcile.
+5. Driver can mark "cash collected" with the amount → creates **one** `payments` row
+   (`provider=manual`, `method=cash`, **`status=pending`**, `collected_by_driver_id` set) for
+   admin to reconcile. The audit row is `actor_type=driver`.
+   - **The booking does not move.** Not `amount_paid_centavos`, not `status`, not
+     `payment_review_required`. A driver's tap is a claim that cash was taken, not a
+     reconciliation — same precedent as §6's manual QR transfer, where the payment row is
+     `pending` until an admin approves it.
+   - **Finance (or owner — `ROLE_MATRIX.verifyPayments`) converts THAT SAME ROW**
+     `pending` → `paid`: `verified_by` / `verified_at` are stamped on it,
+     `amount_paid_centavos` is credited **exactly once**, and the audit row is
+     `actor_type=user`. One handful of cash is one `payments` row for its whole life —
+     verification **never inserts a second row**, which would orphan the pending one and
+     leave the trail showing two payments for one collection.
+   - A **driver may not verify their own collection.** The whole point of the split: a
+     driver who could would be able to pocket the cash and still leave the booking reading
+     "paid in full".
+   - Both calls are one transaction each, and verification runs under the booking row lock,
+     so two finance users clicking at once credit the cash once and the second is refused.
+   - Cash is the BALANCE, so verification does **not** check the amount against the
+     booking's expected deposit or total; the overpay cap against `total_centavos` is what
+     bounds it. The status moves to `confirmed` only from `pending_payment` /
+     `pending_verification` — a tour-day collection must not walk an `in_progress` or
+     `completed` trip backwards — and a cancelled or expired booking gets §6's
+     review-flag treatment instead: credited, flagged, status untouched.
 
 Check-ins update the admin dashboard within ~15 seconds (polling is fine; no websockets needed).
 
