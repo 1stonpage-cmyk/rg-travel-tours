@@ -27,8 +27,40 @@
  * this function takes the two slot locks and nothing else.
  *
  * Both rows are created on demand (owner decision Q8):
- * `INSERT … ON DUPLICATE KEY UPDATE` — a no-op touch that is safe when two
- * requests race to create the same row — and then `SELECT … FOR UPDATE`.
+ * `INSERT … ON DUPLICATE KEY UPDATE` — safe when two requests race to create
+ * the same row — and then `SELECT … FOR UPDATE`. Calling the `INSERT` "a
+ * no-op touch" understates it: see the measurement note on the statement
+ * itself, which is what actually serialises today.
+ *
+ * ## THE PRECONDITION: `takeSlotLocks` must come FIRST in the transaction
+ *
+ * Under REPEATABLE READ, InnoDB pins the transaction's consistent-read
+ * snapshot at its first **non-locking** read, and every plain `SELECT`
+ * afterwards is answered from that snapshot no matter what has committed
+ * since. `INSERT … ON DUPLICATE KEY UPDATE` and `SELECT … FOR UPDATE` do not
+ * pin one, so the locks themselves are safe to take — but a plain `SELECT`
+ * taken BEFORE them (recomputing a quote, reading a tour, anything) pins the
+ * snapshot before the lock is granted. The loser of a race then counts
+ * bookings as of a moment before the winner committed, passes the capacity
+ * check and books the same van: **the locks are granted and change nothing.**
+ *
+ * So: in the booking transaction, `takeSlotLocks()` comes first, before any
+ * consistent read. `assessCapacity()`'s own first plain read is the `tours`
+ * select below, which is already after the locks.
+ *
+ * This is a documented precondition rather than a defence inside the code
+ * because the obvious defence was measured and rejected. Turning the two
+ * booking counts into locking reads (`FOR SHARE`) does fix the snapshot —
+ * locking reads see the latest committed row, not the snapshot — but a
+ * ranged locking read on `bookings` takes GAP locks, and the other
+ * transaction's own `INSERT` into that gap needs an insert-intention lock
+ * that conflicts with it. Two bookings for the same tour on DIFFERENT dates
+ * contend for nothing today; with `FOR SHARE` they died with
+ * `ER_LOCK_DEADLOCK` (1213). Trading a precondition for a deadlock between
+ * unrelated bookings is not a fix. Both halves of that measurement are
+ * pinned by tests: `does NOT serialise two bookings on different dates`
+ * (which `FOR SHARE` turns red) and the hazard guard
+ * `HAZARD: a consistent read taken BEFORE the locks …`.
  *
  * ## Everything reads through `tx`
  *
@@ -37,12 +69,12 @@
  * locks — and under REPEATABLE READ a non-locking re-read can return stale
  * data, which is precisely the bug a sequential test cannot see.
  *
- * ## `assessCapacity` does not throw a refusal
+ * ## `assessCapacity` never throws a REFUSAL
  *
  * It returns `{ ok: false, reason }`, because the caller (`createHold()`,
  * Task 5, and the router above it) turns the reason into guest-facing copy.
- * The only things that throw here are malformed ARGUMENTS — a programmer
- * error, loud by design; see `assertCivilDate`.
+ * It does still throw on a malformed ARGUMENT — deliberately, because that is
+ * a programmer error and the alternative fails open; see `assertCivilDate`.
  *
  * ## Not in scope
  *
@@ -76,7 +108,7 @@ export const CAPACITY_REFUSAL_REASONS = [
 ] as const;
 export type CapacityRefusalReason = (typeof CAPACITY_REFUSAL_REASONS)[number];
 
-/** The verdict. Never an exception — see the module note. */
+/** The verdict. Never a thrown REFUSAL — see the module note. */
 export type CapacityVerdict = { ok: true } | { ok: false; reason: CapacityRefusalReason };
 
 const CIVIL_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -112,6 +144,13 @@ function assertPax(pax: number): void {
  * tour second**. Every capacity read must happen after this, through the
  * same `tx`.
  *
+ * **These must be the FIRST statements of the booking transaction.** A plain
+ * `SELECT` before them pins the REPEATABLE READ snapshot before the lock is
+ * granted, and the capacity check that follows is then answered from a
+ * moment before the winner of the race committed — the locks are taken and
+ * enforce nothing. See "THE PRECONDITION" in the module note; it is pinned
+ * by a hazard-guard test rather than left as a claim.
+ *
  * Raw statements rather than the query builder, for two reasons: the civil
  * date stays a string (Drizzle's `date` columns map to `Date`, and a `Date`
  * is exactly the midnight-shift hazard this module avoids), and the four
@@ -120,10 +159,31 @@ function assertPax(pax: number): void {
 export async function takeSlotLocks(tx: Transaction, tourId: number, date: string): Promise<void> {
   assertCivilDate(date);
 
-  // 1. The shared fleet for that date. ALWAYS first.
+  /*
+   * 1. The shared fleet for that date. ALWAYS first.
+   *
+   * MEASURED, and worth knowing before touching either statement: when the
+   * row does not exist yet, two concurrent `INSERT`s of the same date can
+   * deadlock (the duplicate-key path takes an S lock and then needs an X
+   * lock), which at three or more concurrent bookings for one date becomes
+   * likely rather than theoretical. `createHold()` therefore wants a retry
+   * on MySQL error 1213 (`ER_LOCK_DEADLOCK`) around the whole transaction;
+   * it is not built here, because retrying is the caller's transaction's
+   * business, not this function's.
+   */
   await tx.execute(
     sql`INSERT INTO fleet_date_slots (date) VALUES (${date}) ON DUPLICATE KEY UPDATE date = date`,
   );
+  /*
+   * MEASURED (Task 4, mutation M3): deleting THIS statement and keeping the
+   * `INSERT` above leaves the whole suite green — the `ON DUPLICATE KEY
+   * UPDATE` takes an exclusive lock on the row it touches, created or
+   * duplicate, and is what serialises today. So this line is the CONTRACT
+   * (§5 names it) but is not independently pinned by a test: do not delete it
+   * as dead code on the strength of a green run. A lock that depends on
+   * InnoDB locking a no-op `date = date` update is an implementation detail,
+   * not a guarantee.
+   */
   await tx.execute(sql`SELECT date FROM fleet_date_slots WHERE date = ${date} FOR UPDATE`);
 
   // 2. Then this tour's own groups_per_day row. ALWAYS second.
@@ -160,9 +220,21 @@ const holdsCapacity = inArray(bookings.status, [...CAPACITY_HOLDING_STATUSES]);
 /**
  * The verdict for one more group of `pax` on `tourId` / `date`.
  *
- * **Call `takeSlotLocks(tx, tourId, date)` first.** Without the locks every
- * number below is a read that a concurrent transaction can invalidate before
- * the booking is inserted, and two guests take the same last van.
+ * **Call `takeSlotLocks(tx, tourId, date)` first, as the transaction's first
+ * statements.** Two distinct requirements hide in that one sentence:
+ *
+ *  1. Without the locks, every number below is a read that a concurrent
+ *     transaction can invalidate before the booking is inserted, and two
+ *     guests take the same last van.
+ *  2. Without the locks being **first** — no plain `SELECT` anywhere before
+ *     them — the REPEATABLE READ snapshot is pinned before the lock is
+ *     granted, the counts below are answered from before the winner's
+ *     commit, and holding the locks changes nothing. A quote recomputed from
+ *     the database earlier in the same transaction is exactly that mistake.
+ *     See "THE PRECONDITION" in the module note.
+ *
+ * The counts are deliberately NOT locking reads; the module note records the
+ * `FOR SHARE` measurement and the deadlock that ruled it out.
  *
  * The three gates are §5's checklist in order, and the first one that fails
  * is the reason returned: the tour's own `groups_per_day`, then a van, then

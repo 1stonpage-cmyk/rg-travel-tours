@@ -47,7 +47,7 @@ import {
   type BookingStatus,
   type PriceSnapshot,
 } from '@rg/shared';
-import { getDb, getPool } from '../db/client';
+import { getDb, getPool, type Transaction } from '../db/client';
 import { bookings, destinations, driverLeaves, drivers, tours, vans } from '../db/schema';
 import { generateBookingRef } from '../services/booking-ref';
 import { assessCapacity, takeSlotLocks } from '../services/capacity';
@@ -68,7 +68,25 @@ const created = {
   leaveIds: [] as number[],
 };
 
-const unique = () => `${Date.now()}_${Math.floor(Math.random() * 1e9)}`;
+/**
+ * RANDOM FIRST, timestamp second. `vans.plate` and `drivers.code` are
+ * `varchar(20)`, so a prefix + a 13-digit millisecond timestamp leaves only
+ * about three random digits — and the four-van loop below creates several
+ * fixtures inside the same millisecond, which made a duplicate-key flake a
+ * one-in-a-thousand event. With the random part in front, truncation keeps
+ * the entropy.
+ */
+const unique = () => `${Math.floor(Math.random() * 1e9)}_${Date.now()}`;
+
+/**
+ * The five statuses that hold capacity, as a SQL list — interpolated from
+ * the shared constant rather than written out, so a sixth status cannot
+ * silently narrow what a test looks for.
+ */
+const HOLDING_STATUSES_SQL = sql.join(
+  CAPACITY_HOLDING_STATUSES.map((status) => sql`${status}`),
+  sql`, `,
+);
 
 async function count(statement: Parameters<ReturnType<typeof getDb>['execute']>[0]) {
   const [rows] = (await getDb().execute(statement)) as unknown as [Array<{ n: number }>, unknown];
@@ -207,6 +225,80 @@ async function aBookableDay(opts: { groupsPerDay?: number } = {}) {
   await makeVan();
   await makeDriver();
   return tourId;
+}
+
+/**
+ * A whole booking in one transaction — what `createHold()` will do (Task 5):
+ * both locks in the fixed order, the verdict, then the insert. Used by the
+ * three concurrency tests at the bottom of this file.
+ *
+ * `beforeLocks` runs INSIDE the transaction but BEFORE `takeSlotLocks`, and
+ * exists for exactly one test: the hazard guard, which needs a plain
+ * consistent read there to pin the REPEATABLE READ snapshot early. Every
+ * other caller leaves it out, which is the order the service documents as
+ * its precondition.
+ */
+function bookOnTour(
+  tourId: number,
+  date: string,
+  beforeLocks?: (tx: Transaction) => Promise<unknown>,
+) {
+  return getDb().transaction(async (tx) => {
+    if (beforeLocks) await beforeLocks(tx);
+    await takeSlotLocks(tx, tourId, date);
+    const verdict = await assessCapacity(tx, tourId, date, 4);
+    if (!verdict.ok) throw new Error(`refused: ${verdict.reason}`);
+    const [row] = await tx.insert(bookings).values({
+      ref: generateBookingRef(),
+      tourId,
+      tourDate: new Date(`${date}T00:00:00Z`),
+      pax: 4,
+      leadName: 'Race Fixture',
+      leadEmail: 'race@example.test',
+      leadPhone: '09170000000',
+      status: 'pending_payment',
+      payMode: 'full',
+      priceSnapshot: SNAPSHOT,
+      subtotalCentavos: 100000,
+      totalCentavos: 100000,
+    });
+    created.bookingIds.push(row.insertId);
+    return row.insertId;
+  });
+}
+
+/** Bookings holding capacity on one date, across every tour. */
+function heldOnDate(date: string) {
+  return count(
+    sql`SELECT COUNT(*) n FROM bookings
+        WHERE tour_date = ${date} AND status IN (${HOLDING_STATUSES_SQL})`,
+  );
+}
+
+/** The reasons the settled promises of a concurrent pair rejected with. */
+function rejectionMessages(results: PromiseSettledResult<unknown>[]) {
+  return results
+    .filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+    .map((r) => (r.reason instanceof Error ? r.reason.message : String(r.reason)));
+}
+
+/**
+ * A rendezvous for N transactions: every one of them waits here until all N
+ * have arrived. The hazard test needs both snapshots pinned before either
+ * transaction commits, and a bare `Promise.allSettled` only makes that
+ * likely — this makes it certain.
+ */
+function barrier(parties: number) {
+  let arrived = 0;
+  let release: () => void;
+  const open = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return async () => {
+    arrived += 1;
+    if (arrived >= parties) release();
+    await open;
+  };
 }
 
 describeWithDb('capacity', () => {
@@ -493,42 +585,92 @@ describeWithDb('capacity', () => {
     await makeVan();
     await makeDriver();
 
-    /** What `createHold()` will do (Task 5): locks, verdict, insert — one transaction. */
-    const bookOnTour = (tourId: number) =>
-      getDb().transaction(async (tx) => {
-        await takeSlotLocks(tx, tourId, DAY);
-        const verdict = await assessCapacity(tx, tourId, DAY, 4);
-        if (!verdict.ok) throw new Error(`refused: ${verdict.reason}`);
-        const [row] = await tx.insert(bookings).values({
-          ref: generateBookingRef(),
-          tourId,
-          tourDate: new Date(`${DAY}T00:00:00Z`),
-          pax: 4,
-          leadName: 'Race Fixture',
-          leadEmail: 'race@example.test',
-          leadPhone: '09170000000',
-          status: 'pending_payment',
-          payMode: 'full',
-          priceSnapshot: SNAPSHOT,
-          subtotalCentavos: 100000,
-          totalCentavos: 100000,
-        });
-        created.bookingIds.push(row.insertId);
-        return row.insertId;
-      });
-
-    const results = await Promise.allSettled([bookOnTour(tourA), bookOnTour(tourB)]);
+    const results = await Promise.allSettled([bookOnTour(tourA, DAY), bookOnTour(tourB, DAY)]);
 
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
-    expect(results.filter((r) => r.status === 'rejected')).toHaveLength(1);
+    /*
+     * The loser must be REFUSED, not killed. A deadlock (`ER_LOCK_DEADLOCK`)
+     * or a lock-wait timeout satisfies "exactly one rejected" identically —
+     * and "a deadlock passes every sequential test" is the exact failure
+     * this test exists to catch. The guest-visible difference is "that day
+     * is full" versus a 500, so the reason is asserted, not just the count.
+     */
+    expect(rejectionMessages(results)).toEqual(['refused: no_van_available']);
     // And the state afterwards: ONE booking on that date, for one van.
+    expect(await heldOnDate(DAY), 'the fleet was oversold').toBe(1);
+  });
+
+  /**
+   * The other direction, and the reason the fleet lock is keyed by DATE
+   * alone: two bookings on DIFFERENT dates contend for nothing and must
+   * BOTH succeed. Without this, "take more locks" would look like a free
+   * improvement — it is not. A `FOR SHARE` on the booking counts (the
+   * obvious fix for the snapshot precondition below) turns the gap locks
+   * those reads take into a deadlock with the other transaction's insert,
+   * and this is the test that measured it. See the Task 4 fix report.
+   */
+  it('does NOT serialise two bookings on different dates — they deadlock nothing', async () => {
+    const tourId = await makeTour({ groupsPerDay: 5 });
+    await makeVan();
+    await makeVan();
+    await makeDriver();
+    await makeDriver();
+
+    const results = await Promise.allSettled([
+      bookOnTour(tourId, DAY),
+      bookOnTour(tourId, DAY_AFTER),
+    ]);
+
+    expect(rejectionMessages(results), 'a booking on an unrelated date was refused').toEqual([]);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(2);
+    expect(await heldOnDate(DAY)).toBe(1);
+    expect(await heldOnDate(DAY_AFTER)).toBe(1);
+  });
+
+  /**
+   * **A HAZARD GUARD, NOT A FEATURE.** This test asserts that the fleet IS
+   * oversold, and it is here so that the precondition both exported
+   * functions document cannot quietly stop being true.
+   *
+   * Under REPEATABLE READ, InnoDB pins the transaction's consistent-read
+   * snapshot at its first NON-LOCKING read. `INSERT … ON DUPLICATE KEY
+   * UPDATE` and `SELECT … FOR UPDATE` do not pin one, so `takeSlotLocks`
+   * leaves the snapshot unpinned and the capacity counts that follow read
+   * live data. But a plain `SELECT` taken BEFORE the locks pins the snapshot
+   * before the lock is granted — and then the loser of the race counts
+   * bookings as of a moment before the winner committed, passes the check,
+   * and books the same van. **The locks are granted and change nothing.**
+   *
+   * The `beforeLocks` read below is that mistake, made deliberately, with a
+   * barrier so both snapshots are pinned before either transaction commits.
+   *
+   * If this test ever fails because only ONE booking committed, the hazard
+   * has been fixed (locking reads, or a different isolation level) — delete
+   * this test and the precondition it guards rather than "repairing" it.
+   */
+  it('HAZARD: a consistent read taken BEFORE the locks lets both bookings through', async () => {
+    const tourA = await makeTour({ groupsPerDay: 5 });
+    const tourB = await makeTour({ groupsPerDay: 5 });
+    await makeVan();
+    await makeDriver();
+
+    const arrive = barrier(2);
+    /** The precondition violation: a plain read, so the snapshot is pinned early. */
+    const pinTheSnapshot = async (tx: Transaction) => {
+      await tx.execute(sql`SELECT COUNT(*) n FROM bookings WHERE tour_date = ${DAY}`);
+      await arrive();
+    };
+
+    const results = await Promise.allSettled([
+      bookOnTour(tourA, DAY, pinTheSnapshot),
+      bookOnTour(tourB, DAY, pinTheSnapshot),
+    ]);
+
     expect(
-      await count(
-        sql`SELECT COUNT(*) n FROM bookings WHERE tour_date = ${DAY}
-            AND status IN ('pending_payment','pending_verification','confirmed','assigned','in_progress')`,
-      ),
-      'the fleet was oversold',
-    ).toBe(1);
+      results.filter((r) => r.status === 'fulfilled'),
+      'the hazard is gone — see the comment above this test',
+    ).toHaveLength(2);
+    expect(await heldOnDate(DAY), 'the hazard is gone — see the comment above this test').toBe(2);
   });
 });
 
