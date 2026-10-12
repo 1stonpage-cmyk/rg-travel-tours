@@ -47,26 +47,30 @@ function appWithThrowingRoutes() {
   return app;
 }
 
+type HttpResponse = { status: number; text: string; headers: Record<string, string> };
+
 /**
- * Every way an error response can leak internals, in one assertion. The body
- * is first checked to BE the handler's fixed answer, so none of the
+ * Every way an error response can leak internals, in one assertion, at
+ * whatever status the handler was supposed to answer with. The body is first
+ * checked to BE the handler's fixed answer for that status, so none of the
  * negatives can pass vacuously against an empty body.
  */
-function expectCleanInternalError(res: {
-  status: number;
-  text: string;
-  headers: Record<string, string>;
-}): void {
-  expect(res.status).toBe(500);
+function expectCleanError(res: HttpResponse, status: number, error: string): void {
+  expect(res.status).toBe(status);
   expect(res.headers['content-type']).toMatch(/application\/json/);
-  expect(JSON.parse(res.text)).toEqual({ error: 'Internal Server Error' });
+  expect(JSON.parse(res.text)).toEqual({ error });
 
   expect(res.text).not.toMatch(/<html|<pre>/i); // finalhandler's page
   expect(res.text).not.toMatch(/\bat \S+ \(/); // stack frames
   expect(res.text).not.toMatch(/node_modules|[A-Za-z]:\\|\/(usr|var|home)\//); // paths
   expect(res.text).not.toMatch(/\.[cm]?[jt]sx?:\d+:\d+/); // file:line:col
   expect(res.text).not.toMatch(/Error: /); // the raw message
-  expect(res.text).not.toMatch(/SyntaxError|boom/);
+  expect(res.text).not.toMatch(/SyntaxError|boom|hunter2/);
+}
+
+/** An unclassified error: the handler's 500, with nothing of the error in it. */
+function expectCleanInternalError(res: HttpResponse): void {
+  expectCleanError(res, 500, 'Internal Server Error');
 }
 
 /** Silences the handler's own log line, and hands back the spy to assert on. */
@@ -162,16 +166,105 @@ describe('errorHandler, mounted last', () => {
   });
 });
 
+/**
+ * Cleanup A2 — the status an error carries, when and only when it is a 4xx.
+ *
+ * Mounted through a real app rather than called directly, because the point
+ * is what a caller receives: a status line AND a body, with the body still
+ * fixed per status and still nothing from the error.
+ */
+describe('errorHandler: a 4xx on the error is honoured, anything else is not', () => {
+  /** Throws `err` from a route, with `errorHandler` mounted last. */
+  function appThrowing(err: unknown) {
+    const app = express();
+    app.get('/__throw', () => {
+      throw err;
+    });
+    app.use(errorHandler);
+    return request(app).get('/__throw');
+  }
+
+  /** An `http-errors`-shaped error: both spellings, as body-parser sets them. */
+  function withStatus(status: unknown, statusCode: unknown = status) {
+    return Object.assign(new Error('boom: C:\\dev\\rg-travel-tours in the message'), {
+      status,
+      statusCode,
+    });
+  }
+
+  it('answers a 400 error with 400 Bad Request', async () => {
+    spyOnConsoleError();
+
+    expectCleanError(await appThrowing(withStatus(400)), 400, 'Bad Request');
+  });
+
+  it('honours other 4xx statuses with their own fixed phrase', async () => {
+    spyOnConsoleError();
+
+    expectCleanError(await appThrowing(withStatus(413)), 413, 'Payload Too Large');
+    expectCleanError(await appThrowing(withStatus(415)), 415, 'Unsupported Media Type');
+    expectCleanError(await appThrowing(withStatus(404)), 404, 'Not Found');
+  });
+
+  it('reads statusCode when status is absent', async () => {
+    spyOnConsoleError();
+
+    expectCleanError(await appThrowing(withStatus(undefined, 400)), 400, 'Bad Request');
+  });
+
+  it('gives an unassigned 4xx a generic phrase, never the number as text', async () => {
+    spyOnConsoleError();
+
+    expectCleanError(await appThrowing(withStatus(499)), 499, 'Client Error');
+  });
+
+  /**
+   * The fail-closed half: everything that is NOT a plain 4xx integer stays a
+   * 500. An error that never set a status is one nobody classified, and
+   * answering "your request was bad" when the database is down is worse than
+   * saying nothing.
+   */
+  it('leaves a 5xx, a non-integer and a string status at 500', async () => {
+    spyOnConsoleError();
+
+    expectCleanInternalError(await appThrowing(withStatus(500)));
+    expectCleanInternalError(await appThrowing(withStatus(503)));
+    expectCleanInternalError(await appThrowing(withStatus(399)));
+    expectCleanInternalError(await appThrowing(withStatus('400'))); // not a number
+    expectCleanInternalError(await appThrowing(withStatus(400.5)));
+    expectCleanInternalError(await appThrowing(withStatus(Number.NaN)));
+    expectCleanInternalError(await appThrowing(new Error('no status at all')));
+    expectCleanInternalError(await appThrowing('a thrown string'));
+  });
+
+  it('still logs a client error server-side, with its stack', async () => {
+    const spy = spyOnConsoleError();
+    await appThrowing(withStatus(400));
+
+    expect(spy, 'a 400 that keeps happening must still be visible in the log').toHaveBeenCalled();
+    const logged = loggedText(spy);
+    expect(logged).toMatch(/GET \/__throw/);
+    expect(logged).toMatch(/boom/);
+    expect(logged).toMatch(/\bat \S+ \(/);
+  });
+});
+
 describe('createApp(): the mount is really there', () => {
   /** A real unhandled throw in the real app: `express.json()` on a bad body. */
   const malformedJsonPost = () =>
     request(createApp()).post('/trpc/health').set('Content-Type', 'application/json').send('{bad');
 
-  it('answers a malformed JSON body with the clean 500, not finalhandler HTML', async () => {
+  /**
+   * Cleanup A2: body-parser's `SyntaxError` carries `status: 400`, and that
+   * is the caller's mistake. It was a 400 before Task 20's handler existed
+   * (with a stack page attached, which is why the handler exists) and it is
+   * a 400 again — now with the handler's fixed body and nothing else.
+   */
+  it('answers a malformed JSON body with a clean 400, not a 500 and not finalhandler HTML', async () => {
     spyOnConsoleError();
     const res = await malformedJsonPost();
 
-    expectCleanInternalError(res);
+    expectCleanError(res, 400, 'Bad Request');
   });
 
   it('still logs that error server-side', async () => {
