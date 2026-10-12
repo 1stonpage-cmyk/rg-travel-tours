@@ -6,11 +6,11 @@
 
 **Architecture:** Three pure services (pricing, coupons, capacity) sit under one transactional `createHold()` that takes the fleet and tour locks in the fixed order the core schema established. The checkout UI never computes money; it asks the server for a quote and renders what comes back. Payment goes through the existing `PaymentProvider` seam and `recordPayment()` — Week 3 adds no new way for a booking to become paid.
 
-**Tech Stack:** React 19 + Vite 7 + Tailwind v4 + shadcn/ui · Express 5 + tRPC v11 · Drizzle + MySQL 8 · Zod v4 (shared) · `express-rate-limit`. **No new dependency without the owner's approval** — see Questions Q1 and Q2, which block two tasks.
+**Tech Stack:** React 19 + Vite 7 + Tailwind v4 + shadcn/ui · Express 5 + tRPC v11 · Drizzle + MySQL 8 · Zod v4 (shared) · `express-rate-limit` · **`node-cron`** — approved by the owner 2026-10-12 for Task 11, and **the only dependency this week installs**. **No other new dependency without the owner's approval.** No email library: Q2 deferred email to Week 4.
 
 **Spec:** `docs/BUILD_SPEC.md` — §4 (tour detail), §5 (pricing, capacity, holds), §6 (checkout & payments), §7 (customer portal login), §9 (roles), §11 (notifications). The plan argues from the spec; executors read both.
 
-**Status:** PLAN ONLY — awaiting owner approval. Nothing in this document may be implemented until then.
+**Status:** APPROVED and EXECUTING — owner approved all ten questions on 2026-10-12 (Q1/Q2/Q4/Q7/Q8 first, then Q3/Q5/Q6/Q9/Q10 exactly as recommended). Q1 unblocks Task 11; Q2 drops Task 12, leaving **12 tasks**. Every answer is recorded under Questions below.
 
 ## Global Constraints
 
@@ -64,7 +64,7 @@ The core schema plan (`docs/superpowers/plans/2026-10-10-core-schema.md`) shippe
 
 This plan covers the **guest's path to a paid booking** and stops there. It does **not** build the customer portal's authenticated views (Week 4), manual QR upload (Week 4), dispatch or assignment (Week 5), the driver portal (Week 6), or the admin review queue for `payment_review_required` (Weeks 5–7, and tracked in `LAUNCH_CHECKLIST.md`).
 
-Two tasks are **blocked on a dependency decision** and are marked so: Task 5 (expiry cron) and Task 11 (confirmation email). See Questions Q1 and Q2. Everything else can proceed without them.
+Two tasks were **blocked on a dependency decision** — Task 11 (the expiry sweep) and Task 12 (the confirmation email). **Both are now resolved:** Q1 approved `node-cron`, so Task 11 proceeds; Q2 deferred email to Week 4, so **Task 12 is dropped** and this week is **12 tasks**, shipping on-screen confirmation plus booking lookup instead.
 
 ---
 
@@ -86,55 +86,90 @@ Two tasks are **blocked on a dependency decision** and are marked so: Task 5 (ex
 
 ---
 
-## Questions — answer before execution
+## Questions — ALL TEN ANSWERED by the owner, 2026-10-12
 
-Listed, not guessed. The first two **block tasks** (Task 11, the expiry sweep, and Task 12, the confirmation email — an earlier draft of these two headers pointed at Tasks 5 and 11, which was off by one; Task 5 is `createHold()` and was never blocked); the rest change behaviour and are cheaper to settle now than after guests have booked.
+Listed, not guessed, then answered. **Q1, Q2, Q4 and Q7/Q8 were answered first; Q3, Q5, Q6, Q9 and Q10 were approved exactly as recommended in the second round.** Nothing in this plan was implemented before the last of them landed.
 
-### Q1 — `node-cron` is not installed. How should the hold-expiry sweep run? **BLOCKS Task 11**
+Each answer is recorded with the alternatives it beat, rather than the alternatives being deleted — a decision whose rejected options are gone reads later as an arbitrary preference, and gets quietly re-litigated.
 
-§2's stack names `node-cron`, but `server/package.json` has no scheduler: deps are `@rg/shared, @trpc/server, cors, dotenv, drizzle-orm, express, express-rate-limit, mysql2, zod`. Three options:
+### Q1 — ✅ ANSWERED: use `node-cron`. (Blocked Task 11.)
 
-| Option                                                     | Cost                                                                                                                                                           |
-| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **A. `setInterval` in the server process** — no dependency | One job, one minute; crontab syntax buys nothing. Does not survive a process restart mid-tick, which does not matter for an idempotent sweep. **Recommended.** |
-| **B. Install `node-cron`**                                 | A dependency the spec already names, so arguably pre-approved — but it needs your explicit yes.                                                                |
-| **C. An OS-level cron hitting an authenticated endpoint**  | No dependency, but needs deploy wiring that does not exist and an endpoint that must be protected.                                                             |
+**Owner decision: option B, `node-cron`** — CLAUDE.md's approved stack already names it, so it is not a new dependency decision. This overrides the plan's own recommendation of option A (`setInterval`), which stays recorded below.
 
-### Q2 — No email library is installed. How do confirmation emails send? **BLOCKS Task 12**
+Three conditions came with it, all binding on Task 11:
 
-§2 names "SMTP via a transactional provider" and §11 lists seven notification events, but nothing is installed and Node has no built-in SMTP client. Options: install `nodemailer`; use a provider's REST API over plain `fetch` (no dependency, same pattern as the PayMongo provider); or **defer email to Week 4** and ship Week 3 with on-screen confirmation only. **I recommend deferring** — the booking is confirmed and visible on screen without it, and §11's other six events all belong to later weeks anyway, so building the email layer once with all of them is less work than building it twice.
+1. **Single process only.** Deployment: PM2 **fork mode, 1 instance** — under cluster mode every worker runs the schedule, so each sweep fires N times. Recorded in `LAUNCH_CHECKLIST.md` beside the existing fork-mode requirement, which until now rested only on the rate limiter.
+2. **The sweep stays idempotent** — a second run, a restart mid-tick or two overlapping ticks must not change the outcome.
+3. **It must skip `payment_review_required = 1`** — already carry-forward constraint 1 of the core-schema plan, so the two documents now agree. Task 11 owes a test for it.
 
-### Q3 — What does the guest see when capacity is gone between quote and submit?
+Alternatives recorded: **A. `setInterval`** (no dependency; one job, one minute; crontab syntax buys nothing) and **C. OS-level cron hitting an authenticated endpoint** (no dependency, but needs deploy wiring that does not exist and an endpoint that must be protected).
 
-§5 says "one wins, one gets 'just sold out'". Confirm the copy and the behaviour: does the loser stay on the checkout page with the date cleared, or go back to the tour page? And should the quote carry a short-lived token so the price cannot be replayed after a tier change?
+### Q2 — ✅ ANSWERED: defer email to Week 4. (Blocked Task 12.)
 
-### Q4 — Can a guest hold more than one booking at once?
+**Owner decision: defer**, as recommended. **Task 12 is dropped from Week 3** — dropped, not deferred inside it — so this week is **12 tasks** and ships **on-screen confirmation (Task 9) plus booking lookup (Task 10)**. Week 4 builds the layer once, with `nodemailer` over SMTP per §2's stack, covering all seven of §11's notification events together.
 
-Nothing in the spec forbids it. One browser could hold every slot on a date with repeated submits. Options: no limit; one active hold per email; a rate limit on `createHold` per IP. This is the cheapest denial-of-service in the system.
+**`LAUNCH_CHECKLIST.md` now carries: test SMTP sending from the VPS EARLY**, before Week 4 writes code against it. IONOS has blocked outbound SMTP on another of the owner's projects, so this is a known failure mode, and it is a hosting-level block no application code works around. The fallback, if it is blocked, is a provider's REST API over plain `fetch` — the same pattern as the PayMongo provider, and no new dependency.
 
-### Q5 — Is the 15-minute hold measured from creation, and does it ever extend?
+### Q3 — ✅ ANSWERED: stay on checkout, clear the date, offer the next three; and yes, a server-side quote id.
 
-§5 says `hold_expires_at = now + 15 min`. If the guest reaches PayMongo and pays at 14:59, the webhook may land after expiry — and `recordPayment()` will then record the money and flag `payment_review_required` rather than confirm. Is that acceptable, or should reaching the gateway extend the hold? (§6's manual-QR flow explicitly "stops the expiry" on receipt upload, so there is precedent for extending.)
+**Owner decision: approved as recommended.** When capacity goes between quote and submit, the loser **stays on the checkout page** with the date cleared, an **amber** "just sold out" notice (never red — CLAUDE.md) and **the next 3 available dates offered inline**, so the guest's typing is never thrown away. §5's "one wins, one gets 'just sold out'" is the behaviour; this is the copy and the recovery path.
 
-### Q6 — Exactly which payment methods appear at checkout?
+**And the quote carries a short-lived server-side quote id**, so a price cannot be replayed after an admin edits a tier. The id is the handle; the money stays on the server, which is what keeps this consistent with "the server computes all money" — the browser never holds a signed total it could replay.
 
-§15's own open questions Q2 (QR payments) and Q3 (PayPal) are still unanswered, and they decide what `createCheckout` requests. The `PAYMENT_METHODS` enum has `card, gcash, maya, grab_pay, qrph, bank_transfer, cash`; `bank_transfer` and `cash` are manual flows and must not be offered online.
+### Q4 — ✅ ANSWERED: limit holds, three ways.
 
-### Q7 — Does a coupon reserve its usage slot during the hold?
+**Owner decision.** All three apply together, and **each owes its own test**:
 
-`coupons.usage_limit` / `used_count` exist, and `coupon_redemptions` is unique on `(coupon_id, booking_id)`. If a redemption is only written on payment, the last slot can be promised to several holds at once. If written at hold time, an expired hold must release it. Which?
+| Limit                                      | Scope                                 |
+| ------------------------------------------ | ------------------------------------- |
+| Max **2 active unpaid holds per email**    | Counted on `bookings`, under the lock |
+| Max **2 active unpaid holds per phone**    | Same, independently — **AND**, not OR |
+| **5 hold creations per IP per 15 minutes** | `express-rate-limit` on `createHold`  |
 
-### Q8 — What happens to a coupon redemption when a booking is cancelled or refunded?
+Holds expire on the spec's existing hold window; this adds no new expiry concept.
 
-Follows from Q7 and is not in the spec.
+Two things Task 5 must honour. The email and phone caps are **AND, not OR** — one guest must not take four slots by reusing an email with two phone numbers — and both must be counted **inside the same locked transaction that creates the hold**, or two concurrent submits both read "1 active hold" and both win, leaving a limit that reads as enforced while not being. The per-IP limiter is the weakest of the three alone (office and carrier NAT share addresses), which is why it is a third layer rather than the only one.
 
-### Q9 — May a guest check out without an account _and_ without a coupon-less path breaking? (confirm, not a guess)
+### Q5 — ✅ ANSWERED: measured from creation, and extended ONCE at the gateway redirect.
 
-§7 logs a guest in with booking ref + email. Confirm the checkout collects exactly §6's fields — full name, mobile (PH format), email, pickup location text + optional Google Maps pin, special requests — and that the pin is optional at launch.
+**Owner decision: approved as recommended.** `hold_expires_at = created_at + 15 min` per §5. **At the moment the guest is redirected to the gateway, the hold is extended once to 30 minutes total** — a single, bounded extension, written to `audit_log`, and never repeatable.
 
-### Q10 — What is the PH mobile format rule?
+The reason: a guest who has reached the payment page has committed, and `recordPayment()`'s `payment_review_required` queue should hold genuine anomalies — a webhook for a cancelled booking, a late manual transfer — not someone who typed their card number slowly. §6's manual-QR flow already "stops the expiry" on receipt upload, so extending on a payment attempt is the established precedent, not a new concept.
 
-§6 says "mobile (PH format)" without defining it. `09XXXXXXXXX`, `+639XXXXXXXXX`, both? The seed's contact numbers are `0908 469 6246` style. A wrong rule rejects real guests.
+**It does not change what happens if the money still lands late:** `recordPayment()` records it, leaves the status alone and raises `payment_review_required`. The extension makes that path rarer; it must not be mistaken for removing it.
+
+### Q6 — ✅ ANSWERED: card, GCash, Maya, GrabPay. Nothing else.
+
+**Owner decision: approved as recommended.** `createCheckout` requests exactly **`card`, `gcash`, `maya`, `grab_pay`**.
+
+- **`bank_transfer` and `cash` are never offered online** — both are manual flows an admin reconciles by hand (§6's QR path, and §8's driver cash, which `recordPendingCash()` already keeps out of `amount_paid_centavos`).
+- **`qrph` is held back** until §15's own open Q2 (QR payments) is answered. Offering it now would mean guessing how the QR flow reconciles, which is exactly the kind of guess that becomes a money bug.
+
+### Q7 + Q8 — ✅ ANSWERED: a hold reserves capacity AND coupon usage in one locked transaction; expiry releases both.
+
+**Owner decision.** An active hold reserves **both** capacity (fleet slot + tour slot) **and** coupon usage, all **inside the same locked transaction**. Expiry releases both. A coupon slot therefore behaves exactly like a seat: reserved while held, returned when the hold lapses. That settles Q8 by the same mechanism — a cancellation or refund releases the redemption the way expiry does, because the reservation is tied to the hold's life, not to the payment.
+
+Two tests, named by the owner: **the last slot cannot be held by two guests**, and **a single-use coupon cannot be held twice**.
+
+Three things this binds, which the implementer must not rediscover by guessing:
+
+1. **Lock order gains a third lock.** The core-schema plan fixes `fleet_date_slots(date)` **before** `tour_date_slots(tour_id, date)`. The coupon row is taken **LAST**, after both slot locks — otherwise two guests holding different tours with the same coupon can deadlock.
+2. `coupon_redemptions` is unique on `(coupon_id, booking_id)`, which stops one booking double-redeeming but **not** two bookings racing the last slot, so `used_count` must move under the lock rather than be derived afterwards.
+3. The expiry sweep (Task 11) now releases **two** things per hold, and Q1's idempotency condition covers both: a second run must not decrement `used_count` twice.
+
+### Q9 — ✅ ANSWERED: guest checkout, no account, exactly §6's fields.
+
+**Owner decision: approved as recommended.** A guest checks out with **no account and no password**, and **no account is created at checkout**. The form collects exactly §6's fields: **full name, PH mobile, email, pickup location text + optional Google Maps pin, special requests**. The **pin is optional at launch**.
+
+Portal access afterwards is §7's **booking ref + email** — which is why the booking ref must stay random and non-sequential (CLAUDE.md), since it is doing the work a password would otherwise do.
+
+The Data Privacy Act consent checkbox (RA 10173) is part of this form, not a later addition.
+
+### Q10 — ✅ ANSWERED: accept both forms, store one.
+
+**Owner decision: approved as recommended.** Accept **both `09XXXXXXXXX` and `+639XXXXXXXXX`**, **strip spaces and dashes before validating** (the seed's own numbers are `0908 469 6246` style, and a guest who types their number the way they read it must not be rejected), **store normalised as `+639XXXXXXXXX`**, and reject everything else.
+
+**One shared Zod schema in `/shared`**, used by both checkout and booking lookup — if the two drift, a guest can create a booking they cannot then look up, which is the worst possible place for a validation mismatch.
 
 ---
 
@@ -693,7 +728,7 @@ git commit -m "feat(checkout): booking lookup that reveals nothing and is rate-l
 
 ---
 
-## Task 11: The hold-expiry sweep — **BLOCKED ON Q1**
+## Task 11: The hold-expiry sweep — **UNBLOCKED (Q1: `node-cron`)**
 
 **Files:**
 
@@ -701,7 +736,11 @@ git commit -m "feat(checkout): booking lookup that reveals nothing and is rate-l
 - Modify: `server/src/index.ts`
 - Test: `server/src/__tests__/expire-holds.test.ts`
 
-**Do not start this task until Q1 is answered** — `node-cron` is not installed, and the scheduling mechanism changes the wiring. The **sweep itself** is pure of scheduling and can be written and tested either way: export `expireHolds(now: Date): Promise<{ expired: number }>` and let the scheduler call it.
+**Q1 answered: install and use `node-cron`**, which CLAUDE.md's stack already names. Run it **every minute**, in a **single process** (PM2 fork mode, 1 instance — see `LAUNCH_CHECKLIST.md`; under cluster mode every worker runs the schedule and each sweep fires N times).
+
+Keep the shape the blocked version specified, because it is what makes the sweep testable without a scheduler: export `expireHolds(now: Date): Promise<{ expired: number }>`, pure of scheduling, and let `node-cron` call it. **The tests drive `expireHolds()` directly and never wait on a timer.**
+
+**It must be idempotent** (Q1 condition): a second run, a restart mid-tick or two overlapping ticks must not change the outcome — and that now covers releasing the **coupon redemption** as well as capacity (Q7/Q8), so `used_count` must not be decremented twice for one expired hold. Owes a test.
 
 §5: "Cron (every minute) moves expired, unpaid holds to `expired` and frees capacity."
 
@@ -747,13 +786,18 @@ git commit -m "feat(jobs): expire lapsed holds, never the ones that were paid"
 
 ---
 
-## Task 12: Confirmation email — **BLOCKED ON Q2**
+## Task 12: Confirmation email — **DROPPED from Week 3 (Q2: defer to Week 4)**
 
-**Do not start until Q2 is answered.** No email library is installed and Node has no built-in SMTP client. If the owner defers email to Week 4 (my recommendation), **skip this task entirely** and note it in the handover — the booking is confirmed and visible on the status page without it.
+**Do not build this task.** The owner deferred email to Week 4, so Week 3 is **12 tasks** and ships on-screen confirmation (Task 9) plus booking lookup (Task 10). The booking is confirmed and visible without an email, and nothing else in this plan depends on it.
 
-If approved: §11's "Booking confirmed → email guest", plain branded HTML, failures **logged and never blocking the booking flow** (§11). The send belongs **outside** the webhook's transaction — an SMTP timeout must not roll back a confirmed payment.
+**Handover to Week 4** — the constraints that still hold whenever the layer is built, recorded here so they are not rediscovered:
 
-**✅ DONE 12**
+- `nodemailer` over SMTP per §2's stack, built **once** for all seven of §11's events rather than twice.
+- Sends go **outside** the webhook's transaction: an SMTP timeout must never roll back a confirmed payment.
+- Failures are **logged and never block the booking flow** (§11).
+- **First, test SMTP from the VPS** (now in `LAUNCH_CHECKLIST.md`). IONOS has blocked outbound SMTP on another of the owner's projects; the fallback is a provider's REST API over plain `fetch`, the same pattern as the PayMongo provider.
+
+**✅ DONE 12 — dropped, not built.**
 
 ---
 

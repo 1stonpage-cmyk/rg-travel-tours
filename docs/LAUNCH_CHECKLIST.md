@@ -134,10 +134,11 @@ Checks before leaving it running:
 
 ## Deployment requirements — not optional
 
-Three things Phase 1 found the hard way. Each one is a config line that silently
-disables a security control if it's missing — no error, no log line, nothing to
-notice until it's exploited or until something leaks. Set all three before the app
-ever takes real traffic, and re-check them any time the PM2 or nginx config changes.
+Four things Phase 1 and Week 3 found the hard way. Each one is a config line that
+silently disables a security control or a scheduled job if it's missing — no error, no
+log line, nothing to notice until it's exploited or until something leaks. Set all four
+before the app ever takes real traffic, and re-check them any time the PM2 or nginx
+config changes.
 
 - [ ] **Express `trust proxy` is set**, because the app sits behind nginx (see the
       `proxy_pass` blocks above). The rate limiter keys on request IP. Without
@@ -154,13 +155,39 @@ ever takes real traffic, and re-check them any time the PM2 or nginx config chan
       defaults to `development`, and anything other than `production` fails closed to
       `Disallow: /`. The failure is silent and in the _safe_ direction — the site simply never
       gets crawled — so nothing will alert you; see section (c).
-- [ ] **PM2 runs the API in fork mode, a single instance** — not cluster mode.
-      `express-rate-limit`'s default `MemoryStore` is per-process. Cluster mode with N
-      workers gives each worker its own counter, so the effective rate limit becomes N
-      times the configured value, split unpredictably across workers by whichever one
-      handles a given request. If cluster mode is ever needed for throughput, the
-      limiter needs a shared store (e.g. Redis) first — don't switch PM2 modes without
-      also doing that.
+- [ ] **PM2 runs the API in fork mode, a single instance** — not cluster mode. **Two
+      independent reasons, either one sufficient on its own.**
+      **Reason 1, the rate limiter:** `express-rate-limit`'s default `MemoryStore` is
+      per-process. Cluster mode with N workers gives each worker its own counter, so the
+      effective rate limit becomes N times the configured value, split unpredictably
+      across workers by whichever one handles a given request. If cluster mode is ever
+      needed for throughput, the limiter needs a shared store (e.g. Redis) first — don't
+      switch PM2 modes without also doing that.
+      **Reason 2, the schedules:** `node-cron` schedules live in the app process (owner
+      decision 2026-10-12, Week 3 Q1). Under cluster mode every worker runs every
+      schedule, so the minutely hold-expiry sweep fires N times a minute. That sweep is
+      idempotent by requirement, so it corrupts nothing — but it multiplies the database
+      load by the worker count, and any future job that is _not_ idempotent would do real
+      damage. A shared store does **not** fix this one: the schedule has to be owned by
+      exactly one process.
+
+---
+
+## Verify EARLY — before the code that depends on it is written
+
+Not launch-day items. Each is a hosting-level fact no amount of correct application code
+works around, so finding it late means a rewrite rather than a fix.
+
+- [ ] **Send a test email over SMTP from the VPS itself**, before Week 4 writes the
+      notification layer against it. Many hosts block outbound 25/465/587 on cheaper
+      plans, silently or as a generic timeout, and **IONOS has blocked outbound SMTP on
+      another of this owner's projects** — a known failure mode, not a hypothetical. Test
+      **from the VPS**, not from a laptop; the laptop's network says nothing about the
+      server's. If it is blocked, the fallback is a transactional provider's **REST API
+      over plain `fetch`** (the same pattern as the PayMongo provider, no new dependency),
+      and that choice has to be made before the email layer is built, not after. Email was
+      deferred to Week 4 by owner decision 2026-10-12 (Week 3 Q2), which is exactly why
+      this test is worth doing now, while it is still free.
 
 ---
 
