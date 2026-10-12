@@ -109,3 +109,29 @@ export function createDriverLoginLimiter(): RequestHandler {
     max: DRIVER_LOGIN_IP_MAX,
   });
 }
+
+/**
+ * Week 3 checkout plan, Task 6, Ruling 5 / owner decision Q4: **5 hold
+ * creations per IP per 15 minutes** on `checkout.createHold`.
+ *
+ * Distinct from `MAX_ACTIVE_HOLDS_PER_GUEST` in `services/create-hold.ts`
+ * (two active unpaid holds per email/phone, checked under the lock): that
+ * cap is per IDENTITY and only catches a guest who gives a consistent email
+ * or phone. This one is per IP and catches a script hammering the endpoint
+ * with a fresh email/phone on every call — the case the per-guest cap
+ * cannot see at all.
+ *
+ * **Mounted immediately**, unlike `createDriverLoginLimiter()` above: this
+ * task ships the route it guards in the same commit, so there is no
+ * "guessed procedure name" problem — see `app.ts`.
+ */
+export const CHECKOUT_HOLD_WINDOW_MS = 15 * 60_000;
+export const CHECKOUT_HOLD_MAX = 5;
+export const CHECKOUT_HOLD_PROCEDURES = ['checkout.createHold'] as const;
+
+export function createCheckoutHoldLimiter(): RequestHandler {
+  return createProcedureRateLimit([...CHECKOUT_HOLD_PROCEDURES], {
+    windowMs: CHECKOUT_HOLD_WINDOW_MS,
+    max: CHECKOUT_HOLD_MAX,
+  });
+}
