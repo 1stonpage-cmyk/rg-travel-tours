@@ -1,17 +1,25 @@
 /**
  * `checkout.quote`, `checkout.availability`, `checkout.createHold` — Week 3
- * checkout plan, Task 6.
+ * checkout plan, Task 6 — and `checkout.startPayment`, Task 7.
  *
  * **This router computes nothing.** Every centavo here comes from
  * `priceQuote()` / `loadQuoteInputs()` (pricing.ts) or `createHold()`
  * (create-hold.ts); every capacity verdict comes from `assessCapacity()`
- * (capacity.ts). The three resolvers below only: validate the wire input
+ * (capacity.ts). The resolvers below only: validate the wire input
  * (Zod, via `.input()`), call exactly one service, and translate a typed
  * service error into a guest-safe `TRPCError`. CLAUDE.md: "The server
  * computes all money" — and here, specifically, the SERVICES do, never the
- * router.
+ * router. `startPayment` holds to the same rule in the one place it would be
+ * tempting to break it: the amount it sends a gateway is READ off the
+ * booking row, with the deposit arithmetic left to `depositCentavos()` in
+ * `@rg/shared`.
  *
- * All three are `publicProcedure` — a guest has no session (task A4's
+ * **`createHold` and `startPayment` are the only two mutations here, and
+ * that is a tested property** (plan Task 9). Neither marks anything paid: a
+ * third mutation on this router is how a redirect page quietly becomes a way
+ * to confirm a booking.
+ *
+ * All of them are `publicProcedure` — a guest has no session (task A4's
  * enumeration guard requires every procedure declare `publicProcedure` or
  * `adminProcedure(area)`, so anything else fails `procedure-role-metadata.test.ts`).
  *
@@ -29,7 +37,7 @@
  * message a guest should see, and anything not recognised falls through to
  * `internalError()`'s fixed `INTERNAL_SERVER_ERROR`, with the real error
  * kept only as `cause` (server-side logging, never serialised to the
- * client). **All three procedures wrap their entire body in try/catch for
+ * client). **Every procedure here wraps its entire body in try/catch for
  * this** — `availability` included, even though its typed outcome
  * (`{ ok: false, reason }`) is a normal RETURN, never a throw. A procedure
  * with no `catch` at all is not "nothing to translate", it is an open door:
@@ -49,11 +57,23 @@
  * validate the rules against that price, throw before trusting the result.
  */
 import { TRPCError } from '@trpc/server';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, lt } from 'drizzle-orm';
 import { z } from 'zod';
-import { createHoldInput, formatPeso, quoteInput, type QuoteResult } from '@rg/shared';
+import {
+  bookingPagePath,
+  bookingRefSchema,
+  createHoldInput,
+  depositCentavos,
+  formatPeso,
+  quoteInput,
+  type QuoteResult,
+} from '@rg/shared';
 import { getDb } from '../../db/client';
-import { tours } from '../../db/schema';
+import { bookings, tours } from '../../db/schema';
+import { env } from '../../env';
+import { writeAudit } from '../../services/audit';
+import { getProvider } from '../../services/payments/registry';
+import type { CreateCheckoutResult, PaymentMethod } from '../../services/payments/types';
 import {
   assessCapacity,
   type CapacityRefusalReason,
@@ -96,6 +116,66 @@ const availabilityInput = z
   })
   .strict();
 
+/**
+ * `checkout.startPayment`'s input — **a booking ref and nothing else.**
+ *
+ * `.strict()` is the money rule expressed as a schema: a request that
+ * carries an amount, a total, a deposit or a currency is REFUSED by tRPC's
+ * input stage before the resolver runs, rather than quietly ignored. The
+ * amount is read off the booking row inside the resolver (see
+ * `amountDueNowCentavos` below), so there is nothing a browser could send
+ * that would change it — but "ignored" and "rejected" are different
+ * contracts, and a caller sending `amountCentavos` deserves to be told it
+ * has misunderstood this endpoint.
+ */
+const startPaymentInput = z.object({ ref: bookingRefSchema }).strict();
+
+/**
+ * The instruments offered at a PayMongo checkout (owner Ruling 7 / Q6).
+ *
+ * Fixed here, never chosen by the caller. The list is OUR vocabulary
+ * (`PAYMENT_METHODS`); the gateway client maps `maya` onto PayMongo's own
+ * `paymaya` on the way out.
+ *
+ * What is deliberately absent:
+ *   - `qrph` — waits on BUILD_SPEC §15's own open question.
+ *   - `bank_transfer` and `cash` — both are MANUAL flows an admin
+ *     reconciles by hand (`provider='manual'`: a receipt upload, cash to
+ *     the driver). Offering them at a gateway checkout would promise a
+ *     redirect that cannot exist.
+ */
+export const CHECKOUT_PAYMENT_METHODS = [
+  'card',
+  'gcash',
+  'maya',
+  'grab_pay',
+] as const satisfies readonly PaymentMethod[];
+
+/**
+ * How long a hold lasts once the guest has reached the gateway (owner
+ * Ruling 4 / Q5): `created_at + 30 minutes`, replacing the 15 minutes
+ * `createHold()` set.
+ *
+ * **Extended ONCE, and that is the whole subtlety.** A guest who has
+ * reached the payment page has committed, and typing a card number slowly
+ * should not land their money in `recordPayment()`'s review queue — that
+ * queue is for genuine anomalies. But an extension that reapplied on every
+ * `startPayment` call would be a renewable hold: reload the page, keep the
+ * slot forever, and the capacity nobody is paying for is never released.
+ *
+ * So the extension is computed FROM `created_at` and the UPDATE only
+ * matches a row whose `hold_expires_at` is still short of that target
+ * (`extendHoldForPayment`). A second call matches nothing, writes nothing
+ * and audits nothing. No new column is needed to remember that it already
+ * happened, because `created_at` already remembers.
+ *
+ * **It does not change what happens when the money lands late anyway.**
+ * `recordPayment()` still records such a payment, still leaves the status
+ * alone and still raises `payment_review_required`. This makes that path
+ * rarer; it does not remove it.
+ */
+export const PAYMENT_HOLD_MINUTES = 30;
+
 // ---------------------------------------------------------------------------
 // Error translation — one guest-safe sentence per typed service error.
 // ---------------------------------------------------------------------------
@@ -110,8 +190,8 @@ const CAPACITY_MESSAGES: Record<CapacityRefusalReason, string> = {
 
 /**
  * The one fallback for anything this router does not recognise — a dropped
- * connection, a query timeout, a service throwing something new. ALL THREE
- * procedures route every unrecognised error through this, not just the ones
+ * connection, a query timeout, a service throwing something new. EVERY
+ * procedure routes every unrecognised error through this, not just the ones
  * with a typed vocabulary to translate: a procedure with no `catch` at all
  * lets the thrown error's own `.message` become `shape.message` verbatim,
  * which `trpc.ts`'s `errorFormatter` only path-scrubs — it never replaces
@@ -230,6 +310,100 @@ function translateHoldError(error: unknown): TRPCError {
   return internalError(error);
 }
 
+/**
+ * The gateway could not give us a checkout — for ANY reason.
+ *
+ * One branch on purpose. A missing `PAYMONGO_SECRET_KEY` (the live state of
+ * this project: all three `PAYMONGO_*` variables are empty), a provider
+ * name with no implementation, a 4xx from PayMongo, a dropped connection —
+ * from the guest's side these are one fact: no payment can be started right
+ * now. What they must never become is a redirect to nowhere or a
+ * success-shaped response, so this is a refusal with its own code rather
+ * than a fallback.
+ *
+ * `cause` carries the real error for the server log, and nothing else does:
+ * the gateway client's "not configured" error names the variable (never its
+ * value) and its API error carries PayMongo's own `detail` text — neither
+ * belongs in a response to a guest, and tRPC's `errorFormatter` only
+ * path-scrubs a message, it never replaces one.
+ */
+function gatewayUnavailable(error: unknown): TRPCError {
+  return new TRPCError({
+    code: 'SERVICE_UNAVAILABLE',
+    message:
+      'Online payment is temporarily unavailable. ' +
+      'Please try again shortly, or contact us to pay another way.',
+    cause: error,
+  });
+}
+
+/**
+ * `startPayment` raises its own guest-safe `TRPCError`s inline — the booking
+ * it cannot find, the booking it refuses to charge, the gateway it could not
+ * reach — so this only has to let those through untouched and funnel
+ * everything unexpected into `internalError()`. Without the first line a
+ * deliberately chosen `NOT_FOUND` would be rewritten as a generic 500 by
+ * its own catch block.
+ */
+function translateStartPaymentError(error: unknown): TRPCError {
+  if (error instanceof TRPCError) return error;
+  return internalError(error);
+}
+
+/**
+ * The hold extension of owner Ruling 4, applied at most once per booking.
+ *
+ * Idempotent by construction rather than by a prior read: the UPDATE itself
+ * carries `hold_expires_at < target`, so a second call matches no row and
+ * the audit write is skipped on its affected-row count. Two concurrent
+ * `startPayment` calls therefore produce one extension and one audit row,
+ * not two — and the status is re-checked in the same WHERE, so a booking
+ * cancelled between the resolver's read and this write is not extended.
+ *
+ * It extends and audits; it does NOT touch `status`, `amount_paid_centavos`
+ * or the `payments` table. Starting a payment is not recording one.
+ */
+async function extendHoldForPayment(
+  booking: { id: number; ref: string; createdAt: Date; holdExpiresAt: Date },
+  providerRef: string,
+): Promise<void> {
+  const target = new Date(booking.createdAt.getTime() + PAYMENT_HOLD_MINUTES * 60_000);
+
+  await getDb().transaction(async (tx) => {
+    const [result] = await tx
+      .update(bookings)
+      .set({ holdExpiresAt: target })
+      .where(
+        and(
+          eq(bookings.id, booking.id),
+          eq(bookings.status, 'pending_payment'),
+          lt(bookings.holdExpiresAt, target),
+        ),
+      );
+    if (result.affectedRows === 0) return;
+
+    await writeAudit(tx, {
+      // A guest, not staff and not a cron — the same actor `booking.held`
+      // uses, and for the same reason: a guest is not a row in any table.
+      actorType: 'customer',
+      actorId: null,
+      action: 'booking.hold_extended',
+      entity: 'bookings',
+      entityId: booking.id,
+      // Identifiers and timestamps only. `providerRef` is the gateway's
+      // checkout-session id, which is what an admin reconciles against —
+      // never a key, never a signature, never a request body.
+      data: {
+        ref: booking.ref,
+        reason: 'payment_started',
+        previousHoldExpiresAt: booking.holdExpiresAt.toISOString(),
+        holdExpiresAt: target.toISOString(),
+        providerRef,
+      },
+    });
+  });
+}
+
 export const checkoutRouter = router({
   /**
    * Assembles the wire `QuoteResult` (`@rg/shared`'s `checkout.ts`):
@@ -319,4 +493,150 @@ export const checkoutRouter = router({
       throw translateHoldError(error);
     }
   }),
+
+  /**
+   * Starts a gateway payment for a held booking and returns where to send
+   * the guest. **It starts a payment; it never records one.** Nothing here
+   * writes a `payments` row, moves `amount_paid_centavos` or changes
+   * `status` — only a verified PayMongo webhook or an admin approval may
+   * (CLAUDE.md DO NOT), and both already exist elsewhere.
+   *
+   * **The amount comes from the BOOKING, never from the request.** The
+   * input is a ref and nothing else (`startPaymentInput` is `.strict()`),
+   * and `amount_due_now` is read off the stored row: `total_centavos` for
+   * `pay_mode = 'full'`, otherwise `depositCentavos()` from `@rg/shared`
+   * applied to that same total and the frozen
+   * `price_snapshot.depositPercent`. Both were settled at hold time and
+   * neither is recomputed here. The deposit's rounding rule is NOT restated
+   * in this file — `depositCentavos()` owns it, and a second copy of a
+   * rounding rule is how the two copies come to disagree.
+   *
+   * PayMongo's amounts are already centavos and so are ours, so there is no
+   * conversion anywhere on this path, and none is missing.
+   *
+   * **It refuses any booking that is not payable, before touching the
+   * gateway.** A refusal that still reached PayMongo would have created a
+   * payment intent someone can complete — against a slot that is gone. The
+   * guard is therefore the first thing after the read, and the gateway call
+   * is the last thing before the return.
+   *
+   * The success and cancel URLs are built from `bookingPagePath()` in
+   * `@rg/shared` (owner Ruling 25), which is the same constant the client
+   * mounts its booking-status route from — so the page a paying guest lands
+   * on cannot drift away from the page that exists.
+   *
+   * No rate limit of its own: `createHold` is already capped at 5 per IP
+   * per 15 minutes (Ruling 5), and this endpoint needs a ref that only a
+   * successful hold can produce.
+   */
+  startPayment: publicProcedure
+    .input(startPaymentInput)
+    .mutation(async ({ input }): Promise<{ redirectUrl: string }> => {
+      try {
+        const [booking] = await getDb()
+          .select({
+            id: bookings.id,
+            ref: bookings.ref,
+            status: bookings.status,
+            payMode: bookings.payMode,
+            totalCentavos: bookings.totalCentavos,
+            priceSnapshot: bookings.priceSnapshot,
+            holdExpiresAt: bookings.holdExpiresAt,
+            createdAt: bookings.createdAt,
+            tourTitle: tours.title,
+          })
+          .from(bookings)
+          .innerJoin(tours, eq(tours.id, bookings.tourId))
+          .where(eq(bookings.ref, input.ref))
+          .limit(1);
+
+        // Generic on purpose: a ref is half a portal credential (§7), so
+        // this must not tell a stranger whether a ref exists.
+        if (!booking) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'We could not find that booking.' });
+        }
+
+        /*
+         * Payable means `pending_payment` AND a hold that has not lapsed.
+         *
+         * The status half is the obvious one: a confirmed booking has
+         * already been paid, and a cancelled or expired one has released
+         * its capacity, so neither may be paid again.
+         *
+         * The hold half is the one that is easy to miss. The expiry sweep
+         * is a cron, so a lapsed hold still reads `pending_payment` for up
+         * to a minute — and `hold_expires_at` is null on every booking
+         * with nothing left to expire (schema), which makes a non-null one
+         * in the past a lapsed hold regardless of status. `recordPayment()`
+         * already reasons exactly this way about late money; this refuses
+         * on the same fact, one step earlier, so the race between the cron
+         * and the guest never decides whether an intent gets created.
+         */
+        const holdExpiresAt = booking.holdExpiresAt;
+        const payable =
+          booking.status === 'pending_payment' &&
+          holdExpiresAt !== null &&
+          holdExpiresAt.getTime() > Date.now();
+        if (!payable) {
+          throw new TRPCError({
+            code: 'CONFLICT',
+            message:
+              'This booking can no longer be paid online. ' +
+              'Please start a new booking, or contact us if you have already paid.',
+          });
+        }
+
+        const amountDueNowCentavos =
+          booking.payMode === 'full'
+            ? booking.totalCentavos
+            : depositCentavos(booking.totalCentavos, booking.priceSnapshot.depositPercent);
+
+        const successUrl = `${env.PUBLIC_BASE_URL}${bookingPagePath(booking.ref)}`;
+
+        // Annotated rather than left to inference: an un-annotated `let`
+        // is an evolving `any`, so a later reorder could lose every check
+        // on `checkout.redirectUrl` / `checkout.providerRef` silently.
+        let checkout: CreateCheckoutResult;
+        try {
+          // `getProvider` inside the try as well: an unregistered name is
+          // the same guest-facing fact as an unreachable gateway.
+          checkout = await getProvider('paymongo').createCheckout({
+            bookingRef: booking.ref,
+            amountCentavos: amountDueNowCentavos,
+            // What PayMongo's own dashboard shows an admin reconciling.
+            // The tour and the public ref — never a name, an email or a
+            // phone number (RA 10173: the gateway gets what the payment
+            // needs and nothing else).
+            description: `${booking.tourTitle} — booking ${booking.ref}`,
+            methods: CHECKOUT_PAYMENT_METHODS,
+            successUrl,
+            cancelUrl: `${successUrl}?cancelled=1`,
+          });
+        } catch (error) {
+          throw gatewayUnavailable(error);
+        }
+
+        /*
+         * The extension runs AFTER the gateway answered, deliberately: a
+         * checkout that was never created is not a guest at a payment page,
+         * and an audit row saying "hold extended, payment started" must not
+         * exist for a redirect that never happened.
+         */
+        await extendHoldForPayment(
+          {
+            id: booking.id,
+            ref: booking.ref,
+            createdAt: booking.createdAt,
+            holdExpiresAt,
+          },
+          checkout.providerRef,
+        );
+
+        // The redirect URL only. `providerRef` is the gateway's id and is
+        // of no use to a browser; it belongs in the audit row.
+        return { redirectUrl: checkout.redirectUrl };
+      } catch (error) {
+        throw translateStartPaymentError(error);
+      }
+    }),
 });

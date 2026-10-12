@@ -22,6 +22,27 @@ export const CURRENCY = 'PHP';
 export const BOOKING_REF_PREFIX = 'RG';
 
 /**
+ * The booking-status page, as a React Router path template (owner Ruling 25).
+ *
+ * ONE definition with TWO consumers that must agree character for character,
+ * for the same reason `HERO_IMAGE_PRELOAD` below is shared: the route the
+ * client mounts (plan Task 9) and the `success_url` / `cancel_url` the
+ * gateway redirect is built from (`checkout.startPayment`, plan Task 7). If
+ * they drift, a guest who has just paid lands on a 404 — and the only place
+ * that shows up is production, because each half is individually correct.
+ *
+ * `bookingPagePath()` is the builder for a concrete ref; the cancel URL adds
+ * `?cancelled=1` on top of it, which is a query string and not part of the
+ * path.
+ */
+export const BOOKING_PAGE_ROUTE = '/booking/:ref';
+
+/** The booking-status page for one ref, e.g. `/booking/RG-7KQ4M9`. */
+export function bookingPagePath(ref: string): string {
+  return `/booking/${ref}`;
+}
+
+/**
  * The hero photo's candidates — the mobile LCP element.
  *
  * ONE definition with TWO consumers, deliberately: the `<img>` in
