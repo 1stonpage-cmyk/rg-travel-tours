@@ -210,8 +210,24 @@ describe('schema conventions, read from the real source', () => {
    */
   it('writes amount_paid_centavos from one module only — the one that owns recordPayment()', () => {
     /**
-     * Drizzle's write form, `.set({ amountPaidCentavos: ... })` or
-     * `.values({ amountPaidCentavos: ... })`.
+     * What this regex actually matches: ANY `amountPaidCentavos:` in the
+     * server tree, not specifically Drizzle's write form
+     * (`.set({ amountPaidCentavos: ... })` / `.values({ amountPaidCentavos: ... })`)
+     * — an earlier revision of this comment claimed the narrower anchor, but
+     * the pattern below has none. A `.select()` alias or a plain
+     * response-object key spelled `amountPaidCentavos:` trips it exactly
+     * like a real write would (Task 9's `bookingStatus` field and Task 10's
+     * `bookingLookup` field both had to pick a different wire name for
+     * exactly this reason — see `routers/public/checkout.ts`).
+     *
+     * This is deliberate, not a bug to fix: anchoring to `.set(`/`.values(`
+     * would require matching across lines, and a naive anchor could
+     * UNDER-match some real write shape nobody has written yet. For a
+     * payment-integrity guard the costs of the two kinds of mistake are not
+     * symmetric — a false positive here costs a cosmetic rename on a read;
+     * a false negative costs a money bug nobody sees — so the net stays
+     * this wide on purpose, and renaming a wire field is the expected
+     * accommodation when a read trips it, not a workaround.
      *
      * Two things are excluded, and both are the colon meaning something
      * other than "assign this value":

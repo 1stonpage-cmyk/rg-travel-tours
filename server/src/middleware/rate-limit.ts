@@ -50,13 +50,21 @@ import type { RequestHandler } from 'express';
  */
 export function createProcedureRateLimit(
   procedures: string[],
-  opts: { windowMs: number; max: number },
+  opts: { windowMs: number; max: number; skipSuccessfulRequests?: boolean },
 ): RequestHandler {
   return rateLimit({
     windowMs: opts.windowMs,
     limit: opts.max,
     standardHeaders: true,
     legacyHeaders: false,
+    // Opt-in, defaulting to `false` so every existing caller (driver login,
+    // the checkout-hold cap) keeps counting every matched request exactly as
+    // before. `express-rate-limit`'s own default for "successful" is
+    // `statusCode < 400`, which is also tRPC's own line between an answer
+    // and a refusal — a `NOT_FOUND`/`BAD_REQUEST`/... TRPCError always maps
+    // to 4xx, so "skip successes" and "count failures only" are the same
+    // instruction to this library.
+    skipSuccessfulRequests: opts.skipSuccessfulRequests ?? false,
     skip: (req) => {
       const lastSegment = req.path.slice(req.path.lastIndexOf('/') + 1);
       let decoded: string;
@@ -133,5 +141,34 @@ export function createCheckoutHoldLimiter(): RequestHandler {
   return createProcedureRateLimit([...CHECKOUT_HOLD_PROCEDURES], {
     windowMs: CHECKOUT_HOLD_WINDOW_MS,
     max: CHECKOUT_HOLD_MAX,
+  });
+}
+
+/**
+ * Week 3 checkout plan, Task 10, §7: the guest self-service booking lookup
+ * (`checkout.bookingLookup`, ref + email) is capped at **5 FAILED attempts
+ * per IP per 15 minutes**.
+ *
+ * **Failures only — `skipSuccessfulRequests: true`, and that is the one way
+ * this limiter differs from `createCheckoutHoldLimiter()` above.** §7 caps
+ * "failed attempts", not requests: a guest who keeps re-checking their own
+ * real booking (a correct ref + email, answered 200) must never be locked
+ * out of reading it. Every wrong pairing resolves to `bookingNotFound()` in
+ * `routers/public/checkout.ts`, which tRPC maps to a 4xx — that is what gets
+ * counted.
+ *
+ * **Mounted immediately**, like the hold limiter and unlike the driver-login
+ * one: this task ships `checkout.bookingLookup` in the same commit, so there
+ * is no "guessed procedure name" problem.
+ */
+export const BOOKING_LOOKUP_WINDOW_MS = 15 * 60_000;
+export const BOOKING_LOOKUP_MAX = 5;
+export const BOOKING_LOOKUP_PROCEDURES = ['checkout.bookingLookup'] as const;
+
+export function createBookingLookupLimiter(): RequestHandler {
+  return createProcedureRateLimit([...BOOKING_LOOKUP_PROCEDURES], {
+    windowMs: BOOKING_LOOKUP_WINDOW_MS,
+    max: BOOKING_LOOKUP_MAX,
+    skipSuccessfulRequests: true,
   });
 }

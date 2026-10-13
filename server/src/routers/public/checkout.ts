@@ -69,6 +69,7 @@ import { and, eq, lt } from 'drizzle-orm';
 import { z } from 'zod';
 import {
   bookableDateRange,
+  bookingLookupInput,
   bookingPagePath,
   bookingRefSchema,
   createHoldInput,
@@ -222,6 +223,28 @@ type BookingStatusResult = {
   paidCentavos: number;
   balanceCentavos: number;
   /** owner decision 2026-10-11, task 16b-3 — see `bookings.paymentReviewRequired`. */
+  paymentReviewRequired: boolean;
+};
+
+/**
+ * What `checkout.bookingLookup` (Task 10) answers with — §7's guest
+ * self-service lookup, authenticated by ref + email together rather than a
+ * ref alone. Deliberately the same KIND of read as `BookingStatusResult`
+ * above (status, amounts, a one-line tour summary), with one difference:
+ * no `balanceCentavos`. This task's own constraint is stricter than
+ * `bookingStatus`'s — "the resolver computes none" — so unlike that
+ * procedure's one justified subtraction (`total - paid`, see its own note),
+ * this one only ever hands back figures the database already carries.
+ */
+type BookingLookupResult = {
+  ref: string;
+  status: BookingStatus;
+  tourTitle: string;
+  date: string;
+  pax: number;
+  payMode: PayMode;
+  totalCentavos: number;
+  paidCentavos: number;
   paymentReviewRequired: boolean;
 };
 
@@ -843,6 +866,77 @@ export const checkoutRouter = router({
           // `total - paid`, computed here rather than stored — see
           // `BookingStatusResult`'s own note.
           balanceCentavos: booking.totalCentavos - booking.paidCentavos,
+          paymentReviewRequired: booking.paymentReviewRequired,
+        };
+      } catch (error) {
+        if (error instanceof TRPCError) throw error;
+        throw internalError(error);
+      }
+    }),
+
+  /**
+   * §7's guest self-service lookup (Task 10): ref + email, together,
+   * case-insensitive on the email half. Rate-limited to 5 FAILED attempts
+   * per IP per 15 minutes — `createBookingLookupLimiter()`
+   * (`middleware/rate-limit.ts`), mounted in `app.ts` — with
+   * `skipSuccessfulRequests` so a guest who keeps re-checking their own real
+   * booking is never locked out of reading it.
+   *
+   * **The one rule this resolver exists to enforce: a wrong ref and a wrong
+   * email must be indistinguishable.** A lookup that answered "no such
+   * booking" for one and "wrong email" for the other would turn this
+   * endpoint into a ref oracle — a stranger could enumerate real refs
+   * without ever knowing an email. So there is exactly ONE throw site below,
+   * `bookingNotFound()` — the same shared refusal `startPayment` and
+   * `bookingStatus` already use for the same reason — reached whether the
+   * ref does not exist at all or the ref exists but the email on file does
+   * not match it. Nothing before that throw can observe, by branch taken or
+   * message produced, which half failed: the email comparison only runs
+   * once a row is already in hand, and both outcomes (`!booking` and a row
+   * whose email does not match) feed the identical `throw bookingNotFound()`
+   * on the identical line.
+   *
+   * Query, not mutation (Ruling 8) — this reads and changes nothing, and
+   * the enumeration test on this router (`exposes no mutation that could
+   * confirm a booking`) would fail the moment this became one.
+   */
+  bookingLookup: publicProcedure
+    .input(bookingLookupInput)
+    .query(async ({ input }): Promise<BookingLookupResult> => {
+      try {
+        const [booking] = await getDb()
+          .select({
+            ref: bookings.ref,
+            status: bookings.status,
+            payMode: bookings.payMode,
+            tourDate: bookings.tourDate,
+            pax: bookings.pax,
+            totalCentavos: bookings.totalCentavos,
+            paidCentavos: bookings.amountPaidCentavos,
+            paymentReviewRequired: bookings.paymentReviewRequired,
+            // Compared below, never returned — see the note above on why
+            // the comparison must not be observable as a separate branch.
+            leadEmail: bookings.leadEmail,
+            tourTitle: tours.title,
+          })
+          .from(bookings)
+          .innerJoin(tours, eq(tours.id, bookings.tourId))
+          .where(eq(bookings.ref, input.ref))
+          .limit(1);
+
+        if (!booking || booking.leadEmail.toLowerCase() !== input.email.toLowerCase()) {
+          throw bookingNotFound();
+        }
+
+        return {
+          ref: booking.ref,
+          status: booking.status,
+          tourTitle: booking.tourTitle,
+          date: manilaCivilDate(booking.tourDate),
+          pax: booking.pax,
+          payMode: booking.payMode,
+          totalCentavos: booking.totalCentavos,
+          paidCentavos: booking.paidCentavos,
           paymentReviewRequired: booking.paymentReviewRequired,
         };
       } catch (error) {

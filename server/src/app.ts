@@ -7,7 +7,11 @@ import type { SiteEnv } from './env';
 import { createHtmlHandler } from './html';
 import { errorHandler } from './middleware/error-handler';
 import { rejectMalformedUrl } from './middleware/malformed-url';
-import { createCheckoutHoldLimiter, createProcedureRateLimit } from './middleware/rate-limit';
+import {
+  createBookingLookupLimiter,
+  createCheckoutHoldLimiter,
+  createProcedureRateLimit,
+} from './middleware/rate-limit';
 import { robotsHeader } from './middleware/robots-header';
 import { appRouter } from './routers/_app';
 import { createWebhookRouter } from './routers/webhooks';
@@ -129,6 +133,11 @@ export function createApp(
   // minutes on checkout.createHold. See middleware/rate-limit.ts for why
   // this is distinct from the per-guest hold cap in services/create-hold.ts.
   app.use('/trpc', createCheckoutHoldLimiter());
+
+  // Week 3 checkout plan, Task 10, §7: 5 FAILED booking-lookup attempts per
+  // IP per 15 minutes on checkout.bookingLookup. See
+  // middleware/rate-limit.ts for why this one counts failures only.
+  app.use('/trpc', createBookingLookupLimiter());
 
   app.use('/trpc', createExpressMiddleware({ router: appRouter }));
 

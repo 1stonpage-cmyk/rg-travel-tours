@@ -20,8 +20,11 @@ import { getDb, getPool } from '../db/client';
 import { bookings, destinations, drivers, tourPriceTiers, tours, vans } from '../db/schema';
 import { loadQuoteInputs, priceQuote } from '../services/pricing';
 import {
+  BOOKING_LOOKUP_MAX,
+  BOOKING_LOOKUP_PROCEDURES,
   CHECKOUT_HOLD_MAX,
   CHECKOUT_HOLD_PROCEDURES,
+  createBookingLookupLimiter,
   createCheckoutHoldLimiter,
 } from '../middleware/rate-limit';
 import { appRouter } from '../routers/_app';
@@ -533,6 +536,130 @@ describeWithDb('checkout router', () => {
     // how a redirect page quietly becomes a way to confirm a booking.
     expect(checkoutMutations.sort()).toEqual(['checkout.createHold', 'checkout.startPayment']);
   });
+
+  // -------------------------------------------------------------------------
+  // checkout.bookingLookup — Task 10: §7's guest self-service lookup
+  // (ref + email). The per-IP limiter has its own suite further below,
+  // against the real app and a toy one, mirroring createCheckoutHoldLimiter.
+  // -------------------------------------------------------------------------
+
+  it('returns the booking for a correct ref + email pair', async () => {
+    const tour = await makeTour();
+    await makeFleet();
+    const quote = await caller.checkout.quote({
+      tourSlug: tour.slug,
+      date: DAY,
+      pax: 2,
+      addonIds: [],
+    });
+    const input = validHoldInput({
+      tourSlug: tour.slug,
+      date: DAY,
+      pax: 2,
+      quoteId: quote.quoteId,
+    });
+    const held = await caller.checkout.createHold(input);
+    created.bookingIds.push(held.bookingId);
+
+    const result = await caller.checkout.bookingLookup({
+      ref: held.ref,
+      email: input.lead.email,
+    });
+
+    expect(result.ref).toBe(held.ref);
+    expect(result.status).toBe('pending_payment');
+    expect(result.tourTitle).toBe(tour.slug); // makeTour() sets title = slug
+    expect(result.date).toBe(DAY);
+    expect(result.pax).toBe(2);
+    expect(result.payMode).toBe('deposit');
+    expect(result.totalCentavos).toBe(quote.totalCentavos);
+    expect(result.paidCentavos).toBe(0);
+    expect(result.paymentReviewRequired).toBe(false);
+    // Ruling 8/the task's own constraint: this resolver computes no money —
+    // no `balanceCentavos` field at all, unlike `bookingStatus`.
+    expect(result).not.toHaveProperty('balanceCentavos');
+  });
+
+  it('matches the email case-insensitively', async () => {
+    const tour = await makeTour();
+    await makeFleet();
+    const quote = await caller.checkout.quote({
+      tourSlug: tour.slug,
+      date: DAY,
+      pax: 1,
+      addonIds: [],
+    });
+    const input = validHoldInput({
+      tourSlug: tour.slug,
+      date: DAY,
+      pax: 1,
+      quoteId: quote.quoteId,
+    });
+    const held = await caller.checkout.createHold(input);
+    created.bookingIds.push(held.bookingId);
+
+    const result = await caller.checkout.bookingLookup({
+      ref: held.ref,
+      email: input.lead.email.toUpperCase(),
+    });
+    expect(result.ref).toBe(held.ref);
+  });
+
+  /**
+   * The brief's own load-bearing assertion: a wrong email on a REAL ref
+   * must be indistinguishable from an unknown ref altogether. Asserting
+   * both are merely "an error" would pass against a leaking implementation
+   * that returns "wrong email" for one case and "no such booking" for the
+   * other — only comparing the two for deep equality catches that. Compared
+   * as `{ code, message }` rather than the raw thrown objects: a raw
+   * `TRPCError`'s own `.stack` differs between any two throw expressions by
+   * construction (different call-site line), so including it would make
+   * this assertion fail for a reason that has nothing to do with the
+   * security property it exists to check.
+   */
+  it('answers a wrong email and an unknown ref with the exact same error — never revealing which half was wrong', async () => {
+    const tour = await makeTour();
+    await makeFleet();
+    const quote = await caller.checkout.quote({
+      tourSlug: tour.slug,
+      date: DAY,
+      pax: 1,
+      addonIds: [],
+    });
+    const input = validHoldInput({
+      tourSlug: tour.slug,
+      date: DAY,
+      pax: 1,
+      quoteId: quote.quoteId,
+    });
+    const held = await caller.checkout.createHold(input);
+    created.bookingIds.push(held.bookingId);
+
+    const wrongEmailError = await caller.checkout
+      .bookingLookup({ ref: held.ref, email: `nope_${unique()}@example.test` })
+      .catch((e: unknown) => e);
+    const unknownRefError = await caller.checkout
+      .bookingLookup({ ref: 'RG-ZZZZZZ', email: input.lead.email })
+      .catch((e: unknown) => e);
+
+    const shapeOf = (e: unknown) => ({
+      code: (e as { code: unknown }).code,
+      message: (e as { message: unknown }).message,
+    });
+    expect(shapeOf(wrongEmailError)).toEqual(shapeOf(unknownRefError));
+    expect(shapeOf(wrongEmailError)).toEqual({
+      code: 'NOT_FOUND',
+      message: 'We could not find that booking.',
+    });
+  });
+
+  it('checkout.bookingLookup is itself a query, never a mutation', () => {
+    const procedures = appRouter._def.procedures as unknown as Record<
+      string,
+      { _def: { type: string } }
+    >;
+    expect(procedures['checkout.bookingLookup']?._def.type).toBe('query');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -599,6 +726,97 @@ it('is actually mounted in app.ts: the real app refuses the 6th createHold call 
 it('the real app leaves checkout.quote unaffected by the createHold limiter', async () => {
   const app = createApp();
   for (let i = 0; i < CHECKOUT_HOLD_MAX + 5; i += 1) {
+    const res = await request(app).post('/trpc/checkout.quote').send({});
+    expect(res.status).not.toBe(429);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Task 10, §7 — 5 FAILED booking-lookup attempts per IP per 15 minutes
+// ---------------------------------------------------------------------------
+
+/**
+ * Unlike `appWithLimiterOnly()` above, this toy handler can answer either a
+ * success or a failure on demand (`?ok=1`), because the whole point of this
+ * limiter is that the two are treated differently
+ * (`skipSuccessfulRequests`). Defaults to a 404 — a "failed attempt" — so
+ * every test that doesn't care about the success/failure distinction still
+ * exercises the budget this limiter actually enforces.
+ */
+function appWithLookupLimiterOnly() {
+  const app = express();
+  app.use(createBookingLookupLimiter());
+  app.all('/trpc/*splat', (req, res) => {
+    const ok = req.query.ok === '1';
+    res.status(ok ? 200 : 404).json({ ok });
+  });
+  return app;
+}
+
+it(`allows ${BOOKING_LOOKUP_MAX} failed booking-lookup attempts per IP and refuses the next one`, async () => {
+  const app = appWithLookupLimiterOnly();
+  for (let i = 1; i <= BOOKING_LOOKUP_MAX; i += 1) {
+    await request(app).post(`/trpc/${BOOKING_LOOKUP_PROCEDURES[0]}`).expect(404);
+  }
+  await request(app).post(`/trpc/${BOOKING_LOOKUP_PROCEDURES[0]}`).expect(429);
+});
+
+it('the booking-lookup limiter leaves every other procedure alone', async () => {
+  const app = appWithLookupLimiterOnly();
+  for (let i = 0; i < BOOKING_LOOKUP_MAX + 5; i += 1) {
+    await request(app).post('/trpc/checkout.quote').expect(404);
+  }
+});
+
+it('gives each app its own counter, so one cannot exhaust another', async () => {
+  const a = appWithLookupLimiterOnly();
+  for (let i = 1; i <= BOOKING_LOOKUP_MAX; i += 1) {
+    await request(a).post(`/trpc/${BOOKING_LOOKUP_PROCEDURES[0]}`).expect(404);
+  }
+  await request(appWithLookupLimiterOnly())
+    .post(`/trpc/${BOOKING_LOOKUP_PROCEDURES[0]}`)
+    .expect(404);
+});
+
+/**
+ * Ruling 8, proven at the limiter level rather than trusted from the option
+ * name: many more successes than the budget must never trip it, and the
+ * real budget (failures) is exactly `BOOKING_LOOKUP_MAX` before the next
+ * one is refused.
+ */
+it('counts failed attempts only — a successful lookup never counts against the limit', async () => {
+  const app = appWithLookupLimiterOnly();
+  for (let i = 0; i < BOOKING_LOOKUP_MAX * 3; i += 1) {
+    await request(app).post(`/trpc/${BOOKING_LOOKUP_PROCEDURES[0]}?ok=1`).expect(200);
+  }
+  for (let i = 1; i <= BOOKING_LOOKUP_MAX; i += 1) {
+    await request(app).post(`/trpc/${BOOKING_LOOKUP_PROCEDURES[0]}`).expect(404);
+  }
+  await request(app).post(`/trpc/${BOOKING_LOOKUP_PROCEDURES[0]}`).expect(429);
+});
+
+/**
+ * The regression this whole pattern exists to catch (brief): a limiter that
+ * exists but is unmounted. `appWithLookupLimiterOnly()` above cannot see
+ * that — it mounts the limiter by hand regardless of app.ts's real state.
+ * Only a test against `createApp()` itself proves the mount in app.ts is
+ * real. An empty body fails `.input()` validation (BAD_REQUEST, a 4xx) —
+ * a failed attempt either way, which is what this limiter counts.
+ */
+it('is actually mounted in app.ts: the real app refuses the next bookingLookup call from one IP', async () => {
+  const app = createApp();
+  const statuses: number[] = [];
+  for (let i = 0; i < BOOKING_LOOKUP_MAX + 1; i += 1) {
+    const res = await request(app).post('/trpc/checkout.bookingLookup').send({});
+    statuses.push(res.status);
+  }
+  expect(statuses.slice(0, BOOKING_LOOKUP_MAX)).not.toContain(429);
+  expect(statuses[BOOKING_LOOKUP_MAX]).toBe(429);
+});
+
+it('the real app leaves checkout.quote unaffected by the booking-lookup limiter', async () => {
+  const app = createApp();
+  for (let i = 0; i < BOOKING_LOOKUP_MAX + 5; i += 1) {
     const res = await request(app).post('/trpc/checkout.quote').send({});
     expect(res.status).not.toBe(429);
   }
