@@ -47,7 +47,7 @@ Verified against the tree at `83b83f9`, so no task rebuilds something that is th
 | Any upload handling                    | **Does not exist.** No `multer`, no `/uploads` route, no `uploads/` directory.                                                                                                                                                                                            |
 | Email                                  | **Does not exist.** No transport, no templates, no `nodemailer`.                                                                                                                                                                                                          |
 | `recordPendingCash()`                  | Exists but is the **driver-collected cash** path — its input _requires_ `collectedByDriverId`. It is **not** reusable for a guest receipt.                                                                                                                                |
-| `verifyCashPayment()`                  | Exists but **only approves**. `payments.reject_reason` is never written anywhere in the codebase and `'rejected'` is never set. **The reject path does not exist** — Task 6 builds it.                                                                                    |
+| `verifyCashPayment()`                  | Exists but **only approves**. `payments.reject_reason` is never written anywhere in the codebase and `'rejected'` is never set. **The reject path does not exist** — Task 7 builds it.                                                                                    |
 | Portal / admin pages                   | **Do not exist.** No `client/src/pages/portal`, no `.../admin`.                                                                                                                                                                                                           |
 | QR image setting                       | **Does not exist** in `settings-schema.ts`. See Q3.                                                                                                                                                                                                                       |
 
@@ -640,7 +640,115 @@ git commit -m "feat(notify): branded email that can never block a booking"
 
 ---
 
-### Task 5: Manual receipt submission (4A, server)
+### Task 5: Staff login (Week 1's 1C, pulled into this week)
+
+**Files:**
+
+- Create: `server/src/services/staff-auth.ts`
+- Create: `server/src/routers/admin/auth.ts`
+- Create: `client/src/pages/admin/AdminLoginPage.tsx`
+- Modify: `server/src/middleware/rate-limit.ts` (add `createStaffLoginLimiter()`), `server/src/app.ts`, `server/src/routers/_app.ts`, `client/src/App.tsx`
+- Modify: `server/src/db/seed-data.ts` (the owner user — §13's 1B lists one and the seed has none)
+- Test: `server/src/__tests__/staff-auth.test.ts`, `server/src/__tests__/admin-auth-roles.test.ts`
+
+**Interfaces:**
+
+- Consumes: `createSession`, `revokeSession`, `setSessionCookie`, `clearSessionCookie` (Task 1); `requireRole`, `adminProcedure`, `ADMIN_ROLES` (existing, `middleware/require-role.ts`); `users` from `db/schema`.
+- Produces: `verifyStaffPassword(email, password)` → `{ userId, role } | null`; `admin.auth.login({ email, password })`; `admin.auth.logout()`; `admin.auth.me()`.
+
+**Owner decision 2026-10-13 (Q1): yes, pull 1C in, before the manual-QR approval task.** Session cookies (httpOnly, `secure` in production, `sameSite=lax`), argon2/bcrypt per BUILD_SPEC §2, a rate-limited login, and the roles `owner` / `finance` / `dispatcher` through the existing `adminProcedure`. **Without this, Task 7's approve/reject has no human who can reach it and the manual flow cannot complete** — which is exactly why it comes first.
+
+**Stop and ask before widening this.** It touches auth and roles, which CLAUDE.md puts behind an explicit question. Build only what Task 7 and Task 11 need: a login, a logout, a `me`, and the role gate. No password reset, no invitations, no user-management screen.
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// server/src/__tests__/staff-auth.test.ts
+import { expect, it } from 'vitest';
+import { verifyStaffPassword } from '../services/staff-auth';
+import { describeWithDb } from './helpers/db';
+// `makeStaff(role, password)` is this file's own committed fixture: a `users`
+// row whose `password_hash` is a real hash of `password`.
+
+describeWithDb('verifyStaffPassword', () => {
+  it('accepts the right password and reports the role', async () => {
+    const { id } = await makeStaff('finance', 'correct horse battery staple');
+    expect(
+      await verifyStaffPassword('finance@example.test', 'correct horse battery staple'),
+    ).toEqual({ userId: id, role: 'finance' });
+  });
+
+  /**
+   * One generic refusal for both wrongs, same reasoning as §7's portal
+   * login: a different answer for "no such user" and "wrong password" is an
+   * oracle for which staff emails exist. Asserted by deep equality of the
+   * two results, not by reading each.
+   */
+  it('returns the SAME null for an unknown email and a wrong password', async () => {
+    await makeStaff('finance', 'right');
+    expect(await verifyStaffPassword('finance@example.test', 'wrong')).toBeNull();
+    expect(await verifyStaffPassword('nobody@example.test', 'right')).toBeNull();
+  });
+
+  it('REFUSES a deactivated staff user, however right the password', async () => {
+    await makeStaff('owner', 'right', { isActive: false });
+    expect(await verifyStaffPassword('owner@example.test', 'right')).toBeNull();
+  });
+
+  it('never stores or returns the password, and never logs it', async () => {
+    const { id } = await makeStaff('dispatcher', 'secret-pw');
+    const [row] = await getDb()
+      .select({ hash: users.passwordHash })
+      .from(users)
+      .where(eq(users.id, id));
+    expect(row!.hash).not.toContain('secret-pw');
+    // A hash, not the password: argon2 ids start `$argon2`, bcrypt `$2`.
+    expect(row!.hash).toMatch(/^\$(argon2|2[aby])/);
+  });
+
+  it('REFUSES a role that is not an admin role, even with a valid password', async () => {
+    // A `users` row whose role is outside ADMIN_ROLES must not become a
+    // staff session — `requireRole` re-validates, and this proves the two
+    // layers agree rather than relying on either alone.
+    await makeStaff('customer' as never, 'right');
+    expect(await verifyStaffPassword('customer@example.test', 'right')).toBeNull();
+  });
+});
+```
+
+- [ ] **Step 2: Run it and watch it fail** — `Cannot find module '../services/staff-auth'`.
+
+- [ ] **Step 3: Implement `verifyStaffPassword`** — one query by email, then a constant-time hash compare, then a role check against `ADMIN_ROLES`. Return `null` on every failure path; never a reason.
+
+- [ ] **Step 4: Run it and watch it pass.**
+
+- [ ] **Step 5: `admin.auth.login` / `logout` / `me`, and the rate limit**
+
+The login limiter follows `createProcedureRateLimit`'s existing shape and must count **failed procedure calls**, not HTTP requests — read `middleware/rate-limit.ts` first, including the batching fix from Week 3's final review, and test it with a real comma-joined batch. A single-call test passes against both the broken and the fixed version.
+
+- [ ] **Step 6: A role test per role per area** (CLAUDE.md)
+
+```ts
+// server/src/__tests__/admin-auth-roles.test.ts — the shape, for every area
+// in ROLE_MATRIX: a session in an allowed role reaches it, a session in
+// every other role is refused, a CUSTOMER session is refused, and no
+// session at all is refused. The last two are the ones that matter: a
+// portal session must never reach an admin procedure.
+```
+
+- [ ] **Step 7: The login screen** — `ui-ux-pro-max`, mobile-first at 360px, 44px targets, **no red** (a failed login is amber or brand ink, never red), Tailwind transitions only.
+
+- [ ] **Step 8: Prove each test can fail, five checks, commit**
+
+```bash
+git commit -m "feat(auth): staff login, so an admin can actually verify a receipt"
+```
+
+**✅ DONE 5**
+
+---
+
+### Task 6: Manual receipt submission (4A, server)
 
 **Files:**
 
@@ -667,11 +775,11 @@ git commit -m "feat(notify): branded email that can never block a booking"
 git commit -m "feat(payments): a guest receipt that marks nothing paid"
 ```
 
-**✅ DONE 5**
+**✅ DONE 6**
 
 ---
 
-### Task 6: Admin approve **and reject** (the missing half)
+### Task 7: Admin approve **and reject** (the missing half)
 
 **Files:**
 
@@ -685,7 +793,25 @@ git commit -m "feat(payments): a guest receipt that marks nothing paid"
 
 **This is the half that does not exist anywhere in the codebase today.** `verifyCashPayment()` only approves; `payments.reject_reason` is never written and `status='rejected'` is never set. §6 step 5: approve → payment `paid`, booking `confirmed`; reject **with reason** → the portal shows the reason and a re-upload prompt.
 
-- [ ] **Step 1: Write the failing test** — approve moves payment to `paid`, booking to `confirmed`, sets `verified_by`/`verified_at`, writes audit, sends the confirmed email; **reject** sets `status='rejected'` and `reject_reason`, leaves the booking **`pending_verification`** (see Q7), writes audit, sends the rejected email; a reject with an **empty reason is refused** (the portal has nothing to show otherwise); deciding an already-decided payment is refused and writes nothing (idempotent, fails closed); a non-admin role is refused by `adminProcedure('verifyPayments')`.
+#### What a rejection does (owner decisions 2026-10-13, Q7 and Q8)
+
+> **Proposed by developer — pending R&G confirmation.** The 12-hour figure and the
+> no-extension-past-the-cutoff rule are the developer's proposal, not R&G's stated policy.
+
+- The **payment** row becomes `status='rejected'` with `reject_reason` set.
+- The **booking returns to the awaiting-payment status** (`pending_payment`) — **not** cancelled, and not left in `pending_verification`. The guest gets an **amber** "please re-upload" notice (never red) with the reason.
+- The rejection reason **and the actor** go to `audit_log` — `actorType: 'user'`, `actorId` the verifying admin, so months later it is answerable who rejected what and why.
+- **The re-upload window is 12 hours, and it never extends past the booking-window cutoff for that tour date:**
+
+  ```
+  hold_expires_at = min(rejectedAt + 12h, bookingCutoffInstant(tourDate))
+  ```
+
+  `bookingCutoffInstant(tourDate)` is new and belongs beside `bookableDateRange()` in `shared/src/time.ts`: with `minLeadDays = 1` and `nextDayCutoffTime = '18:00'`, a tour date `D` stops being bookable at **18:00 Manila on `D - minLeadDays`** — so a receipt rejected at 23:00 the night before a tour does not get until 11:00 the next morning to be re-uploaded for a trip that has already left. It takes `now` as a parameter and does its civil-date arithmetic the way `addCivilDays` does.
+
+- **The expiry sweep then needs NO change.** It already expires `pending_payment` bookings whose `hold_expires_at` has passed, and already skips `payment_review_required = 1` and anything with money against it. Setting the status and the deadline is therefore the whole of the capacity release — which is why this rule is implementable without touching `jobs/expire-holds.ts` at all. **Confirm that by test, not by reading:** a rejected-then-lapsed booking must be swept, and a rejected booking whose guest paid late (flag up) must not be.
+
+- [ ] **Step 1: Write the failing test** — approve moves payment to `paid`, booking to `confirmed`, sets `verified_by`/`verified_at`, writes audit, sends the confirmed email; **reject** sets `status='rejected'` and `reject_reason`, returns the booking to **`pending_payment`** with `hold_expires_at` at the Q8 deadline, writes an audit row naming the actor and the reason, and sends the rejected email; **the deadline is the earlier of the two bounds** — a rejection 30 hours before the cutoff gets 12 hours, and one 4 hours before the cutoff gets 4, not 12; a reject with an **empty reason is refused** (the portal has nothing to show otherwise); deciding an already-decided payment is refused and writes nothing (idempotent, fails closed); a non-admin role is refused by `adminProcedure('verifyPayments')`; and the existing sweep expires the booking once that deadline passes **without any change to `expire-holds.ts`**.
 - [ ] **Step 2–4: Fail, implement, pass.** Approve must go through the existing paid-marking path so the one-way rule stays in one place.
 - [ ] **Step 5: Prove each test can fail — including a role test per role**, per CLAUDE.md.
 - [ ] **Step 6: Five checks, commit**
@@ -694,11 +820,11 @@ git commit -m "feat(payments): a guest receipt that marks nothing paid"
 git commit -m "feat(admin): approve or reject a receipt, with the reason the guest will read"
 ```
 
-**✅ DONE 6**
+**✅ DONE 7**
 
 ---
 
-### Task 7: The manual QR page (4A, client)
+### Task 8: The manual QR page (4A, client)
 
 **Files:**
 
@@ -718,11 +844,11 @@ git commit -m "feat(admin): approve or reject a receipt, with the reason the gue
 git commit -m "feat(checkout): the manual QR screen, amount as text beside it"
 ```
 
-**✅ DONE 7**
+**✅ DONE 8**
 
 ---
 
-### Task 8: The portal booking page — tracker, auto-refresh, re-upload
+### Task 9: The portal booking page — tracker, auto-refresh, re-upload
 
 **Files:**
 
@@ -741,11 +867,11 @@ git commit -m "feat(checkout): the manual QR screen, amount as text beside it"
 git commit -m "feat(portal): one booking, five steps, and the rejection reason"
 ```
 
-**✅ DONE 8**
+**✅ DONE 9**
 
 ---
 
-### Task 9: The post-tour review form
+### Task 10: The post-tour review form
 
 **Files:**
 
@@ -763,11 +889,11 @@ git commit -m "feat(portal): one booking, five steps, and the rejection reason"
 git commit -m "feat(portal): a review that waits for approval"
 ```
 
-**✅ DONE 9**
+**✅ DONE 10**
 
 ---
 
-### Task 10: Admin bookings list and detail (4D)
+### Task 11: Admin bookings list and detail (4D)
 
 **Files:**
 
@@ -775,7 +901,7 @@ git commit -m "feat(portal): a review that waits for approval"
 - Modify: `server/src/routers/admin/bookings.ts` (add `list`, `detail`)
 - Test: `server/src/__tests__/admin-bookings.test.ts`, `client/src/__tests__/admin-bookings.test.tsx`
 
-**Use `ui-ux-pro-max`.** **Depends on Q1** — an admin cannot reach this without a staff login, which is Week 1's 1C and does not exist.
+**Use `ui-ux-pro-max`.** **Q1 is answered: yes** — staff login is Task 5 of this plan, so an admin can reach these screens.
 
 - [ ] **Step 1: Write the failing test** — `list` is paginated and filterable by status and date; `detail` returns the booking with its payments, add-on lines and audit trail; **a role test per role per area** (CLAUDE.md), including that a `customer` session is refused; and the receipt image is reachable by an admin through the authenticated route from Task 3.
 - [ ] **Step 2–4: Fail, implement, pass.**
@@ -785,11 +911,11 @@ git commit -m "feat(portal): a review that waits for approval"
 git commit -m "feat(admin): the bookings list and the verification queue"
 ```
 
-**✅ DONE 10**
+**✅ DONE 11**
 
 ---
 
-### Task 11: Phase 1 end-to-end pass (4E)
+### Task 12: Phase 1 end-to-end pass (4E)
 
 **Files:**
 
@@ -805,50 +931,84 @@ Not a code task. Drive every Phase 1 flow against the running app and record wha
 - [ ] **Step 6:** Fix anything found, with a test per fix, then re-run the whole pass.
 - [ ] **Step 7:** Five checks, commit, and write **✅ WEEK 4 COMPLETE** only if every step above passed.
 
-**✅ DONE 11**
+**✅ DONE 12**
 
 ---
 
-## Questions — all of them, before any task starts
+## Questions — answered by the owner 2026-10-13, except where noted
 
-**Q1 — Staff login (1C) is not built. Is it in Week 4's scope?** `adminProcedure` exists and fails closed, but there is no staff login, no password hashing and no admin UI shell. **Task 6 and Task 10 cannot be exercised by a real admin without it.** Three options: (a) pull 1C into this week as a Task 0 (password login, `users` table, role middleware already exists — probably 1–2 extra tasks); (b) keep 4D server-side only, tested through `createCaller` with a synthetic staff session, and defer the admin _screens_ to Week 5; (c) descope 4D entirely. **I recommend (a)** — the admin must be able to approve a receipt for the manual flow to work at all, and a verification queue nobody can log into does not complete Phase 1.
+Four answers arrived before execution and are folded into the tasks above. The rest are
+answered **per task when reached**, and anything touching **money, auth or roles stops and asks**
+(owner instruction, and CLAUDE.md's own rule).
 
-**Q2 — Can an admin approve a payment before any staff login exists?** If Q1 is (b) or (c), the manual flow has no human approver and the guest's receipt sits in `pending_verification` forever. Is a temporary approval path acceptable, and if so what guards it?
+**Q1 — ANSWERED: yes, pull staff login (1C) into Week 4, before the manual-QR approval task.**
+Session cookies (httpOnly, `secure` in production, `sameSite=lax`), argon2/bcrypt per BUILD_SPEC
+§2, a rate-limited login, roles `owner` / `finance` / `dispatcher` through the existing
+`adminProcedure`. It is **Task 5** of this plan, which is why the old Tasks 5–11 are now 6–12.
+Task 11's admin screens are no longer gated on anything.
 
-**Q3 — Where does the QR image come from?** §6 says "uploaded by admin in Settings", but there is no QR settings key and no admin settings screen. Options: (a) a new `payment_qr` settings block holding an uploaded image path plus the account name/number shown beside it; (b) a file dropped on the server and named in `.env`. **(a) is the spec's intent** but needs an admin upload screen — which depends on Q1. Also: **what account details must appear beside the QR** (name, number, bank/e-wallet)? I will not invent them.
+**Q2 — moot.** It asked what to do if an admin could not log in. Q1 settles it: they can.
 
-**Q4 — Which payment methods may a guest choose for a manual transfer?** `PAYMENT_METHODS` includes `gcash`, `maya`, `bank_transfer` and more; §6 says the method records "whichever instrument the guest actually used". Does the guest pick from a list, and which subset?
+**Q7 — ANSWERED: a rejected receipt returns the booking to the awaiting-payment status**
+(`pending_payment`), not cancelled; the guest sees an **amber** "please re-upload" notice; the
+rejection reason **and the actor** are written to `audit_log`. This is the opposite of what the
+plan originally proposed (`pending_verification`), and the owner's version is safe only because
+Q8 bounds it — see Task 7.
 
-**Q5 — Is the manual QR flow reachable from checkout today?** Week 3 shipped `startPayment` for the gateway only. Does the checkout page need a "pay by QR transfer instead" branch (a Week 4 change to a Week 3 file), or is manual QR a separate entry point?
+**Q8 — ANSWERED: yes, time-limited. Twelve hours to re-upload after a rejection, never extending
+past the booking-window cutoff for that tour date.** When it lapses, the existing expiry sweep
+releases the capacity, still skipping `payment_review_required = 1`. **Marked in Task 7 as
+"proposed by developer — pending R&G confirmation"**, per the owner's own instruction: the twelve
+hours is a developer proposal, not R&G's stated policy.
 
-**Q6 — A guest uploads a second receipt while the first is still pending.** Replace the pending row, or keep both? I have planned **replace** (one pending payment per booking is simpler to verify and leaves no ambiguity about which receipt the admin approved), but the audit trail arguably wants both. Which?
+**Q11 — ANSWERED: yes to `cookie-parser`, plus `nodemailer` (already approved). No other new
+libraries.** Both are implied by BUILD_SPEC §2's stack; nothing else may be added without asking.
 
-**Q7 — After a rejection, what status does the booking hold?** I have planned **`pending_verification`** so the portal still shows the tracker and the re-upload prompt, with the _payment_ carrying `rejected`. The alternative is to send the booking back to `pending_payment`, which would re-arm the expiry sweep and could expire a guest who is mid-re-upload. **Confirm `pending_verification`**, or state the intended behaviour.
+### Still open — answered per task when reached
 
-**Q8 — Does a rejection re-start the 15-minute hold?** §5 says a receipt upload stops the expiry. If a rejected guest must re-upload, is there any time limit at all, and does their capacity stay held indefinitely meanwhile? This is a real overbooking-adjacent risk: capacity held by a booking nobody is paying for.
+Each names the task that needs it, so none of them blocks a task that does not.
 
-**Q9 — "Visible from assignment until tour day ends" (§7, driver card).** What is "ends" — the tour date's 23:59 Manila, the booking reaching `completed`, or a fixed number of hours after the start? `tours` has `duration_hours` but no departure time.
+**Q3 (Task 8) — where does the QR image come from, and what account details appear beside it?**
+§6 says "uploaded by admin in Settings"; there is no QR settings key and no admin settings
+screen. I will propose a `payment_qr` settings block when Task 8 is dispatched. **I will not
+invent the account name or number.**
 
-**Q10 — Reminder emails (§11, "day before") need a scheduler job.** `node-cron` and `server/src/jobs/` now exist from Week 3's sweep. Is the day-before reminder in Week 4's scope, or Week 5 with the rest of dispatch? It is not in §13's 4A–4E list.
+**Q4 (Task 6) — which payment methods may a guest pick for a manual transfer?** `PAYMENT_METHODS`
+has `gcash`, `maya`, `bank_transfer` and more; §6 records "whichever instrument the guest
+actually used".
 
-**Q11 — Two new dependencies: `nodemailer` and `cookie-parser`.** Both are implied by BUILD_SPEC §2's stack ("SMTP via a transactional provider", "session cookies"), but CLAUDE.md requires asking before adding any library. Approving `nodemailer` is already done (Week 3 Q2). **Please confirm `cookie-parser`** — the alternative is hand-parsing the `Cookie` header, which I would rather not do for an auth credential.
+**Q5 (Task 8) — is the manual QR flow reachable from checkout today?** Week 3 shipped
+`startPayment` for the gateway only, so this may need a "pay by QR transfer instead" branch in a
+Week 3 file.
 
-**Q12 — Review "verified badge" (§7).** `reviews` has no `verified` column. Is a review verified precisely when `booking_id` is not null (which Task 9 always sets)? That seems right, and needs no schema change — confirm.
+**Q6 (Task 6) — a second receipt while the first is still pending: replace the row, or keep
+both?** Replace is planned; the audit trail arguably wants both.
 
-**Q13 — SMS.** §11 lists optional SMS for four events, and the stack says "behind a provider interface (off by default)". Is the interface in Week 4's scope, or deferred with no stub at all?
+**Q9 (Task 9) — "visible from assignment until tour day ends" (§7, driver card): what is
+"ends"?** `tours` has `duration_hours` but no departure time.
 
----
+**Q10 (not scheduled) — the day-before reminder email (§11) needs a cron job.** `node-cron` and
+`server/src/jobs/` exist now. It is not in §13's 4A–4E list, so it has no task; say the word and
+it gets one.
+
+**Q12 (Task 10) — is a review "verified" precisely when `booking_id` is not null?** No `verified`
+column exists, and Task 10 always sets `booking_id`. Needs no schema change if yes.
+
+**Q13 (not scheduled) — SMS.** §11 lists it as optional behind a provider interface, off by
+default. No task until asked for.
 
 ## Self-review
 
-**1. Spec coverage.** §6 manual QR → Tasks 5, 6, 7. §7 portal login → 2; tracker/auto-refresh/re-upload → 8; driver card → 8; review → 9. §11 email → 4, wired in 5, 6 and 8. §13's 4A → 5+6+7; 4B → 1+2; 4C → 8; 4D → 6+10 (gated on Q1); 4E → 11. §12 security → the upload rules in 3, the session rules in 1, the role tests in 6 and 10. **Gaps I am declaring rather than hiding:** staff login (Q1) has no task until it is answered; the day-before reminder (Q10) and SMS (Q13) have no task; the live gateway check (Task 11 Step 1) is blocked outside this plan.
+**1. Spec coverage.** §6 manual QR → Tasks 6, 7, 8. §7 portal login → 2; tracker/auto-refresh/re-upload → 9; driver card → 9; review → 10. §11 email → 4, wired in 6, 7 and 9. §13's 4A → 6+7+8; 4B → 1+2; 4C → 9; 4D → 7+11; 4E → 12. Week 1's 1C → 5 (pulled in, owner Q1). §12 security → the upload rules in 3, the session rules in 1 and 5, the role tests in 7 and 11. **Gaps I am declaring rather than hiding:** the day-before reminder (Q10) and SMS (Q13) have no task; the live gateway check (Task 12 Step 1) is blocked outside this plan on the PayMongo account.
 
-**2. Placeholder scan.** Tasks 1–4 carry full test code. Tasks 5–10 carry full test _case lists_ and the implementation shape, with code deferred because each depends on an unanswered question (Q1, Q3, Q4, Q6, Q7) — these are named limits, not "TBD". **No task says "similar to Task N".** If the questions are answered before execution, each of 5–10 should gain its test code at dispatch time.
+**2. Placeholder scan.** Tasks 1–5 carry full test code. Tasks 6–11 carry full test _case lists_ and the implementation shape, with code deferred because each still depends on an open question (Q3, Q4, Q5, Q6, Q9, Q12) — these are named limits, not "TBD". **No task says "similar to Task N".** Each of 6–11 gains its test code when it is dispatched and its question is answered.
 
-**3. Type consistency.** `createSession`/`readSession`/`revokeSession` are used with the same signatures in Tasks 1, 2 and 3. `storeReceipt` returns `{ path }` in Task 3 and is consumed as `receiptPath` in Task 5. `notify(event, payload)` is called identically in 4, 5, 6 and 8. `decideManualReceipt`'s `decision: 'approve' | 'reject'` is the same union in Task 6 and Task 10. `SESSION_COOKIE` is defined once, in Task 1.
+**3. Type consistency.** `createSession`/`readSession`/`revokeSession` are used with the same signatures in Tasks 1, 2 and 3. `storeReceipt` returns `{ path }` in Task 3 and is consumed as `receiptPath` in Task 6. `notify(event, payload)` is called identically in 4, 6, 7 and 9. `decideManualReceipt`'s `decision: 'approve' | 'reject'` is the same union in Task 7 and Task 11. `verifyStaffPassword` is defined in Task 5 and consumed only there. `SESSION_COOKIE` is defined once, in Task 1.
 
 ---
 
 ## Execution handoff
 
-**PLAN ONLY — not executing.** Awaiting the owner's answers to Q1–Q13 and approval. Q1 is the one that changes the plan's shape: if staff login comes into this week, a Task 0 precedes everything and Tasks 6 and 10 grow a UI.
+**APPROVED 2026-10-13. Tasks 1–4 are authorised and being executed now** — the session foundation, portal login, receipt uploads and the notification layer — reporting back after Task 4. Q1's answer inserted staff login as **Task 5**, which is why the originally-numbered Tasks 5–11 are now 6–12.
+
+Tasks 5–12 are **not** authorised by that approval and are not started. Each needs its own go-ahead, and Tasks 6–8 and 10–11 each carry an open question listed above. Anything touching money, auth or roles stops and asks first.
