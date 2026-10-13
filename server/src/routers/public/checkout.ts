@@ -77,6 +77,7 @@ import {
   formatPeso,
   isDateBookable,
   manilaCivilDate,
+  PAYMENT_HOLD_MINUTES,
   quoteInput,
   type BookingStatus,
   type PayMode,
@@ -268,31 +269,6 @@ export const CHECKOUT_PAYMENT_METHODS = [
   'maya',
   'grab_pay',
 ] as const satisfies readonly PaymentMethod[];
-
-/**
- * How long a hold lasts once the guest has reached the gateway (owner
- * Ruling 4 / Q5): `created_at + 30 minutes`, replacing the 15 minutes
- * `createHold()` set.
- *
- * **Extended ONCE, and that is the whole subtlety.** A guest who has
- * reached the payment page has committed, and typing a card number slowly
- * should not land their money in `recordPayment()`'s review queue — that
- * queue is for genuine anomalies. But an extension that reapplied on every
- * `startPayment` call would be a renewable hold: reload the page, keep the
- * slot forever, and the capacity nobody is paying for is never released.
- *
- * So the extension is computed FROM `created_at` and the UPDATE only
- * matches a row whose `hold_expires_at` is still short of that target
- * (`extendHoldForPayment`). A second call matches nothing, writes nothing
- * and audits nothing. No new column is needed to remember that it already
- * happened, because `created_at` already remembers.
- *
- * **It does not change what happens when the money lands late anyway.**
- * `recordPayment()` still records such a payment, still leaves the status
- * alone and still raises `payment_review_required`. This makes that path
- * rarer; it does not remove it.
- */
-export const PAYMENT_HOLD_MINUTES = 30;
 
 // ---------------------------------------------------------------------------
 // Error translation — one guest-safe sentence per typed service error.

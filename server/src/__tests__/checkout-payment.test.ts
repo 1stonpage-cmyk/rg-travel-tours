@@ -34,12 +34,18 @@
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { ZodError } from 'zod';
 import { eq, sql } from 'drizzle-orm';
-import { BOOKING_PAGE_ROUTE, bookingPagePath, depositCentavos, manilaCivilDate } from '@rg/shared';
+import {
+  BOOKING_PAGE_ROUTE,
+  bookingPagePath,
+  depositCentavos,
+  manilaCivilDate,
+  PAYMENT_HOLD_MINUTES,
+} from '@rg/shared';
 import { getDb, getPool } from '../db/client';
 import { bookings, destinations, drivers, tourPriceTiers, tours, vans } from '../db/schema';
 import { env } from '../env';
 import { appRouter } from '../routers/_app';
-import { CHECKOUT_PAYMENT_METHODS, PAYMENT_HOLD_MINUTES } from '../routers/public/checkout';
+import { CHECKOUT_PAYMENT_METHODS } from '../routers/public/checkout';
 import { createPaymongoProvider, PaymongoNotConfiguredError } from '../services/payments/paymongo';
 import type { PaymentProvider } from '../services/payments/types';
 import { describeWithDb } from './helpers/db';

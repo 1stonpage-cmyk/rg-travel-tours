@@ -2,6 +2,7 @@ import { createApp } from './app';
 import { assertConnectedDatabase, assertDatabaseName, databaseNameFromUrl } from './db/guard';
 import { env } from './env';
 import { CLIENT_DIST_DIR } from './html';
+import { startScheduledJobs } from './jobs';
 
 try {
   assertDatabaseName(databaseNameFromUrl(env.DATABASE_URL), 'app');
@@ -22,3 +23,13 @@ const clientDistDir = env.NODE_ENV === 'production' ? CLIENT_DIST_DIR : undefine
 createApp(env.PUBLIC_BASE_URL, clientDistDir, env.SITE_ENV).listen(env.PORT, () => {
   console.log(`[rg-travel-tours] server listening on http://localhost:${env.PORT}`);
 });
+
+/*
+ * The cron, started after the database checks above have passed — a sweep
+ * against an unreachable or wrong database is not something to schedule.
+ *
+ * **This process must be the only one running it** (PM2 fork mode, 1
+ * instance; see `src/jobs/index.ts` and docs/LAUNCH_CHECKLIST.md). Nothing
+ * else in the codebase imports `src/jobs`, so no test can start a schedule.
+ */
+startScheduledJobs();
