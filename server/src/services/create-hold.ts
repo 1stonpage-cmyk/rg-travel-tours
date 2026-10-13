@@ -82,6 +82,7 @@
  */
 import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import {
+  DATE_NOT_BOOKABLE,
   HOLD_MINUTES,
   bookableDateRange,
   isDateBookable,
@@ -170,16 +171,6 @@ export class TourDateBlockedError extends Error {
     this.date = date;
   }
 }
-
-/**
- * The one spelling of the "that date is closed" refusal reason.
- *
- * It is a WIRE contract — `checkout.availability` returns it to the browser
- * and `TourDateNotBookableError` carries it — so it was spelled twice for one
- * contract, in two files, with nothing to catch a typo in either. Now the
- * router imports this and a misspelling fails `pnpm typecheck`.
- */
-export const DATE_NOT_BOOKABLE = 'date_not_bookable' as const;
 
 /**
  * The date is outside the bookable window — the `booking` settings block

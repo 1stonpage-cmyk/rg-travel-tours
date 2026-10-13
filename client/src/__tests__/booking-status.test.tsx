@@ -152,12 +152,22 @@ describe('BookingStatusPage — cancelled retry (Task 8b)', () => {
     vi.unstubAllGlobals();
   });
 
-  it('shows a working "try paying again" button in the cancelled notice, and leaves for the redirect URL', async () => {
+  it('shows a working "try paying again" button in the cancelled notice, and leaves for the redirect URL — triggering exactly one mutation, never createHold', async () => {
     mockTrpc({ 'checkout.bookingStatus': { ...BASE_STATUS, status: 'pending_payment' } });
     const assign = vi.fn();
     vi.stubGlobal('location', { assign, href: 'http://localhost/' });
+    let createHoldCalls = 0;
+    let startPaymentCalls = 0;
     mockTrpc({
+      // This page must never be able to create a hold (§6) — registered
+      // here so that if a future change ever wired this up, it would be
+      // counted rather than silently uncovered.
+      'checkout.createHold': () => {
+        createHoldCalls += 1;
+        throw new Error('BookingStatusPage must never call createHold');
+      },
       'checkout.startPayment': (input: unknown) => {
+        startPaymentCalls += 1;
         expect(input).toEqual({ ref: BASE_STATUS.ref });
         return { redirectUrl: 'https://pay.example/session/retry1' };
       },
@@ -172,6 +182,13 @@ describe('BookingStatusPage — cancelled retry (Task 8b)', () => {
     await waitFor(() => {
       expect(assign).toHaveBeenCalledWith('https://pay.example/session/retry1');
     });
+
+    // Exactly one mutation call total resulted from this click — never a
+    // second startPayment call, and never createHold. The URL assertion
+    // above alone would not catch an extra mutation added inside
+    // <PayNowButton> or a sibling call added next to it.
+    expect(startPaymentCalls).toBe(1);
+    expect(createHoldCalls).toBe(0);
   });
 
   it('never shows the retry button without ?cancelled=1', async () => {

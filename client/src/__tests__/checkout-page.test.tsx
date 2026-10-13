@@ -170,13 +170,21 @@ describe('CheckoutPage — pay now (Task 8b)', () => {
     vi.unstubAllGlobals();
   });
 
-  it("starts payment with the held booking's ref and leaves for the redirect URL on success", async () => {
+  it("starts payment with the held booking's ref and leaves for the redirect URL on success — and that click triggers startPayment, never a second createHold", async () => {
     mockTrpc({ 'checkout.quote': QUOTE_FIXTURE });
-    mockTrpc({ 'checkout.createHold': () => HOLD_RESULT });
+    let createHoldCalls = 0;
+    let startPaymentCalls = 0;
+    mockTrpc({
+      'checkout.createHold': () => {
+        createHoldCalls += 1;
+        return HOLD_RESULT;
+      },
+    });
     const assign = vi.fn();
     vi.stubGlobal('location', { assign, href: 'http://localhost/' });
     mockTrpc({
       'checkout.startPayment': (input: unknown) => {
+        startPaymentCalls += 1;
         expect(input).toEqual({ ref: HOLD_RESULT.ref });
         return { redirectUrl: 'https://pay.example/session/abc123' };
       },
@@ -190,12 +198,24 @@ describe('CheckoutPage — pay now (Task 8b)', () => {
     await user.click(within(form).getByLabelText(/i agree/i));
     await user.click(within(form).getByRole('button', { name: /book now/i }));
 
+    expect(createHoldCalls).toBe(1);
+    expect(startPaymentCalls).toBe(0);
+
     const payButton = await screen.findByRole('button', { name: /^pay now$/i });
     await user.click(payButton);
 
     await waitFor(() => {
       expect(assign).toHaveBeenCalledWith('https://pay.example/session/abc123');
     });
+
+    // The click on "Pay now" triggered exactly one mutation call total —
+    // `checkout.startPayment`, once — and did NOT also fire a second
+    // `checkout.createHold`. A future change that slipped a second
+    // mutation into `<PayNowButton>` (or called createHold again) would
+    // move either count and this would catch it; the URL assertion above
+    // alone would not.
+    expect(startPaymentCalls).toBe(1);
+    expect(createHoldCalls).toBe(1);
   });
 
   it("shows the server's own calm message, never a crash, when startPayment is refused", async () => {

@@ -247,6 +247,30 @@ describe('HeroSection — date picker bounds come from the server (Task 8b)', ()
     expect(dateInput).not.toHaveAttribute('min');
     expect(dateInput).not.toHaveAttribute('max');
   });
+
+  it('also omits min/max if settings.get errors, rather than falling back to the browser clock', async () => {
+    mockTrpcError('settings.get');
+    mockTrpc({ 'destinations.list': DESTINATIONS_FIXTURE });
+    renderHero();
+
+    // The search form renders unconditionally either way (see the component
+    // comment). Wait for the copy's own error card — proof the query has
+    // actually settled into `isError`, not just caught mid-pending (the
+    // previous test already covers pending; this one is the distinct error
+    // code path `data` takes the exact same `undefined` route through, but
+    // by a different query state). 3000ms, matching this file's own
+    // destinations.list error tests: the query client retries once
+    // (query-client.ts) with a ~1s backoff before settling into isError,
+    // past the default 1000ms `findByRole` timeout.
+    expect(await screen.findByRole('alert', {}, { timeout: 3000 })).toHaveTextContent(
+      /content could not load/i,
+    );
+
+    const form = screen.getByRole('form', { name: /search tours/i });
+    const dateInput = within(form).getByLabelText(/^date$/i);
+    expect(dateInput).not.toHaveAttribute('min');
+    expect(dateInput).not.toHaveAttribute('max');
+  });
 });
 
 describe('HeroCopySkeleton / TrustBarSkeleton — loading announced to screen readers (BUG-071)', () => {
