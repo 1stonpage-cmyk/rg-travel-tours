@@ -1,6 +1,8 @@
 import { Route, Routes } from 'react-router-dom';
 import { BOOKING_PAGE_ROUTE } from '@rg/shared';
 import PublicLayout from '@/components/layout/PublicLayout';
+import AdminBookingDetailPage from '@/pages/admin/AdminBookingDetailPage';
+import AdminBookingsPage from '@/pages/admin/AdminBookingsPage';
 import AdminLoginPage from '@/pages/admin/AdminLoginPage';
 import ManualQrPage from '@/pages/portal/ManualQrPage';
 import PortalBookingPage from '@/pages/portal/PortalBookingPage';
@@ -56,6 +58,17 @@ export default function App() {
        * `X-Robots-Tag` middleware already keeps out of every index.
        */}
       <Route path="admin/login" element={<AdminLoginPage />} />
+
+      {/*
+       * The admin bookings screens (Week 4, Task 11). Outside
+       * `PublicLayout` like the sign-in: they render their own `<main>`,
+       * and `/admin/*` is kept out of every index by the `X-Robots-Tag`
+       * middleware. The SERVER gates them — every procedure behind these
+       * pages is an `adminProcedure`, so an unauthenticated visitor sees
+       * the pages' own "sign in again" state rather than any data.
+       */}
+      <Route path="admin/bookings" element={<AdminBookingsPage />} />
+      <Route path="admin/bookings/:ref" element={<AdminBookingDetailPage />} />
 
       {/*
        * The guest portal (Week 4, Tasks 8 and 9). OUTSIDE `PublicLayout`

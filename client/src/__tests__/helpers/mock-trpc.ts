@@ -80,7 +80,28 @@ export function mockTrpc(next: Handlers) {
         const parsed = JSON.parse(init.body) as Record<string, unknown>;
         parsedInputs = procedures.map((_name, index) => parsed[String(index)]);
       } catch {
-        // GET requests (queries) have no JSON body — nothing to parse.
+        // A malformed body is not something this mock has to recover from.
+      }
+    } else {
+      /*
+       * A QUERY. `httpBatchLink` puts its inputs in the `input` query
+       * param as `{"0": <input0>, ...}` — the same positional shape as a
+       * batched POST body, keyed by the procedure's place in the
+       * comma-joined path.
+       *
+       * Parsed here (Week 4 Task 11) so a test can assert on what a page
+       * ASKED FOR, not only on what it was given back — which is the only
+       * way to prove a filter reaches the server rather than being applied
+       * in the browser over one page of rows.
+       */
+      const raw = url.searchParams.get('input');
+      if (raw !== null) {
+        try {
+          const parsed = JSON.parse(raw) as Record<string, unknown>;
+          parsedInputs = procedures.map((_name, index) => parsed[String(index)]);
+        } catch {
+          // Not JSON: leave the inputs undefined rather than guessing.
+        }
       }
     }
 

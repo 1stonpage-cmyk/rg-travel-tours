@@ -33,10 +33,19 @@
  */
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
-import { manilaCivilDate } from '@rg/shared';
-import { eq } from 'drizzle-orm';
+import { BOOKING_STATUSES, manilaCivilDate } from '@rg/shared';
+import { and, asc, desc, eq, gte, lte, sql } from 'drizzle-orm';
 import { getDb } from '../../db/client';
-import { bookings, tours } from '../../db/schema';
+import {
+  auditLog,
+  bookingAddons,
+  bookingNotes,
+  bookings,
+  drivers,
+  payments,
+  tours,
+  vans,
+} from '../../db/schema';
 import { notify } from '../../services/notify';
 import {
   ReceiptAlreadyDecidedError,
@@ -124,7 +133,270 @@ async function mailPayload(bookingId: number) {
   };
 }
 
+/**
+ * The list query (§9's bookings area).
+ *
+ * A civil date range rather than a timestamp range: an operations screen
+ * asks "what is running on Saturday", and `tour_date` is a DATE column.
+ * Both ends are inclusive and both are optional.
+ *
+ * `limit` is capped at 100 — a page of a thousand bookings is not a page,
+ * and an uncapped limit is how one admin screen becomes a way to pull the
+ * whole customer table in a single request.
+ */
+const listInput = z
+  .object({
+    status: z.enum(BOOKING_STATUSES).optional(),
+    /** `YYYY-MM-DD`, inclusive. */
+    from: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+    to: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+    /** Needs verifying: a pending manual receipt is waiting on someone. */
+    awaitingVerification: z.boolean().optional(),
+    limit: z.number().int().min(1).max(100).default(25),
+    offset: z.number().int().min(0).default(0),
+  })
+  .strict();
+
 export const adminBookingsRouter = router({
+  /**
+   * The bookings list (§9's 4D screen), paginated and filterable.
+   *
+   * `adminProcedure('bookingsView')` — §9 gives view access to all three
+   * admin roles, which is why this is a different area from the
+   * approve/reject pair below: a dispatcher runs the day and needs to see
+   * the bookings, and must not be able to decide that money arrived.
+   *
+   * **It returns a row per booking and nothing per payment.** The list is
+   * for scanning; the detail view below is where a payment trail lives. A
+   * list that joined payments would fan out and would also mean every
+   * admin screen-load pulled every receipt path in the system.
+   */
+  list: adminProcedure('bookingsView')
+    .input(listInput)
+    .query(async ({ input }) => {
+      const where = [
+        input.status ? eq(bookings.status, input.status) : undefined,
+        input.from ? gte(bookings.tourDate, new Date(`${input.from}T00:00:00Z`)) : undefined,
+        input.to ? lte(bookings.tourDate, new Date(`${input.to}T00:00:00Z`)) : undefined,
+        /*
+         * "Waiting on us": a booking under verification with a pending
+         * manual receipt. Expressed as an EXISTS rather than a join so the
+         * row count cannot change — a booking with two receipt rows must
+         * still be one row in this list.
+         */
+        input.awaitingVerification
+          ? sql`EXISTS (
+              SELECT 1 FROM payments p
+              WHERE p.booking_id = ${bookings.id}
+                AND p.provider = 'manual'
+                AND p.type = 'payment'
+                AND p.status = 'pending'
+                AND p.receipt_path IS NOT NULL
+            )`
+          : undefined,
+      ].filter((clause) => clause !== undefined);
+
+      const condition = where.length > 0 ? and(...where) : undefined;
+
+      const rows = await getDb()
+        .select({
+          id: bookings.id,
+          ref: bookings.ref,
+          status: bookings.status,
+          tourTitle: tours.title,
+          tourDate: bookings.tourDate,
+          pax: bookings.pax,
+          leadName: bookings.leadName,
+          totalCentavos: bookings.totalCentavos,
+          paidCentavos: bookings.amountPaidCentavos,
+          paymentReviewRequired: bookings.paymentReviewRequired,
+          createdAt: bookings.createdAt,
+        })
+        .from(bookings)
+        .innerJoin(tours, eq(tours.id, bookings.tourId))
+        .where(condition)
+        // Soonest tour first: an operations list is a diary, not a log.
+        .orderBy(asc(bookings.tourDate), asc(bookings.id))
+        .limit(input.limit)
+        .offset(input.offset);
+
+      const [counted] = await getDb()
+        .select({ total: sql<number>`COUNT(*)` })
+        .from(bookings)
+        .innerJoin(tours, eq(tours.id, bookings.tourId))
+        .where(condition);
+
+      return {
+        items: rows.map((row) => ({ ...row, tourDate: manilaCivilDate(row.tourDate) })),
+        /** For the pager. `COUNT(*)` comes back as a string on some drivers. */
+        total: Number(counted?.total ?? 0),
+        limit: input.limit,
+        offset: input.offset,
+      };
+    }),
+
+  /**
+   * One booking, with everything an admin needs to decide about it: its
+   * payments (receipt paths included, so the authenticated receipt route
+   * can be linked), its add-on lines, its assignment, and its audit trail.
+   *
+   * Also `bookingsView`: reading a booking is reading a booking, whatever
+   * the reader intends to do next. The DECISIONS are gated separately —
+   * `approveReceipt` and `rejectReceipt` are `verifyPayments`, so a
+   * dispatcher sees this screen and finds no buttons on it.
+   */
+  detail: adminProcedure('bookingsView')
+    .input(z.object({ ref: z.string().min(1).max(20) }).strict())
+    .query(async ({ input }) => {
+      const [booking] = await getDb()
+        .select({
+          id: bookings.id,
+          ref: bookings.ref,
+          status: bookings.status,
+          tourId: bookings.tourId,
+          tourTitle: tours.title,
+          tourDate: bookings.tourDate,
+          pax: bookings.pax,
+          payMode: bookings.payMode,
+          leadName: bookings.leadName,
+          leadEmail: bookings.leadEmail,
+          leadPhone: bookings.leadPhone,
+          subtotalCentavos: bookings.subtotalCentavos,
+          discountCentavos: bookings.discountCentavos,
+          totalCentavos: bookings.totalCentavos,
+          paidCentavos: bookings.amountPaidCentavos,
+          paymentReviewRequired: bookings.paymentReviewRequired,
+          holdExpiresAt: bookings.holdExpiresAt,
+          driverId: bookings.driverId,
+          vanId: bookings.vanId,
+          createdAt: bookings.createdAt,
+        })
+        .from(bookings)
+        .innerJoin(tours, eq(tours.id, bookings.tourId))
+        .where(eq(bookings.ref, input.ref))
+        .limit(1);
+
+      if (!booking) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'No booking with that reference.' });
+      }
+
+      const paymentRows = await getDb()
+        .select({
+          id: payments.id,
+          type: payments.type,
+          provider: payments.provider,
+          method: payments.method,
+          amountCentavos: payments.amountCentavos,
+          status: payments.status,
+          txnRef: payments.txnRef,
+          /** The filename the authenticated receipt route serves. */
+          receiptPath: payments.receiptPath,
+          rejectReason: payments.rejectReason,
+          verifiedBy: payments.verifiedBy,
+          verifiedAt: payments.verifiedAt,
+          createdAt: payments.createdAt,
+        })
+        .from(payments)
+        .where(eq(payments.bookingId, booking.id))
+        .orderBy(desc(payments.id));
+
+      /*
+       * Staff notes live in their own append-only table, not a column on
+       * `bookings` — "who wrote this and when" is the point of them (§9),
+       * and a single text column cannot answer either.
+       */
+      const noteRows = await getDb()
+        .select({
+          id: bookingNotes.id,
+          note: bookingNotes.note,
+          userId: bookingNotes.userId,
+          createdAt: bookingNotes.createdAt,
+        })
+        .from(bookingNotes)
+        .where(eq(bookingNotes.bookingId, booking.id))
+        .orderBy(desc(bookingNotes.id));
+
+      const addonRows = await getDb()
+        .select({
+          id: bookingAddons.id,
+          name: bookingAddons.name,
+          qty: bookingAddons.qty,
+          priceCentavos: bookingAddons.priceCentavos,
+          perPerson: bookingAddons.perPerson,
+        })
+        .from(bookingAddons)
+        .where(eq(bookingAddons.bookingId, booking.id))
+        .orderBy(asc(bookingAddons.id));
+
+      /*
+       * The trail for this booking: rows about the booking itself plus rows
+       * about its payments. `audit_log.entity_id` is polymorphic, so the
+       * payment ids are gathered from the rows above rather than joined.
+       */
+      const paymentIds = paymentRows.map((row) => row.id);
+      const trail = await getDb()
+        .select({
+          id: auditLog.id,
+          actorType: auditLog.actorType,
+          actorId: auditLog.actorId,
+          action: auditLog.action,
+          entity: auditLog.entity,
+          entityId: auditLog.entityId,
+          data: auditLog.data,
+          createdAt: auditLog.createdAt,
+        })
+        .from(auditLog)
+        .where(
+          paymentIds.length > 0
+            ? sql`(${auditLog.entity} = 'bookings' AND ${auditLog.entityId} = ${booking.id})
+                   OR (${auditLog.entity} = 'payments' AND ${auditLog.entityId} IN (${sql.join(
+                     paymentIds.map((id) => sql`${id}`),
+                     sql`, `,
+                   )}))`
+            : sql`${auditLog.entity} = 'bookings' AND ${auditLog.entityId} = ${booking.id}`,
+        )
+        .orderBy(desc(auditLog.id))
+        .limit(100);
+
+      const [assignment] = booking.driverId
+        ? await getDb()
+            .select({ driverName: drivers.name, driverPhone: drivers.phone })
+            .from(drivers)
+            .where(eq(drivers.id, booking.driverId))
+            .limit(1)
+        : [undefined];
+      const [van] = booking.vanId
+        ? await getDb()
+            .select({ model: vans.model, plate: vans.plate })
+            .from(vans)
+            .where(eq(vans.id, booking.vanId))
+            .limit(1)
+        : [undefined];
+
+      return {
+        ...booking,
+        tourDate: manilaCivilDate(booking.tourDate),
+        payments: paymentRows,
+        addons: addonRows,
+        notes: noteRows,
+        audit: trail,
+        assignment: assignment
+          ? {
+              driverName: assignment.driverName,
+              driverPhone: assignment.driverPhone,
+              vanModel: van?.model ?? null,
+              vanPlate: van?.plate ?? null,
+            }
+          : null,
+      };
+    }),
+
   /**
    * Approve: the payment becomes `paid`, the booking `confirmed`, and the
    * guest gets §11's confirmation email.
