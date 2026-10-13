@@ -1,8 +1,10 @@
 import { createExpressMiddleware } from '@trpc/server/adapters/express';
+import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import express from 'express';
 import { rateLimit } from 'express-rate-limit';
 import { TIMEZONE } from '@rg/shared';
+import { createContext } from './context';
 import type { SiteEnv } from './env';
 import { createHtmlHandler } from './html';
 import { errorHandler } from './middleware/error-handler';
@@ -139,7 +141,20 @@ export function createApp(
   // middleware/rate-limit.ts for why this one counts failures only.
   app.use('/trpc', createBookingLookupLimiter());
 
-  app.use('/trpc', createExpressMiddleware({ router: appRouter }));
+  /*
+   * Cookies, then the context factory that reads them (Week 4, Task 1).
+   *
+   * Mounted here rather than globally at the top: nothing above this line
+   * needs a cookie, and a parser that runs on every static asset request is
+   * work for no one. It MUST come before the tRPC middleware, which is what
+   * reads `req.cookies` to resolve the session.
+   *
+   * Until this existed `ctx` was `{}`, so `ctx.session` was always
+   * undefined and every `adminProcedure` refused everything — closed, but
+   * also never exercised. See `context.ts`.
+   */
+  app.use('/trpc', cookieParser());
+  app.use('/trpc', createExpressMiddleware({ router: appRouter, createContext }));
 
   // -------------------------------------------------------------------------
   // Crawl directives (task 4.3). Mounted here, above the catch-all block
