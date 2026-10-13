@@ -135,8 +135,10 @@
  *
  * So each booking is attempted inside its own `try`: a failure is logged,
  * counted in `failed`, and the loop moves to the next row. `expireHolds`
- * itself now rejects only if the candidate read fails, which is the one
- * failure that means "there is nothing to make progress on".
+ * itself now rejects only if one of the two reads it opens with fails — the
+ * skipped-money count, then the candidate read — and those are the failures
+ * that mean "there is nothing to make progress on", so there is nothing to
+ * report but the error.
  *
  * ## Never a deletion
  *
