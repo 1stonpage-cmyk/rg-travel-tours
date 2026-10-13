@@ -32,6 +32,7 @@ function renderLogin(search = '') {
         <Routes>
           <Route path="/portal/login" element={<PortalLoginPage />} />
           <Route path="/portal/pay" element={<p>payment screen</p>} />
+          <Route path="/portal/booking" element={<p>booking screen</p>} />
         </Routes>
       </MemoryRouter>
     </TrpcProviders>,
@@ -39,7 +40,7 @@ function renderLogin(search = '') {
 }
 
 describe('PortalLoginPage', () => {
-  it('signs a guest in with ref + email and lands them on the payment screen', async () => {
+  it('signs a guest in with ref + email and lands them on their booking', async () => {
     const seen: unknown[] = [];
     mockTrpc({
       'portal.login': (input: unknown) => {
@@ -53,7 +54,10 @@ describe('PortalLoginPage', () => {
     await userEvent.type(screen.getByLabelText(/email/i), 'guest@example.test');
     await userEvent.click(screen.getByRole('button', { name: /view my booking/i }));
 
-    expect(await screen.findByText('payment screen')).toBeInTheDocument();
+    // The booking page is the default landing: a guest who signed in from
+    // their confirmation email wants their booking, and one who came from
+    // the checkout link carries `next=/portal/pay` explicitly.
+    expect(await screen.findByText('booking screen')).toBeInTheDocument();
     expect(seen).toEqual([{ ref: 'RG-7KQ4M9', email: 'guest@example.test' }]);
   });
 
@@ -88,6 +92,17 @@ describe('PortalLoginPage', () => {
     expect(alerts[0]).not.toHaveTextContent(/reference is/i);
   });
 
+  /** The checkout link sends a guest straight to the payment screen. */
+  it('honours next=/portal/pay, which is what the checkout link asks for', async () => {
+    mockTrpc({ 'portal.login': { ok: true } });
+    renderLogin('?ref=RG-7KQ4M9&next=/portal/pay');
+
+    await userEvent.type(screen.getByLabelText(/email/i), 'guest@example.test');
+    await userEvent.click(screen.getByRole('button', { name: /view my booking/i }));
+
+    expect(await screen.findByText('payment screen')).toBeInTheDocument();
+  });
+
   /**
    * An open redirect would let a phishing link bounce a signed-in guest
    * off our domain. Only `/portal/*` is honoured.
@@ -100,8 +115,8 @@ describe('PortalLoginPage', () => {
     await userEvent.type(screen.getByLabelText(/email/i), 'guest@example.test');
     await userEvent.click(screen.getByRole('button', { name: /view my booking/i }));
 
-    // It fell back to the payment screen rather than following the URL.
-    expect(await screen.findByText('payment screen')).toBeInTheDocument();
+    // It fell back to the booking page rather than following the URL.
+    expect(await screen.findByText('booking screen')).toBeInTheDocument();
   });
 
   it('asks the phone for the right keyboards and does not autocorrect the reference', () => {
@@ -127,9 +142,9 @@ describe('PortalLoginPage', () => {
     await userEvent.click(screen.getByRole('button', { name: /view my booking/i }));
 
     expect(await screen.findByRole('button', { name: /checking/i })).toBeDisabled();
-    expect(screen.queryByText('payment screen')).not.toBeInTheDocument();
+    expect(screen.queryByText('booking screen')).not.toBeInTheDocument();
 
     resolve?.({ ok: true });
-    await waitFor(() => expect(screen.getByText('payment screen')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('booking screen')).toBeInTheDocument());
   });
 });

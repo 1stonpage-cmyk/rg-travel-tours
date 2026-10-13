@@ -41,7 +41,7 @@ const ERROR_ID = 'portal-login-error';
  * guest off our own domain the moment they signed in.
  */
 function safeNext(raw: string | null): string {
-  if (!raw || !raw.startsWith('/portal/')) return '/portal/pay';
+  if (!raw || !raw.startsWith('/portal/')) return '/portal/booking';
   return raw;
 }
 

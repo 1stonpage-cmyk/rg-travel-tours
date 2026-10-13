@@ -3,6 +3,7 @@ import { BOOKING_PAGE_ROUTE } from '@rg/shared';
 import PublicLayout from '@/components/layout/PublicLayout';
 import AdminLoginPage from '@/pages/admin/AdminLoginPage';
 import ManualQrPage from '@/pages/portal/ManualQrPage';
+import PortalBookingPage from '@/pages/portal/PortalBookingPage';
 import PortalLoginPage from '@/pages/portal/PortalLoginPage';
 import BookingStatusPage from '@/pages/public/BookingStatusPage';
 import CheckoutPage from '@/pages/public/CheckoutPage';
@@ -69,6 +70,7 @@ export default function App() {
        */}
       <Route path="portal/login" element={<PortalLoginPage />} />
       <Route path="portal/pay" element={<ManualQrPage />} />
+      <Route path="portal/booking" element={<PortalBookingPage />} />
     </Routes>
   );
 }

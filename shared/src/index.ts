@@ -3,6 +3,7 @@ export * from './checkout';
 export * from './constants';
 export * from './coupon';
 export * from './money';
+export * from './portal';
 export * from './receipts';
 export * from './roles';
 export * from './time';

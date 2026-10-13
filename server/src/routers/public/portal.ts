@@ -31,17 +31,19 @@
  * `BOOKING_LOOKUP_PROCEDURES` in `middleware/rate-limit.ts`.
  */
 import { TRPCError } from '@trpc/server';
-import { eq } from 'drizzle-orm';
+import { and, desc, eq, isNotNull } from 'drizzle-orm';
 import { z } from 'zod';
 import {
   RECEIPT_UPLOAD_MAX_PER_BOOKING,
   bookingLookupInput,
   depositCentavos,
+  isDriverVisible,
   manilaCivilDate,
+  portalTracker,
 } from '@rg/shared';
 import { readSettingBlock } from '../../content/settings';
 import { getDb } from '../../db/client';
-import { bookings, payments, tours } from '../../db/schema';
+import { bookings, drivers, payments, tours, vans } from '../../db/schema';
 import { clearSessionCookie, setSessionCookie } from '../../middleware/session-cookie';
 import { findBookingByCredentials } from '../../services/portal-auth';
 import { createSession, revokeSession } from '../../services/sessions';
@@ -194,6 +196,162 @@ export const portalRouter = router({
             instructions: qrBlock.instructions,
           }
         : null,
+    };
+  }),
+
+  /**
+   * The whole booking page (§7, Week 4 Task 9): the five-step tracker, the
+   * balance, the rejection reason if there is one, and the assigned driver
+   * while they may still be shown.
+   *
+   * **`customerProcedure`, no input** — the same structural rule
+   * `manualPayment` above follows: the session names the booking, so there
+   * is no reference to pass and no way to ask for another guest's.
+   *
+   * ## Every number comes from here
+   *
+   * `balanceCentavos` and `amountDueCentavos` are computed on the server
+   * from the booking's own price snapshot. The page formats and never
+   * calculates — CLAUDE.md's first DO NOT, and the client-side arithmetic
+   * guard would fail the build if it tried.
+   *
+   * ## The tracker is §7's table, not this resolver's opinion
+   *
+   * `portalTracker()` in `@rg/shared` implements the table verbatim and is
+   * exhaustively tested there over all eight statuses. It is called HERE
+   * rather than in the browser so that the server and the page can never
+   * disagree about which steps are lit.
+   *
+   * ## The driver's number is withheld rather than hidden
+   *
+   * `isDriverVisible()` decides, and when it says no the details are not in
+   * the response at all — not merely unrendered. A driver's mobile is
+   * personal data (RA 10173) and "the component does not show it" is not
+   * the same as "the guest cannot read it in the network tab".
+   */
+  booking: customerProcedure.query(async ({ ctx }) => {
+    const [row] = await getDb()
+      .select({
+        ref: bookings.ref,
+        status: bookings.status,
+        payMode: bookings.payMode,
+        tourTitle: tours.title,
+        tourDate: bookings.tourDate,
+        pax: bookings.pax,
+        leadName: bookings.leadName,
+        totalCentavos: bookings.totalCentavos,
+        // Aliased — see the note in `manualPayment` on the payment guard.
+        paidCentavos: bookings.amountPaidCentavos,
+        priceSnapshot: bookings.priceSnapshot,
+        holdExpiresAt: bookings.holdExpiresAt,
+        driverId: bookings.driverId,
+        vanId: bookings.vanId,
+      })
+      .from(bookings)
+      .innerJoin(tours, eq(tours.id, bookings.tourId))
+      .where(eq(bookings.id, ctx.session.subjectId))
+      .limit(1);
+
+    if (!row) {
+      throw new TRPCError({ code: 'NOT_FOUND', message: 'We could not find that booking.' });
+    }
+
+    /*
+     * Every receipt this booking has, newest first. The newest is the one
+     * the guest is waiting on; a `rejected` one carries the reason §7 says
+     * to show them.
+     */
+    const receipts = await getDb()
+      .select({
+        id: payments.id,
+        status: payments.status,
+        rejectReason: payments.rejectReason,
+        createdAt: payments.createdAt,
+      })
+      .from(payments)
+      .where(
+        and(
+          eq(payments.bookingId, ctx.session.subjectId),
+          eq(payments.provider, 'manual'),
+          eq(payments.type, 'payment'),
+          isNotNull(payments.receiptPath),
+        ),
+      )
+      .orderBy(desc(payments.id));
+
+    const latest = receipts[0];
+    const expected =
+      row.payMode === 'full'
+        ? row.totalCentavos
+        : depositCentavos(row.totalCentavos, row.priceSnapshot.depositPercent);
+    const tourDate = manilaCivilDate(row.tourDate);
+    const now = new Date();
+
+    /*
+     * The driver and the van, read only when they may be shown. Two
+     * queries rather than a join on the main read, because the usual answer
+     * is "no driver yet" and a join would pay for the lookup on every call.
+     */
+    let driver: {
+      name: string;
+      phone: string;
+      vanModel: string | null;
+      vanPlate: string | null;
+    } | null = null;
+    if (row.driverId !== null && isDriverVisible(row.status, tourDate, now)) {
+      const [assigned] = await getDb()
+        .select({ name: drivers.name, phone: drivers.phone })
+        .from(drivers)
+        .where(eq(drivers.id, row.driverId))
+        .limit(1);
+      if (assigned) {
+        const [van] = row.vanId
+          ? await getDb()
+              .select({ model: vans.model, plate: vans.plate })
+              .from(vans)
+              .where(eq(vans.id, row.vanId))
+              .limit(1)
+          : [undefined];
+        driver = {
+          name: assigned.name,
+          phone: assigned.phone,
+          vanModel: van?.model ?? null,
+          vanPlate: van?.plate ?? null,
+        };
+      }
+    }
+
+    return {
+      ref: row.ref,
+      status: row.status,
+      leadName: row.leadName,
+      tourTitle: row.tourTitle,
+      tourDate,
+      pax: row.pax,
+      totalCentavos: row.totalCentavos,
+      paidCentavos: row.paidCentavos,
+      /** What is still owed on the whole booking — the "balance due on tour day" of §7. */
+      balanceCentavos: Math.max(row.totalCentavos - row.paidCentavos, 0),
+      /** What to pay NOW: the deposit (or the full total), less anything paid. */
+      amountDueCentavos: Math.max(expected - row.paidCentavos, 0),
+      holdExpiresAt: row.holdExpiresAt,
+      tracker: portalTracker({
+        status: row.status,
+        paidCentavos: row.paidCentavos,
+        hasReceipt: receipts.length > 0,
+      }),
+      receipt: latest
+        ? {
+            status: latest.status,
+            /** Only ever set on a rejection, and §7 says to show it. */
+            rejectReason: latest.status === 'rejected' ? latest.rejectReason : null,
+            submittedAt: latest.createdAt,
+          }
+        : null,
+      uploadsRemaining: Math.max(RECEIPT_UPLOAD_MAX_PER_BOOKING - receipts.length, 0),
+      driver,
+      /** §7: the review form appears after `completed`. Task 10 owns the form. */
+      canReview: row.status === 'completed',
     };
   }),
 });
