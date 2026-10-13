@@ -113,6 +113,39 @@ describe('mixed-status batches (207) under skipSuccessfulRequests', () => {
       await request(app).post('/trpc/checkout.bookingLookup').expect(200);
     }
   });
+
+  /**
+   * Second reader on the F1 fix, and the one property none of us could
+   * settle by reading the library: **the give-back has to scale with the
+   * counting.** Counting one attempt per matched call means a SUCCESSFUL
+   * batch of N takes N hits on the way in, so it must return N on `finish`,
+   * not one. If it returned one, an all-successful batch of three would net
+   * +2 permanently and a guest batching their own real lookups would
+   * accumulate hits until §7's lookup locked them out for fifteen minutes —
+   * an availability bug, invisible from the symptom, erring toward refusing
+   * a guest their own booking.
+   *
+   * **The budget has to be at least the batch size** or the limiter trips
+   * mid-batch and the test measures nothing: three calls against a budget
+   * of two is a 429 on the third increment, before any `finish` fires. So
+   * `limit` is 3 here, and the discriminating move is a SECOND identical
+   * batch rather than a single call — after one batch of three, a per-call
+   * give-back leaves the counter at 0 (second batch: 1,2,3, passes) while a
+   * once-per-request give-back leaves it at 2 (second batch: 3,4 — refused
+   * on its second increment). A single follow-up call cannot tell those
+   * apart: 2 + 1 = 3 is still inside a budget of 3.
+   */
+  it('gives back every hit an all-successful BATCH took, not just one', async () => {
+    const app = appAnswering(200, 3);
+    const batch = '/trpc/checkout.bookingLookup,checkout.bookingLookup,checkout.bookingLookup';
+
+    // A leak of (N - 1) per request would refuse the second batch outright.
+    for (let i = 0; i < 5; i += 1) {
+      await request(app).post(`${batch}?batch=1`).expect(200);
+    }
+    // And the budget is genuinely intact afterwards, not merely un-tripped.
+    await request(app).post('/trpc/checkout.bookingLookup').expect(200);
+  });
 });
 
 /**
