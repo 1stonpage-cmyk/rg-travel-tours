@@ -186,9 +186,15 @@ works around, so finding it late means a rewrite rather than a fix.
       server's. Email was deferred to Week 4 by owner decision 2026-10-12 (Week 3 Q2),
       which is exactly why this test is worth doing now, while it is still free.
 
-      **The transport is decided (owner decision 2026-10-13, Week 3 Q2):** `nodemailer`
-      over SMTP, with **Brevo's SMTP relay (free tier)** as the default provider, and **no
-      other email library**. Every value lives in `.env` — `SMTP_HOST`, `SMTP_PORT`,
+      **PROPOSED transport, NOT YET CONFIRMED — do not act on the vendor choice yet:**
+      `nodemailer` over SMTP, with **Brevo's SMTP relay (free tier)** as the proposed default
+      provider, and **no other email library**.
+      Status: this reached the project through a subagent's thread rather than the owner's own
+      message to the session that owns this file, so the vendor is recorded here as a proposal
+      awaiting the owner's confirmation. **Confirm the provider before creating any account or
+      putting credentials anywhere.** The `nodemailer`-over-SMTP shape is the spec's own stack
+      (§2) and is not in question; only the provider is.
+      Whatever provider is confirmed, every value lives in `.env` — `SMTP_HOST`, `SMTP_PORT`,
       `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` — so swapping providers is a config change, not
       a code change. Tests use a **mock transport and never send real email.**
 
@@ -198,15 +204,19 @@ works around, so finding it late means a rewrite rather than a fix.
       PayMongo provider — still no new dependency, but no longer `nodemailer`). Which is
       why this test comes before the email layer is built, not after.
 
-- [ ] **Create the Brevo account** and generate its SMTP credentials, then put them in the
-      deployed `.env` only — never in the repo (`SMTP_PASS` is a secret like any gateway key).
+- [ ] **AFTER the owner confirms the provider** (see the status note above — do not create an
+      account for an unconfirmed vendor), create the account, generate its SMTP credentials, and
+      put them in the deployed `.env` only — never in the repo (`SMTP_PASS` is a secret like any
+      gateway key).
 
 - [ ] **Add the sender-authentication DNS records in Cloudflare for `travelsugbo.com`:**
-      **SPF**, **DKIM** (both from Brevo's own setup page, since the DKIM key is
-      account-specific) and a **DMARC** record. Without SPF and DKIM, booking confirmations
+      **SPF**, **DKIM** (both from the chosen provider's own setup page, since the DKIM key is
+      account-specific) and a **DMARC** record. **This item does not wait on the provider
+      decision** — every sending domain needs all three whoever sends the mail, and DNS
+      propagation has real lead time, so it is the part worth starting first. Without SPF and DKIM, booking confirmations
       from a brand-new sending domain land in spam or are rejected outright — and a guest who
       never receives their booking reference cannot find their booking, which turns a working
-      system into a support call. Verify them with Brevo's own domain check **and**
+      system into a support call. Verify them with the provider's own domain check **and**
       independently (`dig TXT travelsugbo.com`, `dig TXT <selector>._domainkey.travelsugbo.com`,
       `dig TXT _dmarc.travelsugbo.com`) before trusting the dashboard's green tick. Start DMARC
       at `p=none` so nothing is silently discarded while the records are being proven, then
