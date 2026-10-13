@@ -40,13 +40,15 @@ import {
   isDriverVisible,
   manilaCivilDate,
   portalTracker,
+  submitReviewInput,
 } from '@rg/shared';
 import { readSettingBlock } from '../../content/settings';
-import { getDb } from '../../db/client';
-import { bookings, drivers, payments, tours, vans } from '../../db/schema';
+import { getDb, type Transaction } from '../../db/client';
+import { bookings, drivers, payments, reviews, tours, vans } from '../../db/schema';
 import { clearSessionCookie, setSessionCookie } from '../../middleware/session-cookie';
 import { findBookingByCredentials } from '../../services/portal-auth';
 import { createSession, revokeSession } from '../../services/sessions';
+import { writeAudit } from '../../services/audit';
 import { customerProcedure, publicProcedure, router } from '../../trpc';
 
 /**
@@ -279,6 +281,18 @@ export const portalRouter = router({
       )
       .orderBy(desc(payments.id));
 
+    /*
+     * §7's review form appears after `completed` — but not once the guest
+     * has already written one, or the page would invite them to do it
+     * again and `submitReview` would refuse them.
+     */
+    const [existingReview] = await getDb()
+      .select({ id: reviews.id })
+      .from(reviews)
+      .where(eq(reviews.bookingId, ctx.session.subjectId))
+      .limit(1);
+    const hasReview = existingReview !== undefined;
+
     const latest = receipts[0];
     const expected =
       row.payMode === 'full'
@@ -350,8 +364,121 @@ export const portalRouter = router({
         : null,
       uploadsRemaining: Math.max(RECEIPT_UPLOAD_MAX_PER_BOOKING - receipts.length, 0),
       driver,
-      /** §7: the review form appears after `completed`. Task 10 owns the form. */
-      canReview: row.status === 'completed',
+      /** §7: the review form appears after `completed`, and only then. */
+      canReview: row.status === 'completed' && !hasReview,
     };
+  }),
+
+  /**
+   * The post-tour review (§7, Week 4 Task 10).
+   *
+   * **It is written `pending` and it is never published by this
+   * procedure.** §7: "rate & review form (verified badge, sub-scores) →
+   * `pending` → admin approval". A guest writing straight onto the public
+   * site would be exactly the fake-social-proof risk CLAUDE.md forbids,
+   * arrived at from the other direction — so `status` is not an input,
+   * there is no code path here that sets anything else, and
+   * `portal-review.test.ts` asserts the review is absent from
+   * `reviews.published` until an admin moves it.
+   *
+   * ## What the guest supplies, and what the server fills in
+   *
+   * The input is a rating, a body and four optional sub-scores. The
+   * BOOKING, the TOUR, the NAME and the STATUS all come from the server:
+   * the booking from the session, the tour from the booking, the name from
+   * `lead_name`, the status from this rule. A guest cannot sign someone
+   * else's review, point one at a tour they did not take, or publish it.
+   *
+   * ## `booking_id` is what makes it verified
+   *
+   * The column's own note says so, and that is the whole mechanism (plan
+   * question Q12): a review with a booking behind it happened; one without
+   * is admin-entered. There is no separate `verified` flag to set, and
+   * `is_sample` is false — the seeded sample reviews carry `true` and the
+   * production build guard uses it.
+   *
+   * ## One review per booking
+   *
+   * Checked inside the transaction, under the booking row lock, so two
+   * taps of a slow Submit button cannot write two. A second attempt is
+   * refused rather than silently merged: the guest wrote something and is
+   * owed an answer about what happened to it.
+   */
+  submitReview: customerProcedure.input(submitReviewInput).mutation(async ({ ctx, input }) => {
+    return getDb().transaction(async (tx: Transaction) => {
+      const [booking] = await tx
+        .select({
+          id: bookings.id,
+          ref: bookings.ref,
+          status: bookings.status,
+          tourId: bookings.tourId,
+          leadName: bookings.leadName,
+        })
+        .from(bookings)
+        .where(eq(bookings.id, ctx.session.subjectId))
+        .for('update')
+        .limit(1);
+
+      if (!booking) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'We could not find that booking.' });
+      }
+
+      /*
+       * §7: after `completed`. A guest cannot review a tour they have not
+       * been on — including one they paid for that has not run yet, which
+       * is the case that would otherwise slip through.
+       */
+      if (booking.status !== 'completed') {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'You can leave a review once your tour is complete.',
+        });
+      }
+
+      const [existing] = await tx
+        .select({ id: reviews.id })
+        .from(reviews)
+        .where(eq(reviews.bookingId, booking.id))
+        .limit(1);
+      if (existing) {
+        throw new TRPCError({
+          code: 'CONFLICT',
+          message: 'You have already left a review for this booking. Message us to change it.',
+        });
+      }
+
+      const [inserted] = await tx.insert(reviews).values({
+        tourId: booking.tourId,
+        // What makes it verified. See the note above.
+        bookingId: booking.id,
+        // The booking's own name, never one the browser sent.
+        name: booking.leadName,
+        rating: input.rating,
+        guide: input.guide ?? null,
+        value: input.value ?? null,
+        punctuality: input.punctuality ?? null,
+        safety: input.safety ?? null,
+        body: input.body,
+        // THE point of this procedure. An admin publishes; a guest does not.
+        status: 'pending',
+        isSample: false,
+      });
+
+      await writeAudit(tx, {
+        actorType: 'customer',
+        actorId: null,
+        action: 'review.submitted',
+        entity: 'reviews',
+        entityId: Number(inserted.insertId),
+        data: {
+          bookingRef: booking.ref,
+          rating: input.rating,
+          // Spelled out so the trail says a guest did NOT publish this.
+          status: 'pending',
+        },
+      });
+
+      return { status: 'pending' as const };
+    });
   }),
 });

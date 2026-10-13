@@ -32,6 +32,7 @@ import { Loader2, RefreshCw } from 'lucide-react';
 import { formatPeso, portalPollMs } from '@rg/shared';
 import DriverCard from '@/components/portal/DriverCard';
 import ReceiptUpload from '@/components/portal/ReceiptUpload';
+import ReviewForm from '@/components/portal/ReviewForm';
 import Tracker from '@/components/portal/Tracker';
 import { Button } from '@/components/ui/button';
 import { trpc } from '@/lib/trpc';
@@ -190,6 +191,18 @@ export default function PortalBookingPage() {
         <div className="mt-6">
           <DriverCard driver={booking.driver} />
         </div>
+      ) : null}
+
+      {/*
+       * The review form, after `completed` and only while the server still
+       * says there is one to write (Task 10). `canReview` goes false the
+       * moment a review exists, so the page never invites a second one that
+       * `submitReview` would refuse.
+       */}
+      {booking.canReview ? (
+        <section className="border-border bg-background mt-6 rounded-2xl border p-5">
+          <ReviewForm onSubmitted={() => void query.refetch()} />
+        </section>
       ) : null}
 
       <p className="text-muted-foreground mt-8 text-xs">

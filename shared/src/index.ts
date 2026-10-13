@@ -5,6 +5,7 @@ export * from './coupon';
 export * from './money';
 export * from './portal';
 export * from './receipts';
+export * from './review';
 export * from './roles';
 export * from './time';
 export * from './schemas/public';
