@@ -7,6 +7,7 @@ import { TIMEZONE } from '@rg/shared';
 import { createContext } from './context';
 import type { SiteEnv } from './env';
 import { createHtmlHandler } from './html';
+import { createReceiptRouter } from './routers/receipts';
 import { errorHandler } from './middleware/error-handler';
 import { rejectMalformedUrl } from './middleware/malformed-url';
 import {
@@ -153,6 +154,14 @@ export function createApp(
    * undefined and every `adminProcedure` refused everything — closed, but
    * also never exercised. See `context.ts`.
    */
+  /*
+   * Receipts (Week 4, Task 3). Mounted with its own cookie parser because
+   * it reads the session itself — it answers bytes, not JSON, so it is an
+   * Express route rather than a tRPC procedure. Every refusal is the same
+   * 404; see the route's own note on why.
+   */
+  app.use('/api/receipts', cookieParser(), createReceiptRouter());
+
   app.use('/trpc', cookieParser());
   app.use('/trpc', createExpressMiddleware({ router: appRouter, createContext }));
 
