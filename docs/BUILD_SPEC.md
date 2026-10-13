@@ -835,28 +835,40 @@ confirmation email in 3F.
   that fixed order, and `assessCapacity()` returns a verdict rather than throwing. The
   cross-tour race is pinned by a genuinely concurrent test, and the fleet lock's removal is
   proven to break it.
-- **3C** Hold creation + expiry cron. **Partial.** Hold creation is done —
-  `services/create-hold.ts`, one transaction from quote to `pending_payment` with a 15-minute
-  hold, the price snapshot, the add-on lines and an audit row, under both slot locks with a
-  retry on deadlock. **The expiry sweep is not built**: nothing yet moves a lapsed hold to
-  `expired`, so a hold that is never paid holds its capacity indefinitely. That is the gap
-  `node-cron` and `server/src/jobs` fill.
-- **3D** Checkout page + coupon validation. **Partial.** Coupon validation is done
-  (`services/coupons.ts`, one typed error per §6 rule, re-checked under the lock inside the
-  hold), and the checkout page renders a server-computed quote with no arithmetic on any
-  centavo value in `client/`. **Outstanding:** the date picker does not yet consume
-  `SettingsPayload.bookingWindow`, so it can still offer a date the server refuses, and the
-  resulting `date_not_bookable` refusal has no amber copy of its own.
+- **3C** Hold creation + expiry cron. ✅ DONE — `services/create-hold.ts` is one transaction
+  from quote to `pending_payment` with a 15-minute hold, the price snapshot, the add-on lines
+  and an audit row, under both slot locks with a retry on deadlock; and `jobs/expire-holds.ts`
+  now sweeps lapsed holds to `expired` every minute via `node-cron`, freeing both the capacity
+  and the coupon reservation. **It never expires a booking with money against it** — a guest who
+  paid after their hold lapsed is left for the review queue, enforced by two conditions in the
+  UPDATE's own WHERE and pinned by a two-connection test that fails if the race did not actually
+  overlap. One poisoned row is logged, counted and skipped rather than aborting the sweep.
+  **Deploy note:** the schedule must run in a single process — PM2 fork mode, one instance — or
+  every worker runs it and each sweep fires N times (see `LAUNCH_CHECKLIST.md`).
+- **3D** Checkout page + coupon validation. ✅ DONE — `services/coupons.ts` gives one typed
+  error per §6 rule, re-checked under the coupon row's lock inside the hold; the checkout page
+  renders a server-computed quote with **no arithmetic on any centavo value in `client/`**, which
+  a repo-wide guard asserts; the date input takes its bounds from `SettingsPayload.bookingWindow`
+  — two civil dates resolved server-side, never a browser clock — so it no longer offers a date
+  the server would refuse; and `date_not_bookable` has its own amber sentence, distinct from the
+  capacity copy, keyed off the single shared constant rather than a retyped literal.
 - **3E** Checkout session + webhook through the `PaymentProvider` seam (signature, idempotency
   on `(provider, provider_event_id)`, amount check). ✅ DONE — `checkout.startPayment` starts a
   PayMongo test-mode checkout from a held booking, sending the amount read off the booking row;
   the webhook half, with the signature check and the `(provider, provider_event_id)` unique
   index, predates this week. Xendit remains a stub that cannot mark anything paid — see the
   2026-10-10 multi-gateway change in section 6.
-- **3F** Confirmation page (read-only polling) + confirmation emails. **Not done.** The booking
-  status page is not built, and the confirmation email is blocked on Q2 (email provider). When
-  the status page is built it must stay read-only: nothing on a redirect may confirm a booking,
-  and the guard is that `checkout` exposes exactly two mutations.
+- **3F** Confirmation page (read-only polling) + confirmation emails. **Partial.** The booking
+  status page is **done** — `BookingStatusPage` polls `checkout.bookingStatus` (a query) and
+  confirms nothing itself, mounted at the exact route `startPayment` sends PayMongo, asserted
+  from the shared constant rather than a retyped path. The read-only guarantee is guarded three
+  ways: `checkout` exposes exactly two mutations (`createHold`, `startPayment`), polling is
+  asserted to fire none of them, and the one retry action is pinned to `startPayment` alone.
+  **Confirmation emails are NOT done**, and their scope is an OPEN question: the 2026-10-12
+  decision deferred email to Week 4, which would move this clause out of Week 3 altogether, but
+  that has not been confirmed in the executing session — so this line records the question
+  rather than asserting an answer. Nothing in Week 3 depends on email; a guest sees the booking
+  on screen and can find it again by ref + email.
 
 Roadmap items to pick up in or after this week:
 
