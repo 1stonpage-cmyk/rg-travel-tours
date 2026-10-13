@@ -25,6 +25,7 @@ import { SESSION_COOKIE } from '../middleware/session-cookie';
 import { generateBookingRef } from '../services/booking-ref';
 import { users } from '../db/schema';
 import { createSession } from '../services/sessions';
+import { recordManualReceipt } from '../services/payments/manual-receipt';
 import { receiptStorageDir, storeReceipt } from '../services/uploads';
 import { describeWithDb } from './helpers/db';
 
@@ -271,6 +272,76 @@ describeWithDb('GET /api/receipts/:name', () => {
     expect(
       (await request(createApp()).get(`/api/receipts/${path}`).set('Cookie', cookie(token))).status,
     ).toBe(404);
+  });
+
+  /* ====================================================================
+   * Superseded receipts (Week 4 Task 6; owner decision 2026-10-14, Q6).
+   *
+   * A second upload does not delete the first — it marks it `superseded`
+   * and keeps the file, so a disputed transfer can still be examined. The
+   * access rule narrows with it: the older file is **staff only**, because
+   * the guest has already moved on to the receipt that replaced it.
+   * ==================================================================== */
+
+  it('serves a SUPERSEDED receipt to staff', async () => {
+    const { bookingId, path: first } = await makeBookingWithReceipt();
+    const second = await storeReceipt({
+      buffer: JPEG,
+      mimetype: 'image/jpeg',
+      originalname: 'r2.jpg',
+    });
+    created.files.push(second.path);
+    await recordManualReceipt({
+      bookingId,
+      method: 'gcash',
+      txnRef: `TXN${unique()}`,
+      receiptPath: second.path,
+      now: new Date(),
+    });
+
+    const { token } = await createSession('user', await makeStaff(), new Date());
+    expect(
+      (await request(createApp()).get(`/api/receipts/${first}`).set('Cookie', cookie(token)))
+        .status,
+      'staff cannot read the receipt they are being asked to compare against',
+    ).toBe(200);
+  });
+
+  /**
+   * And NOT to the guest who uploaded it — with the same 404 as any
+   * stranger's file, so the refusal does not announce that it still exists.
+   * Their current receipt is still theirs to see, which is what makes this
+   * a narrowing rather than a lockout.
+   */
+  it('REFUSES a superseded receipt to the guest, while still serving the current one', async () => {
+    const { bookingId, path: first } = await makeBookingWithReceipt();
+    const second = await storeReceipt({
+      buffer: JPEG,
+      mimetype: 'image/jpeg',
+      originalname: 'r2.jpg',
+    });
+    created.files.push(second.path);
+    await recordManualReceipt({
+      bookingId,
+      method: 'gcash',
+      txnRef: `TXN${unique()}`,
+      receiptPath: second.path,
+      now: new Date(),
+    });
+
+    const { token } = await createSession('customer', bookingId, new Date());
+    const app = createApp();
+
+    const superseded = await request(app)
+      .get(`/api/receipts/${first}`)
+      .set('Cookie', cookie(token));
+    expect(superseded.status).toBe(404);
+    expect(superseded.body).toEqual({ error: 'Not found' });
+
+    expect(
+      (await request(app).get(`/api/receipts/${second.path}`).set('Cookie', cookie(token))).status,
+      'the guest lost access to the receipt they just uploaded',
+    ).toBe(200);
   });
 
   /**

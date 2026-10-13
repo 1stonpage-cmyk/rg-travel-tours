@@ -1308,7 +1308,27 @@ export const PAYMENT_METHODS = [
  * payment service's job, and the raw original is kept verbatim in
  * `provider_status` for support and reconciliation.
  */
-export const PAYMENT_STATUSES = ['pending', 'paid', 'rejected', 'failed', 'refunded'] as const;
+/**
+ * `superseded` is the manual-receipt flow's (owner decision 2026-10-14, Q6):
+ * a guest who uploads a second receipt while the first is still `pending`
+ * does not overwrite it — the older row is marked `superseded` and kept.
+ *
+ * Kept, because a replaced row destroys the evidence of what the guest
+ * first sent, which is exactly what is wanted when a transfer is disputed.
+ * A separate value rather than reusing `rejected`, because no admin
+ * rejected it: `rejected` carries a `reject_reason` the guest is shown, and
+ * reading "we could not confirm your payment" for a receipt nobody looked
+ * at would be a lie told by an enum. Only a `pending` row can be approved
+ * or rejected, so a superseded one is permanently out of the decision path.
+ */
+export const PAYMENT_STATUSES = [
+  'pending',
+  'paid',
+  'rejected',
+  'superseded',
+  'failed',
+  'refunded',
+] as const;
 
 /**
  * Every payment and every refund, for every provider (BUILD_SPEC §10, §6).

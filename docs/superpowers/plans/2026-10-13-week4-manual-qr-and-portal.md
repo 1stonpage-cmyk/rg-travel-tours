@@ -973,16 +973,21 @@ Each names the task that needs it, so none of them blocks a task that does not.
 screen. I will propose a `payment_qr` settings block when Task 8 is dispatched. **I will not
 invent the account name or number.**
 
-**Q4 (Task 6) — which payment methods may a guest pick for a manual transfer?** `PAYMENT_METHODS`
-has `gcash`, `maya`, `bank_transfer` and more; §6 records "whichever instrument the guest
-actually used".
+**Q4 (Task 6) — ANSWERED 2026-10-14: `gcash`, `maya` and `bank_transfer` only**, refused at the
+Zod boundary in `/shared` (`MANUAL_TRANSFER_METHODS`), with a test per refused method. `card`,
+`grab_pay` and `qrph` belong to the gateway; `cash` is §8's office/driver flow and must not be
+reachable from a guest's browser.
 
 **Q5 (Task 8) — is the manual QR flow reachable from checkout today?** Week 3 shipped
 `startPayment` for the gateway only, so this may need a "pay by QR transfer instead" branch in a
 Week 3 file.
 
-**Q6 (Task 6) — a second receipt while the first is still pending: replace the row, or keep
-both?** Replace is planned; the audit trail arguably wants both.
+**Q6 (Task 6) — ANSWERED 2026-10-14: keep both.** A new receipt marks the older row
+`superseded` — never deleted, never approvable — and only the newest `pending` row can be
+approved or rejected in Task 7. Capped at **five** uploads per booking (plus the per-IP upload
+limit); the sixth is refused with an amber "please message us". The files of superseded receipts
+stay retrievable, **staff only**. This required one new `payments.status` enum value and
+therefore migration `0009_payments_superseded_status.sql`.
 
 **Q9 (Task 9) — "visible from assignment until tour day ends" (§7, driver card): what is
 "ends"?** `tours` has `duration_hours` but no departure time.

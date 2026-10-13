@@ -327,3 +327,36 @@ export function createBookingLookupLimiter(): RequestHandler {
     skipSuccessfulRequests: true,
   });
 }
+
+/**
+ * The receipt upload (Week 4 plan, Task 6): **10 uploads per IP per 15
+ * minutes**, counting successes as well as failures.
+ *
+ * Unlike every limiter above this one, it is mounted on an Express PATH
+ * rather than built from tRPC procedure names: a receipt is bytes, so it
+ * arrives at `POST /api/receipts/upload` and not through `/trpc`.
+ * `createProcedureRateLimit` has nothing to match on, and its
+ * batch-counting machinery has nothing to count.
+ *
+ * Successes count here, which is the opposite of the login limiters. The
+ * cost being limited is not guessing, it is **5MB of body and a disk
+ * write**, and a successful upload spends exactly as much of both as a
+ * failed one. The per-booking cap of five (`RECEIPT_UPLOAD_MAX_PER_BOOKING`,
+ * enforced in `services/payments/manual-receipt.ts`) is the other half: this
+ * one bounds the bandwidth, that one bounds the queue an admin has to read.
+ *
+ * Ten rather than five, because a guest whose first upload was rejected by
+ * the magic-byte check (a HEIC photo renamed `.jpg`, which phones really do)
+ * should be able to try again a few times before a limiter stops them.
+ */
+export const RECEIPT_UPLOAD_WINDOW_MS = 15 * 60_000;
+export const RECEIPT_UPLOAD_MAX_PER_IP = 10;
+
+export function createReceiptUploadLimiter(): RequestHandler {
+  return rateLimit({
+    windowMs: RECEIPT_UPLOAD_WINDOW_MS,
+    limit: RECEIPT_UPLOAD_MAX_PER_IP,
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+}

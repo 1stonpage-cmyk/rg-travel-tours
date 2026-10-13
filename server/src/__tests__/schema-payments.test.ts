@@ -134,7 +134,21 @@ describe('payments table (declaration)', () => {
    * database's.
    */
   it('keeps our status vocabulary separate from the gateway wording', () => {
-    expect([...PAYMENT_STATUSES]).toEqual(['pending', 'paid', 'rejected', 'failed', 'refunded']);
+    /*
+     * `superseded` joined the list in Week 4 Task 6 (owner decision
+     * 2026-10-14, Q6) and is ours in exactly the sense this test is about:
+     * no gateway has such a state. A guest's second receipt pushes the
+     * first aside without any admin rejecting it, and reusing `rejected`
+     * would have shown that guest a rejection reason nobody wrote.
+     */
+    expect([...PAYMENT_STATUSES]).toEqual([
+      'pending',
+      'paid',
+      'rejected',
+      'superseded',
+      'failed',
+      'refunded',
+    ]);
     expect(column('status')?.enumValues).toEqual([...PAYMENT_STATUSES]);
     expect(column('status')?.notNull).toBe(true);
     expect(column('status')?.default).toBe('pending');

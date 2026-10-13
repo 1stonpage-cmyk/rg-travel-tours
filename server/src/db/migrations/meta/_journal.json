@@ -64,6 +64,13 @@
       "when": 1791768319299,
       "tag": "0008_money_columns_centavos",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "5",
+      "when": 1791917347865,
+      "tag": "0009_payments_superseded_status",
+      "breakpoints": true
     }
   ]
 }

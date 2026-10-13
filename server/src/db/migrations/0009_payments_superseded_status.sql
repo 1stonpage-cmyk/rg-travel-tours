@@ -1,0 +1,1 @@
+ALTER TABLE `payments` MODIFY COLUMN `status` enum('pending','paid','rejected','superseded','failed','refunded') NOT NULL DEFAULT 'pending';

@@ -294,3 +294,75 @@ export class PaymentVerificationNotPermittedError extends Error {
     this.actorType = actor;
   }
 }
+
+/* ======================================================================
+ * The manual receipt flow (Week 4 plan, Task 6; BUILD_SPEC Section 6
+ * steps 3-4). Both of these are shown to the GUEST, through the upload
+ * route, so each carries a message that is safe to read in a browser and
+ * says what to do next.
+ * ====================================================================== */
+
+/**
+ * The booking cannot take a receipt right now.
+ *
+ * One class with a `reason`, rather than five classes: the caller shows the
+ * guest a different sentence per reason, and splitting that across a type
+ * hierarchy would put the copy in five places. The reasons are deliberately
+ * NOT a free string - each is a decision made under the booking row lock.
+ *
+ * `already_paid` is its own reason rather than a kind of `wrong_status`,
+ * because it is the one a guest is most likely to hit by accident: they
+ * paid, the webhook landed, and they upload the screenshot anyway. That is
+ * not an error they caused, and the message says so.
+ */
+export type ReceiptRefusalReason =
+  'already_paid' | 'booking_cancelled' | 'booking_expired' | 'hold_expired' | 'nothing_due';
+
+const RECEIPT_REFUSAL_MESSAGE: Record<ReceiptRefusalReason, string> = {
+  already_paid:
+    'This booking is already paid, so there is nothing to upload. Message us if that looks wrong.',
+  booking_cancelled:
+    'This booking has been cancelled, so a receipt cannot be added to it. Please message us.',
+  booking_expired:
+    'This booking has expired and its seats have been released. Please book again, or message us.',
+  hold_expired:
+    'The hold on this booking has run out, so we cannot accept a receipt against it. Please message us and we will check whether the seats are still free.',
+  nothing_due: 'There is nothing left to pay on this booking. Message us if that looks wrong.',
+};
+
+export class ReceiptNotAcceptedError extends Error {
+  readonly bookingId: number;
+  readonly reason: ReceiptRefusalReason;
+  /** Safe to show a guest: no ids, no internal status names. */
+  readonly guestMessage: string;
+
+  constructor(bookingId: number, reason: ReceiptRefusalReason) {
+    super(`Booking ${bookingId} cannot accept a receipt: ${reason}`);
+    this.name = 'ReceiptNotAcceptedError';
+    this.bookingId = bookingId;
+    this.reason = reason;
+    this.guestMessage = RECEIPT_REFUSAL_MESSAGE[reason];
+  }
+}
+
+/**
+ * Five receipts on one booking is enough (owner decision 2026-10-14, Q6).
+ *
+ * A cap on rows, not a rate limit - the per-IP limiter handles a flood.
+ * This stops a patient guest burying the one receipt an admin needs to
+ * look at under forty near-identical ones, and hands the case to a human
+ * instead.
+ */
+export class ReceiptLimitReachedError extends Error {
+  readonly bookingId: number;
+  readonly count: number;
+  readonly guestMessage: string;
+
+  constructor(bookingId: number, count: number, guestMessage: string) {
+    super(`Booking ${bookingId} already has ${count} receipts, which is the maximum`);
+    this.name = 'ReceiptLimitReachedError';
+    this.bookingId = bookingId;
+    this.count = count;
+    this.guestMessage = guestMessage;
+  }
+}
