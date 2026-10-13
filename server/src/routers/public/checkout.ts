@@ -19,6 +19,14 @@
  * third mutation on this router is how a redirect page quietly becomes a way
  * to confirm a booking.
  *
+ * **`bookingStatus` (Task 9) is this rule's other half: the redirect page's
+ * own query.** §6: "The success redirect page only reads status (polls until
+ * the webhook lands). It never confirms anything itself." It is a plain
+ * `publicProcedure.query`, it writes nothing, and the enumeration test above
+ * is what makes "nothing here can confirm a booking" a checked fact rather
+ * than a hope — adding a mutation to answer a question this query already
+ * answers would be the easiest way to break it by accident.
+ *
  * All of them are `publicProcedure` — a guest has no session (task A4's
  * enumeration guard requires every procedure declare `publicProcedure` or
  * `adminProcedure(area)`, so anything else fails `procedure-role-metadata.test.ts`).
@@ -67,7 +75,10 @@ import {
   depositCentavos,
   formatPeso,
   isDateBookable,
+  manilaCivilDate,
   quoteInput,
+  type BookingStatus,
+  type PayMode,
   type QuoteResult,
 } from '@rg/shared';
 import { readSettingBlock } from '../../content/settings';
@@ -146,6 +157,73 @@ const availabilityInput = z
  * has misunderstood this endpoint.
  */
 const startPaymentInput = z.object({ ref: bookingRefSchema }).strict();
+
+/**
+ * `checkout.bookingStatus`'s own input (Task 9) — a ref and nothing else,
+ * for the same reason `startPaymentInput` above is `.strict()`: this is the
+ * page a guest lands on after paying, and it must not be possible to ask it
+ * to confirm, discount or otherwise decide anything by sending it extra
+ * fields. There is nothing to ignore here, either — a ref is the entire
+ * question.
+ */
+const bookingStatusInput = z.object({ ref: bookingRefSchema }).strict();
+
+/**
+ * The one "we could not find that booking" refusal, shared by every
+ * procedure here that looks a booking up by ref alone (`startPayment`,
+ * `bookingStatus`). A ref is half a portal credential (§7) — a stranger who
+ * guesses one must get back exactly the same sentence a stranger who typos
+ * one does, so this is written once rather than retyped per call site,
+ * which would otherwise invite the two copies to quietly drift apart.
+ */
+function bookingNotFound(): TRPCError {
+  return new TRPCError({ code: 'NOT_FOUND', message: 'We could not find that booking.' });
+}
+
+/**
+ * What `checkout.bookingStatus` answers with (Task 9) — status, amounts and
+ * a one-line tour summary, and nothing a guest could use to confirm, pay,
+ * cancel or alter the booking: there is no field here the page could feed
+ * back into another endpoint to do any of those things.
+ *
+ * `balanceCentavos` is the one subtraction in this file that is not a typed
+ * service's own output: `total - paid`, same formula the `bookings` table's
+ * own module note names as deliberately NOT a stored column ("if a query
+ * wants it, the query subtracts"). This is that query, run here because
+ * CLAUDE.md's "the server computes all money" rule is about who may be
+ * TRUSTED to produce a money figure — never about the server being allowed
+ * to subtract two of its own already-trusted numbers before replying. The
+ * client-side ban on `*Centavos` arithmetic (`checkout-page.test.tsx`'s
+ * repo-wide scan) is scoped to `client/` for exactly this reason: nothing
+ * under `client/` may compute money, and this file is not under `client/`.
+ */
+type BookingStatusResult = {
+  ref: string;
+  status: BookingStatus;
+  tourTitle: string;
+  /** Civil date (Asia/Manila), e.g. `'2026-12-25'` — see `bookings.tourDate`. */
+  date: string;
+  pax: number;
+  payMode: PayMode;
+  totalCentavos: number;
+  /**
+   * `bookings.amount_paid_centavos`, read-only, renamed on the wire to
+   * `paidCentavos`. Not a cosmetic choice: `schema-conventions.test.ts`'s
+   * A5b guard greps the whole server tree for the literal text
+   * `amountPaidCentavos:` to prove only `record-payment.ts` ever WRITES
+   * that column, and its regex cannot tell a `.select()` alias or a
+   * returned-object key apart from a `.set()` — a plain READ spelled with
+   * the DB column's own camelCase name would false-positive as a second
+   * writer. Renaming the field this file hands back is cheaper and more
+   * honest than teaching that guard to parse call expressions, and it costs
+   * nothing: this type is this procedure's own wire shape, not reused
+   * anywhere `amountPaidCentavos` is already the public contract.
+   */
+  paidCentavos: number;
+  balanceCentavos: number;
+  /** owner decision 2026-10-11, task 16b-3 — see `bookings.paymentReviewRequired`. */
+  paymentReviewRequired: boolean;
+};
 
 /**
  * The instruments offered at a PayMongo checkout (owner Ruling 7 / Q6).
@@ -393,6 +471,25 @@ function translateStartPaymentError(error: unknown): TRPCError {
  *
  * It extends and audits; it does NOT touch `status`, `amount_paid_centavos`
  * or the `payments` table. Starting a payment is not recording one.
+ *
+ * **Unstated dependency, now stated.** The "at most once" guarantee above
+ * is only as exact as `target`, and `target` is `created_at + 30 minutes`
+ * recomputed fresh on every call — so it is only reproducible bit-for-bit
+ * across calls if `created_at` itself round-trips through MySQL
+ * losslessly. That holds today because both `bookings.created_at`
+ * (`server/src/db/schema.ts:951`) and `bookings.hold_expires_at`
+ * (`:916`) are a bare `datetime`: no fractional-seconds field, so MySQL
+ * stores and returns whole seconds only, and the exact same whole-second
+ * value comes back on every read. A future migration to `datetime(3)` on
+ * either column would let a sub-second component survive on one side of
+ * the `<` comparison below but get rounded away on the other (the write
+ * path and the read path do not round fractional seconds the same way),
+ * so `holdExpiresAt < target` could stay true forever — every
+ * `startPayment` call on the same booking extending the hold again,
+ * instead of the second call matching no row as this function's own name
+ * promises. Nothing here enforces that dependency; it is just documented
+ * so the next person reaching for more precision on these two columns
+ * reads this first.
  */
 async function extendHoldForPayment(
   booking: { id: number; ref: string; createdAt: Date; holdExpiresAt: Date },
@@ -595,10 +692,10 @@ export const checkoutRouter = router({
           .limit(1);
 
         // Generic on purpose: a ref is half a portal credential (§7), so
-        // this must not tell a stranger whether a ref exists.
-        if (!booking) {
-          throw new TRPCError({ code: 'NOT_FOUND', message: 'We could not find that booking.' });
-        }
+        // this must not tell a stranger whether a ref exists. Shared with
+        // `bookingStatus` below so the two can never say something different
+        // for the same fact.
+        if (!booking) throw bookingNotFound();
 
         /*
          * Payable means `pending_payment` AND a hold that has not lapsed.
@@ -681,6 +778,76 @@ export const checkoutRouter = router({
         return { redirectUrl: checkout.redirectUrl };
       } catch (error) {
         throw translateStartPaymentError(error);
+      }
+    }),
+
+  /**
+   * The booking-status / payment-redirect page's own read (Task 9). This is
+   * the WHOLE resolver, on purpose: validate the input (`.input()`), read
+   * one row, translate "no row" into the shared generic refusal, and hand
+   * back a plain object. No write of any kind is reachable from here — see
+   * the enumeration test (`exposes no mutation that could confirm a
+   * booking`) and §6's own rule this procedure exists to satisfy: "The
+   * success redirect page only reads status ... It never confirms anything
+   * itself."
+   *
+   * `startPayment`'s `success_url` / `cancel_url` point at the page that
+   * calls this procedure, both built from `bookingPagePath()` (Ruling 25) —
+   * so whatever ref a guest is redirected back with is exactly the ref this
+   * resolves.
+   */
+  bookingStatus: publicProcedure
+    .input(bookingStatusInput)
+    .query(async ({ input }): Promise<BookingStatusResult> => {
+      try {
+        const [booking] = await getDb()
+          .select({
+            ref: bookings.ref,
+            status: bookings.status,
+            payMode: bookings.payMode,
+            tourDate: bookings.tourDate,
+            pax: bookings.pax,
+            totalCentavos: bookings.totalCentavos,
+            // Aliased to `paidCentavos` here, not the column's own
+            // camelCase name — see `BookingStatusResult.paidCentavos`'s own
+            // note on why.
+            paidCentavos: bookings.amountPaidCentavos,
+            paymentReviewRequired: bookings.paymentReviewRequired,
+            tourTitle: tours.title,
+          })
+          .from(bookings)
+          .innerJoin(tours, eq(tours.id, bookings.tourId))
+          .where(eq(bookings.ref, input.ref))
+          .limit(1);
+
+        // Same generic refusal `startPayment` uses for the same fact — see
+        // `bookingNotFound()`'s own note on why the two must agree.
+        if (!booking) throw bookingNotFound();
+
+        return {
+          ref: booking.ref,
+          status: booking.status,
+          tourTitle: booking.tourTitle,
+          // `bookings.tour_date` reads back as a `Date` at UTC midnight of
+          // the civil date (`create-hold.ts`'s own note: the pool runs at
+          // `timezone: 'Z'`, so this stores the day the guest picked, in
+          // Cebu, exactly) — `manilaCivilDate()` is the one conversion back
+          // to the wire's civil-date string, not a hand-rolled
+          // `toISOString().slice(0, 10)` that would happen to agree with it
+          // only because the offset is positive.
+          date: manilaCivilDate(booking.tourDate),
+          pax: booking.pax,
+          payMode: booking.payMode,
+          totalCentavos: booking.totalCentavos,
+          paidCentavos: booking.paidCentavos,
+          // `total - paid`, computed here rather than stored — see
+          // `BookingStatusResult`'s own note.
+          balanceCentavos: booking.totalCentavos - booking.paidCentavos,
+          paymentReviewRequired: booking.paymentReviewRequired,
+        };
+      } catch (error) {
+        if (error instanceof TRPCError) throw error;
+        throw internalError(error);
       }
     }),
 });

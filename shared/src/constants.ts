@@ -37,9 +37,16 @@ export const BOOKING_REF_PREFIX = 'RG';
  */
 export const BOOKING_PAGE_ROUTE = '/booking/:ref';
 
-/** The booking-status page for one ref, e.g. `/booking/RG-7KQ4M9`. */
+/**
+ * The booking-status page for one ref, e.g. `/booking/RG-7KQ4M9`.
+ *
+ * Derived from `BOOKING_PAGE_ROUTE` rather than retyping `/booking/` — one
+ * literal in the codebase, not two that could quietly drift apart. See
+ * `shared/src/__tests__/constants.test.ts`, which fails if this goes back
+ * to a hand-typed template string.
+ */
 export function bookingPagePath(ref: string): string {
-  return `/booking/${ref}`;
+  return BOOKING_PAGE_ROUTE.replace(':ref', ref);
 }
 
 /**

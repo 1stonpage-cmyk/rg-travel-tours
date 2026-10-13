@@ -17,7 +17,7 @@ import request from 'supertest';
 import { bookingRefSchema, manilaCivilDate, quoteResultSchema } from '@rg/shared';
 import { createApp } from '../app';
 import { getDb, getPool } from '../db/client';
-import { destinations, drivers, tourPriceTiers, tours, vans } from '../db/schema';
+import { bookings, destinations, drivers, tourPriceTiers, tours, vans } from '../db/schema';
 import { loadQuoteInputs, priceQuote } from '../services/pricing';
 import {
   CHECKOUT_HOLD_MAX,
@@ -428,6 +428,110 @@ describeWithDb('checkout router', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  // -------------------------------------------------------------------------
+  // checkout.bookingStatus — Task 9: a read, and only a read.
+  //
+  // §6: "The success redirect page only reads status ... It never confirms
+  // anything itself." The enumeration test below is the one that actually
+  // proves that for the whole router, not just this procedure: a third
+  // checkout mutation is how a redirect page quietly becomes a way to
+  // confirm a booking.
+  // -------------------------------------------------------------------------
+
+  it('returns status, amounts and a tour summary for a real held booking', async () => {
+    const tour = await makeTour();
+    await makeFleet();
+    const quote = await caller.checkout.quote({
+      tourSlug: tour.slug,
+      date: DAY,
+      pax: 2,
+      addonIds: [],
+    });
+    const held = await caller.checkout.createHold(
+      validHoldInput({ tourSlug: tour.slug, date: DAY, pax: 2, quoteId: quote.quoteId }),
+    );
+    created.bookingIds.push(held.bookingId);
+
+    const status = await caller.checkout.bookingStatus({ ref: held.ref });
+
+    expect(status.ref).toBe(held.ref);
+    expect(status.status).toBe('pending_payment');
+    expect(status.tourTitle).toBe(tour.slug); // makeTour() sets title = slug
+    expect(status.date).toBe(DAY);
+    expect(status.pax).toBe(2);
+    expect(status.payMode).toBe('deposit');
+    expect(status.totalCentavos).toBe(quote.totalCentavos);
+    expect(status.paidCentavos).toBe(0);
+    // Server arithmetic on a server value (`total - paid`), same spirit as
+    // `startPayment`'s own `depositCentavos()` read just above — never
+    // trusted from the wire, and never forbidden by the client-only
+    // money-arithmetic guard (`checkout-page.test.tsx`), which scans
+    // `client/` only.
+    expect(status.balanceCentavos).toBe(quote.totalCentavos);
+    expect(status.paymentReviewRequired).toBe(false);
+  });
+
+  it('reflects a status change made elsewhere (e.g. the webhook) — a live read, never a cached confirmation', async () => {
+    const tour = await makeTour();
+    await makeFleet();
+    const quote = await caller.checkout.quote({
+      tourSlug: tour.slug,
+      date: DAY,
+      pax: 1,
+      addonIds: [],
+    });
+    const held = await caller.checkout.createHold(
+      validHoldInput({ tourSlug: tour.slug, date: DAY, pax: 1, quoteId: quote.quoteId }),
+    );
+    created.bookingIds.push(held.bookingId);
+
+    // Simulates what only a verified webhook or an admin approval may do —
+    // never this procedure itself.
+    await getDb()
+      .update(bookings)
+      .set({ status: 'confirmed', amountPaidCentavos: quote.totalCentavos, holdExpiresAt: null })
+      .where(eq(bookings.id, held.bookingId));
+
+    const status = await caller.checkout.bookingStatus({ ref: held.ref });
+    expect(status.status).toBe('confirmed');
+    expect(status.paidCentavos).toBe(quote.totalCentavos);
+    expect(status.balanceCentavos).toBe(0);
+  });
+
+  it('answers an unknown ref with the SAME generic NOT_FOUND startPayment uses — never leaking whether a ref exists', async () => {
+    const error = await caller.checkout
+      .bookingStatus({ ref: 'RG-ZZZZZZ' })
+      .catch((e: unknown) => e);
+    expect(error).toMatchObject({ code: 'NOT_FOUND' });
+    expect((error as Error).message).toBe('We could not find that booking.');
+  });
+
+  it('checkout.bookingStatus is itself a query, never a mutation', () => {
+    const procedures = appRouter._def.procedures as unknown as Record<
+      string,
+      { _def: { type: string } }
+    >;
+    expect(procedures['checkout.bookingStatus']?._def.type).toBe('query');
+  });
+
+  /**
+   * The brief's own test, verbatim: this is the single most load-bearing
+   * assertion in the whole task. `createHold` and `startPayment` are the
+   * only two checkout mutations — a third here is exactly how a page that
+   * is supposed to only READ status would quietly become a way to CONFIRM
+   * one.
+   */
+  it('exposes no mutation that could confirm a booking', () => {
+    const procs = Object.entries(appRouter._def.procedures);
+    const checkoutMutations = procs
+      .filter(([name]) => name.startsWith('checkout.'))
+      .filter(([, p]) => (p as { _def: { type: string } })._def.type === 'mutation')
+      .map(([name]) => name);
+    // createHold and startPayment are the only two. A third mutation here is
+    // how a redirect page quietly becomes a way to confirm a booking.
+    expect(checkoutMutations.sort()).toEqual(['checkout.createHold', 'checkout.startPayment']);
   });
 });
 
