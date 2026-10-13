@@ -189,3 +189,61 @@ export function bookableDateRange(settings: BookingWindowSettings, now: Date): B
 export function isDateBookable(date: string, range: BookableDateRange): boolean {
   return date >= range.earliest && date <= range.latest;
 }
+
+/**
+ * Asia/Manila's UTC offset, in milliseconds, AT a given instant.
+ *
+ * Measured through `Intl` rather than hardcoded to +8, for the reason this
+ * module opens with: the Philippines does not observe DST today, and that
+ * is a fact about the current calendar rather than something to build on.
+ */
+function manilaOffsetMs(at: Date): number {
+  const p = manilaParts(at);
+  const asIfUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+  return asIfUtc - at.getTime();
+}
+
+/**
+ * The INSTANT at which a Manila wall clock reads `civilDate` `hhmm`.
+ *
+ * The inverse of `manilaParts()`, and the only function here that goes that
+ * way. Two passes rather than one: the first guesses the instant using the
+ * offset in force at the naive UTC reading, the second re-measures the
+ * offset at that guess. On a zone with no DST the two agree and the second
+ * pass is free; across a DST boundary, which Manila could one day have
+ * again, the second pass is what stops the answer being an hour out.
+ */
+export function manilaInstant(civilDate: string, hhmm: string): Date {
+  const [year, month, day] = civilDate.split('-').map(Number) as [number, number, number];
+  const [hour, minute] = hhmm.split(':').map(Number) as [number, number];
+  const naive = Date.UTC(year, month - 1, day, hour, minute, 0, 0);
+
+  const firstGuess = new Date(naive - manilaOffsetMs(new Date(naive)));
+  return new Date(naive - manilaOffsetMs(firstGuess));
+}
+
+/**
+ * **The instant a tour date stops being bookable.**
+ *
+ * The clock-time twin of `bookableDateRange()`, which answers the same
+ * question in civil dates: with `minLeadDays = 1` and
+ * `nextDayCutoffTime = '18:00'`, tour date `D` is bookable until 18:00
+ * Manila on `D - 1`, and from that instant on it is not.
+ *
+ * It exists because Week 4 Task 7 needs a DEADLINE rather than a date: a
+ * guest whose receipt is rejected gets twelve hours to re-upload, "never
+ * extending past the booking-window cutoff for that tour date" (owner
+ * decision 2026-10-13, Q8 — _proposed by developer, not yet confirmed with
+ * R&G_). A receipt rejected at 23:00 the night before a tour must not buy
+ * until 11:00 the next morning for a trip that has already left.
+ *
+ * Derived from the SAME two settings as the civil window, so the two cannot
+ * disagree about where the line is. `now` is not a parameter and must not
+ * become one: this is a property of the tour date, not of when you ask.
+ */
+export function bookingCutoffInstant(
+  tourDate: string,
+  settings: Pick<BookingWindowSettings, 'minLeadDays' | 'nextDayCutoffTime'>,
+): Date {
+  return manilaInstant(addCivilDays(tourDate, -settings.minLeadDays), settings.nextDayCutoffTime);
+}

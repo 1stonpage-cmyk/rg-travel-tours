@@ -48,24 +48,52 @@
  * update, the audit row — happens inside that same transaction, so a
  * failure anywhere leaves no half-submitted receipt.
  */
-import { and, eq, inArray, isNotNull } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import {
+  bookingCutoffInstant,
   depositCentavos,
+  manilaCivilDate,
   manualTransferMethodSchema,
   RECEIPT_CAP_MESSAGE,
+  RECEIPT_REUPLOAD_WINDOW_MS,
   RECEIPT_UPLOAD_MAX_PER_BOOKING,
   transferReferenceSchema,
+  type BookingStatus,
+  type BookingWindowSettings,
 } from '@rg/shared';
+import { readSettingBlock } from '../../content/settings';
 import { getDb, type Transaction } from '../../db/client';
-import { bookings, payments } from '../../db/schema';
+import { AUDIT_ACTOR_TYPES, bookings, payments } from '../../db/schema';
 import { writeAudit } from '../audit';
 import {
   BookingNotFoundError,
+  ReceiptAlreadyDecidedError,
   ReceiptLimitReachedError,
   ReceiptNotAcceptedError,
+  ReceiptPaymentNotFoundError,
+  ReceiptRejectionNeedsReasonError,
   type ReceiptRefusalReason,
 } from './errors';
+import { approveManualReceipt, assertMayVerifyPayments } from './record-payment';
+
+/**
+ * The one definition of "a guest receipt row", used by the cap, the
+ * supersede and the decision alike.
+ *
+ * `receipt_path IS NOT NULL` is what separates it from a driver's pending
+ * CASH row (§8), which is also `provider='manual'` and also `pending`. Every
+ * query in this module goes through here so that distinction cannot be
+ * forgotten in one place and remembered in three.
+ */
+function receiptRow(paymentId: number): SQL {
+  return and(
+    eq(payments.id, paymentId),
+    eq(payments.type, 'payment'),
+    eq(payments.provider, 'manual'),
+    isNotNull(payments.receiptPath),
+  ) as SQL;
+}
 
 /**
  * Validated here as well as at the HTTP door, and `method` against the
@@ -305,5 +333,221 @@ export async function recordManualReceipt(
     });
 
     return { paymentId, supersededPaymentIds, amountCentavos: due };
+  });
+}
+
+/* ======================================================================
+ * The decision (Week 4 plan, Task 7; §6 step 5).
+ *
+ * **Approve lives in `record-payment.ts`, and that split is deliberate.**
+ * Approval moves `bookings.amount_paid_centavos`, which only the module
+ * that owns `recordPayment()` may write — a rule a guard test enforces
+ * rather than a convention. Rejection moves no money at all, so it lives
+ * here beside the upload it undoes, and `decideManualReceipt()` is the one
+ * door an admin screen calls either way.
+ * ====================================================================== */
+
+/**
+ * The verifier, in `assertMayVerifyPayments`'s shape. `role` is `unknown`
+ * on purpose: the gate re-parses it against `ADMIN_ROLES` and refuses a
+ * missing role, a number and a plausible-looking string alike, rather than
+ * trusting what a type annotation claims.
+ */
+export interface ReceiptVerifier {
+  /**
+   * The audit actor types, so a caller cannot invent one at compile time.
+   * `driver`, `system` and `provider` are representable and are REFUSED by
+   * the gate rather than by the type system, because that refusal is the
+   * property worth testing: §8's driver may claim money, never verify it.
+   */
+  type: (typeof AUDIT_ACTOR_TYPES)[number];
+  id: number | null;
+  /** `users.role`, re-parsed against `ADMIN_ROLES` by the gate. */
+  role: unknown;
+}
+
+export interface DecideManualReceiptResult {
+  paymentId: number;
+  bookingId: number;
+  decision: 'approve' | 'reject';
+  /** The booking's status after the decision. */
+  bookingStatus: BookingStatus;
+  /**
+   * When a rejected guest must have re-uploaded by — null on an approval.
+   * The earlier of twelve hours and the booking cutoff for the tour date.
+   */
+  reuploadBy: Date | null;
+}
+
+/**
+ * The deadline a rejection leaves the guest (owner decision 2026-10-13, Q8
+ * — _proposed by developer, pending R&G confirmation_).
+ *
+ *     min(rejectedAt + 12h, bookingCutoffInstant(tourDate))
+ *
+ * The second bound is the one that matters. Twelve flat hours would hand a
+ * guest rejected at 23:00 the night before a tour until 11:00 the next
+ * morning, for a trip that left at 7am — and the hold would keep a van
+ * seat that nobody can now pay for. The cutoff is the same instant the
+ * booking window itself closes for that date, so the two cannot disagree.
+ *
+ * It may be in the PAST, when a receipt is rejected after the cutoff has
+ * already gone by. That is correct and needs no special case: the expiry
+ * sweep releases the capacity on its next run, which is exactly what should
+ * happen to a booking that can no longer be paid for.
+ */
+export function reuploadDeadline(
+  rejectedAt: Date,
+  tourDate: Date,
+  settings: Pick<BookingWindowSettings, 'minLeadDays' | 'nextDayCutoffTime'>,
+): Date {
+  const twelveHours = new Date(rejectedAt.getTime() + RECEIPT_REUPLOAD_WINDOW_MS);
+  const cutoff = bookingCutoffInstant(manilaCivilDate(tourDate), settings);
+  return cutoff.getTime() < twelveHours.getTime() ? cutoff : twelveHours;
+}
+
+/**
+ * Approve or reject the pending receipt on a booking.
+ *
+ * **Approve** hands straight to `approveManualReceipt()`: payment `paid`,
+ * `verified_by` / `verified_at` set, `amount_paid_centavos` credited once,
+ * booking `confirmed`.
+ *
+ * **Reject** sets `status='rejected'` with the reason the GUEST will read,
+ * returns the booking to `pending_payment` — not cancelled (owner
+ * decision 2026-10-13, Q7) — and sets `hold_expires_at` to the Q8
+ * deadline. Nothing else changes: no money moves, and the receipt file
+ * stays exactly where it is.
+ *
+ * **The expiry sweep needs no change to release the capacity afterwards.**
+ * It already expires `pending_payment` bookings whose `hold_expires_at` has
+ * passed and already skips anything with money against it or flagged for
+ * review. Setting the status and the deadline IS the release, which is why
+ * `jobs/expire-holds.ts` is untouched by this task — and why
+ * `manual-receipt-decide.test.ts` drives the real sweep to prove it rather
+ * than asserting it in a comment.
+ *
+ * Rejects, writing nothing, when the actor may not verify payments, when
+ * the id is not a receipt row, when that row is not `pending` (already
+ * decided, or superseded by a newer upload), or when a rejection carries no
+ * reason.
+ */
+export async function decideManualReceipt(input: {
+  paymentId: number;
+  decision: 'approve' | 'reject';
+  reason?: string;
+  verifier: ReceiptVerifier;
+  now: Date;
+}): Promise<DecideManualReceiptResult> {
+  const { paymentId, decision, verifier, now } = input;
+
+  if (decision === 'approve') {
+    const result = await approveManualReceipt({ paymentId, verifier });
+    return {
+      paymentId,
+      bookingId: result.bookingId,
+      decision,
+      bookingStatus: result.bookingStatus,
+      reuploadBy: null,
+    };
+  }
+
+  /*
+   * The reason is checked BEFORE the role gate would even matter, because
+   * it costs nothing — but after it in order, so that an unauthorised
+   * actor learns nothing from the shape of the refusal. Trimmed, because a
+   * reason of three spaces is a blank one with extra steps.
+   */
+  const verifiedBy = assertMayVerifyPayments(verifier);
+  const reason = (input.reason ?? '').trim();
+  if (reason.length === 0) throw new ReceiptRejectionNeedsReasonError();
+
+  /*
+   * Read OUTSIDE the transaction: it is a different pooled connection, and
+   * holding the booking row lock while fetching settings would widen the
+   * window every other writer waits on for no reason.
+   */
+  const bookingSettings = await readSettingBlock('booking');
+
+  return getDb().transaction(async (tx: Transaction) => {
+    // Unlocked, and used only to find which booking to lock — its status
+    // is deliberately not trusted; the locking re-read below is.
+    const [unlocked] = await tx
+      .select({ bookingId: payments.bookingId })
+      .from(payments)
+      .where(receiptRow(paymentId))
+      .limit(1);
+    if (!unlocked) throw new ReceiptPaymentNotFoundError(paymentId);
+
+    const [booking] = await tx
+      .select({ ref: bookings.ref, status: bookings.status, tourDate: bookings.tourDate })
+      .from(bookings)
+      .where(eq(bookings.id, unlocked.bookingId))
+      .for('update')
+      .limit(1);
+    if (!booking) throw new BookingNotFoundError(unlocked.bookingId);
+
+    /*
+     * The authoritative read, `FOR UPDATE` and after the booking lock — the
+     * same ordering every path in `record-payment.ts` uses, so none of them
+     * can deadlock against another. Two admins deciding one receipt at once
+     * are serialised here, and the second is refused.
+     */
+    const [payment] = await tx
+      .select({ status: payments.status })
+      .from(payments)
+      .where(receiptRow(paymentId))
+      .for('update')
+      .limit(1);
+    if (!payment) throw new ReceiptPaymentNotFoundError(paymentId);
+    if (payment.status !== 'pending') {
+      throw new ReceiptAlreadyDecidedError(paymentId, payment.status);
+    }
+
+    const reuploadBy = reuploadDeadline(now, booking.tourDate, bookingSettings);
+
+    await tx
+      .update(payments)
+      .set({ status: 'rejected', rejectReason: reason })
+      .where(eq(payments.id, paymentId));
+
+    /*
+     * Back to `pending_payment`, which is the owner's Q7 answer and the
+     * opposite of what this plan originally proposed: the guest still has a
+     * booking and something to do about it. `payment_review_required` is
+     * deliberately NOT set — that flag means "money arrived that an admin
+     * must resolve", and here no money arrived.
+     */
+    await tx
+      .update(bookings)
+      .set({ status: 'pending_payment', holdExpiresAt: reuploadBy })
+      .where(eq(bookings.id, unlocked.bookingId));
+
+    await writeAudit(tx, {
+      // The admin, by `users.id`. "Who rejected what, and why" has to be
+      // answerable months later (§10, and the owner's Q7).
+      actorType: 'user',
+      actorId: verifiedBy,
+      action: 'payment.rejected',
+      entity: 'payments',
+      entityId: paymentId,
+      data: {
+        bookingRef: booking.ref,
+        reason,
+        priorPaymentStatus: 'pending',
+        paymentStatus: 'rejected',
+        priorBookingStatus: booking.status,
+        bookingStatus: 'pending_payment',
+        reuploadBy: reuploadBy.toISOString(),
+      },
+    });
+
+    return {
+      paymentId,
+      bookingId: unlocked.bookingId,
+      decision: 'reject' as const,
+      bookingStatus: 'pending_payment' as const,
+      reuploadBy,
+    };
   });
 }

@@ -4,6 +4,7 @@ import { destinationsRouter } from './public/destinations';
 import { inquiriesRouter } from './public/inquiries';
 import { newsletterRouter } from './public/newsletter';
 import { packagesRouter } from './public/packages';
+import { adminBookingsRouter } from './admin/bookings';
 import { staffAuthRouter } from './admin/auth';
 import { portalRouter } from './public/portal';
 import { reviewsRouter } from './public/reviews';
@@ -59,6 +60,17 @@ export const appRouter = router({
    * thing in this codebase to have ever run with a real staff session.
    */
   staffAuth: staffAuthRouter,
+
+  /*
+   * The admin surface (Week 4, Task 7). Everything under this namespace is
+   * built with `adminProcedure(area)` and nothing else may be — the guard
+   * in `procedure-role-metadata.test.ts` fails the build on a procedure
+   * whose path contains `admin` and whose role metadata is missing, which
+   * is why the sign-in lives at `staffAuth` instead of in here.
+   */
+  admin: router({
+    bookings: adminBookingsRouter,
+  }),
 });
 
 export type AppRouter = typeof appRouter;

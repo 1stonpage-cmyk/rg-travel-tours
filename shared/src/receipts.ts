@@ -72,3 +72,20 @@ export const uploadReceiptMetaSchema = z
   .object({ method: manualTransferMethodSchema, txnRef: transferReferenceSchema })
   .strict();
 export type UploadReceiptMeta = z.infer<typeof uploadReceiptMetaSchema>;
+
+/**
+ * How long a guest has to re-upload after an admin rejects a receipt
+ * (owner decision 2026-10-13, Q8 — _proposed by developer, pending R&G
+ * confirmation_).
+ *
+ * The window **never extends past the booking-window cutoff for that tour
+ * date**: the deadline is the earlier of `rejectedAt + 12h` and
+ * `bookingCutoffInstant(tourDate)`. A receipt rejected at 23:00 the night
+ * before a tour must not buy until 11:00 the next morning for a trip that
+ * has already left.
+ *
+ * Shared because the portal tells the guest how long they have, and a
+ * second copy of "12" in the client is a second place for it to be wrong.
+ */
+export const RECEIPT_REUPLOAD_HOURS = 12;
+export const RECEIPT_REUPLOAD_WINDOW_MS = RECEIPT_REUPLOAD_HOURS * 60 * 60 * 1000;

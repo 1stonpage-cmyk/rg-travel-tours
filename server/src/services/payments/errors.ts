@@ -366,3 +366,63 @@ export class ReceiptLimitReachedError extends Error {
     this.guestMessage = guestMessage;
   }
 }
+
+/**
+ * The id is not a guest receipt row.
+ *
+ * Its own class rather than reusing `CashPaymentNotFoundError`: the two
+ * paths narrow to different rows on purpose, and an admin told "no
+ * driver-collected cash payment with id 41" while looking at a receipt
+ * screen would go looking for the wrong bug.
+ */
+export class ReceiptPaymentNotFoundError extends Error {
+  readonly paymentId: number;
+
+  constructor(paymentId: number) {
+    super(`No pending guest receipt with payment id ${paymentId}`);
+    this.name = 'ReceiptPaymentNotFoundError';
+    this.paymentId = paymentId;
+  }
+}
+
+/**
+ * The receipt has already been decided - approved, rejected, or superseded
+ * by a newer upload.
+ *
+ * **This is the double-decision refusal**, and like its cash sibling it is
+ * thrown from under the booking row lock after a locking re-read. Two
+ * admins opening the same receipt both see `pending`; serialised by the
+ * lock, the second one reads what the first wrote and lands here. Approving
+ * twice would credit one transfer to `amount_paid_centavos` twice, and the
+ * booking total would then be wrong in the direction nobody notices.
+ *
+ * `superseded` reaches here too, which is the owner's Q6 rule enforced
+ * rather than described: only the newest pending receipt can be acted on.
+ */
+export class ReceiptAlreadyDecidedError extends Error {
+  readonly paymentId: number;
+  readonly status: string;
+
+  constructor(paymentId: number, status: unknown) {
+    const current = safeName(status);
+    super(`Receipt payment ${paymentId} is "${current}", not "pending", so it cannot be decided`);
+    this.name = 'ReceiptAlreadyDecidedError';
+    this.paymentId = paymentId;
+    this.status = current;
+  }
+}
+
+/**
+ * A rejection with no reason.
+ *
+ * The reason is not paperwork: §6 shows it to the GUEST, who has to work
+ * out what to do differently. A blank one would leave the portal saying
+ * "your payment was not accepted" and nothing else, which is the single
+ * most frustrating state the booking flow can be in.
+ */
+export class ReceiptRejectionNeedsReasonError extends Error {
+  constructor() {
+    super('A rejection needs a reason: the guest is shown it and has to act on it');
+    this.name = 'ReceiptRejectionNeedsReasonError';
+  }
+}

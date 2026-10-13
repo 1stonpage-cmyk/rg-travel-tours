@@ -442,6 +442,26 @@ instrument exists on several gateways and §9's revenue report needs both axes.
 4. Booking → `pending_verification`; payment row → `pending`.
 5. Admin approves → payment `paid`, booking `confirmed`. Admin rejects (with reason) → customer portal shows the reason and a re-upload prompt.
 
+   **What a rejection does, in full** (owner decisions 2026-10-13 Q7 and Q8;
+   built in Week 4 Task 7). _The twelve hours and the no-extension rule are
+   proposed by the developer and are **not yet confirmed with R&G**._
+
+   - The payment row becomes `rejected` with `reject_reason`; the reason is
+     shown to the guest and emailed to them.
+   - The booking returns to **`pending_payment`** — not cancelled — and the
+     guest may upload again.
+   - `hold_expires_at = min(rejectedAt + 12h, bookingCutoffInstant(tourDate))`,
+     so the re-upload window never outlives the booking window for that tour
+     date. When it lapses the existing expiry sweep releases the seats; it
+     still skips anything flagged `payment_review_required`.
+   - A second receipt while one is pending marks the older row **`superseded`**
+     (owner decision 2026-10-14, Q6), and only the newest `pending` row can be
+     approved or rejected. Five receipts per booking, then the guest is asked
+     to message R&G.
+   - Manual transfers are **`gcash`, `maya` and `bank_transfer` only** (owner
+     decision 2026-10-14, Q4). `card`, `grab_pay` and `qrph` are the gateway's;
+     `cash` is §8's office/driver flow.
+
 A manual QR payment is recorded with `provider = 'manual'` and whichever instrument the guest
 actually used (`gcash`, `maya`, `bank_transfer`, …) — there is no `manual_qr` method, because
 `provider` already carries the fact that a human verified it. It has no

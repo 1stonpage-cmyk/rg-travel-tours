@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   bookableDateRange,
+  bookingCutoffInstant,
   isDateBookable,
+  manilaInstant,
   manilaCivilDate,
   manilaParts,
   manilaTimeHHMM,
@@ -192,5 +194,73 @@ describe('isDateBookable', () => {
     for (const date of ['2026-06-10', '2026-06-11', '2026-06-15', '2026-06-16']) {
       expect(isDateBookable(date, impossible), `${date} was bookable`).toBe(false);
     }
+  });
+});
+
+describe('manilaInstant', () => {
+  /**
+   * The inverse of `manilaParts`, so the two must agree exactly. Asserted
+   * as a round trip rather than against a hand-computed UTC string: a
+   * hand-computed expectation encodes the +8 offset this module refuses to
+   * assume, and would have to be rewritten if the zone ever changed.
+   */
+  it('round-trips with manilaParts', () => {
+    const instant = manilaInstant('2026-06-10', '18:00');
+    const parts = manilaParts(instant);
+    expect([parts.year, parts.month, parts.day]).toEqual([2026, 6, 10]);
+    expect([parts.hour, parts.minute]).toEqual([18, 0]);
+  });
+
+  /** And it really is 10:00 UTC, which is the fact `bookableDateRange`'s own fixtures rest on. */
+  it('agrees with the UTC instant this suite already uses for 18:00 Manila', () => {
+    expect(manilaInstant('2026-06-10', '18:00').toISOString()).toBe('2026-06-10T10:00:00.000Z');
+    expect(manilaInstant('2026-06-10', '00:00').toISOString()).toBe('2026-06-09T16:00:00.000Z');
+  });
+});
+
+describe('bookingCutoffInstant', () => {
+  /**
+   * The clock-time twin of `bookableDateRange`, and the two must agree
+   * about where the line is: a tour on 2026-06-11 stops being bookable at
+   * 18:00 Manila on 2026-06-10, which is exactly the instant
+   * `AT_CUTOFF` names and the instant at which `isDateBookable` flips for
+   * that date.
+   */
+  it('is the cutoff time on the day minLeadDays before the tour', () => {
+    expect(bookingCutoffInstant('2026-06-11', WINDOW).getTime()).toBe(AT_CUTOFF.getTime());
+  });
+
+  /**
+   * **It agrees with the civil window at the boundary instant itself**, not
+   * merely nearby. One minute earlier the date is bookable; at the cutoff
+   * it is not; and `bookingCutoffInstant` is that exact instant.
+   */
+  it('lands on the instant the civil window closes', () => {
+    const cutoff = bookingCutoffInstant('2026-06-11', WINDOW);
+    const aMinuteBefore = new Date(cutoff.getTime() - 60_000);
+    expect(isDateBookable('2026-06-11', bookableDateRange(WINDOW, aMinuteBefore))).toBe(true);
+    expect(isDateBookable('2026-06-11', bookableDateRange(WINDOW, cutoff))).toBe(false);
+  });
+
+  it('honours a different lead time and a different cutoff clock', () => {
+    const sameDay = { minLeadDays: 0, nextDayCutoffTime: '06:30' };
+    // minLeadDays 0: the cutoff is on the tour day itself.
+    expect(bookingCutoffInstant('2026-06-11', sameDay).toISOString()).toBe(
+      '2026-06-10T22:30:00.000Z',
+    );
+    const threeDays = { minLeadDays: 3, nextDayCutoffTime: '18:00' };
+    expect(bookingCutoffInstant('2026-06-11', threeDays).toISOString()).toBe(
+      '2026-06-08T10:00:00.000Z',
+    );
+  });
+
+  /** Across a month and a year boundary, where naive date arithmetic breaks. */
+  it('crosses month and year boundaries', () => {
+    expect(bookingCutoffInstant('2026-01-01', WINDOW).toISOString()).toBe(
+      '2025-12-31T10:00:00.000Z',
+    );
+    expect(bookingCutoffInstant('2026-03-01', WINDOW).toISOString()).toBe(
+      '2026-02-28T10:00:00.000Z',
+    );
   });
 });

@@ -41,7 +41,7 @@
  * received" into "money might be received", and the one function the whole
  * payment rule rests on would stop meaning anything exact.
  */
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, isNotNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { type AdminRole, type BookingStatus, adminRoleSchema, depositCentavos } from '@rg/shared';
 import { getDb, type Transaction } from '../../db/client';
@@ -59,6 +59,8 @@ import {
   BookingNotFoundError,
   CashPaymentNotFoundError,
   CashPaymentNotPendingError,
+  ReceiptAlreadyDecidedError,
+  ReceiptPaymentNotFoundError,
   PaymentAmountMismatchError,
   PaymentOverpaysBookingError,
   PaymentVerificationNotPermittedError,
@@ -636,8 +638,18 @@ const MAY_VERIFY: readonly AdminRole[] = ROLE_MATRIX.verifyPayments;
  * Returns the verified `users.id`, so the caller attributes the audit row
  * and `verified_by` to a value this gate has already narrowed rather than
  * asserting the null away afterwards.
+ *
+ * **Exported** because the manual-receipt REJECTION path needs the same
+ * gate and must not grow its own: §9 gives "verify payments" to owner and
+ * finance, and rejecting a receipt is that permission being exercised just
+ * as much as approving one. Two copies of a role check are two answers to
+ * one question.
  */
-function assertMayVerifyCash(verifier: { type: string; id: number | null; role: unknown }): number {
+export function assertMayVerifyPayments(verifier: {
+  type: string;
+  id: number | null;
+  role: unknown;
+}): number {
   if (verifier.type !== 'user' || verifier.id === null) {
     throw new PaymentVerificationNotPermittedError(verifier.type);
   }
@@ -649,7 +661,7 @@ function assertMayVerifyCash(verifier: { type: string; id: number | null; role: 
 }
 
 /**
- * Where a verified cash payment may move the booking's status.
+ * Where verifying a pending manual payment may move the booking's status.
  *
  * `recordPayment()` confirms any live booking it touches, because the money
  * it records is the deposit or the full amount and arrives BEFORE the trip.
@@ -661,8 +673,13 @@ function assertMayVerifyCash(verifier: { type: string; id: number | null; role: 
  * So the status moves only from the two statuses that mean "not paid for
  * yet", and is otherwise left exactly as it was. Nothing new is invented:
  * `confirmed` is §5's own status and the two sources are §5's own.
+ *
+ * The same rule serves an approved guest RECEIPT (Week 4 Task 6), which
+ * arrives before the trip and whose booking is therefore always one of
+ * those two — so the clamp costs it nothing and protects it from the same
+ * mistake if that ever stops being true.
  */
-function statusAfterCashVerified(current: BookingStatus): BookingStatus {
+function statusAfterManualVerified(current: BookingStatus): BookingStatus {
   return current === 'pending_payment' || current === 'pending_verification'
     ? 'confirmed'
     : current;
@@ -687,12 +704,12 @@ function statusAfterCashVerified(current: BookingStatus): BookingStatus {
  * credited, `payment_review_required` goes up, and the status is left alone.
  * Nothing auto-confirms a dead booking.
  */
-export async function verifyCashPayment(
-  input: VerifyCashPaymentInput,
+async function verifyPendingManualPayment(
+  paymentId: number,
+  kind: PendingKind,
+  verifiedBy: number,
 ): Promise<VerifyCashPaymentResult> {
-  const parsed = verifyCashPaymentInputSchema.parse(input);
-  // Before the transaction opens — it needs nothing from the database.
-  const verifiedBy = assertMayVerifyCash(parsed.verifier);
+  const parsed = { paymentId };
 
   return getDb().transaction(async (tx: Transaction) => {
     /*
@@ -701,21 +718,22 @@ export async function verifyCashPayment(
      * the time the lock below is granted, a concurrent verifier may have
      * committed a change to this very row.
      *
-     * Scoped to the cash shape, so a gateway charge's id is "not found"
-     * rather than something this path could mark paid.
+     * Scoped to ONE manual shape — the driver's cash row or the guest's
+     * receipt row, never both, and never a gateway charge, whose id is
+     * "not found" here rather than something this path could mark paid.
      */
-    const cashRow = and(
+    const pendingRow = and(
       eq(payments.id, parsed.paymentId),
       eq(payments.type, 'payment'),
       eq(payments.provider, 'manual'),
-      eq(payments.method, 'cash'),
+      kind === 'cash' ? eq(payments.method, 'cash') : isNotNull(payments.receiptPath),
     );
     const [unlocked] = await tx
       .select({ bookingId: payments.bookingId })
       .from(payments)
-      .where(cashRow)
+      .where(pendingRow)
       .limit(1);
-    if (!unlocked) throw new CashPaymentNotFoundError(parsed.paymentId);
+    if (!unlocked) throw notFound(kind, parsed.paymentId);
 
     /*
      * THE lock — the same booking row lock that protects the refund cap
@@ -756,14 +774,21 @@ export async function verifyCashPayment(
      * deadlock against another.
      */
     const [payment] = await tx
-      .select({ status: payments.status, amountCentavos: payments.amountCentavos })
+      .select({
+        status: payments.status,
+        amountCentavos: payments.amountCentavos,
+        // Read rather than assumed: `'cash'` for the driver path, and the
+        // real instrument (gcash, maya, bank_transfer) for a receipt.
+        method: payments.method,
+        receiptPath: payments.receiptPath,
+      })
       .from(payments)
-      .where(cashRow)
+      .where(pendingRow)
       .for('update')
       .limit(1);
-    if (!payment) throw new CashPaymentNotFoundError(parsed.paymentId);
+    if (!payment) throw notFound(kind, parsed.paymentId);
     if (payment.status !== 'pending') {
-      throw new CashPaymentNotPendingError(parsed.paymentId, payment.status);
+      throw notPending(kind, parsed.paymentId, payment.status);
     }
 
     /*
@@ -771,11 +796,15 @@ export async function verifyCashPayment(
      * verifying what the driver recorded; a caller-supplied amount here
      * would be a browser-adjustable credit to `amount_paid_centavos`.
      *
-     * No `expectedAmountCentavos()` check either, unlike the gateway path:
-     * cash is the BALANCE at the end of the tour, not the deposit or the
-     * full total the booking expected up front, so an exact match against
-     * either would refuse every legitimate collection. The overpay cap
-     * below is what bounds it — and that is the cap that matters, because
+     * No `expectedAmountCentavos()` check either, unlike the gateway path.
+     * For cash, because it is the BALANCE at the end of the tour rather
+     * than the deposit the booking expected up front, so an exact match
+     * against either would refuse every legitimate collection. For a
+     * receipt, because the amount on the row was computed from the booking
+     * when the guest uploaded it (`recordManualReceipt`) and is already
+     * what the booking expected — re-deriving it here would re-decide it
+     * against a booking that may have been part-paid since. The overpay cap
+     * below is what bounds both, and that is the cap that matters, because
      * it is measured against money already credited.
      */
     const nextAmountPaidCentavos = booking.amountPaidCentavos + payment.amountCentavos;
@@ -789,7 +818,7 @@ export async function verifyCashPayment(
 
     const reviewReason = lateMoneyReason(booking, new Date());
     const nextStatus =
-      reviewReason === null ? statusAfterCashVerified(booking.status) : booking.status;
+      reviewReason === null ? statusAfterManualVerified(booking.status) : booking.status;
 
     /*
      * The conversion. An UPDATE of the row the driver created — NOT an
@@ -829,7 +858,8 @@ export async function verifyCashPayment(
         bookingRef: booking.ref,
         amountCentavos: payment.amountCentavos,
         provider: 'manual',
-        method: 'cash',
+        method: payment.method,
+        receiptPath: payment.receiptPath,
         bookingStatus: nextStatus,
         priorBookingStatus: booking.status,
         paymentReviewRequired: reviewReason !== null,
@@ -851,4 +881,85 @@ export async function verifyCashPayment(
       paymentReviewRequired: reviewReason !== null,
     };
   });
+}
+
+/* ======================================================================
+ * The two doors onto `verifyPendingManualPayment` above.
+ *
+ * It is one function because the dangerous part — lock the booking, re-read
+ * the payment row `FOR UPDATE`, credit `amount_paid_centavos` exactly once,
+ * clamp the status, audit — is identical for a driver's cash and a guest's
+ * receipt, and because `amount_paid_centavos` may only be written from this
+ * module (the guard in `schema-conventions.test.ts`). Two copies of that
+ * body would be two places for the double-credit bug to come back.
+ *
+ * What differs is only which row the id may name and what the refusal is
+ * called, which is what `kind` selects.
+ * ====================================================================== */
+
+/** Which pending manual row an id may name. */
+type PendingKind = 'cash' | 'receipt';
+
+const notFound = (kind: PendingKind, paymentId: number): Error =>
+  kind === 'cash'
+    ? new CashPaymentNotFoundError(paymentId)
+    : new ReceiptPaymentNotFoundError(paymentId);
+
+const notPending = (kind: PendingKind, paymentId: number, status: unknown): Error =>
+  kind === 'cash'
+    ? new CashPaymentNotPendingError(paymentId, status)
+    : new ReceiptAlreadyDecidedError(paymentId, status);
+
+/**
+ * Finance confirms that driver-collected cash was actually handed over
+ * (BUILD_SPEC §8 item 5, A5b).
+ *
+ * Converts the pending row from `recordPendingCash()` **in place** —
+ * `status` `pending` -> `paid`, `verified_by` and `verified_at` set — and
+ * credits `amount_paid_centavos` exactly once, in one transaction under the
+ * booking row lock. **It inserts nothing.** One handful of cash is one
+ * `payments` row for its whole life.
+ *
+ * Rejects, writing nothing, when the verifier is not an owner or a finance
+ * user, when the id is not a driver-cash row, when that row is no longer
+ * `pending` (the double-verify refusal), when the booking has vanished, or
+ * when the credit would overpay the booking.
+ *
+ * A cash collection against a booking that is cancelled, expired or holding
+ * a lapsed hold gets `recordPayment()`'s treatment unchanged: the money is
+ * credited, `payment_review_required` goes up, and the status is left alone.
+ * Nothing auto-confirms a dead booking.
+ */
+export async function verifyCashPayment(
+  input: VerifyCashPaymentInput,
+): Promise<VerifyCashPaymentResult> {
+  const parsed = verifyCashPaymentInputSchema.parse(input);
+  // Before the transaction opens — it needs nothing from the database.
+  const verifiedBy = assertMayVerifyPayments(parsed.verifier);
+  return verifyPendingManualPayment(parsed.paymentId, 'cash', verifiedBy);
+}
+
+/**
+ * An admin approves a guest's uploaded receipt (§6 step 5, Week 4 Task 7).
+ *
+ * **This is the half of the manual flow that marks money received**, and it
+ * is here rather than in `manual-receipt.ts` for one reason: this module
+ * owns `bookings.amount_paid_centavos` and nothing else may write it. The
+ * rejection half, which moves no money, lives beside the upload instead.
+ *
+ * Converts the `pending` receipt row in place — never a second insert — so
+ * one transfer is one `payments` row from upload to approval, carrying the
+ * guest's reference and the file an admin looked at.
+ *
+ * Rejects, writing nothing, when the verifier is not an owner or finance,
+ * when the id is not a receipt row, or when that row is no longer
+ * `pending` — which includes a `superseded` one, so only the newest receipt
+ * can ever be approved (owner decision 2026-10-14, Q6).
+ */
+export async function approveManualReceipt(
+  input: VerifyCashPaymentInput,
+): Promise<VerifyCashPaymentResult> {
+  const parsed = verifyCashPaymentInputSchema.parse(input);
+  const verifiedBy = assertMayVerifyPayments(parsed.verifier);
+  return verifyPendingManualPayment(parsed.paymentId, 'receipt', verifiedBy);
 }
