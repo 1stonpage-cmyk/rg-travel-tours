@@ -44,10 +44,14 @@ export function startScheduledJobs(): void {
     EVERY_MINUTE,
     async () => {
       try {
-        const { expired } = await expireHolds(new Date());
-        // Silent on a no-op: this runs 1,440 times a day.
-        if (expired > 0) {
-          console.log(`[jobs] expire-holds: released ${expired} lapsed hold(s)`);
+        const { expired, failed } = await expireHolds(new Date());
+        // Silent on a no-op: this runs 1,440 times a day. `skippedWithMoney`
+        // logs itself, loudly, from inside the sweep.
+        if (expired > 0 || failed > 0) {
+          console.log(
+            `[jobs] expire-holds: released ${expired} lapsed hold(s)` +
+              (failed > 0 ? `, ${failed} could not be expired and will be retried` : ''),
+          );
         }
       } catch (error) {
         console.error('[jobs] expire-holds failed', error);

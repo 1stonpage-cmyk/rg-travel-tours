@@ -57,10 +57,40 @@
  *  - A webhook that commits the review flag first makes the UPDATE match
  *    nothing: `affectedRows === 0`, and the sweep writes nothing at all.
  *
- * The locks this takes, in order: the booking row (the UPDATE), then the
- * coupon's redemption row and the coupon row (`releaseRedemption`). The
- * global order is `fleet_date_slots` → `tour_date_slots` → **coupon row
- * last**, and the coupon is last here too.
+ * ## The locks this takes, and the invariant that keeps them safe
+ *
+ * In order: the booking row (the conditional UPDATE, by PRIMARY KEY), then
+ * the coupon's redemption row and the coupon row (`releaseRedemption`). The
+ * coupon is last, which is the tail of the global
+ * `fleet_date_slots → tour_date_slots → coupon` order.
+ *
+ * **But it is NOT the case that the sweep simply follows that order, and the
+ * reason it is still deadlock-free is worth stating exactly** (fix round 1,
+ * MINOR 6): `createHold()` takes the coupon row `FOR UPDATE`
+ * (`reserveCouponUnderLock`, `create-hold.ts`) BEFORE it inserts its
+ * booking row — so relative to this sweep, which takes a booking row and
+ * then a coupon row, the two orderings are INVERTED. A cycle would need
+ * `createHold()` to end up waiting for a booking row this sweep holds, and
+ * it cannot, because **the sweep takes no gap locks and no next-key locks**:
+ *
+ *  - its UPDATE is a primary-key lookup, so InnoDB takes a single record
+ *    lock on an existing row and locks no gap around it;
+ *  - its candidate read is NON-LOCKING, so the ranged scan over
+ *    `bookings_hold_expiry_idx` takes nothing at all.
+ *
+ * `createHold()` only ever INSERTS into `bookings`, and an insert can only
+ * wait on another transaction's gap or next-key lock. There is none to wait
+ * on, so the inverted order is harmless.
+ *
+ * **That is the invariant a future change would break.** Turning the
+ * candidate read into a ranged `SELECT … FOR UPDATE` (the obvious-looking
+ * "tighten the sweep" refactor) would take gap locks across that index,
+ * `createHold()`'s insert would need an insert-intention lock inside one of
+ * those gaps, and the inverted coupon/booking order would become a real
+ * deadlock between a booking attempt and the cron. If the candidate read
+ * ever has to lock, the sweep must take the coupon row FIRST, or not at all.
+ * `capacity.ts` records the same measurement for `FOR SHARE` on the capacity
+ * counts, and it is the same hazard.
  *
  * ## Idempotency, which is an owner condition
  *
@@ -92,6 +122,22 @@
  *     affected-row count, so `used_count` cannot be decremented twice for
  *     one hold even if something above it ever ran twice.
  *
+ * ## One bad row must not stop the sweep
+ *
+ * Per-booking transactions keep COMMITTED work, but they do not give the
+ * LOOP progress: before fix round 1 a single throw rejected the whole
+ * `expireHolds` promise, the cron logged it, and the next minute started
+ * again with the same oldest candidate (the read is ordered by lapse time).
+ * A row persistently blocked by a long transaction would therefore burn
+ * `innodb_lock_wait_timeout` and then abort every NEWER lapsed hold, every
+ * minute, re-creating for all of them the exact bug this task exists to fix
+ * — while looking healthy, because the cron kept running and kept logging.
+ *
+ * So each booking is attempted inside its own `try`: a failure is logged,
+ * counted in `failed`, and the loop moves to the next row. `expireHolds`
+ * itself now rejects only if the candidate read fails, which is the one
+ * failure that means "there is nothing to make progress on".
+ *
  * ## Never a deletion
  *
  * Expiry is a STATUS CHANGE. Nothing here deletes a booking or a payment,
@@ -99,7 +145,7 @@
  * gets one row per expiry, `actor_type` `system` (a cron is not a person and
  * not a gateway).
  */
-import { and, asc, eq, isNotNull, lte } from 'drizzle-orm';
+import { and, asc, eq, gt, isNotNull, lte, sql } from 'drizzle-orm';
 import { manilaCivilDate } from '@rg/shared';
 import { getDb } from '../db/client';
 import type { Database, Transaction } from '../db/client';
@@ -107,10 +153,45 @@ import { bookings } from '../db/schema';
 import { writeAudit } from '../services/audit';
 import { releaseRedemption } from '../services/coupons';
 
-/** What one sweep did. `expired` counts rows this sweep actually changed. */
+/** What one sweep did. */
 export interface ExpireHoldsResult {
+  /** Bookings this sweep moved to `expired`. */
   expired: number;
+  /**
+   * Lapsed holds left alone because they carry money but NOT the review
+   * flag — the state `amount_paid_centavos = 0` exists to catch.
+   *
+   * Counted and logged rather than silently skipped (fix round 1): nothing
+   * in the system produces this row today, so if one ever appears it is
+   * either a new payment path that forgot to raise the review flag or data
+   * edited by hand, and in both cases a guest's money is sitting on a
+   * booking nobody is looking at. A guard that fires invisibly is a guard
+   * nobody knows fired.
+   *
+   * Review-flagged holds are deliberately NOT counted here: they are the
+   * expected, documented case and are already visible in the review queue.
+   */
+  skippedWithMoney: number;
+  /**
+   * Bookings whose own transaction threw. Logged, skipped, and retried on
+   * the next tick — see "One bad row must not stop the sweep".
+   */
+  failed: number;
 }
+
+/**
+ * The most bookings one tick will expire.
+ *
+ * The candidate read used to be unbounded, so the first sweep after an
+ * outage was one giant batch (fix round 1). A cap turns a backlog into
+ * successive ticks instead: 200 a minute is 12,000 an hour, far beyond any
+ * plausible backlog for a day-tour operator, while keeping one tick's work —
+ * and one tick's row locks — bounded.
+ *
+ * Exported so the test that proves the batching can assert against this
+ * number rather than a copy of it.
+ */
+export const HOLD_SWEEP_BATCH_LIMIT = 200;
 
 /** The booking facts one expiry needs. Read before the transaction opens. */
 interface Candidate {
@@ -151,6 +232,33 @@ function expirable(now: Date) {
     // Defence in depth: never expire a booking with money against it.
     eq(bookings.amountPaidCentavos, 0),
   );
+}
+
+/**
+ * Lapsed holds carrying money that the review flag is NOT covering.
+ *
+ * The flag is the rule; `amount_paid_centavos = 0` is the spare guard. This
+ * counts what the spare guard caught, so it can be logged and asserted
+ * instead of being an invisible difference in a WHERE clause.
+ *
+ * One indexed count on the same `(status, hold_expires_at)` range the
+ * candidate read uses, so it costs one extra statement per tick.
+ */
+async function countLapsedHoldsCarryingMoney(db: Database, now: Date): Promise<number> {
+  const [row] = await db
+    .select({ n: sql<number>`COUNT(*)` })
+    .from(bookings)
+    .where(
+      and(
+        eq(bookings.status, 'pending_payment'),
+        isNotNull(bookings.holdExpiresAt),
+        lte(bookings.holdExpiresAt, now),
+        eq(bookings.paymentReviewRequired, false),
+        gt(bookings.amountPaidCentavos, 0),
+      ),
+    );
+  if (!row) throw new Error('COUNT(*) returned no row');
+  return Number(row.n);
 }
 
 /**
@@ -256,6 +364,8 @@ async function expireOne(db: Database, booking: Candidate, now: Date): Promise<b
 export async function expireHolds(now: Date): Promise<ExpireHoldsResult> {
   const db = getDb();
 
+  const skippedWithMoney = await countLapsedHoldsCarryingMoney(db, now);
+
   const candidates: Candidate[] = await db
     .select({
       id: bookings.id,
@@ -269,11 +379,37 @@ export async function expireHolds(now: Date): Promise<ExpireHoldsResult> {
     .where(expirable(now))
     // Oldest lapse first, so a backlog is worked through in the order the
     // holds died rather than in whatever order the index happens to return.
-    .orderBy(asc(bookings.holdExpiresAt), asc(bookings.id));
+    .orderBy(asc(bookings.holdExpiresAt), asc(bookings.id))
+    .limit(HOLD_SWEEP_BATCH_LIMIT);
 
   let expired = 0;
+  let failed = 0;
   for (const candidate of candidates) {
-    if (await expireOne(db, candidate, now)) expired += 1;
+    /*
+     * The loop's progress guarantee. One row that cannot be expired — a
+     * lock-wait timeout against a long-running transaction, a deadlock, a
+     * dropped connection mid-statement — must not take the rest of the
+     * batch with it, because the rest of the batch is every NEWER lapsed
+     * hold and they would all keep their capacity until the row healed.
+     */
+    try {
+      if (await expireOne(db, candidate, now)) expired += 1;
+    } catch (error) {
+      failed += 1;
+      console.error(
+        `[jobs] expire-holds: booking ${candidate.ref} (id ${candidate.id}) could not be expired`,
+        error,
+      );
+    }
   }
-  return { expired };
+
+  if (skippedWithMoney > 0) {
+    console.warn(
+      `[jobs] expire-holds: ${skippedWithMoney} lapsed hold(s) carry money but are NOT ` +
+        'flagged for review — a payment path raised money without raising the flag, ' +
+        'or a row was edited by hand. Nobody is reviewing that money.',
+    );
+  }
+
+  return { expired, skippedWithMoney, failed };
 }
