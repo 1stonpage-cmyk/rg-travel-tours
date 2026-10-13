@@ -2,6 +2,8 @@ import { Route, Routes } from 'react-router-dom';
 import { BOOKING_PAGE_ROUTE } from '@rg/shared';
 import PublicLayout from '@/components/layout/PublicLayout';
 import AdminLoginPage from '@/pages/admin/AdminLoginPage';
+import ManualQrPage from '@/pages/portal/ManualQrPage';
+import PortalLoginPage from '@/pages/portal/PortalLoginPage';
 import BookingStatusPage from '@/pages/public/BookingStatusPage';
 import CheckoutPage from '@/pages/public/CheckoutPage';
 import HomePage from '@/pages/public/HomePage';
@@ -53,6 +55,20 @@ export default function App() {
        * `X-Robots-Tag` middleware already keeps out of every index.
        */}
       <Route path="admin/login" element={<AdminLoginPage />} />
+
+      {/*
+       * The guest portal (Week 4, Tasks 8 and 9). OUTSIDE `PublicLayout`
+       * like the staff sign-in: these screens render their own `<main>`,
+       * and a guest who is mid-payment should not be invited back into the
+       * catalogue by a nav bar.
+       *
+       * `/portal/pay` shows an amount due and an account number, so it is
+       * behind the guest session (owner decision 2026-10-14, Q5) — the page
+       * itself renders a sign-in prompt rather than details when there is
+       * no session, so there is no flash of anything private.
+       */}
+      <Route path="portal/login" element={<PortalLoginPage />} />
+      <Route path="portal/pay" element={<ManualQrPage />} />
     </Routes>
   );
 }

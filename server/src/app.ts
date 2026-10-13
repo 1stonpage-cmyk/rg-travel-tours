@@ -7,6 +7,7 @@ import { TIMEZONE } from '@rg/shared';
 import { createContext } from './context';
 import type { SiteEnv } from './env';
 import { createHtmlHandler } from './html';
+import { createPaymentQrRouter } from './routers/payment-qr';
 import { createReceiptRouter } from './routers/receipts';
 import { errorHandler } from './middleware/error-handler';
 import { rejectMalformedUrl } from './middleware/malformed-url';
@@ -190,6 +191,14 @@ export function createApp(
    * 404; see the route's own note on why.
    */
   app.use('/api/receipts', cookieParser(), createReceiptRouter());
+
+  /*
+   * The payment QR (Week 4, Task 8). Its own cookie parser, like the
+   * receipts route and for the same reason: it answers bytes and reads the
+   * session itself. It takes no parameter at all, so there is no name to
+   * police.
+   */
+  app.use('/api/payment-qr', cookieParser(), createPaymentQrRouter());
 
   app.use('/trpc', cookieParser());
   app.use('/trpc', createExpressMiddleware({ router: appRouter, createContext }));

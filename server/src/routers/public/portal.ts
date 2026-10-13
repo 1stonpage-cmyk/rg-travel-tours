@@ -31,12 +31,21 @@
  * `BOOKING_LOOKUP_PROCEDURES` in `middleware/rate-limit.ts`.
  */
 import { TRPCError } from '@trpc/server';
+import { eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { bookingLookupInput } from '@rg/shared';
+import {
+  RECEIPT_UPLOAD_MAX_PER_BOOKING,
+  bookingLookupInput,
+  depositCentavos,
+  manilaCivilDate,
+} from '@rg/shared';
+import { readSettingBlock } from '../../content/settings';
+import { getDb } from '../../db/client';
+import { bookings, payments, tours } from '../../db/schema';
 import { clearSessionCookie, setSessionCookie } from '../../middleware/session-cookie';
 import { findBookingByCredentials } from '../../services/portal-auth';
 import { createSession, revokeSession } from '../../services/sessions';
-import { publicProcedure, router } from '../../trpc';
+import { customerProcedure, publicProcedure, router } from '../../trpc';
 
 /**
  * The one refusal. Built fresh per call rather than held as a module
@@ -88,5 +97,103 @@ export const portalRouter = router({
     if (token) await revokeSession(token);
     clearSessionCookie(ctx.res);
     return { ok: true as const };
+  }),
+
+  /**
+   * Everything the manual QR screen shows (§6 step 1, Week 4 Task 8).
+   *
+   * **`customerProcedure`, and it takes NO input.** The booking comes from
+   * the session, whose `subject_id` is the booking id — so there is no
+   * reference to pass, nothing to tamper with, and a booking reference on
+   * its own reveals nothing (owner decision 2026-10-14, Q5). A signed-in
+   * guest can reach exactly one booking: their own.
+   *
+   * ## The amount is computed here, from the booking
+   *
+   * `amountDueCentavos` is the deposit (or the full total for a `full`
+   * booking) less anything already paid — the same arithmetic
+   * `recordManualReceipt()` records, from the same price snapshot. The
+   * browser is told a number and never asked for one (CLAUDE.md: the server
+   * computes all money), which is also why the QR image carries no amount:
+   * a static QR cannot embed one, so §6 shows it as text beside it.
+   *
+   * ## `qr` is null until R&G configure it
+   *
+   * Owner decision 2026-10-14 (Q3): the account name, number and image are
+   * seeded EMPTY and nothing invents them. While `isConfigured` is false
+   * this returns `qr: null`, the page shows an amber "payment details
+   * pending" state, and the checkout does not offer the option at all —
+   * three places agreeing, from one flag.
+   */
+  manualPayment: customerProcedure.query(async ({ ctx }) => {
+    const [booking] = await getDb()
+      .select({
+        ref: bookings.ref,
+        status: bookings.status,
+        payMode: bookings.payMode,
+        tourTitle: tours.title,
+        tourDate: bookings.tourDate,
+        pax: bookings.pax,
+        totalCentavos: bookings.totalCentavos,
+        // Aliased, never `amountPaidCentavos:` — the payment guard in
+        // `schema-conventions.test.ts` reads that spelling as a WRITE of the
+        // money column, deliberately, and renaming a read is the
+        // accommodation it asks for.
+        paidCentavos: bookings.amountPaidCentavos,
+        priceSnapshot: bookings.priceSnapshot,
+        holdExpiresAt: bookings.holdExpiresAt,
+      })
+      .from(bookings)
+      .innerJoin(tours, eq(tours.id, bookings.tourId))
+      .where(eq(bookings.id, ctx.session.subjectId))
+      .limit(1);
+
+    /*
+     * A live session whose booking has vanished. Not reachable today —
+     * bookings are never hard-deleted — and it fails closed rather than
+     * handing the page an empty object to render payment details from.
+     */
+    if (!booking) {
+      throw new TRPCError({ code: 'NOT_FOUND', message: 'We could not find that booking.' });
+    }
+
+    const expected =
+      booking.payMode === 'full'
+        ? booking.totalCentavos
+        : depositCentavos(booking.totalCentavos, booking.priceSnapshot.depositPercent);
+    const amountDueCentavos = Math.max(expected - booking.paidCentavos, 0);
+
+    const qrBlock = await readSettingBlock('payment_qr');
+    const receipts = await getDb()
+      .select({ id: payments.id })
+      .from(payments)
+      .where(eq(payments.bookingId, ctx.session.subjectId));
+
+    return {
+      ref: booking.ref,
+      status: booking.status,
+      tourTitle: booking.tourTitle,
+      /** A civil date, as every tour date is — never a UTC timestamp. */
+      tourDate: manilaCivilDate(booking.tourDate),
+      pax: booking.pax,
+      totalCentavos: booking.totalCentavos,
+      paidCentavos: booking.paidCentavos,
+      amountDueCentavos,
+      holdExpiresAt: booking.holdExpiresAt,
+      /**
+       * How many more receipts this booking may carry (owner decision Q6).
+       * Published so the screen can say so BEFORE a guest picks a file,
+       * rather than refusing the upload after they have waited for it.
+       */
+      uploadsRemaining: Math.max(RECEIPT_UPLOAD_MAX_PER_BOOKING - receipts.length, 0),
+      qr: qrBlock.isConfigured
+        ? {
+            imagePath: qrBlock.imagePath,
+            accountName: qrBlock.accountName,
+            accountNumber: qrBlock.accountNumber,
+            instructions: qrBlock.instructions,
+          }
+        : null,
+    };
   }),
 });

@@ -86,6 +86,17 @@ function validValueFor(key: string): unknown {
       };
     case 'booking':
       return { minLeadDays: 1, nextDayCutoffTime: '18:00', maxAdvanceDays: 180 };
+    case 'payment_qr':
+      // Week 4 Task 8: the UNCONFIGURED shape, which is what the seed ships
+      // and therefore what a real row looks like until R&G send the real
+      // QR and account details.
+      return {
+        imagePath: null,
+        accountName: null,
+        accountNumber: null,
+        instructions: null,
+        isConfigured: false,
+      };
     case 'legal_privacy':
       return { markdown: '# Privacy', updatedAt: '2026-01-01T00:00:00.000Z' };
     case 'legal_terms':

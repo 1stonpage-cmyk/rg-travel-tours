@@ -21,6 +21,7 @@ import CheckoutPage from '@/pages/public/CheckoutPage';
 import { RATE_LIMIT_MESSAGE } from '@/lib/mutation-errors';
 import { TrpcProviders } from '@/lib/trpc';
 import { mockTrpc, mockTrpcError, mockTrpcRateLimited } from './helpers/mock-trpc';
+import { SETTINGS_FIXTURE } from './helpers/fixtures';
 
 /**
  * Deliberately NOT internally consistent with §5's pricing formula — see
@@ -216,6 +217,57 @@ describe('CheckoutPage — pay now (Task 8b)', () => {
     // alone would not.
     expect(startPaymentCalls).toBe(1);
     expect(createHoldCalls).toBe(1);
+  });
+
+  /* ====================================================================
+   * The manual-transfer alternative (Week 4 Task 8; owner decision
+   * 2026-10-14, Q3 and Q5).
+   *
+   * Two rules, and the first is the one that could cost a guest money:
+   * while `payment_qr` is unconfigured the option must not be offered at
+   * all, because the screen behind it could only apologise. The second is
+   * that it is a LINK — Week 3's checkout router has exactly two
+   * mutations and that is a tested property, so choosing to pay by
+   * transfer starts nothing on the server.
+   * ==================================================================== */
+
+  it('offers NO transfer link while manualTransferEnabled is false', async () => {
+    mockTrpc({ 'checkout.quote': QUOTE_FIXTURE });
+    mockTrpc({ 'checkout.createHold': () => HOLD_RESULT });
+    // SETTINGS_FIXTURE ships `manualTransferEnabled: false`, which is what
+    // the seeded database says until R&G configure their QR.
+    mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
+
+    const user = userEvent.setup();
+    renderCheckout();
+
+    const form = await screen.findByRole('form', { name: /checkout/i });
+    await fillGuestDetails(user, form);
+    await user.click(within(form).getByLabelText(/i agree/i));
+    await user.click(within(form).getByRole('button', { name: /book now/i }));
+
+    await screen.findByRole('button', { name: /^pay now$/i });
+    expect(screen.queryByRole('link', { name: /bank transfer/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/gcash, maya or bank transfer/i)).not.toBeInTheDocument();
+  });
+
+  it('offers the transfer link, carrying the ref, once it IS enabled', async () => {
+    mockTrpc({ 'checkout.quote': QUOTE_FIXTURE });
+    mockTrpc({ 'checkout.createHold': () => HOLD_RESULT });
+    mockTrpc({ 'settings.get': { ...SETTINGS_FIXTURE, manualTransferEnabled: true } });
+
+    const user = userEvent.setup();
+    renderCheckout();
+
+    const form = await screen.findByRole('form', { name: /checkout/i });
+    await fillGuestDetails(user, form);
+    await user.click(within(form).getByLabelText(/i agree/i));
+    await user.click(within(form).getByRole('button', { name: /book now/i }));
+
+    const link = await screen.findByRole('link', { name: /gcash, maya or bank transfer/i });
+    // Through the portal sign-in, which is where the guest session — and so
+    // the amount and the account details — comes from.
+    expect(link).toHaveAttribute('href', `/portal/login?ref=${HOLD_RESULT.ref}&next=/portal/pay`);
   });
 
   it("shows the server's own calm message, never a crash, when startPayment is refused", async () => {

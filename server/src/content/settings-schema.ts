@@ -168,6 +168,49 @@ const bookingSchema = z
     message: 'maxAdvanceDays must not be below minLeadDays: no date would be bookable',
   });
 
+/**
+ * The R&G payment QR and the account it belongs to (BUILD_SPEC §6 step 1;
+ * owner decision 2026-10-14, Q3).
+ *
+ * **Seeded EMPTY, with `isConfigured: false`, and nothing here is ever
+ * invented.** The same rule the DOT/DTI permit numbers follow: a payment
+ * instruction that is wrong by a digit sends a guest's money to a stranger,
+ * so the seed ships nulls and the site renders an explicit pending state
+ * until R&G supply the real values (see `docs/LAUNCH_CHECKLIST.md`).
+ *
+ * `isConfigured` is the switch the whole flow reads: while it is false the
+ * manual-transfer option is **not offered at checkout at all**. It is
+ * refused unless all four fields are actually filled, so an admin cannot
+ * turn the flow on with nothing behind it — the flag states a fact rather
+ * than asserting one.
+ */
+const paymentQrSchema = z
+  .object({
+    /**
+     * A path under `/uploads`, served through the authenticated receipt-style
+     * route — never a public URL, and never a data URI in a settings row.
+     * Null until R&G send the image.
+     */
+    imagePath: z.string().max(300).nullable(),
+    /** Exactly as it appears on the account. Null until R&G confirm it. */
+    accountName: z.string().max(160).nullable(),
+    /** The GCash number or bank account number, as text. Null until confirmed. */
+    accountNumber: z.string().max(80).nullable(),
+    /** Anything R&G want said beside it, e.g. which bank branch. */
+    instructions: z.string().max(600).nullable(),
+    /** True only when the four above are real. See the refinement. */
+    isConfigured: z.boolean(),
+  })
+  .refine(
+    (qr) =>
+      !qr.isConfigured ||
+      Boolean(qr.imagePath?.trim() && qr.accountName?.trim() && qr.accountNumber?.trim()),
+    {
+      message:
+        'payment_qr.isConfigured cannot be true without imagePath, accountName and accountNumber',
+    },
+  );
+
 const legalDocSchema = z.object({
   markdown: z.string(),
   updatedAt: z.string(),
@@ -188,6 +231,7 @@ export const SETTING_SCHEMAS = {
   faqs: z.array(faqSchema),
   contact: contactSchema,
   booking: bookingSchema,
+  payment_qr: paymentQrSchema,
   legal_privacy: legalDocSchema,
   legal_terms: legalDocSchema,
 } satisfies Record<string, z.ZodType>;

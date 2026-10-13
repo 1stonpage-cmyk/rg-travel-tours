@@ -46,6 +46,7 @@ import { initTRPC } from '@trpc/server';
 import type { Context } from './context';
 import { ZodError, z } from 'zod';
 import type { AdminRole } from '@rg/shared';
+import { requireCustomer } from './middleware/require-customer';
 import {
   ROLE_MATRIX,
   requireRole,
@@ -87,13 +88,20 @@ export function scrubPaths(message: string): string {
 /**
  * What every procedure must declare about who may call it (task A4).
  *
- * A discriminated union, not two optional fields: there is no third state and
- * no "unset". `publicProcedure` stamps the first variant, `adminProcedure()`
- * stamps the second, and because `t` is never exported those are the only two
- * ways a procedure on this server can come into existence. That is what makes
- * the metadata a FACT about the procedure rather than a label someone
- * remembered to apply — and what lets `procedure-role-metadata.test.ts`
- * enumerate `appRouter` and refuse anything carrying neither.
+ * A discriminated union, not optional fields: there is no "unset".
+ * `publicProcedure` stamps the first variant, `customerProcedure` the
+ * second, `adminProcedure()` the third, and because `t` is never exported
+ * those are the only three ways a procedure on this server can come into
+ * existence. That is what makes the metadata a FACT about the procedure
+ * rather than a label someone remembered to apply — and what lets
+ * `procedure-role-metadata.test.ts` enumerate `appRouter` and refuse
+ * anything carrying none of them.
+ *
+ * `customer` arrived in Week 4 Task 8 with the guest portal: the manual-QR
+ * screen shows an amount due and an account number, and a booking reference
+ * alone must not reveal either (owner decision 2026-10-14, Q5). It is a
+ * third ACCESS KIND rather than a role, because a guest has no role — their
+ * session names one booking and that is the whole of their authority.
  *
  * `roles` is denormalised into the meta on purpose. The gate already spreads
  * `ROLE_MATRIX[area]`, so this copy is redundant at runtime — but it means the
@@ -102,6 +110,7 @@ export function scrubPaths(message: string): string {
  */
 export type ProcedureAccess =
   | { readonly access: 'public' }
+  | { readonly access: 'customer' }
   | {
       readonly access: 'admin';
       readonly area: AdminArea;
@@ -178,6 +187,25 @@ export const router = t.router;
  * `verified_by`), which is exactly the thing this builder cannot give it.
  */
 export const publicProcedure = t.procedure.meta({ access: 'public' });
+
+/**
+ * A procedure only a signed-in GUEST may call (Week 4, Task 8).
+ *
+ * The portal's counterpart to `adminProcedure`, and it exists for the same
+ * reason: so the gate cannot be forgotten. `requireCustomer` replaces
+ * `ctx.session` with a narrowed `CustomerSession` whose `subjectId` IS the
+ * booking id, so a resolver downstream reaches exactly one booking and has
+ * no input field through which to ask for another. That is what makes "a
+ * portal session reaches one booking" structural rather than a rule every
+ * future resolver has to remember (CLAUDE.md, RA 10173).
+ *
+ * No area and no roles: a guest has neither. The one thing the metadata
+ * needs to say is that this is not public, and the enumeration guard holds
+ * it to the same anonymous-caller proof the admin procedures get.
+ */
+export const customerProcedure = t.procedure
+  .meta({ access: 'customer' })
+  .use(({ ctx, next }) => next({ ctx: { session: requireCustomer(ctx) } }));
 
 /**
  * The ONLY way to build an admin procedure (task A4).

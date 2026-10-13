@@ -72,6 +72,10 @@ function accessOf(procedure: ProcedureLike): ProcedureAccess | undefined {
   if (!meta || typeof meta !== 'object') return undefined;
   const access = (meta as { access?: unknown }).access;
   if (access === 'public') return { access: 'public' };
+  // Week 4 Task 8: the guest portal's own access kind. No area and no roles
+  // to compare — a guest has neither — so the assertions that bite on it
+  // are "it is declared" and "it refuses an anonymous caller".
+  if (access === 'customer') return { access: 'customer' };
   if (access === 'admin') {
     const { area, roles } = meta as { area?: unknown; roles?: unknown };
     if (typeof area !== 'string' || !Array.isArray(roles)) return undefined;
@@ -179,6 +183,34 @@ for (const target of TARGETS) {
         await expect(
           callerFor(target.router, path, {})(),
           `${path} is labelled admin but answered a caller with no session`,
+        ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+      }
+    });
+
+    /**
+     * The same proof for the guest portal (Week 4, Task 8). A `customer`
+     * procedure reads ONE booking — an amount due, an account number — and
+     * the owner's instruction is that a booking reference alone reveals
+     * nothing, so an unauthenticated caller must be refused by the GATE and
+     * not merely by the label.
+     *
+     * Also asserted: a STAFF session does not satisfy it. An admin reads a
+     * booking through the admin surface, where access is role-gated and
+     * audited; if a staff session passed this gate, "which booking is this
+     * session for" would stop having an answer.
+     */
+    it('refuses an anonymous caller, and a staff session, on every customer procedure', async () => {
+      const customerPaths = paths.filter((path) => access(path)?.access === 'customer');
+      for (const path of customerPaths) {
+        await expect(
+          callerFor(target.router, path, {})(),
+          `${path} is labelled customer but answered a caller with no session`,
+        ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+        await expect(
+          callerFor(target.router, path, {
+            session: { subjectType: 'user', subjectId: 1, role: 'owner' },
+          })(),
+          `${path} let a STAFF session through the guest-portal gate`,
         ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
       }
     });

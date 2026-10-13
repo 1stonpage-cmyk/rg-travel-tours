@@ -613,6 +613,23 @@ export const SEED_SETTINGS: SettingsBlocks = {
    * half that needs R&G's confirmation most — it is the line between "we can
    * still crew a van for tomorrow" and "we cannot".
    */
+  /**
+   * EMPTY, and it stays empty until R&G send the real QR image and account
+   * details (owner decision 2026-10-14, Q3). `isConfigured: false` keeps the
+   * manual-transfer option off the checkout entirely, so nothing can be
+   * offered to a guest that would send their money nowhere.
+   *
+   * Never invent an account name or number here — the same rule as the
+   * permit numbers above.
+   */
+  payment_qr: {
+    imagePath: null,
+    accountName: null,
+    accountNumber: null,
+    instructions: null,
+    isConfigured: false,
+  },
+
   booking: {
     minLeadDays: 1,
     nextDayCutoffTime: '18:00',

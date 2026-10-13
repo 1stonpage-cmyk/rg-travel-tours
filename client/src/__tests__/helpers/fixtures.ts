@@ -227,6 +227,14 @@ export const SETTINGS_FIXTURE: SettingsPayload = {
    * a date picker depend on the day it runs.
    */
   bookingWindow: { earliest: '2026-07-02', latest: '2026-12-28' },
+  /*
+   * FALSE, which is what the seeded database says until R&G's QR and
+   * account details are configured (owner decision 2026-10-14, Q3). A
+   * fixture that said `true` would make the checkout's "pay by transfer"
+   * link appear in every test that renders the page, which is the opposite
+   * of what a default should do.
+   */
+  manualTransferEnabled: false,
   legal: {
     privacy: {
       markdown:

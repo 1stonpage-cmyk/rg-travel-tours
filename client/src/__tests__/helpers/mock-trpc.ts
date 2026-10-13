@@ -121,10 +121,25 @@ export function mockTrpc(next: Handlers) {
 }
 
 /** Makes one named procedure reject, so error states can be exercised. */
-export function mockTrpcError(procedure: string) {
+export function mockTrpcError(procedure: string, _code?: string, message?: string) {
+  /*
+   * `message` was added in Week 4 Task 8: the portal sign-in shows the
+   * SERVER's own sentence for a refused login (one generic message for a
+   * wrong reference and a wrong email alike, per §7), so a test that asserts
+   * the guest sees that sentence needs the mock to carry it. Omitted, it
+   * stays `'mock failure'` and every existing caller behaves exactly as
+   * before.
+   *
+   * `_code` is accepted and unused on purpose: callers name the tRPC code
+   * at the call site because it documents WHICH refusal is being simulated,
+   * and the client code under test reads the message rather than the code.
+   * Threading it into the thrown error would mean minting a real TRPCError
+   * here, which this mock deliberately does not do — it fakes the socket,
+   * not the server.
+   */
   mockTrpc({
     [procedure]: () => {
-      throw new Error('mock failure');
+      throw new Error(message ?? 'mock failure');
     },
   });
 }

@@ -199,6 +199,18 @@ export interface SettingsPayload {
    * booking.)
    */
   bookingWindow: BookableDateRange;
+  /**
+   * Whether the manual QR transfer flow may be offered at all — and
+   * **nothing else about it**.
+   *
+   * The account name, the number and the QR image are deliberately NOT in
+   * this payload: it is the public settings query that every page calls, and
+   * a guest's payment instructions are read through the session-gated
+   * `portal.manualPayment` instead (owner decision 2026-10-14, Q5). What the
+   * browser needs here is one boolean — whether to show the option — and
+   * one boolean is what it gets.
+   */
+  manualTransferEnabled: boolean;
   legal: {
     privacy: SettingsBlocks['legal_privacy'];
     terms: SettingsBlocks['legal_terms'];
@@ -257,6 +269,8 @@ export function toSettingsPayload(blocks: SettingsBlocks, now: Date): SettingsPa
     // Resolved here, beside `openState` and the announcement window, and for
     // the same reason: Manila-clock logic belongs on the server.
     bookingWindow: bookableDateRange(blocks.booking, now),
+    // The flag only. See the field's own note on why the details are not here.
+    manualTransferEnabled: blocks.payment_qr.isConfigured,
     legal: { privacy: blocks.legal_privacy, terms: blocks.legal_terms },
   };
 }

@@ -409,6 +409,31 @@ Still outstanding:
       and `coming-soon/index.html`. `pnpm check:contact` enforces it; run it after any
       contact change rather than eyeballing both files.
 
+### The manual transfer QR — BLOCKING for the transfer flow
+
+The `payment_qr` settings block ships **empty**, with `isConfigured: false` (owner decision
+2026-10-14, Q3). Until it is filled, the "pay by GCash, Maya or bank transfer" option is **not
+offered at checkout at all**, the guest portal's payment screen shows an amber "payment details
+pending" notice, and `GET /api/payment-qr` answers 404. That is deliberate: a payment
+instruction that is wrong by one digit sends a guest's money to a stranger, so **nothing here is
+ever invented** — the same rule as the accreditation numbers below.
+
+- [ ] Get R&G's **QR image** (PNG, JPG or WEBP) and the **exact account name and account
+      number**, in writing, from R&G. Not transcribed from a screenshot, and not guessed.
+- [ ] Put the image in `UPLOADS_DIR/payment-qr/` on the server. The filename must be a plain
+      image name (`[A-Za-z0-9][A-Za-z0-9_-]*.png|jpg|jpeg|webp`) — the route refuses anything
+      else rather than handing it to the filesystem.
+- [ ] Fill the `payment_qr` settings row: `imagePath`, `accountName`, `accountNumber`, optional
+      `instructions`, and `isConfigured: true`. The schema **refuses** `isConfigured: true`
+      unless the image, the name and the number are all actually present, so the flag cannot be
+      turned on with nothing behind it.
+- [ ] Verify end to end, as a guest: the checkout now offers the transfer link; the portal
+      payment screen shows the QR, the amount and the account details; and the QR image loads
+      (it is behind the guest session — signed out, it must 404).
+- [ ] Verify the opposite too: signed out, `GET /api/payment-qr` is a 404 and the public
+      `settings.get` payload contains **no** account name, number or image path. Only the
+      `manualTransferEnabled` boolean is public.
+
 ### Permits and legal
 
 - [ ] Real DOT, DTI and BIR numbers supplied and entered in Settings — **never invent an

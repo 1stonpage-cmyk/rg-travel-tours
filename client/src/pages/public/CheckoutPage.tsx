@@ -156,6 +156,13 @@ export default function CheckoutPage() {
     { enabled: hasSelection, retry: false, placeholderData: keepPreviousData },
   );
   const createHold = trpc.checkout.createHold.useMutation();
+  /*
+   * Read for ONE boolean: `manualTransferEnabled`, which decides whether the
+   * "pay by transfer instead" link is offered after a hold (Week 4 Task 8).
+   * The same cache entry every other page's `settings.get` uses — TanStack
+   * dedupes by key — so this costs no extra request.
+   */
+  const settingsQuery = trpc.settings.get.useQuery();
 
   // An invalid/expired coupon fails the WHOLE quote (couponCode is part of
   // its input), which would otherwise blank the rest of the page. Report
@@ -273,6 +280,35 @@ export default function CheckoutPage() {
                     </p>
                   </div>
                   <PayNowButton bookingRef={createHold.data.ref} />
+
+                  {/*
+                   * The manual transfer alternative (§6, Week 4 Task 8).
+                   *
+                   * **Offered only when `manualTransferEnabled`** — the
+                   * `payment_qr` settings block's own flag, which is false
+                   * until R&G's QR and account details are configured
+                   * (owner decision 2026-10-14, Q3). Offering it sooner
+                   * would send a guest to a screen that could only
+                   * apologise.
+                   *
+                   * It is a LINK, not a mutation. Week 3's checkout router
+                   * has exactly two mutations and that is a tested property
+                   * (owner decision Q5, option c): paying by transfer
+                   * starts nothing on the server, so nothing here calls it.
+                   * The link carries the ref to prefill the portal sign-in,
+                   * which is where the guest session — and therefore the
+                   * amount and the account details — comes from.
+                   */}
+                  {settingsQuery.data?.manualTransferEnabled ? (
+                    <p className="text-center text-sm">
+                      <Link
+                        to={`/portal/login?ref=${encodeURIComponent(createHold.data.ref)}&next=/portal/pay`}
+                        className="text-brand-blue-700 hover:text-brand-blue-900 tap-target inline-flex items-center font-semibold underline transition-colors"
+                      >
+                        Pay by GCash, Maya or bank transfer instead
+                      </Link>
+                    </p>
+                  ) : null}
                 </div>
               ) : (
                 <form aria-label="Checkout form" onSubmit={handleSubmit} className="space-y-6">
