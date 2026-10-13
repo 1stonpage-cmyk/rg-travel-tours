@@ -18,6 +18,22 @@ const schema = z.object({
   // or seeding the app database doesn't need it configured.
   TEST_DATABASE_URL: z.string().optional(),
   UPLOADS_DIR: z.string().default('./uploads'),
+  /*
+   * Email (Week 4, Task 4; owner Q2 2026-10-13 — nodemailer over SMTP).
+   * ALL OPTIONAL, for the same reason the PayMongo keys are: the app must
+   * boot and take bookings with no mail server configured, which is how it
+   * runs during content work. `notify()` logs and returns instead of
+   * throwing, so a missing host can never block a booking (§11).
+   *
+   * `SMTP_PASSWORD` keeps the name `.env.example` has carried since task
+   * 7E rather than the `SMTP_PASS` of the owner's note — renaming it would
+   * silently break an already-configured `.env` for no gain.
+   */
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASSWORD: z.string().optional(),
+  MAIL_FROM: z.string().optional(),
   PUBLIC_BASE_URL: z.string().default('http://localhost:5180'),
   // PayMongo (plan Task 16). BOTH OPTIONAL, deliberately: the app must still
   // boot without payment credentials — that is how it runs today and how it
