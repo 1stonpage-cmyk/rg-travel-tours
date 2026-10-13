@@ -65,7 +65,7 @@
  * validate the rules against that price, throw before trusting the result.
  */
 import { TRPCError } from '@trpc/server';
-import { and, eq, lt } from 'drizzle-orm';
+import { and, eq, lt, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import {
   bookableDateRange,
@@ -73,6 +73,7 @@ import {
   bookingPagePath,
   bookingRefSchema,
   createHoldInput,
+  DATE_BLOCKED,
   DATE_NOT_BOOKABLE,
   depositCentavos,
   formatPeso,
@@ -86,7 +87,7 @@ import {
 } from '@rg/shared';
 import { readSettingBlock } from '../../content/settings';
 import { getDb } from '../../db/client';
-import { bookings, tours } from '../../db/schema';
+import { bookings, tourBlockedDates, tours } from '../../db/schema';
 import { env } from '../../env';
 import { writeAudit } from '../../services/audit';
 import { getProvider } from '../../services/payments/registry';
@@ -120,15 +121,19 @@ import { publicProcedure, router } from '../../trpc';
 
 /**
  * What `checkout.availability` answers with: every capacity reason, plus the
- * booking window's own (owner decision 2026-10-13, pending R&G).
+ * booking window's own (owner decision 2026-10-13, pending R&G) and the
+ * blocked date's (final whole-branch review, F4).
  *
- * `date_not_bookable` is deliberately NOT a member of
- * `CapacityRefusalReason`: `assessCapacity()` has no clock and must not grow
- * one, so the window is evaluated here and in `createHold()`, never inside
- * the capacity service. Keeping the vocabularies separate is what stops a
- * later reader assuming capacity decides it.
+ * `date_not_bookable` and `date_blocked` are deliberately NOT members of
+ * `CapacityRefusalReason`: `assessCapacity()` has no clock and no notion of
+ * an admin closing a day, and must not grow either, so both are evaluated
+ * here and in `createHold()`, never inside the capacity service. Keeping the
+ * vocabularies separate is what stops a later reader assuming capacity
+ * decides them. Both live in `@rg/shared` as single-definition wire
+ * constants so the client's copy cannot drift from the server's reason.
  */
-export type AvailabilityVerdict = CapacityVerdict | { ok: false; reason: typeof DATE_NOT_BOOKABLE };
+export type AvailabilityVerdict =
+  CapacityVerdict | { ok: false; reason: typeof DATE_NOT_BOOKABLE | typeof DATE_BLOCKED };
 
 /**
  * `checkout.availability`'s own input — a date and a head count against one
@@ -600,12 +605,54 @@ export const checkoutRouter = router({
         if (!tour) return { ok: false, reason: 'tour_unavailable' };
 
         /*
-         * The booking window first, and WITHOUT the locks: it is a pure
-         * function of the settings and the clock, so it needs no transaction
-         * — and answering it here means the date picker greys a closed date
-         * out rather than showing it as "fully booked". `createHold()`
-         * re-checks it under the locks; this is the friendly early answer,
-         * exactly as `validateCoupon()` is for coupons.
+         * §5 step 1's date guards, in `createHold()`'s own order (its step
+         * 2): blocked first, then the booking window. **The order is the
+         * point.** Both surfaces answer the same question, and the
+         * precedence is what makes them give the same REASON for it — a
+         * blocked date that is also outside the window is "this tour isn't
+         * running that day" on both, never one sentence here and a
+         * different one on submit. `createHold()`'s past-date guard has no
+         * counterpart here because it needs none: `earliest` is never
+         * before today, so a past date already answers
+         * `date_not_bookable`.
+         *
+         * **Both reads are outside the locks, and that is safe HERE and
+         * only here.** `availability` is a plain advisory query; it reserves
+         * nothing and `createHold()` re-checks every one of these under its
+         * own locks before it writes. Inside that transaction the same two
+         * reads would be subject to `services/capacity.ts`'s PRECONDITION —
+         * a non-locking read before `takeSlotLocks()` pins the REPEATABLE
+         * READ snapshot and the capacity counts are then answered from
+         * before the race's winner committed. There is no snapshot to
+         * poison in a query that holds no locks and writes nothing.
+         *
+         * Final whole-branch review, F4: the blocked-date read used to live
+         * ONLY in `createHold()`, so this procedure answered `{ ok: true }`
+         * for a blocked date and the guest was refused only at submit.
+         */
+        const [blocked] = await getDb()
+          .select({ id: tourBlockedDates.id })
+          .from(tourBlockedDates)
+          // The date is compared as a STRING through raw SQL, the same way
+          // `capacity.ts` and `create-hold.ts` do it: Drizzle maps a `date`
+          // column to a `Date`, and a `Date` is the midnight-shift hazard a
+          // civil date must avoid.
+          .where(
+            and(
+              eq(tourBlockedDates.tourId, tour.id),
+              sql`${tourBlockedDates.date} = ${input.date}`,
+            ),
+          )
+          .limit(1);
+        if (blocked) return { ok: false, reason: DATE_BLOCKED };
+
+        /*
+         * The booking window, WITHOUT the locks for the same reason: it is a
+         * pure function of the settings and the clock, so it needs no
+         * transaction — and answering it here means the date picker greys a
+         * closed date out rather than showing it as "fully booked".
+         * `createHold()` re-checks it under the locks; this is the friendly
+         * early answer, exactly as `validateCoupon()` is for coupons.
          */
         const window = bookableDateRange(await readSettingBlock('booking'), new Date());
         if (!isDateBookable(input.date, window)) {

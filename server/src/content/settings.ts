@@ -187,9 +187,16 @@ export interface SettingsPayload {
    * `nextDayCutoffTime`, `maxAdvanceDays`) never reaches the client, for the
    * same reason the announcement's schedule fields never do: a browser clock
    * in the wrong time zone must not evaluate a Manila rule. It is published
-   * FOR a date picker to consume — disabling anything outside these two
-   * dates by string comparison, computing nothing — but no client code reads
-   * it yet; that wiring is its own task.
+   * FOR a date picker to consume — bounding itself by string comparison,
+   * computing nothing — and **its consumer exists**: the booking flow's own
+   * date input, `client/src/components/home/HeroSection.tsx`, sets the `min`
+   * and `max` of its `<input type="date">` from `bookingWindow.earliest` /
+   * `.latest`. (This comment used to say no client code read it yet —
+   * corrected 2026-10-13, final review F3. That is `bookingWindow`'s only
+   * consumer, so a reader who believes there is none will delete the field
+   * and un-bound that picker. The enquiry form's "preferred dates" input is
+   * a different thing and is deliberately unbounded: an enquiry is not a
+   * booking.)
    */
   bookingWindow: BookableDateRange;
   legal: {

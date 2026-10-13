@@ -38,6 +38,84 @@ describe('procedure-scoped rate limiting', () => {
 });
 
 /**
+ * Final whole-branch review, F1 (second half): the limiter used to count
+ * HTTP REQUESTS, and a batch is one request carrying any number of
+ * procedure CALLS. A 50-call batch of the limited procedure therefore cost
+ * one attempt out of five, which is the cap multiplied by fifty.
+ *
+ * The limits in this repo are all written per ATTEMPT ("5 failed attempts",
+ * "5 hold creations") — never per TCP request — so the unit the limiter
+ * counts has to be the matched procedure segment, and these two tests pin
+ * that unit at the factory level, independent of any one limiter's options.
+ */
+describe('batch amplification — one attempt per matched CALL, not per request', () => {
+  it('spends one unit of budget per matched segment in a batch', async () => {
+    const app = appWith(2);
+    // Two matched calls in one request = the whole budget.
+    await request(app).post('/trpc/inquiries.create,inquiries.create?batch=1').expect(200);
+    await request(app).post('/trpc/inquiries.create').expect(429);
+  });
+
+  it('refuses a single batch that exceeds the budget on its own', async () => {
+    const app = appWith(2);
+    await request(app)
+      .post('/trpc/inquiries.create,inquiries.create,inquiries.create?batch=1')
+      .expect(429);
+  });
+
+  it('counts only the MATCHED segments, not every segment of the batch', async () => {
+    const app = appWith(2);
+    // One matched call alongside two unlisted ones costs exactly one.
+    await request(app).post('/trpc/tours.list,inquiries.create,tours.list?batch=1').expect(200);
+    await request(app).post('/trpc/inquiries.create').expect(200);
+    await request(app).post('/trpc/inquiries.create').expect(429);
+  });
+});
+
+/**
+ * Final whole-branch review, F1 (first half): `@trpc/server`'s
+ * `getHTTPStatusCode` answers **207** when one batch's results carry mixed
+ * statuses, and `express-rate-limit`'s default `requestWasSuccessful` is
+ * `statusCode < 400`. A `skipSuccessfulRequests` limiter therefore read 207
+ * as "that attempt succeeded" and gave the hit back — so a failed call
+ * hidden in a batch alongside any successful one was free, without limit.
+ *
+ * 207 is not a success and not a failure: it is "some of these failed", and
+ * for a limiter that counts failures only there is just one safe reading of
+ * it. These tests use a toy route that answers 207 directly, so the
+ * property is pinned at the factory level; the real-tRPC 207 (which is
+ * what actually produced the hole) is pinned in `checkout-router.test.ts`.
+ */
+describe('mixed-status batches (207) under skipSuccessfulRequests', () => {
+  function appAnswering(status: number, max: number) {
+    const app = express();
+    app.use(
+      createProcedureRateLimit(['checkout.bookingLookup'], {
+        windowMs: 60_000,
+        max,
+        skipSuccessfulRequests: true,
+      }),
+    );
+    app.all('/trpc/*splat', (_req, res) => res.status(status).json({ ok: true }));
+    return app;
+  }
+
+  it('counts a 207 against the limit', async () => {
+    const app = appAnswering(207, 2);
+    await request(app).post('/trpc/checkout.bookingLookup').expect(207);
+    await request(app).post('/trpc/checkout.bookingLookup').expect(207);
+    await request(app).post('/trpc/checkout.bookingLookup').expect(429);
+  });
+
+  it('still gives the hit back for a plain 200, however many times', async () => {
+    const app = appAnswering(200, 2);
+    for (let i = 0; i < 10; i += 1) {
+      await request(app).post('/trpc/checkout.bookingLookup').expect(200);
+    }
+  });
+});
+
+/**
  * Round 1 review (Critical, C1): the prior version of this predicate
  * normalized the path with a rule tRPC itself doesn't use, which left
  * both mutations effectively unlimited. tRPC actually derives the

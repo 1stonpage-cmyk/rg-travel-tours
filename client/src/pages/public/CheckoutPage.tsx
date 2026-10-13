@@ -1,5 +1,5 @@
 import { keepPreviousData } from '@tanstack/react-query';
-import { DATE_NOT_BOOKABLE, type PayMode } from '@rg/shared';
+import { DATE_BLOCKED, DATE_NOT_BOOKABLE, type PayMode } from '@rg/shared';
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import QueryBoundary from '@/components/common/QueryBoundary';
@@ -51,10 +51,12 @@ import { trpc } from '@/lib/trpc';
  * see that procedure's own note) is asked alongside `checkout.quote` for
  * the same tour/date/pax, and an `ok: false` verdict shows an amber banner
  * with its own distinct sentence: `date_not_bookable` ("that date isn't
- * bookable") is never worded like a capacity refusal ("that day is full") —
- * the two are different facts about different systems (a date window has
- * no clock dependency on van/driver supply). `createHold()` remains the
- * one authority; this banner cannot block or skip its own, later, re-check.
+ * bookable") and `date_blocked` ("this tour isn't running that day") are
+ * never worded like a capacity refusal ("that day is full") — the three are
+ * different facts about different systems (a date window has no clock
+ * dependency on van/driver supply, and a blocked day is an admin's
+ * decision that will not free up). `createHold()` remains the one
+ * authority; this banner cannot block or skip its own, later, re-check.
  */
 
 const MAX_PAX = 12;
@@ -91,6 +93,16 @@ function parseAddonIds(raw: string | null): number[] {
 const AVAILABILITY_MESSAGES: Record<string, string> = {
   [DATE_NOT_BOOKABLE]:
     "We're not taking online bookings for that date. Please choose a different date.",
+  /*
+   * `tour_blocked_dates` — an admin closed that day for this tour (final
+   * whole-branch review, F4). Its own sentence, keyed off the shared
+   * constant like the one above: a blocked day is not coming back, so the
+   * capacity fallback's "try a different date, fewer guests" would send a
+   * guest round a loop that cannot end, and the booking-window sentence
+   * would point at the wrong cause. Amber like every other hint on this
+   * page — never red (CLAUDE.md, guarded by `no-red.test.ts`).
+   */
+  [DATE_BLOCKED]: "This tour isn't running on that date. Please choose a different date.",
 };
 const CAPACITY_FALLBACK_MESSAGE =
   "This tour doesn't have space for that date and group size. Please try a different date, fewer guests, or contact us.";

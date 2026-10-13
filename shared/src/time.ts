@@ -138,12 +138,25 @@ function addCivilDays(date: string, days: number): string {
  * Callers today: `createHold()`, which is the authority and checks it inside
  * the locked transaction, and `checkout.availability`, the early friendly
  * answer. The resolved window is also published to the browser as
- * `SettingsPayload.bookingWindow` so a date picker can grey out what is
- * closed — **that wiring does not exist yet**, and `checkout.quote` does not
- * enforce the window either: a quote for a closed date still returns a
- * price, and the hold refuses it. Said plainly here because the opposite
- * claim invites someone to treat the quote as a gate, or to delete the hold's
- * check as redundant.
+ * `SettingsPayload.bookingWindow` (see `server/src/content/settings.ts`) so
+ * a date picker can bound itself, and **that wiring is live**: the date
+ * input of the BOOKING flow — `client/src/components/home/HeroSection.tsx`,
+ * the hero search that sends a guest to checkout — feeds
+ * `bookingWindow.earliest` / `.latest` straight into the `min` / `max` of
+ * its `<input type="date">`, and is `bookingWindow`'s only consumer. Named
+ * here because this comment used to say the wiring did not exist, which is
+ * how a value with exactly one consumer gets deleted as dead — and deleting
+ * it would silently un-bound that picker.
+ *
+ * (The client's other date input, "preferred dates" on the package ENQUIRY
+ * form, is deliberately unbounded: an enquiry is not a booking, and a guest
+ * asking about next Christmas may legitimately name a date past
+ * `maxAdvanceDays`. This window governs what may be BOOKED.)
+ *
+ * `checkout.quote` does not enforce the window: a quote for a closed date
+ * still returns a price, and the hold refuses it. Said plainly here because
+ * the opposite claim invites someone to treat the quote as a gate, or to
+ * delete the hold's check as redundant.
  *
  * `now` is a parameter and this never calls `new Date()` itself: the cutoff
  * is a clock comparison, so a test for "17:59 versus 18:00 Manila" has to be

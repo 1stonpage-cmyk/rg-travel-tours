@@ -1,5 +1,15 @@
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { dirname, extname, join, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { bookingLookupInput, createHoldInput, phPhoneSchema, quoteInput } from '../checkout';
+import {
+  bookingLookupInput,
+  createHoldInput,
+  DATE_BLOCKED,
+  DATE_NOT_BOOKABLE,
+  phPhoneSchema,
+  quoteInput,
+} from '../checkout';
 
 /** A valid quoteId shape for fixtures that don't test the quoteId rule itself. */
 const QUOTE_ID = 'a'.repeat(32);
@@ -143,5 +153,72 @@ describe('bookingLookupInput', () => {
         totalCentavos: 1,
       }).success,
     ).toBe(false);
+  });
+});
+
+/**
+ * Final whole-branch review, F4: the availability reason strings are WIRE
+ * contracts with one definition each, and this is the guard that keeps them
+ * that way.
+ *
+ * It is here because the typechecker structurally cannot catch the failure:
+ * two independent `export const X = 'date_blocked' as const` declarations
+ * produce the identical literal type, so a duplicate compiles, passes every
+ * test, and then drifts the first time either side is renamed — at which
+ * point one surface tells a guest the wrong thing. This week fixed that
+ * exact defect twice by hand (`date_not_bookable` was defined in both
+ * `shared/src/checkout.ts` and `server/src/services/create-hold.ts`);
+ * a scan is cheaper than a third round of it.
+ *
+ * Scoped to a DECLARATION of the literal (`= 'date_blocked'`), not to any
+ * mention: the server and client are expected to IMPORT and compare these
+ * constants freely, and the tests that assert the wire value (this file's
+ * siblings in `server/` and `client/`) legitimately spell the literal out.
+ */
+describe('one definition per availability reason (wire contracts)', () => {
+  const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+
+  function collectSourceFiles(dir: string): string[] {
+    return readdirSync(dir).flatMap((entry) => {
+      if (entry === 'node_modules' || entry === 'dist' || entry === '__tests__') return [];
+      const p = join(dir, entry);
+      if (statSync(p).isDirectory()) return collectSourceFiles(p);
+      return extname(p) === '.ts' || extname(p) === '.tsx' ? [p] : [];
+    });
+  }
+
+  const sources = ['shared/src', 'server/src', 'client/src'].flatMap((d) =>
+    collectSourceFiles(join(repoRoot, d)),
+  );
+
+  it.each([
+    ['date_not_bookable', DATE_NOT_BOOKABLE],
+    ['date_blocked', DATE_BLOCKED],
+  ])('declares %s exactly once, in @rg/shared', (literal, value) => {
+    expect(value, 'the constant must carry the literal this test scans for').toBe(literal);
+
+    // `= 'date_blocked'` — an assignment of the literal, which is what a
+    // second definition looks like however it is exported. All three quote
+    // styles, because a duplicate would not be courteous enough to match
+    // this file's own formatting.
+    const spellings = [`= '${literal}'`, `= "${literal}"`, '= `' + literal + '`'];
+    const declaringFiles = sources
+      .filter((file) => {
+        const text = readFileSync(file, 'utf8');
+        return spellings.some((spelling) => text.includes(spelling));
+      })
+      .map((file) =>
+        file
+          .slice(repoRoot.length + 1)
+          .split(sep)
+          .join('/'),
+      );
+
+    expect(
+      declaringFiles,
+      `"${literal}" is a wire contract with ONE definition. Import it from @rg/shared ` +
+        `instead of declaring it again — the typechecker cannot tell two identical ` +
+        `literal types apart, so a duplicate would drift silently.`,
+    ).toEqual(['shared/src/checkout.ts']);
   });
 });

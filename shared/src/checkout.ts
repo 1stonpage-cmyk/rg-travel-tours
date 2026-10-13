@@ -139,3 +139,28 @@ export type QuoteResult = z.infer<typeof quoteResultSchema>;
  * router's own note on the point).
  */
 export const DATE_NOT_BOOKABLE = 'date_not_bookable' as const;
+
+/**
+ * The one spelling of "the tour is not running that day" — `tour_blocked_dates`
+ * (§5 step 1, second half). Same WIRE-contract-with-one-definition rule as
+ * `DATE_NOT_BOOKABLE` above, and defined here for the same measured reason:
+ * two independent definitions of one wire value are IDENTICAL to the
+ * typechecker (both produce the same literal type), so the drift is
+ * invisible until a guest sees the wrong sentence. This week fixed that
+ * exact defect twice; this value starts out shared.
+ *
+ * Deliberately distinct from `DATE_NOT_BOOKABLE` and from every
+ * `CapacityRefusalReason` (final whole-branch review, F4). All three are
+ * "you cannot book that day", and all three deserve a different sentence:
+ * "we're closed for online bookings on that date" (the window), "that day
+ * is full" (capacity), "this tour isn't running that day" (an admin blocked
+ * it — a fiesta, a closed island, a maintenance day). A blocked date is
+ * never going to free up, so telling a guest it is "fully booked" invites
+ * them to keep checking back.
+ *
+ * `createHold()`'s `TourDateBlockedError` is the authoritative refusal for
+ * the same condition; `checkout.availability` returns this reason so both
+ * surfaces answer the same question with the same reason, which is the whole
+ * point of the precedence order they share.
+ */
+export const DATE_BLOCKED = 'date_blocked' as const;

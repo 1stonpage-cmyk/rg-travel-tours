@@ -14,10 +14,18 @@ import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 import express from 'express';
 import request from 'supertest';
-import { bookingRefSchema, manilaCivilDate, quoteResultSchema } from '@rg/shared';
+import { bookingRefSchema, DATE_BLOCKED, manilaCivilDate, quoteResultSchema } from '@rg/shared';
 import { createApp } from '../app';
 import { getDb, getPool } from '../db/client';
-import { bookings, destinations, drivers, tourPriceTiers, tours, vans } from '../db/schema';
+import {
+  bookings,
+  destinations,
+  drivers,
+  tourBlockedDates,
+  tourPriceTiers,
+  tours,
+  vans,
+} from '../db/schema';
 import { loadQuoteInputs, priceQuote } from '../services/pricing';
 import {
   BOOKING_LOOKUP_MAX,
@@ -163,6 +171,9 @@ async function cleanup() {
   }
   for (const id of created.tourIds) {
     await db.delete(tourPriceTiers).where(eq(tourPriceTiers.tourId, id));
+    // Task F4 added this file's first blocked-date fixtures; they are keyed
+    // by tour, so they have to go before the tour does.
+    await db.delete(tourBlockedDates).where(eq(tourBlockedDates.tourId, id));
     await pool.query('DELETE FROM tour_date_slots WHERE tour_id = ?', [id]);
     await db.delete(tours).where(eq(tours.id, id));
   }
@@ -394,6 +405,96 @@ describeWithDb('checkout router', () => {
       await caller.checkout.availability({ tourSlug: tour.slug, date: '2099-12-10', pax: 2 }),
       'a date beyond maxAdvanceDays is not bookable either',
     ).toEqual({ ok: false, reason: 'date_not_bookable' });
+  });
+
+  /**
+   * Final whole-branch review, F4: `tour_blocked_dates` had exactly ONE
+   * production call site — inside `createHold()` — so `availability`
+   * answered `{ ok: true }` for a blocked date, the checkout page showed no
+   * banner, and the guest was refused only on submit.
+   *
+   * That defeats the precedence work this week did. The order of the date
+   * guards exists so both surfaces say the SAME reason for the same request
+   * (see `create-hold.ts` step 2), and they cannot agree on a reason one of
+   * them never evaluates. So this asserts both halves: the reason reaches
+   * the wire, and it is `date_blocked` rather than a capacity reason or
+   * `date_not_bookable`.
+   */
+  it('availability reports date_blocked for a date the tour has blocked', async () => {
+    const tour = await makeTour();
+    await makeFleet();
+    await getDb()
+      .insert(tourBlockedDates)
+      .values({
+        tourId: tour.tourId,
+        date: new Date(`${DAY}T00:00:00Z`),
+        reason: 'Fiesta — no trips',
+      });
+
+    expect(await caller.checkout.availability({ tourSlug: tour.slug, date: DAY, pax: 2 })).toEqual({
+      ok: false,
+      reason: DATE_BLOCKED,
+    });
+  });
+
+  /**
+   * The agreement itself, asserted rather than assumed: the advisory read
+   * and the authoritative write must name the same cause for one request.
+   * `createHold()` throws `TourDateBlockedError`, whose router translation
+   * is "This tour isn't running on that date." — the same thing
+   * `date_blocked` tells the guest early.
+   */
+  it('availability and createHold agree on WHY a blocked date is refused', async () => {
+    const tour = await makeTour();
+    await makeFleet();
+    const quote = await caller.checkout.quote({
+      tourSlug: tour.slug,
+      date: DAY,
+      pax: 2,
+      addonIds: [],
+    });
+    await getDb()
+      .insert(tourBlockedDates)
+      .values({ tourId: tour.tourId, date: new Date(`${DAY}T00:00:00Z`) });
+
+    const advisory = await caller.checkout.availability({
+      tourSlug: tour.slug,
+      date: DAY,
+      pax: 2,
+    });
+    const refusal = await caller.checkout
+      .createHold(
+        validHoldInput({ tourSlug: tour.slug, date: DAY, pax: 2, quoteId: quote.quoteId }),
+      )
+      .catch((e: unknown) => e);
+
+    expect(advisory).toEqual({ ok: false, reason: DATE_BLOCKED });
+    expect(refusal).toMatchObject({
+      code: 'BAD_REQUEST',
+      message: "This tour isn't running on that date.",
+    });
+  });
+
+  /**
+   * Precedence, matching `createHold()`'s own order (past, then blocked,
+   * then the window, then capacity): a date that is BOTH blocked and
+   * outside the booking window reports the blocked reason, because that is
+   * the one the hold would have thrown first. Were the two surfaces to
+   * order these differently, the page would promise one sentence and the
+   * submit would deliver another.
+   */
+  it('availability reports date_blocked ahead of date_not_bookable for today', async () => {
+    const tour = await makeTour();
+    await makeFleet();
+    const today = manilaCivilDate(new Date());
+    await getDb()
+      .insert(tourBlockedDates)
+      .values({ tourId: tour.tourId, date: new Date(`${today}T00:00:00Z`) });
+
+    expect(
+      await caller.checkout.availability({ tourSlug: tour.slug, date: today, pax: 2 }),
+      'today is also outside the window under minLeadDays: 1 — blocked still wins',
+    ).toEqual({ ok: false, reason: DATE_BLOCKED });
   });
 
   it('availability reports tour_unavailable for an unknown slug, not an error', async () => {
@@ -821,4 +922,82 @@ it('the real app leaves checkout.quote unaffected by the booking-lookup limiter'
     const res = await request(app).post('/trpc/checkout.quote').send({});
     expect(res.status).not.toBe(429);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Final whole-branch review, F1 — the batching bypass, against the REAL app
+//
+// The two tests `rate-limit.test.ts` cannot write: they pin the limiter's
+// handling of a 207 and of a multi-call batch using toy routes, which proves
+// the mechanism but assumes the status codes. These prove that real
+// `@trpc/server` really answers those shapes with those statuses, through
+// `createApp()`'s real mount — which is where the hole actually was.
+//
+// `checkout.bookingLookup` is a QUERY, so the shape a browser (and an
+// attacker) sends is a GET batch — `httpBatchLink` POSTs only mutations.
+// Measured: a POST to it answers 405 (METHOD_NOT_SUPPORTED), so a test that
+// drove this bypass over POST would be exercising nothing.
+//
+// No database: `health` needs none, and every lookup below fails Zod
+// validation before the resolver runs. That is deliberate (same reasoning as
+// the limiter tests above) — a DB-less run must still catch a limiter that
+// fails open.
+// ---------------------------------------------------------------------------
+
+/** A GET batch, the shape `httpBatchLink` sends for queries. */
+function batchPath(procedures: string[]): string {
+  const input = Object.fromEntries(procedures.map((_, i) => [i, {}]));
+  return `/trpc/${procedures.join(',')}?batch=1&input=${encodeURIComponent(JSON.stringify(input))}`;
+}
+
+/**
+ * The exploit as reported: one failed lookup batched with one SUCCESSFUL
+ * call. `getHTTPStatusCode` sees {200, 400}, answers 207, and
+ * `express-rate-limit` used to read 207 as a success and hand the hit back
+ * — unlimited ref-oracle attempts. MEASURED before the fix: twelve
+ * consecutive 207s, never a 429.
+ */
+it('counts a failed lookup hidden in a mixed-status (207) batch', async () => {
+  const app = createApp();
+  const path = batchPath(['health', 'checkout.bookingLookup']);
+  const statuses: number[] = [];
+  for (let i = 0; i < BOOKING_LOOKUP_MAX + 1; i += 1) {
+    statuses.push((await request(app).get(path)).status);
+  }
+  // The mixed batch really is a 207 — the premise of the whole finding.
+  expect(statuses.slice(0, BOOKING_LOOKUP_MAX)).toEqual(Array(BOOKING_LOOKUP_MAX).fill(207));
+  expect(statuses[BOOKING_LOOKUP_MAX]).toBe(429);
+});
+
+/**
+ * The amplification half: N failed lookups in ONE request are N attempts,
+ * not one. Three per batch against a budget of five means the second batch
+ * crosses it. MEASURED before the fix: four batches (twelve failed lookups)
+ * and never a 429.
+ */
+it('spends the lookup budget per failed call, not per batched request', async () => {
+  const app = createApp();
+  const path = batchPath(Array(3).fill(BOOKING_LOOKUP_PROCEDURES[0]));
+  const first = await request(app).get(path);
+  const second = await request(app).get(path);
+  // Uniform statuses across the batch, so tRPC answers the shared 400 —
+  // which is why counting "one 4xx per request" saw one attempt, not three.
+  expect(first.status).toBe(400);
+  expect(second.status).toBe(429);
+});
+
+/**
+ * The same amplification against the owner's "5 hold creations per IP per
+ * 15 minutes" (Ruling 5 / Q4). `createHold` is a mutation, so this one is a
+ * POST batch — the shape `httpBatchLink` really sends for it. Six calls in
+ * one request exceed the budget inside that single request.
+ */
+it('spends the createHold budget per batched call, not per request', async () => {
+  const app = createApp();
+  const calls = Array(CHECKOUT_HOLD_MAX + 1).fill(CHECKOUT_HOLD_PROCEDURES[0]);
+  const body = Object.fromEntries(calls.map((_, i) => [i, {}]));
+  const res = await request(app)
+    .post(`/trpc/${calls.join(',')}?batch=1`)
+    .send(body);
+  expect(res.status).toBe(429);
 });

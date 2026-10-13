@@ -272,6 +272,29 @@ describe('CheckoutPage — availability banner (Task 8b)', () => {
     expect(banner).not.toHaveTextContent(/not taking online bookings/i);
   });
 
+  /**
+   * Final whole-branch review, F4: `checkout.availability` now answers
+   * `date_blocked` for a date in `tour_blocked_dates` (it used to answer
+   * `{ ok: true }` and leave the refusal to submit). A blocked date needs
+   * its own sentence for the same reason `date_not_bookable` does: "fully
+   * booked" invites a guest to check back for a day that is never going to
+   * open, and "we're not taking online bookings for that date" points at
+   * the booking window, which is a different thing an admin controls
+   * differently.
+   */
+  it('shows a date_blocked hint, distinct from both other refusals', async () => {
+    mockTrpc({
+      'checkout.quote': QUOTE_FIXTURE,
+      'checkout.availability': { ok: false, reason: 'date_blocked' },
+    });
+    renderCheckout();
+
+    const banner = await screen.findByRole('alert');
+    expect(banner).toHaveTextContent(/isn't running/i);
+    expect(banner).not.toHaveTextContent(/not taking online bookings/i);
+    expect(banner).not.toHaveTextContent(/doesn't have space/i);
+  });
+
   it('shows no banner at all once the date is available', async () => {
     mockTrpc({
       'checkout.quote': QUOTE_FIXTURE,
