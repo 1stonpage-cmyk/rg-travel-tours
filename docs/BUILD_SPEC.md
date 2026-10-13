@@ -801,23 +801,62 @@ Use **ui-ux-pro-max** throughout; match the approved demo.
 
 ### Week 3 — Booking & online payments
 
-Nothing in this week is built. There is no `server/src/jobs`, no `server/src/webhooks`, no
-gateway client and no `node-cron` dependency.
+> **Preamble rewritten 2026-10-13.** It previously said "nothing in this week is built", that
+> there was no gateway client, and that the week was blocked on an unexecuted core-schema plan
+> with Q7 and Q4 open. All of that described a world that no longer exists. What follows is
+> checked against the tree, not against the plan's expectations.
 
-**Blocked on the core schema.** Every task below needs tables that do not exist yet — `bookings`,
-`payments`, `payment_events`, `coupons`, `tour_date_slots`. Those are planned in
-`docs/superpowers/plans/2026-10-10-core-schema.md`, which must be approved and executed first.
-That plan also carries thirteen open questions; **Q7 (does the van/driver capacity check mean
-per-day or per-trip?) blocks 3B**, and Q4 (deposit rounding) blocks 3A.
+**No longer blocked on the core schema.** That plan is executed and its migrations are applied:
+`bookings`, `booking_addons`, `payments`, `payment_events`, `coupons`, `coupon_redemptions`,
+`tour_date_slots`, `fleet_date_slots`, `vans`, `drivers`, `driver_leaves`, `users`, `sessions`
+and `audit_log` all exist (nine migrations in `server/src/db/migrations`). **Q4 (deposit
+rounding — ceil to the next whole peso) and Q7 (capacity is
+`MIN(groups_per_day, vans free that day)`) were both answered 2026-10-11** and are implemented;
+Q7 is still marked _pending R&G confirmation_ in section 5, which is a business confirmation, not
+a build blocker.
 
-- **3A** Pricing service + tests (tiers, add-ons, coupons, deposit rounding).
-- **3B** Capacity service + transaction lock + concurrency test.
-- **3C** Hold creation + expiry cron.
-- **3D** Checkout page + coupon validation.
+**The gateway seam exists**, built by the core-schema plan ahead of this week:
+`server/src/services/payments/` holds the `PaymentProvider` registry, the PayMongo client and
+the Xendit stub that cannot mark anything paid, and the webhook route is mounted at
+`/api/webhooks` from `server/src/routers/webhooks` — **not** the `server/src/webhooks` path this
+spec originally planned. `recordPayment()` is the only thing that can mark a booking paid.
+
+**Still absent, and each is a specific task's job:** there is no `server/src/jobs` and
+**`node-cron` is not yet a dependency** (3C's sweep adds both), and no email transport (3F).
+Of this plan's own open questions, **Q1 (scheduler) is answered — `node-cron` in the server
+process — and Q2 (email provider) is still open**, which is the only thing blocking the
+confirmation email in 3F.
+
+- **3A** Pricing service + tests (tiers, add-ons, coupons, deposit rounding). ✅ DONE —
+  `services/pricing.ts`: pure `priceQuote()`, `loadQuoteInputs()` and the `quoteDigest()` that
+  lets a hold detect a price edited between quote and booking.
+- **3B** Capacity service + transaction lock + concurrency test. ✅ DONE —
+  `services/capacity.ts`: `takeSlotLocks()` takes `fleet_date_slots` then `tour_date_slots`, in
+  that fixed order, and `assessCapacity()` returns a verdict rather than throwing. The
+  cross-tour race is pinned by a genuinely concurrent test, and the fleet lock's removal is
+  proven to break it.
+- **3C** Hold creation + expiry cron. **Partial.** Hold creation is done —
+  `services/create-hold.ts`, one transaction from quote to `pending_payment` with a 15-minute
+  hold, the price snapshot, the add-on lines and an audit row, under both slot locks with a
+  retry on deadlock. **The expiry sweep is not built**: nothing yet moves a lapsed hold to
+  `expired`, so a hold that is never paid holds its capacity indefinitely. That is the gap
+  `node-cron` and `server/src/jobs` fill.
+- **3D** Checkout page + coupon validation. **Partial.** Coupon validation is done
+  (`services/coupons.ts`, one typed error per §6 rule, re-checked under the lock inside the
+  hold), and the checkout page renders a server-computed quote with no arithmetic on any
+  centavo value in `client/`. **Outstanding:** the date picker does not yet consume
+  `SettingsPayload.bookingWindow`, so it can still offer a date the server refuses, and the
+  resulting `date_not_bookable` refusal has no amber copy of its own.
 - **3E** Checkout session + webhook through the `PaymentProvider` seam (signature, idempotency
-  on `(provider, provider_event_id)`, amount check). PayMongo implemented; Xendit stays a stub
-  that cannot mark anything paid — see the 2026-10-10 multi-gateway change in section 6.
-- **3F** Confirmation page (read-only polling) + confirmation emails.
+  on `(provider, provider_event_id)`, amount check). ✅ DONE — `checkout.startPayment` starts a
+  PayMongo test-mode checkout from a held booking, sending the amount read off the booking row;
+  the webhook half, with the signature check and the `(provider, provider_event_id)` unique
+  index, predates this week. Xendit remains a stub that cannot mark anything paid — see the
+  2026-10-10 multi-gateway change in section 6.
+- **3F** Confirmation page (read-only polling) + confirmation emails. **Not done.** The booking
+  status page is not built, and the confirmation email is blocked on Q2 (email provider). When
+  the status page is built it must stay read-only: nothing on a redirect may confirm a booking,
+  and the guard is that `checkout` exposes exactly two mutations.
 
 Roadmap items to pick up in or after this week:
 
