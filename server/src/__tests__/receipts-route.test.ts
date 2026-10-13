@@ -23,6 +23,7 @@ import { getDb, getPool } from '../db/client';
 import { bookings, destinations, payments, tours } from '../db/schema';
 import { SESSION_COOKIE } from '../middleware/session-cookie';
 import { generateBookingRef } from '../services/booking-ref';
+import { users } from '../db/schema';
 import { createSession } from '../services/sessions';
 import { receiptStorageDir, storeReceipt } from '../services/uploads';
 import { describeWithDb } from './helpers/db';
@@ -94,6 +95,29 @@ async function makeBookingWithReceipt() {
 
 const cookie = (token: string) => `${SESSION_COOKIE}=${token}`;
 
+const staffIds: number[] = [];
+
+/**
+ * A real staff row. A `user` session resolves its role LIVE from `users`
+ * (Week 4, Task 5), so an invented subject id no longer resolves at all —
+ * which is the deactivation guarantee working, and the reason these tests
+ * create an actual staff member instead of a number.
+ */
+async function makeStaff() {
+  const unique = `${Math.floor(Math.random() * 1e9)}_${Date.now()}`;
+  const [row] = await getDb()
+    .insert(users)
+    .values({
+      name: `Receipt Staff ${unique}`,
+      email: `receipt_staff_${unique}@example.test`,
+      passwordHash: '__receipt_fixture_not_a_hash__',
+      role: 'finance',
+      isActive: true,
+    });
+  staffIds.push(row.insertId);
+  return row.insertId;
+}
+
 async function cleanup() {
   const pool = getPool();
   for (const id of created.bookingIds) {
@@ -105,6 +129,14 @@ async function cleanup() {
   for (const id of created.destIds)
     await getDb().delete(destinations).where(eq(destinations.id, id));
   for (const name of created.files) await rm(join(receiptStorageDir(), name), { force: true });
+  for (const id of staffIds) {
+    await pool.query('DELETE FROM sessions WHERE subject_type = ? AND subject_id = ?', [
+      'user',
+      id,
+    ]);
+    await pool.query('DELETE FROM users WHERE id = ?', [id]);
+  }
+  staffIds.length = 0;
   created.bookingIds = [];
   created.tourIds = [];
   created.destIds = [];
@@ -129,7 +161,7 @@ describeWithDb('GET /api/receipts/:name', () => {
 
   it('serves it to a STAFF session too — verifying a receipt is the admin job', async () => {
     const { path } = await makeBookingWithReceipt();
-    const { token } = await createSession('user', 4242, new Date());
+    const { token } = await createSession('user', await makeStaff(), new Date());
 
     expect(
       (await request(createApp()).get(`/api/receipts/${path}`).set('Cookie', cookie(token))).status,
@@ -172,7 +204,7 @@ describeWithDb('GET /api/receipts/:name', () => {
 
   it('REFUSES a path-traversal name without touching the filesystem', async () => {
     const app = createApp();
-    const { token } = await createSession('user', 4242, new Date());
+    const { token } = await createSession('user', await makeStaff(), new Date());
     for (const name of ['../../.env', '..%2f..%2f.env', 'x.jpg', 'ABCDEF.jpg']) {
       const res = await request(app).get(`/api/receipts/${name}`).set('Cookie', cookie(token));
       expect(res.status, `${name} was not refused`).toBe(404);
@@ -209,7 +241,7 @@ describeWithDb('GET /api/receipts/:name', () => {
       escaping,
       bookingId,
     ]);
-    const { token } = await createSession('user', 4242, new Date());
+    const { token } = await createSession('user', await makeStaff(), new Date());
 
     const res = await request(createApp())
       .get(`/api/receipts/${encodeURIComponent(escaping)}`)

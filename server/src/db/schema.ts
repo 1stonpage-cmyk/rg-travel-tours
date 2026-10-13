@@ -303,8 +303,11 @@ export const users = mysqlTable(
     name: varchar('name', { length: 160 }).notNull(),
     email: varchar('email', { length: 200 }).notNull().unique(),
     /**
-     * argon2id or bcrypt output — 255 fits an argon2id encoded hash with room
-     * to spare, and bcrypt's 60 fits trivially. The password itself is never
+     * A self-describing `scrypt` string (owner decision 2026-10-14, replacing
+     * argon2/bcrypt — see `services/password.ts`): algorithm, parameters, salt
+     * and key, about 140 characters at the OWASP parameters. 255 still fits an
+     * argon2id hash with room to spare, so a later migration needs no column
+     * change. The password itself is never
      * stored, never logged and never put in an audit row.
      */
     passwordHash: varchar('password_hash', { length: 255 }).notNull(),
@@ -450,7 +453,9 @@ export const drivers = mysqlTable(
     code: varchar('code', { length: 20 }).notNull().unique(),
     phone: varchar('phone', { length: 40 }).notNull(),
     /**
-     * argon2id/bcrypt of the six-digit PIN. 255 fits an argon2id encoded
+     * A self-describing `scrypt` string of the six-digit PIN, through the same
+     * `services/password.ts` helper as a staff password (owner decision
+     * 2026-10-14). 255 fits an argon2id encoded
      * hash with room to spare. The PIN itself is never stored, never logged
      * and never put in an audit row — and no column here could hold one.
      */

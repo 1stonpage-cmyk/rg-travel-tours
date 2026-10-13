@@ -73,7 +73,9 @@ on Windows fails `pnpm format:check` on every text file (BUG-099). Do not relax 
 ## Stack
 
 React + TypeScript + Vite + Tailwind v4 + shadcn/ui + React Router · Express + tRPC ·
-Drizzle + MySQL 8 · Zod (shared) · session cookies with bcrypt/argon2 · PayMongo ·
+Drizzle + MySQL 8 · Zod (shared) · session cookies with **scrypt via `node:crypto`**
+(owner decision 2026-10-14, replacing argon2/bcrypt: no native dependency to build on the VPS;
+OWASP parameters, self-describing hashes so a later migration is additive) · PayMongo ·
 SMTP email · optional SMS behind a provider interface · `node-cron` · PM2 · nginx + Let's Encrypt.
 
 Tailwind is **v4**: brand tokens live in an `@theme` block in `client/src/index.css`.

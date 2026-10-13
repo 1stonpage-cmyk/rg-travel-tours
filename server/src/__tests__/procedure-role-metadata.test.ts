@@ -122,7 +122,14 @@ function callerFor(target: { createCaller: (ctx: never) => unknown }, path: stri
  * ------------------------------------------------------------------ */
 
 const TARGETS = [
-  { name: 'appRouter', router: appRouter, adminExpected: false },
+  /*
+   * `adminExpected` flipped to TRUE in Week 4, Task 5: `staffAuth.me` is the
+   * first `adminProcedure` ever mounted on `appRouter`. Before it, the whole
+   * router was public and the admin assertions below had nothing to bite on
+   * here — which is what this flag exists to state rather than leave as an
+   * accident. Everything else on `appRouter` is still public.
+   */
+  { name: 'appRouter', router: appRouter, adminExpected: true },
   { name: 'a Week-5-shaped router', router: weekFiveShaped, adminExpected: true },
 ] as const;
 
@@ -138,7 +145,8 @@ for (const target of TARGETS) {
       expect(paths.length).toBeGreaterThan(0);
       expect(paths).toContain(target.name === 'appRouter' ? 'health' : 'open');
       // And the admin assertions below have something to bite on where they
-      // are supposed to — `appRouter` is all-public until Week 5.
+      // are supposed to. `appRouter` gained its first admin procedure in
+      // Week 4 (`staffAuth.me`); before that it was all-public.
       expect(adminPaths.length > 0).toBe(target.adminExpected);
     });
 

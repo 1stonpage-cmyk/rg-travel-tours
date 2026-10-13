@@ -222,6 +222,32 @@ works around, so finding it late means a rewrite rather than a fix.
       at `p=none` so nothing is silently discarded while the records are being proven, then
       tighten it.
 
+### The owner account and the origin allowlist — BLOCKING
+
+Both are `.env` values with no safe default, and the app is wrong in a different way for
+each if they are missing: no owner can sign in, or every browser request is refused.
+
+- [ ] **Set `OWNER_EMAIL` and `OWNER_PASSWORD` in the deployed `.env`**, then run
+      `pnpm --filter @rg/server db:seed`. Use a **strong, unique** password of at least 12
+      characters — the seed refuses anything shorter, and refuses one variable without the
+      other. There is no default and nothing committed: a password in the repository is the
+      real credential on the live site the day someone forgets to change it.
+- [ ] **Remove `OWNER_PASSWORD` from the server `.env` once the first seed has run.** The
+      hash is in the database from that moment and the plaintext has no further use, so
+      leaving it is a credential sitting in a file for no benefit. (Re-adding it and
+      re-seeding is also the password-reset path, which is why the seed updates an existing
+      owner rather than failing on the duplicate email — there is no reset screen until the
+      admin weeks.)
+- [ ] **Set `APP_ORIGIN=https://travelsugbo.com`** in the deployed `.env`. It is the only
+      origin allowed to make a state-changing request (CSRF, §12), and outside production the
+      Vite dev server on 5180 is allowed as well — which is exactly why production must be set
+      explicitly rather than left on the default. Verify after deploy: a `POST` to `/trpc/...`
+      with a foreign `Origin` must answer **403**.
+      **`/api/webhooks/*` is deliberately exempt** — a gateway sends no `Origin` and is
+      protected by signature verification instead, so a check there would reject every real
+      payment notification. Confirm a signed test webhook still succeeds when you do the
+      gateway wire check below.
+
 ### The gateway wire check — BLOCKING, and no test in the suite can substitute for it
 
 Owner decision 2026-10-13: **no PayMongo or Xendit account exists yet**, so the live test-mode

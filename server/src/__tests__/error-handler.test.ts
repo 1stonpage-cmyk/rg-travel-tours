@@ -28,6 +28,18 @@ import { createApp } from '../app';
 import { errorHandler } from '../middleware/error-handler';
 import { describeWithDb } from './helpers/db';
 
+/**
+ * Every POST here is a BROWSER request, so it carries the `Origin` header a
+ * browser always sends. Required since Week 4 Task 5 mounted the CSRF
+ * origin check ahead of the limiters and the body parser
+ * (`middleware/origin-check.ts`): without it these requests are refused 403
+ * before the thing under test ever runs.
+ */
+const BROWSER_ORIGIN = 'http://localhost:5180';
+function post(app: Parameters<typeof request>[0], path: string) {
+  return request(app).post(path).set('Origin', BROWSER_ORIGIN);
+}
+
 /** Mirrors app.ts: routes first, the error handler last. */
 function appWithThrowingRoutes() {
   const app = express();
@@ -159,6 +171,7 @@ describe('errorHandler, mounted last', () => {
     await request(createApp())
       .post('/trpc/auth.login')
       .set('Content-Type', 'application/json')
+      .set('Origin', BROWSER_ORIGIN)
       .send('{"password":"hunter2-not-a-real-secret",');
 
     expect(spy).toHaveBeenCalled();
@@ -252,7 +265,7 @@ describe('errorHandler: a 4xx on the error is honoured, anything else is not', (
 describe('createApp(): the mount is really there', () => {
   /** A real unhandled throw in the real app: `express.json()` on a bad body. */
   const malformedJsonPost = () =>
-    request(createApp()).post('/trpc/health').set('Content-Type', 'application/json').send('{bad');
+    post(createApp(), '/trpc/health').set('Content-Type', 'application/json').send('{bad');
 
   /**
    * Cleanup A2: body-parser's `SyntaxError` carries `status: 400`, and that
@@ -297,16 +310,16 @@ describe('createApp(): routes that handle their own errors are not shadowed', ()
    * change that could turn one of them into a 500.
    */
   it('leaves the webhook route 404/400/503 answers alone', async () => {
-    const unknown = await request(app).post('/api/webhooks/stripe').send({});
+    const unknown = await post(app, '/api/webhooks/stripe').send({});
     expect(unknown.status).toBe(404);
 
-    const manual = await request(app).post('/api/webhooks/manual').send({});
+    const manual = await post(app, '/api/webhooks/manual').send({});
     expect(manual.status).toBe(404);
 
-    const unsigned = await request(app).post('/api/webhooks/paymongo').send({});
+    const unsigned = await post(app, '/api/webhooks/paymongo').send({});
     expect(unsigned.status).toBe(400);
 
-    const disabled = await request(app).post('/api/webhooks/xendit').send({});
+    const disabled = await post(app, '/api/webhooks/xendit').send({});
     expect(disabled.status).toBe(503);
   });
 });

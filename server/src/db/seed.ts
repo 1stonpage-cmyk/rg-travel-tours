@@ -27,6 +27,7 @@ import {
   type DatabaseContext,
 } from './guard';
 import { closeDb, getDb } from './client';
+import { hashPassword } from '../services/password';
 import * as schema from './schema';
 import {
   SEED_DESTINATIONS,
@@ -196,6 +197,82 @@ async function upsertSetting(db: Db, key: string, value: unknown): Promise<void>
   await db.insert(schema.settings).values({ key, value });
 }
 
+/**
+ * The first owner account (Week 4, Task 5; owner instruction 2026-10-14).
+ *
+ * **Read from `OWNER_EMAIL` and `OWNER_PASSWORD` in `.env`, never from this
+ * file.** A password in the repository is a password in every clone, every
+ * fork and every CI log, and it would be the real credential on the live
+ * site the day someone forgot to change it. So there is no default, no
+ * fallback and no "changeme".
+ *
+ * It is never printed either — not the password, not a masked version of
+ * it. The only thing logged is whether an owner was created or updated.
+ *
+ * ## When neither variable is set, this step is SKIPPED, loudly
+ *
+ * A deliberate reading of "the seed refuses if either is missing", and the
+ * reason is that `pnpm test` seeds `rg_travel_test` on **every run**
+ * through `globalSetup`: a hard failure with no owner configured would stop
+ * the entire suite rather than protect anything. So:
+ *
+ *  - **neither set** — nothing to seed, skip with a warning. The failure
+ *    mode is "no owner can sign in", which is loud, safe and exactly what
+ *    the launch checklist tells a deployer to fix.
+ *  - **either one set** — the deployer is TRYING to seed an owner, so both
+ *    are required and the password must be at least 12 characters. Refuses
+ *    outright rather than creating a weak account.
+ *
+ * That keeps the thing the instruction actually protects against — a weak
+ * or committed owner password — impossible, without making every test run
+ * depend on production-shaped configuration.
+ */
+async function upsertOwner(db: Db): Promise<void> {
+  const email = env.OWNER_EMAIL?.trim();
+  const password = env.OWNER_PASSWORD;
+
+  if (!email && !password) {
+    console.warn(
+      '[seed] owner: SKIPPED — OWNER_EMAIL and OWNER_PASSWORD are not set, so no staff account ' +
+        'exists and nobody can sign in to the admin. Set both in .env and re-run.',
+    );
+    return;
+  }
+
+  if (!email || !password) {
+    throw new Error(
+      'seed: OWNER_EMAIL and OWNER_PASSWORD must BOTH be set to seed an owner account.',
+    );
+  }
+
+  if (password.length < 12) {
+    // The length, never the password.
+    throw new Error(
+      `seed: OWNER_PASSWORD must be at least 12 characters (got ${password.length}).`,
+    );
+  }
+
+  const passwordHash = await hashPassword(password);
+  const existing = await db
+    .select({ id: schema.users.id })
+    .from(schema.users)
+    .where(eq(schema.users.email, email));
+
+  if (existing.length > 0) {
+    await db
+      .update(schema.users)
+      .set({ passwordHash, role: 'owner', isActive: true })
+      .where(eq(schema.users.id, existing[0]!.id));
+    console.log('[seed] owner: updated the existing account (password reset from .env)');
+    return;
+  }
+
+  await db
+    .insert(schema.users)
+    .values({ name: 'Owner', email, passwordHash, role: 'owner', isActive: true });
+  console.log('[seed] owner: created');
+}
+
 export async function seed(context: DatabaseContext = 'app'): Promise<void> {
   const url = context === 'test' ? env.TEST_DATABASE_URL : env.DATABASE_URL;
   if (!url) {
@@ -207,6 +284,8 @@ export async function seed(context: DatabaseContext = 'app'): Promise<void> {
   await assertConnectedDatabase(context);
 
   const db = getDb();
+
+  await upsertOwner(db);
 
   const destinationIdBySlug = new Map<string, number>();
   for (const destination of SEED_DESTINATIONS) {

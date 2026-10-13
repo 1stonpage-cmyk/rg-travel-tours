@@ -5,6 +5,18 @@ import { createApp } from '../app';
 import { createProcedureRateLimit } from '../middleware/rate-limit';
 import { describeWithDb } from './helpers/db';
 
+/**
+ * Every POST here is a BROWSER request, so it carries the `Origin` header a
+ * browser always sends. Required since Week 4 Task 5 mounted the CSRF
+ * origin check ahead of the limiters and the body parser
+ * (`middleware/origin-check.ts`): without it these requests are refused 403
+ * before the thing under test ever runs.
+ */
+const BROWSER_ORIGIN = 'http://localhost:5180';
+function post(app: Parameters<typeof request>[0], path: string) {
+  return request(app).post(path).set('Origin', BROWSER_ORIGIN);
+}
+
 function appWith(max: number) {
   const app = express();
   app.use(createProcedureRateLimit(['inquiries.create'], { windowMs: 60_000, max }));
@@ -15,16 +27,16 @@ function appWith(max: number) {
 describe('procedure-scoped rate limiting', () => {
   it('limits the named procedure', async () => {
     const app = appWith(2);
-    await request(app).post('/trpc/inquiries.create').expect(200);
-    await request(app).post('/trpc/inquiries.create').expect(200);
-    await request(app).post('/trpc/inquiries.create').expect(429);
+    await post(app, '/trpc/inquiries.create').expect(200);
+    await post(app, '/trpc/inquiries.create').expect(200);
+    await post(app, '/trpc/inquiries.create').expect(429);
   });
 
   it('leaves unlisted procedures alone', async () => {
     const app = appWith(1);
-    await request(app).post('/trpc/tours.list').expect(200);
-    await request(app).post('/trpc/tours.list').expect(200);
-    await request(app).post('/trpc/tours.list').expect(200);
+    await post(app, '/trpc/tours.list').expect(200);
+    await post(app, '/trpc/tours.list').expect(200);
+    await post(app, '/trpc/tours.list').expect(200);
   });
 
   it('still limits a batched call that includes the named procedure', async () => {
@@ -32,8 +44,8 @@ describe('procedure-scoped rate limiting', () => {
     // `?batch=1` because that's the real shape httpBatchLink sends — tRPC
     // only treats the path as comma-joined procedure names when the batch
     // flag is present (round 1 review, cheap fix #1).
-    await request(app).post('/trpc/tours.list,inquiries.create?batch=1').expect(200);
-    await request(app).post('/trpc/tours.list,inquiries.create?batch=1').expect(429);
+    await post(app, '/trpc/tours.list,inquiries.create?batch=1').expect(200);
+    await post(app, '/trpc/tours.list,inquiries.create?batch=1').expect(429);
   });
 });
 
@@ -52,8 +64,8 @@ describe('batch amplification — one attempt per matched CALL, not per request'
   it('spends one unit of budget per matched segment in a batch', async () => {
     const app = appWith(2);
     // Two matched calls in one request = the whole budget.
-    await request(app).post('/trpc/inquiries.create,inquiries.create?batch=1').expect(200);
-    await request(app).post('/trpc/inquiries.create').expect(429);
+    await post(app, '/trpc/inquiries.create,inquiries.create?batch=1').expect(200);
+    await post(app, '/trpc/inquiries.create').expect(429);
   });
 
   it('refuses a single batch that exceeds the budget on its own', async () => {
@@ -66,9 +78,9 @@ describe('batch amplification — one attempt per matched CALL, not per request'
   it('counts only the MATCHED segments, not every segment of the batch', async () => {
     const app = appWith(2);
     // One matched call alongside two unlisted ones costs exactly one.
-    await request(app).post('/trpc/tours.list,inquiries.create,tours.list?batch=1').expect(200);
-    await request(app).post('/trpc/inquiries.create').expect(200);
-    await request(app).post('/trpc/inquiries.create').expect(429);
+    await post(app, '/trpc/tours.list,inquiries.create,tours.list?batch=1').expect(200);
+    await post(app, '/trpc/inquiries.create').expect(200);
+    await post(app, '/trpc/inquiries.create').expect(429);
   });
 });
 
@@ -102,15 +114,15 @@ describe('mixed-status batches (207) under skipSuccessfulRequests', () => {
 
   it('counts a 207 against the limit', async () => {
     const app = appAnswering(207, 2);
-    await request(app).post('/trpc/checkout.bookingLookup').expect(207);
-    await request(app).post('/trpc/checkout.bookingLookup').expect(207);
-    await request(app).post('/trpc/checkout.bookingLookup').expect(429);
+    await post(app, '/trpc/checkout.bookingLookup').expect(207);
+    await post(app, '/trpc/checkout.bookingLookup').expect(207);
+    await post(app, '/trpc/checkout.bookingLookup').expect(429);
   });
 
   it('still gives the hit back for a plain 200, however many times', async () => {
     const app = appAnswering(200, 2);
     for (let i = 0; i < 10; i += 1) {
-      await request(app).post('/trpc/checkout.bookingLookup').expect(200);
+      await post(app, '/trpc/checkout.bookingLookup').expect(200);
     }
   });
 
@@ -141,10 +153,10 @@ describe('mixed-status batches (207) under skipSuccessfulRequests', () => {
 
     // A leak of (N - 1) per request would refuse the second batch outright.
     for (let i = 0; i < 5; i += 1) {
-      await request(app).post(`${batch}?batch=1`).expect(200);
+      await post(app, `${batch}?batch=1`).expect(200);
     }
     // And the budget is genuinely intact afterwards, not merely un-tripped.
-    await request(app).post('/trpc/checkout.bookingLookup').expect(200);
+    await post(app, '/trpc/checkout.bookingLookup').expect(200);
   });
 });
 
@@ -173,7 +185,7 @@ describe('rate limiting through the real app mount — bypass shapes from round 
     for (let i = 0; i < count; i += 1) {
       // Deliberately invalid/empty bodies — the limiter runs before (and
       // regardless of) tRPC's own input validation.
-      const res = await request(app).post(path).send({});
+      const res = await post(app, path).send({});
       statuses.push(res.status);
     }
     return statuses;
@@ -207,10 +219,10 @@ describe('rate limiting through the real app mount — bypass shapes from round 
 
   it('still limits the real batched shape: /trpc/tours.list,inquiries.create?batch=1', async () => {
     const app = createApp();
-    await request(app).post('/trpc/tours.list,inquiries.create?batch=1').send({});
+    await post(app, '/trpc/tours.list,inquiries.create?batch=1').send({});
     const statuses: number[] = [];
     for (let i = 0; i < 6; i += 1) {
-      const res = await request(app).post('/trpc/tours.list,inquiries.create?batch=1').send({});
+      const res = await post(app, '/trpc/tours.list,inquiries.create?batch=1').send({});
       statuses.push(res.status);
     }
     expect(statuses).toContain(429);

@@ -39,6 +39,18 @@ import { appRouter } from '../routers/_app';
 import { testContext } from './helpers/ctx';
 import { describeWithDb } from './helpers/db';
 
+/**
+ * Every POST here is a BROWSER request, so it carries the `Origin` header a
+ * browser always sends. Required since Week 4 Task 5 mounted the CSRF
+ * origin check ahead of the limiters and the body parser
+ * (`middleware/origin-check.ts`): without it these requests are refused 403
+ * before the thing under test ever runs.
+ */
+const BROWSER_ORIGIN = 'http://localhost:5180';
+function post(app: Parameters<typeof request>[0], path: string) {
+  return request(app).post(path).set('Origin', BROWSER_ORIGIN);
+}
+
 const caller = appRouter.createCaller(testContext());
 
 /**
@@ -787,24 +799,24 @@ function appWithLimiterOnly() {
 it(`allows ${CHECKOUT_HOLD_MAX} hold attempts per IP and refuses the 6th`, async () => {
   const app = appWithLimiterOnly();
   for (let i = 1; i <= CHECKOUT_HOLD_MAX; i += 1) {
-    await request(app).post(`/trpc/${CHECKOUT_HOLD_PROCEDURES[0]}`).expect(200);
+    await post(app, `/trpc/${CHECKOUT_HOLD_PROCEDURES[0]}`).expect(200);
   }
-  await request(app).post(`/trpc/${CHECKOUT_HOLD_PROCEDURES[0]}`).expect(429);
+  await post(app, `/trpc/${CHECKOUT_HOLD_PROCEDURES[0]}`).expect(429);
 });
 
 it('the checkout.createHold limiter leaves every other procedure alone', async () => {
   const app = appWithLimiterOnly();
   for (let i = 0; i < CHECKOUT_HOLD_MAX + 5; i += 1) {
-    await request(app).post('/trpc/checkout.quote').expect(200);
+    await post(app, '/trpc/checkout.quote').expect(200);
   }
 });
 
 it('gives each app its own counter, so one cannot exhaust another', async () => {
   const a = appWithLimiterOnly();
   for (let i = 1; i <= CHECKOUT_HOLD_MAX; i += 1) {
-    await request(a).post(`/trpc/${CHECKOUT_HOLD_PROCEDURES[0]}`).expect(200);
+    await post(a, `/trpc/${CHECKOUT_HOLD_PROCEDURES[0]}`).expect(200);
   }
-  await request(appWithLimiterOnly()).post(`/trpc/${CHECKOUT_HOLD_PROCEDURES[0]}`).expect(200);
+  await post(appWithLimiterOnly(), `/trpc/${CHECKOUT_HOLD_PROCEDURES[0]}`).expect(200);
 });
 
 /**
@@ -819,7 +831,7 @@ it('is actually mounted in app.ts: the real app refuses the 6th createHold call 
   for (let i = 0; i < CHECKOUT_HOLD_MAX + 1; i += 1) {
     // Deliberately invalid body — the limiter runs before, and regardless
     // of, tRPC's own input validation (same pattern as rate-limit.test.ts).
-    const res = await request(app).post('/trpc/checkout.createHold').send({});
+    const res = await post(app, '/trpc/checkout.createHold').send({});
     statuses.push(res.status);
   }
   expect(statuses.slice(0, CHECKOUT_HOLD_MAX)).not.toContain(429);
@@ -829,7 +841,7 @@ it('is actually mounted in app.ts: the real app refuses the 6th createHold call 
 it('the real app leaves checkout.quote unaffected by the createHold limiter', async () => {
   const app = createApp();
   for (let i = 0; i < CHECKOUT_HOLD_MAX + 5; i += 1) {
-    const res = await request(app).post('/trpc/checkout.quote').send({});
+    const res = await post(app, '/trpc/checkout.quote').send({});
     expect(res.status).not.toBe(429);
   }
 });
@@ -859,22 +871,22 @@ function appWithLookupLimiterOnly() {
 it(`allows ${BOOKING_LOOKUP_MAX} failed booking-lookup attempts per IP and refuses the next one`, async () => {
   const app = appWithLookupLimiterOnly();
   for (let i = 1; i <= BOOKING_LOOKUP_MAX; i += 1) {
-    await request(app).post(`/trpc/${BOOKING_LOOKUP_PROCEDURES[0]}`).expect(404);
+    await post(app, `/trpc/${BOOKING_LOOKUP_PROCEDURES[0]}`).expect(404);
   }
-  await request(app).post(`/trpc/${BOOKING_LOOKUP_PROCEDURES[0]}`).expect(429);
+  await post(app, `/trpc/${BOOKING_LOOKUP_PROCEDURES[0]}`).expect(429);
 });
 
 it('the booking-lookup limiter leaves every other procedure alone', async () => {
   const app = appWithLookupLimiterOnly();
   for (let i = 0; i < BOOKING_LOOKUP_MAX + 5; i += 1) {
-    await request(app).post('/trpc/checkout.quote').expect(404);
+    await post(app, '/trpc/checkout.quote').expect(404);
   }
 });
 
 it('gives each app its own counter, so one cannot exhaust another', async () => {
   const a = appWithLookupLimiterOnly();
   for (let i = 1; i <= BOOKING_LOOKUP_MAX; i += 1) {
-    await request(a).post(`/trpc/${BOOKING_LOOKUP_PROCEDURES[0]}`).expect(404);
+    await post(a, `/trpc/${BOOKING_LOOKUP_PROCEDURES[0]}`).expect(404);
   }
   await request(appWithLookupLimiterOnly())
     .post(`/trpc/${BOOKING_LOOKUP_PROCEDURES[0]}`)
@@ -890,12 +902,12 @@ it('gives each app its own counter, so one cannot exhaust another', async () => 
 it('counts failed attempts only — a successful lookup never counts against the limit', async () => {
   const app = appWithLookupLimiterOnly();
   for (let i = 0; i < BOOKING_LOOKUP_MAX * 3; i += 1) {
-    await request(app).post(`/trpc/${BOOKING_LOOKUP_PROCEDURES[0]}?ok=1`).expect(200);
+    await post(app, `/trpc/${BOOKING_LOOKUP_PROCEDURES[0]}?ok=1`).expect(200);
   }
   for (let i = 1; i <= BOOKING_LOOKUP_MAX; i += 1) {
-    await request(app).post(`/trpc/${BOOKING_LOOKUP_PROCEDURES[0]}`).expect(404);
+    await post(app, `/trpc/${BOOKING_LOOKUP_PROCEDURES[0]}`).expect(404);
   }
-  await request(app).post(`/trpc/${BOOKING_LOOKUP_PROCEDURES[0]}`).expect(429);
+  await post(app, `/trpc/${BOOKING_LOOKUP_PROCEDURES[0]}`).expect(429);
 });
 
 /**
@@ -910,7 +922,7 @@ it('is actually mounted in app.ts: the real app refuses the next bookingLookup c
   const app = createApp();
   const statuses: number[] = [];
   for (let i = 0; i < BOOKING_LOOKUP_MAX + 1; i += 1) {
-    const res = await request(app).post('/trpc/checkout.bookingLookup').send({});
+    const res = await post(app, '/trpc/checkout.bookingLookup').send({});
     statuses.push(res.status);
   }
   expect(statuses.slice(0, BOOKING_LOOKUP_MAX)).not.toContain(429);
@@ -920,7 +932,7 @@ it('is actually mounted in app.ts: the real app refuses the next bookingLookup c
 it('the real app leaves checkout.quote unaffected by the booking-lookup limiter', async () => {
   const app = createApp();
   for (let i = 0; i < BOOKING_LOOKUP_MAX + 5; i += 1) {
-    const res = await request(app).post('/trpc/checkout.quote').send({});
+    const res = await post(app, '/trpc/checkout.quote').send({});
     expect(res.status).not.toBe(429);
   }
 });
@@ -999,6 +1011,7 @@ it('spends the createHold budget per batched call, not per request', async () =>
   const body = Object.fromEntries(calls.map((_, i) => [i, {}]));
   const res = await request(app)
     .post(`/trpc/${calls.join(',')}?batch=1`)
+    .set('Origin', BROWSER_ORIGIN)
     .send(body);
   expect(res.status).toBe(429);
 });

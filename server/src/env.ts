@@ -34,7 +34,24 @@ const schema = z.object({
   SMTP_USER: z.string().optional(),
   SMTP_PASSWORD: z.string().optional(),
   MAIL_FROM: z.string().optional(),
+  /*
+   * The first owner account, read by the seed (Week 4, Task 5). Both
+   * optional so `pnpm test` can seed `rg_travel_test` without
+   * production-shaped config; `upsertOwner()` in `db/seed.ts` refuses if
+   * one is set without the other, or if the password is under 12
+   * characters. NEVER defaulted, never logged.
+   */
+  OWNER_EMAIL: z.string().optional(),
+  OWNER_PASSWORD: z.string().optional(),
   PUBLIC_BASE_URL: z.string().default('http://localhost:5180'),
+  /*
+   * The origin allowed to make state-changing requests (Week 4, Task 5;
+   * owner instruction 2026-10-14). Production is `https://travelsugbo.com`;
+   * outside production the Vite dev server on 5180 is allowed as well, which
+   * is why the default is harmless and the production value must be set.
+   * See `middleware/origin-check.ts`.
+   */
+  APP_ORIGIN: z.string().default('http://localhost:5180'),
   // PayMongo (plan Task 16). BOTH OPTIONAL, deliberately: the app must still
   // boot without payment credentials — that is how it runs today and how it
   // runs during content work — so a missing key is not a startup failure.

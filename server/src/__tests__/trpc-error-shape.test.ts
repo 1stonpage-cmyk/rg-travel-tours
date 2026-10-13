@@ -142,10 +142,20 @@ describe('tRPC error shape — an internal error', () => {
   });
 });
 
+/*
+ * `.set('Origin', ...)` on every POST below (Week 4, Task 5): the origin
+ * check refuses a state-changing request with no `Origin`, which is the
+ * CSRF defence working — a browser always sends one, so a request without
+ * it is not a browser. These tests are about the ERROR SHAPE, so they send
+ * the header and get past the gate to the thing they are actually testing.
+ */
+const ORIGIN = 'http://localhost:5180';
+
 describe('tRPC error shape — a Zod validation failure through the real app', () => {
   it('still returns the code, the message and per-field errors', async () => {
     const res = await request(createApp())
       .post('/trpc/newsletter.subscribe')
+      .set('Origin', ORIGIN)
       .set('Content-Type', 'application/json')
       .send({ email: 'not-an-email' });
 
@@ -165,6 +175,7 @@ describe('tRPC error shape — a Zod validation failure through the real app', (
   it('names every failing field of an inquiry, not just the first', async () => {
     const res = await request(createApp())
       .post('/trpc/inquiries.create')
+      .set('Origin', ORIGIN)
       .set('Content-Type', 'application/json')
       .send({ type: 'contact', name: '', email: 'nope', message: '', consent: false });
 

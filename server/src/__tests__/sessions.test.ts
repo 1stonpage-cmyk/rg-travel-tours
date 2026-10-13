@@ -23,7 +23,7 @@ import { afterEach, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
 import { eq, inArray } from 'drizzle-orm';
 import { getDb, getPool } from '../db/client';
-import { sessions } from '../db/schema';
+import { sessions, users } from '../db/schema';
 import { createSession, readSession, revokeSession } from '../services/sessions';
 import { describeWithDb } from './helpers/db';
 
@@ -34,7 +34,34 @@ const NOW = new Date('2026-10-13T04:00:00Z');
  * `sessions.subject_id` is polymorphic and carries no foreign key. */
 const SUBJECT = { customer: 920_001, staff: 920_002, driver: 920_003 };
 
+const staffIds: number[] = [];
+
+/** A real `users` row, which a `user` session now requires to resolve. */
+async function makeStaff(role: 'owner' | 'dispatcher' | 'finance') {
+  const unique = `${Math.floor(Math.random() * 1e9)}_${Date.now()}`;
+  const [row] = await getDb()
+    .insert(users)
+    .values({
+      name: `Session Fixture ${unique}`,
+      email: `session_${unique}@example.test`,
+      // Not a real hash and not a real password: nothing here signs in.
+      passwordHash: '__session_fixture_not_a_hash__',
+      role,
+      isActive: true,
+    });
+  staffIds.push(row.insertId);
+  return row.insertId;
+}
+
 async function cleanup() {
+  for (const id of staffIds) {
+    await getPool().query('DELETE FROM sessions WHERE subject_type = ? AND subject_id = ?', [
+      'user',
+      id,
+    ]);
+    await getPool().query('DELETE FROM users WHERE id = ?', [id]);
+  }
+  staffIds.length = 0;
   await getPool().query('DELETE FROM sessions WHERE subject_id IN (?, ?, ?)', [
     SUBJECT.customer,
     SUBJECT.staff,
@@ -72,17 +99,69 @@ describeWithDb('sessions', () => {
     });
   });
 
+  /**
+   * A `driver` or `customer` session resolves on the session row alone. A
+   * `user` session does NOT — it is held to the extra conditions below, so
+   * it needs a real `users` row to resolve at all.
+   */
   it('keeps the three subject types apart', async () => {
-    const staff = await createSession('user', SUBJECT.staff, NOW);
     const driver = await createSession('driver', SUBJECT.driver, NOW);
-    expect(await readSession(staff.token, NOW)).toEqual({
-      subjectType: 'user',
-      subjectId: SUBJECT.staff,
-    });
     expect(await readSession(driver.token, NOW)).toEqual({
       subjectType: 'driver',
       subjectId: SUBJECT.driver,
     });
+
+    const staffId = await makeStaff('owner');
+    const staff = await createSession('user', staffId, NOW);
+    expect(await readSession(staff.token, NOW)).toEqual({
+      subjectType: 'user',
+      subjectId: staffId,
+      role: 'owner',
+    });
+  });
+
+  /**
+   * **A staff session carries the role, read LIVE from the row.** This is
+   * what `requireRole` gates on, and resolving it here rather than copying
+   * it into the session at login is what makes a demotion take effect on
+   * the next request instead of at the end of a 24-hour session.
+   */
+  it('reflects a role CHANGE immediately, without a new login', async () => {
+    const staffId = await makeStaff('dispatcher');
+    const { token } = await createSession('user', staffId, NOW);
+    expect((await readSession(token, NOW))?.role).toBe('dispatcher');
+
+    await getDb().update(users).set({ role: 'finance' }).where(eq(users.id, staffId));
+
+    expect(
+      (await readSession(token, NOW))?.role,
+      'the role was cached in the session — a demotion would not take effect',
+    ).toBe('finance');
+  });
+
+  /**
+   * **Deactivation signs a staff member out everywhere, at once.** The flag
+   * exists so an account can be switched off without deleting history; if a
+   * live session survived it, a dismissed employee would keep admin access
+   * for up to a day. Fails closed, and silently — the caller gets the same
+   * `null` as an expired token, because it cannot act on the difference.
+   */
+  it('REFUSES a staff session whose user has been deactivated', async () => {
+    const staffId = await makeStaff('owner');
+    const { token } = await createSession('user', staffId, NOW);
+    expect(await readSession(token, NOW)).not.toBeNull();
+
+    await getDb().update(users).set({ isActive: false }).where(eq(users.id, staffId));
+
+    expect(
+      await readSession(token, NOW),
+      'a deactivated staff member kept a live admin session',
+    ).toBeNull();
+  });
+
+  it('REFUSES a staff session whose user row no longer exists', async () => {
+    const { token } = await createSession('user', 999_999_001, NOW);
+    expect(await readSession(token, NOW)).toBeNull();
   });
 
   /**

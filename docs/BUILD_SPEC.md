@@ -80,20 +80,20 @@ If you find a bug unrelated to the current task, **don't stop or fix it**. Finis
 
 ## 2. Tech stack
 
-| Layer      | Choice                                                                                 |
-| ---------- | -------------------------------------------------------------------------------------- |
-| Frontend   | React + TypeScript + Vite + Tailwind + shadcn/ui                                       |
-| Routing    | React Router                                                                           |
-| API        | Express + tRPC                                                                         |
-| ORM / DB   | Drizzle + MySQL 8                                                                      |
-| Validation | Zod (shared between client and server)                                                 |
-| Auth       | Session cookies (httpOnly, secure, sameSite=lax), bcrypt/argon2 for passwords and PINs |
-| Payments   | `PaymentProvider` interface; PayMongo API + webhooks first, Xendit stubbed             |
-| Email      | SMTP via a transactional provider (configurable in `.env`)                             |
-| SMS        | Optional, behind a provider interface (off by default)                                 |
-| Jobs       | `node-cron` in the server process (hold expiry, reminders, alerts)                     |
-| Process    | PM2                                                                                    |
-| Web server | nginx reverse proxy + Let's Encrypt SSL                                                |
+| Layer      | Choice                                                                                                                                                     |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Frontend   | React + TypeScript + Vite + Tailwind + shadcn/ui                                                                                                           |
+| Routing    | React Router                                                                                                                                               |
+| API        | Express + tRPC                                                                                                                                             |
+| ORM / DB   | Drizzle + MySQL 8                                                                                                                                          |
+| Validation | Zod (shared between client and server)                                                                                                                     |
+| Auth       | Session cookies (httpOnly, secure, sameSite=lax), **scrypt via `node:crypto`** for passwords and PINs — owner decision 2026-10-14, replacing argon2/bcrypt |
+| Payments   | `PaymentProvider` interface; PayMongo API + webhooks first, Xendit stubbed                                                                                 |
+| Email      | SMTP via a transactional provider (configurable in `.env`)                                                                                                 |
+| SMS        | Optional, behind a provider interface (off by default)                                                                                                     |
+| Jobs       | `node-cron` in the server process (hold expiry, reminders, alerts)                                                                                         |
+| Process    | PM2                                                                                                                                                        |
+| Web server | nginx reverse proxy + Let's Encrypt SSL                                                                                                                    |
 
 ### SEO note (Vite SPA)
 

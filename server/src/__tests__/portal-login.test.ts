@@ -292,7 +292,10 @@ describeWithDb('the shared ref+email budget', () => {
 
     // Three failed logins (mutations: POST).
     for (let i = 0; i < 3; i += 1) {
-      const res = await request(app).post('/trpc/portal.login').send(wrong);
+      const res = await request(app)
+        .post('/trpc/portal.login')
+        .set('Origin', 'http://localhost:5180')
+        .send(wrong);
       expect(res.status, 'a failed login should be a 4xx, so the limiter counts it').toBe(401);
     }
 
@@ -306,7 +309,12 @@ describeWithDb('the shared ref+email budget', () => {
 
     // Six: refused, on either door.
     expect(
-      (await request(app).post('/trpc/portal.login').send(wrong)).status,
+      (
+        await request(app)
+          .post('/trpc/portal.login')
+          .set('Origin', 'http://localhost:5180')
+          .send(wrong)
+      ).status,
       'the login had its own budget rather than sharing the lookup one',
     ).toBe(429);
     expect(

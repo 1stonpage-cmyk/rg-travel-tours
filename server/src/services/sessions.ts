@@ -38,7 +38,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { and, eq, gt } from 'drizzle-orm';
 import { getDb } from '../db/client';
-import { sessions } from '../db/schema';
+import { sessions, users } from '../db/schema';
 
 /**
  * A day. §7 logs a guest in with a booking ref and an email rather than a
@@ -54,6 +54,12 @@ export type SessionSubject = 'user' | 'customer' | 'driver';
 export interface ResolvedSession {
   subjectType: string;
   subjectId: number;
+  /**
+   * The staff role, for `subject_type = 'user'` sessions only, read LIVE
+   * from the `users` row rather than stored in the session. See
+   * `readSession` for why that matters.
+   */
+  role?: string;
 }
 
 /** One-way, fast, and the only form the token takes at rest. */
@@ -103,13 +109,48 @@ export async function createSession(
  * holds an expired session object and forgets to check it.
  */
 export async function readSession(token: string, now: Date): Promise<ResolvedSession | null> {
+  /*
+   * A LEFT JOIN onto `users`, because a staff session needs the ROLE and
+   * `requireRole` reads it off the session. Two consequences, and both are
+   * the reason this is a join rather than a column on `sessions`:
+   *
+   *  1. **The role is live.** A staff member demoted from `owner` to
+   *     `dispatcher` loses the owner's permissions on their very next
+   *     request, instead of keeping them until their 24-hour session
+   *     expires. A role copied into the session row at login would be a
+   *     stale capability with a day-long tail.
+   *  2. **Deactivation is immediate.** `is_active = false` makes this
+   *     resolve to `null`, so a staff member who is switched off is signed
+   *     out everywhere at once — which is the whole point of having the flag
+   *     rather than deleting the row.
+   *
+   * The join is `LEFT`: a `customer` or `driver` session has no `users` row
+   * and must still resolve. Only a `user` session is held to the extra
+   * conditions below.
+   */
   const [row] = await getDb()
-    .select({ subjectType: sessions.subjectType, subjectId: sessions.subjectId })
+    .select({
+      subjectType: sessions.subjectType,
+      subjectId: sessions.subjectId,
+      role: users.role,
+      isActive: users.isActive,
+    })
     .from(sessions)
+    .leftJoin(users, and(eq(sessions.subjectType, 'user'), eq(users.id, sessions.subjectId)))
     .where(and(eq(sessions.tokenHash, hashToken(token)), gt(sessions.expiresAt, now)))
     .limit(1);
 
-  return row ?? null;
+  if (!row) return null;
+
+  if (row.subjectType === 'user') {
+    // A staff session whose user is gone or switched off is not a session.
+    // Fails closed, and silently: the caller gets the same `null` as an
+    // expired token, because it cannot act on the difference.
+    if (!row.role || row.isActive !== true) return null;
+    return { subjectType: row.subjectType, subjectId: row.subjectId, role: row.role };
+  }
+
+  return { subjectType: row.subjectType, subjectId: row.subjectId };
 }
 
 /**

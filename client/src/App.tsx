@@ -1,6 +1,7 @@
 import { Route, Routes } from 'react-router-dom';
 import { BOOKING_PAGE_ROUTE } from '@rg/shared';
 import PublicLayout from '@/components/layout/PublicLayout';
+import AdminLoginPage from '@/pages/admin/AdminLoginPage';
 import BookingStatusPage from '@/pages/public/BookingStatusPage';
 import CheckoutPage from '@/pages/public/CheckoutPage';
 import HomePage from '@/pages/public/HomePage';
@@ -43,6 +44,15 @@ export default function App() {
         <Route path="privacy" element={<PrivacyPage />} />
         <Route path="terms" element={<TermsPage />} />
       </Route>
+
+      {/*
+       * The staff sign-in, OUTSIDE `PublicLayout` on purpose: it carries no
+       * header, no navigation and no WhatsApp button, because nobody
+       * browses to it and a staff member at 6am wants two fields and a
+       * button. It is also the only route under `/admin`, which the
+       * `X-Robots-Tag` middleware already keeps out of every index.
+       */}
+      <Route path="admin/login" element={<AdminLoginPage />} />
     </Routes>
   );
 }

@@ -4,6 +4,7 @@ import { destinationsRouter } from './public/destinations';
 import { inquiriesRouter } from './public/inquiries';
 import { newsletterRouter } from './public/newsletter';
 import { packagesRouter } from './public/packages';
+import { staffAuthRouter } from './admin/auth';
 import { portalRouter } from './public/portal';
 import { reviewsRouter } from './public/reviews';
 import { settingsRouter } from './public/settings';
@@ -45,6 +46,19 @@ export const appRouter = router({
    * attempts, not two. See `BOOKING_LOOKUP_PROCEDURES`.
    */
   portal: portalRouter,
+
+  /*
+   * Staff sign-in (Week 4, Task 5). NOT under `admin.*`: `login` and
+   * `logout` are necessarily public, and `procedure-role-metadata.test.ts`
+   * requires everything in an admin namespace to be `adminProcedure` — an
+   * invariant worth keeping, so the namespace moved rather than the rule.
+   *
+   * `staffAuth.login` is rate-limited per IP in app.ts and per EMAIL in
+   * `services/staff-auth.ts`; one limiter cannot see what the other
+   * catches. `me` sits behind `adminProcedure`, which makes it the first
+   * thing in this codebase to have ever run with a real staff session.
+   */
+  staffAuth: staffAuthRouter,
 });
 
 export type AppRouter = typeof appRouter;

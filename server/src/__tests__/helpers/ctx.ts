@@ -18,6 +18,7 @@
  * tested through a fake `res` proves nothing about the mount.
  */
 import type { Request, Response } from 'express';
+import type { AdminRole } from '@rg/shared';
 import type { ResolvedSession } from '../../services/sessions';
 
 export interface CapturedCookie {
@@ -66,11 +67,14 @@ export function customerContext(bookingId: number) {
 }
 
 /**
- * A context for a logged-in staff member. The role is NOT part of
- * `ResolvedSession` — `requireRole` reads it from the `users` row and
- * re-validates it — so this only carries the subject, which is the honest
- * shape of what a cookie can tell the server.
+ * A context for a logged-in staff member.
+ *
+ * The role is part of `ResolvedSession` because `readSession` resolves it
+ * LIVE from the `users` row on every request — it is never stored in the
+ * session — and `requireRole` then re-parses it rather than trusting it.
+ * This helper is the shape the real factory produces, so a test that uses
+ * it is exercising the same context an authenticated request would.
  */
-export function staffContext(userId: number) {
-  return testContext({ subjectType: 'user', subjectId: userId });
+export function staffContext(userId: number, role: AdminRole = 'owner') {
+  return testContext({ subjectType: 'user', subjectId: userId, role });
 }

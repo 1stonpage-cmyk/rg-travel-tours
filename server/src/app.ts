@@ -10,10 +10,12 @@ import { createHtmlHandler } from './html';
 import { createReceiptRouter } from './routers/receipts';
 import { errorHandler } from './middleware/error-handler';
 import { rejectMalformedUrl } from './middleware/malformed-url';
+import { createOriginCheck } from './middleware/origin-check';
 import {
   createBookingLookupLimiter,
   createCheckoutHoldLimiter,
   createProcedureRateLimit,
+  createStaffLoginLimiter,
 } from './middleware/rate-limit';
 import { robotsHeader } from './middleware/robots-header';
 import { appRouter } from './routers/_app';
@@ -67,6 +69,29 @@ export function createApp(
   // middleware/malformed-url.ts for why the query string is NOT checked and
   // why skipping the rate limiters is safe here.
   app.use(rejectMalformedUrl());
+
+  /*
+   * CSRF: the origin check, on every state-changing request (Week 4, Task
+   * 5; owner instruction 2026-10-14).
+   *
+   * **Mounted HERE, and the position is the security property** — above the
+   * webhook router, `express.json()`, every rate limiter, the receipt route
+   * and the tRPC mount. Two things follow from that:
+   *
+   *  1. A forged request is refused before it costs anything: no body
+   *     parsed, no limiter budget spent, no database query, and above all
+   *     no ~128MB scrypt hash (`services/password.ts`).
+   *  2. **The `/api/webhooks/*` exemption becomes load-bearing rather than
+   *     decorative.** Mounted below the webhook router — where it sat
+   *     first — the exemption was unreachable code, because the router had
+   *     already answered; `origin-check.test.ts` passed either way and
+   *     proved nothing. Here, removing the exemption really does 403 every
+   *     gateway callback, which is what that test now detects.
+   *
+   * Gateways are not unprotected by the exemption: they send no `Origin` at
+   * all, and are verified by HMAC over the raw body instead.
+   */
+  app.use(createOriginCheck());
 
   // -------------------------------------------------------------------------
   // Gateway webhooks (plan Task 15). MOUNTED HERE, AND THE POSITION IS THE
@@ -141,6 +166,10 @@ export function createApp(
   // IP per 15 minutes on checkout.bookingLookup. See
   // middleware/rate-limit.ts for why this one counts failures only.
   app.use('/trpc', createBookingLookupLimiter());
+
+  // Staff login, 10 failed attempts per IP per 15 minutes (Week 4, Task 5).
+  // The per-email half is in `services/staff-auth.ts`.
+  app.use('/trpc', createStaffLoginLimiter());
 
   /*
    * Cookies, then the context factory that reads them (Week 4, Task 1).

@@ -293,6 +293,33 @@ export const BOOKING_LOOKUP_MAX = 5;
  */
 export const BOOKING_LOOKUP_PROCEDURES = ['checkout.bookingLookup', 'portal.login'] as const;
 
+/**
+ * Staff login, per IP (Week 4, Task 5; owner instruction 2026-10-14).
+ *
+ * The per-EMAIL half lives in `services/staff-auth.ts`, and both are needed
+ * because neither sees what the other catches: this one stops one address
+ * grinding through passwords, that one stops an attacker spreading guesses
+ * for a single account across many addresses.
+ *
+ * `skipSuccessfulRequests` so a staff member working normally never spends
+ * budget — only failures count, exactly as §7's booking-lookup limit does.
+ *
+ * It is also a MEMORY control: each verification allocates ~128MB for
+ * scrypt, so an unlimited login endpoint is an exhaustion vector long
+ * before it is a guessing one. See `services/password.ts`.
+ */
+export const STAFF_LOGIN_WINDOW_MS = 15 * 60_000;
+export const STAFF_LOGIN_MAX_PER_IP = 10;
+export const STAFF_LOGIN_PROCEDURES = ['staffAuth.login'] as const;
+
+export function createStaffLoginLimiter(): RequestHandler {
+  return createProcedureRateLimit([...STAFF_LOGIN_PROCEDURES], {
+    windowMs: STAFF_LOGIN_WINDOW_MS,
+    max: STAFF_LOGIN_MAX_PER_IP,
+    skipSuccessfulRequests: true,
+  });
+}
+
 export function createBookingLookupLimiter(): RequestHandler {
   return createProcedureRateLimit([...BOOKING_LOOKUP_PROCEDURES], {
     windowMs: BOOKING_LOOKUP_WINDOW_MS,
