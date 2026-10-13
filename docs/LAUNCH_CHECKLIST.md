@@ -183,11 +183,34 @@ works around, so finding it late means a rewrite rather than a fix.
       plans, silently or as a generic timeout, and **IONOS has blocked outbound SMTP on
       another of this owner's projects** — a known failure mode, not a hypothetical. Test
       **from the VPS**, not from a laptop; the laptop's network says nothing about the
-      server's. If it is blocked, the fallback is a transactional provider's **REST API
-      over plain `fetch`** (the same pattern as the PayMongo provider, no new dependency),
-      and that choice has to be made before the email layer is built, not after. Email was
-      deferred to Week 4 by owner decision 2026-10-12 (Week 3 Q2), which is exactly why
-      this test is worth doing now, while it is still free.
+      server's. Email was deferred to Week 4 by owner decision 2026-10-12 (Week 3 Q2),
+      which is exactly why this test is worth doing now, while it is still free.
+
+      **The transport is decided (owner decision 2026-10-13, Week 3 Q2):** `nodemailer`
+      over SMTP, with **Brevo's SMTP relay (free tier)** as the default provider, and **no
+      other email library**. Every value lives in `.env` — `SMTP_HOST`, `SMTP_PORT`,
+      `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` — so swapping providers is a config change, not
+      a code change. Tests use a **mock transport and never send real email.**
+
+      **If the VPS turns out to be blocked, that decision needs revisiting rather than
+      working around:** `nodemailer` over SMTP cannot work at all through a blocked port, so
+      the fallback is Brevo's **HTTP API over plain `fetch`** (the same pattern as the
+      PayMongo provider — still no new dependency, but no longer `nodemailer`). Which is
+      why this test comes before the email layer is built, not after.
+
+- [ ] **Create the Brevo account** and generate its SMTP credentials, then put them in the
+      deployed `.env` only — never in the repo (`SMTP_PASS` is a secret like any gateway key).
+
+- [ ] **Add the sender-authentication DNS records in Cloudflare for `travelsugbo.com`:**
+      **SPF**, **DKIM** (both from Brevo's own setup page, since the DKIM key is
+      account-specific) and a **DMARC** record. Without SPF and DKIM, booking confirmations
+      from a brand-new sending domain land in spam or are rejected outright — and a guest who
+      never receives their booking reference cannot find their booking, which turns a working
+      system into a support call. Verify them with Brevo's own domain check **and**
+      independently (`dig TXT travelsugbo.com`, `dig TXT <selector>._domainkey.travelsugbo.com`,
+      `dig TXT _dmarc.travelsugbo.com`) before trusting the dashboard's green tick. Start DMARC
+      at `p=none` so nothing is silently discarded while the records are being proven, then
+      tighten it.
 
 ---
 
@@ -206,6 +229,19 @@ Do these in order. Steps 1–4 change nothing public, so they are safe to do ear
 
 2. **Apply any pending database migration** to the production `rg_travel` database, and
    confirm the app boots against it.
+
+   Then **seed the settings rows, before the first start**:
+
+   ```bash
+   pnpm --filter @rg/server db:seed    # settings, incl. the booking window
+   ```
+
+   `readSettings()` **fails closed**: it throws on the first missing key, so a settings row
+   the code expects and the database does not have takes the whole public site down with a
+   500 rather than degrading. The newest such key is `booking` (the bookable date window —
+   `minLeadDays`, `nextDayCutoffTime`, `maxAdvanceDays`), added 2026-10-13, so a database
+   seeded before that date is missing it. The seed is idempotent and upserts by natural key,
+   so running it again is safe and is the fastest way to be sure.
 
 3. **Publish the build**: sync `client/dist` into `/var/www/travelsugbo/app`, confirm
    `pm2 restart` brings the API up on 3100, and smoke-test the whole flow on
