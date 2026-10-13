@@ -1,5 +1,6 @@
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { formatPeso, type BookingStatus } from '@rg/shared';
+import PayNowButton from '@/components/checkout/PayNowButton';
 import QueryBoundary from '@/components/common/QueryBoundary';
 import { Skeleton } from '@/components/common/Skeleton';
 import { Button } from '@/components/ui/button';
@@ -10,17 +11,31 @@ import { trpc } from '@/lib/trpc';
 /**
  * Task 9, week 3 checkout plan — the booking-status / payment-redirect page.
  *
- * **This page only reads.** §6: "The success redirect page only reads
- * status (polls until the webhook lands). It never confirms anything
- * itself." This file calls no mutation hook at all — not for
- * `checkout.createHold`, not `checkout.startPayment`, not anything else —
- * and `server/src/routers/public/checkout.ts`'s own enumeration test
- * (`exposes no mutation that could confirm a booking`) is what makes that a
- * checked property of the ROUTER, not just an absence in this file that a
- * later edit could quietly undo. Only a verified PayMongo webhook or an
- * admin approval ever marks a booking paid (CLAUDE.md DO NOT); this page's
- * entire job is to keep asking what that webhook already decided, and
- * render exactly what comes back.
+ * **This page only reads — it confirms nothing itself.** §6: "The success
+ * redirect page only reads status (polls until the webhook lands). It
+ * never confirms anything itself." This file itself calls no mutation hook
+ * — no `checkout.createHold`, no `checkout.startPayment` — directly: its
+ * own hooks are `useParams`, `useSearchParams` and
+ * `checkout.bookingStatus.useQuery`, nothing else. Only a verified
+ * PayMongo webhook or an admin approval ever marks a booking paid (CLAUDE.md
+ * DO NOT); this page's entire job is to keep asking what that webhook
+ * already decided, and render exactly what comes back.
+ *
+ * **Task 8b's one addition: a real "try paying again" affordance.** A
+ * cancelled gateway redirect used to land here with copy that *claimed* a
+ * retry was possible ("you can try paying again") with no actual way to do
+ * it — a lie by omission CLAUDE.md's bug-tracking spirit does not allow
+ * once the real trigger (`checkout.startPayment`) exists. The fix is
+ * `<PayNowButton>` (components/checkout/PayNowButton.tsx) — the SAME
+ * component `CheckoutPage` uses after a fresh `createHold` — rendered only
+ * inside the cancelled notice below. It does not weaken the rule above:
+ * `checkout.startPayment` "starts a payment; it never records one" (its
+ * own doc comment) — nothing reachable from this page can mark a booking
+ * paid, cancelled, or anything else. `server/src/routers/public/
+ * checkout.ts`'s own enumeration test (`exposes no mutation that could
+ * confirm a booking`) is what makes "nothing on this router can confirm a
+ * booking" a checked property of the ROUTER, independent of what any page
+ * calls.
  *
  * **Route shape (Ruling 25).** `checkout.startPayment` sends PayMongo a
  * success URL of `${PUBLIC_BASE_URL}${bookingPagePath(ref)}` and a cancel
@@ -167,12 +182,15 @@ export default function BookingStatusPage() {
             return (
               <div className="mt-6 space-y-4">
                 {showCancelledNotice && (
-                  <div role="status" className={cn('rounded-xl border p-4', TONE_CLASSES.calm)}>
-                    <p className="text-sm font-semibold">Payment cancelled</p>
-                    <p className="mt-1 text-sm">
-                      You cancelled before finishing payment. Your spot may still be held — you can
-                      try paying again, or contact us if you need help.
-                    </p>
+                  <div className={cn('space-y-3 rounded-xl border p-4', TONE_CLASSES.calm)}>
+                    <div role="status">
+                      <p className="text-sm font-semibold">Payment cancelled</p>
+                      <p className="mt-1 text-sm">
+                        You cancelled before finishing payment. Your spot may still be held — pay
+                        now to try again, or contact us if you need help.
+                      </p>
+                    </div>
+                    <PayNowButton bookingRef={data.ref} label="Try paying again" />
                   </div>
                 )}
 

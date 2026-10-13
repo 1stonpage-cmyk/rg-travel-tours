@@ -215,6 +215,40 @@ describe('HeroSection — settings-driven', () => {
   });
 });
 
+describe('HeroSection — date picker bounds come from the server (Task 8b)', () => {
+  it('sets min/max from settings.get bookingWindow, never the browser clock', async () => {
+    mockTrpc({ 'settings.get': SETTINGS_FIXTURE, 'destinations.list': DESTINATIONS_FIXTURE });
+    renderHero();
+
+    const form = await screen.findByRole('form', { name: /search tours/i });
+    const dateInput = within(form).getByLabelText(/^date$/i);
+
+    await waitFor(() => {
+      expect(dateInput).toHaveAttribute('min', SETTINGS_FIXTURE.bookingWindow.earliest);
+    });
+    expect(dateInput).toHaveAttribute('max', SETTINGS_FIXTURE.bookingWindow.latest);
+
+    // Proof this isn't the browser clock: the fixture's earliest date is
+    // nowhere near whatever "today" is when this test runs, so a client-side
+    // `new Date().toISOString().slice(0, 10)` could never have produced it.
+    const today = new Date().toISOString().slice(0, 10);
+    expect(dateInput.getAttribute('min')).not.toBe(today);
+  });
+
+  it('omits min/max while settings.get is still pending, rather than falling back to the browser clock', () => {
+    mockTrpc({
+      'settings.get': () => new Promise(() => {}),
+      'destinations.list': DESTINATIONS_FIXTURE,
+    });
+    renderHero();
+
+    const form = screen.getByRole('form', { name: /search tours/i });
+    const dateInput = within(form).getByLabelText(/^date$/i);
+    expect(dateInput).not.toHaveAttribute('min');
+    expect(dateInput).not.toHaveAttribute('max');
+  });
+});
+
 describe('HeroCopySkeleton / TrustBarSkeleton — loading announced to screen readers (BUG-071)', () => {
   it('HeroCopySkeleton exposes a status region while settings.get is pending, instead of aria-hidden', () => {
     mockTrpc({

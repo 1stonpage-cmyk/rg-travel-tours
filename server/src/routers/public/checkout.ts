@@ -73,6 +73,7 @@ import {
   bookingPagePath,
   bookingRefSchema,
   createHoldInput,
+  DATE_NOT_BOOKABLE,
   depositCentavos,
   formatPeso,
   isDateBookable,
@@ -106,7 +107,6 @@ import {
 } from '../../services/coupons';
 import {
   CapacityRefusedError,
-  DATE_NOT_BOOKABLE,
   createHold as createHoldService,
   HoldContentionError,
   HoldLimitReachedError,
@@ -128,7 +128,7 @@ import { publicProcedure, router } from '../../trpc';
  * the capacity service. Keeping the vocabularies separate is what stops a
  * later reader assuming capacity decides it.
  */
-type AvailabilityVerdict = CapacityVerdict | { ok: false; reason: typeof DATE_NOT_BOOKABLE };
+export type AvailabilityVerdict = CapacityVerdict | { ok: false; reason: typeof DATE_NOT_BOOKABLE };
 
 /**
  * `checkout.availability`'s own input — a date and a head count against one
@@ -232,10 +232,14 @@ type BookingStatusResult = {
  * self-service lookup, authenticated by ref + email together rather than a
  * ref alone. Deliberately the same KIND of read as `BookingStatusResult`
  * above (status, amounts, a one-line tour summary), with one difference:
- * no `balanceCentavos`. This task's own constraint is stricter than
- * `bookingStatus`'s — "the resolver computes none" — so unlike that
- * procedure's one justified subtraction (`total - paid`, see its own note),
- * this one only ever hands back figures the database already carries.
+ * no `balanceCentavos`. Omitting it here is an implementer's choice,
+ * narrower than strictly required — not a spec-forbidden field — so unlike
+ * `bookingStatus`'s one justified subtraction (`total - paid`, see its own
+ * note), this resolver only ever hands back figures the database already
+ * carries. If a future screen built on this lookup genuinely needs a
+ * balance, the SERVER computes it here the same way `bookingStatus` does —
+ * never the client (CLAUDE.md: "If the UI needs a balance, the SERVER
+ * provides it").
  */
 type BookingLookupResult = {
   ref: string;

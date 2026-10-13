@@ -575,8 +575,9 @@ describeWithDb('checkout router', () => {
     expect(result.totalCentavos).toBe(quote.totalCentavos);
     expect(result.paidCentavos).toBe(0);
     expect(result.paymentReviewRequired).toBe(false);
-    // Ruling 8/the task's own constraint: this resolver computes no money —
-    // no `balanceCentavos` field at all, unlike `bookingStatus`.
+    // An implementer's choice, narrower than strictly required (not a
+    // spec-forbidden field): this resolver hands back no `balanceCentavos`,
+    // unlike `bookingStatus`.
     expect(result).not.toHaveProperty('balanceCentavos');
   });
 

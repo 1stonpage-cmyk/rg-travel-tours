@@ -119,3 +119,24 @@ export const quoteResultSchema = z.object({
   quoteId: z.string().regex(/^[0-9a-f]{32}$/, 'Expected a 32-character lowercase hex quote id'),
 });
 export type QuoteResult = z.infer<typeof quoteResultSchema>;
+
+/**
+ * The one wire-facing reason `checkout.availability` returns for a date
+ * outside `SettingsPayload.bookingWindow` (Task 8b, week 3 checkout plan) —
+ * exported from the shared boundary so the client can compare against it
+ * instead of retyping the literal and risking a silent drift between the
+ * two sides.
+ *
+ * Not a member of the capacity service's own `CapacityRefusalReason`
+ * vocabulary (`server/src/services/capacity.ts`): the booking window has no
+ * connection to capacity, and keeping the two reason vocabularies separate
+ * is what stops a future reader assuming capacity decides this (see that
+ * router's own note on the point).
+ *
+ * `server/src/services/create-hold.ts` (a CLAUDE.md do-not-modify file for
+ * this task) separately defines and exports its OWN `DATE_NOT_BOOKABLE` for
+ * `TourDateNotBookableError.reason` — an internal detail of that service,
+ * untouched here. This constant is the one `checkout.availability` actually
+ * returns over the wire, so it is the one worth importing client-side.
+ */
+export const DATE_NOT_BOOKABLE = 'date_not_bookable' as const;

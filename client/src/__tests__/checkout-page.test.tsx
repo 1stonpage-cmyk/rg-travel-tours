@@ -10,17 +10,17 @@
  * rendering the server's own fields, the wrong figure would appear and this
  * test would catch it.
  */
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import CheckoutPage from '@/pages/public/CheckoutPage';
 import { RATE_LIMIT_MESSAGE } from '@/lib/mutation-errors';
 import { TrpcProviders } from '@/lib/trpc';
-import { mockTrpc, mockTrpcRateLimited } from './helpers/mock-trpc';
+import { mockTrpc, mockTrpcError, mockTrpcRateLimited } from './helpers/mock-trpc';
 
 /**
  * Deliberately NOT internally consistent with §5's pricing formula — see
@@ -153,6 +153,114 @@ describe('CheckoutPage — hold countdown', () => {
 
     // Display-only: reaching zero must not have triggered a second call.
     expect(createHoldCalls).toBe(1);
+  });
+});
+
+/**
+ * Task 8b: the gap a code review found — the hold, `checkout.startPayment`
+ * and the status page all existed and were each tested, but nothing in the
+ * UI joined checkout → payment → status page. These tests prove the join
+ * exists: after a successful hold, a "Pay now" trigger calls
+ * `checkout.startPayment` with the new booking's ref and leaves for the
+ * `redirectUrl` it returns — never a client-computed URL, never a crash on
+ * refusal.
+ */
+describe('CheckoutPage — pay now (Task 8b)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("starts payment with the held booking's ref and leaves for the redirect URL on success", async () => {
+    mockTrpc({ 'checkout.quote': QUOTE_FIXTURE });
+    mockTrpc({ 'checkout.createHold': () => HOLD_RESULT });
+    const assign = vi.fn();
+    vi.stubGlobal('location', { assign, href: 'http://localhost/' });
+    mockTrpc({
+      'checkout.startPayment': (input: unknown) => {
+        expect(input).toEqual({ ref: HOLD_RESULT.ref });
+        return { redirectUrl: 'https://pay.example/session/abc123' };
+      },
+    });
+
+    const user = userEvent.setup();
+    renderCheckout();
+
+    const form = await screen.findByRole('form', { name: /checkout/i });
+    await fillGuestDetails(user, form);
+    await user.click(within(form).getByLabelText(/i agree/i));
+    await user.click(within(form).getByRole('button', { name: /book now/i }));
+
+    const payButton = await screen.findByRole('button', { name: /^pay now$/i });
+    await user.click(payButton);
+
+    await waitFor(() => {
+      expect(assign).toHaveBeenCalledWith('https://pay.example/session/abc123');
+    });
+  });
+
+  it("shows the server's own calm message, never a crash, when startPayment is refused", async () => {
+    mockTrpc({ 'checkout.quote': QUOTE_FIXTURE });
+    mockTrpc({ 'checkout.createHold': () => HOLD_RESULT });
+    mockTrpcError('checkout.startPayment');
+
+    const user = userEvent.setup();
+    renderCheckout();
+
+    const form = await screen.findByRole('form', { name: /checkout/i });
+    await fillGuestDetails(user, form);
+    await user.click(within(form).getByLabelText(/i agree/i));
+    await user.click(within(form).getByRole('button', { name: /book now/i }));
+
+    const payButton = await screen.findByRole('button', { name: /^pay now$/i });
+    await user.click(payButton);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/please try again|whatsapp/i);
+  });
+});
+
+/**
+ * Task 8b: the date picker upstream of this page can still offer a date
+ * `createHold` will refuse (BUILD_SPEC §3D's own documented gap). Until
+ * that is fully closed everywhere, this page itself calls the advisory
+ * `checkout.availability` and shows its own amber hint — and
+ * `date_not_bookable` must read differently from a capacity refusal, never
+ * share its wording (the whole reason the server keeps the two reason
+ * vocabularies separate).
+ */
+describe('CheckoutPage — availability banner (Task 8b)', () => {
+  it('shows a date_not_bookable hint, distinct from a capacity refusal', async () => {
+    mockTrpc({
+      'checkout.quote': QUOTE_FIXTURE,
+      'checkout.availability': { ok: false, reason: 'date_not_bookable' },
+    });
+    renderCheckout();
+
+    const banner = await screen.findByRole('alert');
+    expect(banner).toHaveTextContent(/not taking online bookings/i);
+  });
+
+  it('shows a different hint for a capacity refusal than for date_not_bookable', async () => {
+    mockTrpc({
+      'checkout.quote': QUOTE_FIXTURE,
+      'checkout.availability': { ok: false, reason: 'tour_sold_out' },
+    });
+    renderCheckout();
+
+    const banner = await screen.findByRole('alert');
+    expect(banner).toHaveTextContent(/doesn't have space/i);
+    expect(banner).not.toHaveTextContent(/not taking online bookings/i);
+  });
+
+  it('shows no banner at all once the date is available', async () => {
+    mockTrpc({
+      'checkout.quote': QUOTE_FIXTURE,
+      'checkout.availability': { ok: true },
+    });
+    renderCheckout();
+
+    await screen.findByRole('form', { name: /checkout/i });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 });
 

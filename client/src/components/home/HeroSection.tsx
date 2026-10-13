@@ -18,8 +18,6 @@ import {
 import { useHeroParallax } from '@/lib/use-hero-parallax';
 import { trpc } from '@/lib/trpc';
 
-const today = new Date().toISOString().slice(0, 10);
-
 /**
  * Stand-in for the eyebrow/headline/subtitle/trust-line block below, sized
  * to roughly the same box so there is minimal shift once settings resolve.
@@ -48,6 +46,21 @@ function HeroCopySkeleton() {
  * the copy (eyebrow, headline, subtitle, trust line) — which has no
  * reasonable placeholder text that wouldn't itself be fabricated copy — is
  * allowed to show a skeleton while `settings.get` loads.
+ *
+ * **The date field's `min`/`max` come from `settingsQuery.data.bookingWindow`
+ * (Task 8b) — never the browser clock.** This used to be
+ * `new Date().toISOString().slice(0, 10)`, computed client-side: wrong twice
+ * over, since it read the BROWSER's clock (a guest in London with a skewed
+ * clock would see a different earliest date than one in Cebu) rather than
+ * Asia/Manila, and it had no cutoff or ceiling at all, so the picker could
+ * offer a date `createHold` would refuse outright (today, past the 18:00
+ * Manila cutoff on tomorrow, or past the 180-day ceiling).
+ * `SettingsPayload.bookingWindow` (`server/src/content/settings.ts`) is
+ * already resolved server-side against the Manila clock into two plain
+ * civil dates — this reads them and does no date arithmetic of its own.
+ * Before `settingsQuery` resolves, `min`/`max` are simply omitted (not
+ * computed from anything) rather than reintroducing a client clock as a
+ * fallback.
  */
 export default function HeroSection() {
   const navigate = useNavigate();
@@ -221,7 +234,8 @@ export default function HeroSection() {
             <Input
               id="hero-date"
               type="date"
-              min={today}
+              min={settingsQuery.data?.bookingWindow.earliest}
+              max={settingsQuery.data?.bookingWindow.latest}
               value={date}
               onChange={(e) => setDate(e.target.value)}
               className="tap-target"

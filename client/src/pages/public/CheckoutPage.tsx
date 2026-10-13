@@ -1,6 +1,5 @@
 import { keepPreviousData } from '@tanstack/react-query';
-import { TRPCClientError } from '@trpc/client';
-import type { PayMode } from '@rg/shared';
+import { DATE_NOT_BOOKABLE, type PayMode } from '@rg/shared';
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import QueryBoundary from '@/components/common/QueryBoundary';
@@ -9,9 +8,10 @@ import CouponField from '@/components/checkout/CouponField';
 import GuestDetails from '@/components/checkout/GuestDetails';
 import HoldCountdown from '@/components/checkout/HoldCountdown';
 import ConsentCheckbox from '@/components/checkout/ConsentCheckbox';
+import PayNowButton from '@/components/checkout/PayNowButton';
 import QuoteSummary from '@/components/checkout/QuoteSummary';
 import { Button } from '@/components/ui/button';
-import { describeMutationError } from '@/lib/mutation-errors';
+import { describeCheckoutError } from '@/lib/mutation-errors';
 import { trpc } from '@/lib/trpc';
 
 /**
@@ -34,16 +34,27 @@ import { trpc } from '@/lib/trpc';
  * tour detail page carrying "Book now" is a later task); this is flagged in
  * the task report for the controller to confirm when that CTA is wired.
  *
- * **Why it stops at `createHold`.** `checkout.startPayment` (already built,
- * Task 7) is what actually starts a gateway redirect, and wiring a "pay
- * now" trigger to it is a real payment-flow decision this task's brief does
- * not list (Interfaces: `checkout.quote`, `checkout.createHold` only) — the
- * plan's own mapping (`§6 online payment → Task 7`) never assigns a client
- * trigger to any task in this plan. CLAUDE.md: stop and ask before touching
- * payment flow outside the given task. So this page ends at a held booking
- * plus its countdown, exactly §6's bullet list for "Checkout page" (lead
- * details, pay toggle, coupon, countdown, consent) — nothing about an
- * online-payment button is in that list either.
+ * **It now joins checkout → payment (Task 8b).** `checkout.startPayment`
+ * (built Task 7) is what actually starts a gateway redirect; a code review
+ * of this plan found that nothing in the UI called it, which meant a guest
+ * could hold a spot but never pay for it from this page. After a
+ * successful `createHold`, `<PayNowButton>` (components/checkout/
+ * PayNowButton.tsx) is the one trigger: it calls `checkout.startPayment`
+ * with the new booking's `ref` and leaves for the `redirectUrl` it returns.
+ * The same component is reused by `BookingStatusPage` as its "try paying
+ * again" affordance, so the two screens share one translation of
+ * `startPayment`'s guest-safe refusals rather than two copies that could
+ * drift.
+ *
+ * **It also previews the booking window and tour availability — advisory
+ * only.** `checkout.availability` (an advisory read, never authoritative —
+ * see that procedure's own note) is asked alongside `checkout.quote` for
+ * the same tour/date/pax, and an `ok: false` verdict shows an amber banner
+ * with its own distinct sentence: `date_not_bookable` ("that date isn't
+ * bookable") is never worded like a capacity refusal ("that day is full") —
+ * the two are different facts about different systems (a date window has
+ * no clock dependency on van/driver supply). `createHold()` remains the
+ * one authority; this banner cannot block or skip its own, later, re-check.
  */
 
 const MAX_PAX = 12;
@@ -63,29 +74,29 @@ function parseAddonIds(raw: string | null): number[] {
 }
 
 /**
- * `describeMutationError` (lib/mutation-errors.ts) only ever returns one of
- * two fixed strings — a deliberate scope for `inquiries.create`, which has
- * no other guest-safe message to preserve. `checkout.quote` and
- * `checkout.createHold` are different: their router
- * (`server/src/routers/public/checkout.ts`) crafts a SPECIFIC guest-safe
- * sentence for every 4xx it can throw ("This tour is fully booked for that
- * date.", "That coupon code has already been fully claimed.", "The price
- * for this quote has changed.") — that router's own doc comment calls
- * picking that sentence its whole job. Collapsing every one of those into
- * one generic line would throw the work away. So: a 429 (and anything 5xx)
- * still goes through `describeMutationError`'s two approved strings, but
- * every other 4xx's OWN message passes through untouched.
+ * `AVAILABILITY_MESSAGES` — the client's own tiny vocabulary for
+ * `checkout.availability`'s advisory `ok: false` verdicts (Task 8b).
+ * `DATE_NOT_BOOKABLE` gets its own sentence, keyed off the SHARED constant
+ * (`@rg/shared`) rather than a retyped string literal, so a future rename
+ * of the wire value fails this file at compile time instead of silently
+ * falling through to the capacity fallback below. Every capacity reason
+ * (`tour_unavailable`, `tour_sold_out`, `no_van_available`,
+ * `no_driver_available`) shares one deliberately different sentence — the
+ * server already has its own distinct copy per reason
+ * (`CAPACITY_MESSAGES` in checkout.ts) for the AUTHORITATIVE `createHold`
+ * refusal a guest sees on submit; this banner is only the early, advisory
+ * hint, so one shared "no space" sentence is enough to be honest without
+ * duplicating that vocabulary.
  */
-function describeCheckoutError(error: unknown): string {
-  if (
-    error instanceof TRPCClientError &&
-    typeof error.data?.httpStatus === 'number' &&
-    error.data.httpStatus < 500 &&
-    error.data.httpStatus !== 429
-  ) {
-    return error.message;
-  }
-  return describeMutationError(error);
+const AVAILABILITY_MESSAGES: Record<string, string> = {
+  [DATE_NOT_BOOKABLE]:
+    "We're not taking online bookings for that date. Please choose a different date.",
+};
+const CAPACITY_FALLBACK_MESSAGE =
+  "This tour doesn't have space for that date and group size. Please try a different date, fewer guests, or contact us.";
+
+function describeAvailability(reason: string): string {
+  return AVAILABILITY_MESSAGES[reason] ?? CAPACITY_FALLBACK_MESSAGE;
 }
 
 function CheckoutSkeleton() {
@@ -124,6 +135,12 @@ export default function CheckoutPage() {
 
   const quoteQuery = trpc.checkout.quote.useQuery(
     { tourSlug: tourSlug ?? '', date, pax, addonIds, couponCode },
+    { enabled: hasSelection, retry: false, placeholderData: keepPreviousData },
+  );
+  // Advisory only (see this procedure's own note) — `createHold()` below
+  // remains the one authority and re-checks the same two facts itself.
+  const availabilityQuery = trpc.checkout.availability.useQuery(
+    { tourSlug: tourSlug ?? '', date, pax },
     { enabled: hasSelection, retry: false, placeholderData: keepPreviousData },
   );
   const createHold = trpc.checkout.createHold.useMutation();
@@ -211,6 +228,17 @@ export default function CheckoutPage() {
         Review your trip, enter your details, and we'll hold your spot while you pay.
       </p>
 
+      {availabilityQuery.data && !availabilityQuery.data.ok && (
+        <div
+          role="alert"
+          className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 mt-6 rounded-xl border p-4"
+        >
+          <p className="text-sm font-medium">
+            {describeAvailability(availabilityQuery.data.reason)}
+          </p>
+        </div>
+      )}
+
       <QueryBoundary
         query={quoteQuery}
         skeleton={<CheckoutSkeleton />}
@@ -220,14 +248,19 @@ export default function CheckoutPage() {
           <div className="mt-8 grid gap-8 lg:grid-cols-[1fr_360px] lg:items-start">
             <div className="order-2 lg:order-1">
               {createHold.isSuccess && createHold.data ? (
-                <div className="border-brand-blue-200 bg-background space-y-3 rounded-2xl border p-6">
-                  <p className="text-brand-blue-900 text-lg font-semibold">Your spot is held!</p>
-                  <p className="text-muted-foreground text-sm">
-                    Booking reference{' '}
-                    <span className="text-brand-blue-900 font-semibold">{createHold.data.ref}</span>
-                    . We've reserved your spot — please complete payment before the hold below runs
-                    out, and keep this reference for your records.
-                  </p>
+                <div className="border-brand-blue-200 bg-background space-y-4 rounded-2xl border p-6">
+                  <div className="space-y-3">
+                    <p className="text-brand-blue-900 text-lg font-semibold">Your spot is held!</p>
+                    <p className="text-muted-foreground text-sm">
+                      Booking reference{' '}
+                      <span className="text-brand-blue-900 font-semibold">
+                        {createHold.data.ref}
+                      </span>
+                      . We've reserved your spot — pay now to confirm it before the hold below runs
+                      out, and keep this reference for your records.
+                    </p>
+                  </div>
+                  <PayNowButton bookingRef={createHold.data.ref} />
                 </div>
               ) : (
                 <form aria-label="Checkout form" onSubmit={handleSubmit} className="space-y-6">

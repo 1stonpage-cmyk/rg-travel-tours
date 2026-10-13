@@ -9,12 +9,13 @@
  * `checkout.startPayment` was ever called while that happened — not merely
  * that the right text appeared.
  */
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from '@/App';
 import BookingStatusPage from '@/pages/public/BookingStatusPage';
 import { bookingPagePath, BOOKING_PAGE_ROUTE } from '@rg/shared';
@@ -128,12 +129,56 @@ describe('BookingStatusPage — read only (§6)', () => {
     expect(alert.textContent).not.toMatch(/mock failure/i);
   });
 
-  it('contains no useMutation hook at all — a structural guard on top of the behavioural one above', () => {
+  it('contains no useMutation hook directly in this file — the one retry action is delegated to <PayNowButton>', () => {
     const file = join(
       dirname(fileURLToPath(import.meta.url)),
       '../pages/public/BookingStatusPage.tsx',
     );
     const src = readFileSync(file, 'utf8');
     expect(src).not.toMatch(/useMutation/);
+  });
+});
+
+/**
+ * Task 8b: the gap a code review found — this page's cancelled copy used to
+ * SAY "you can try paying again" with no actual way to do it. These prove
+ * the real affordance: the button only appears for a cancelled,
+ * still-pending booking, calls `checkout.startPayment` with the booking's
+ * own ref, and leaves for the redirect URL on success — the exact same
+ * action `CheckoutPage` wires up, via the shared `<PayNowButton>`.
+ */
+describe('BookingStatusPage — cancelled retry (Task 8b)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('shows a working "try paying again" button in the cancelled notice, and leaves for the redirect URL', async () => {
+    mockTrpc({ 'checkout.bookingStatus': { ...BASE_STATUS, status: 'pending_payment' } });
+    const assign = vi.fn();
+    vi.stubGlobal('location', { assign, href: 'http://localhost/' });
+    mockTrpc({
+      'checkout.startPayment': (input: unknown) => {
+        expect(input).toEqual({ ref: BASE_STATUS.ref });
+        return { redirectUrl: 'https://pay.example/session/retry1' };
+      },
+    });
+
+    const user = userEvent.setup();
+    renderStatusPage(BASE_STATUS.ref, '?cancelled=1');
+
+    const retryButton = await screen.findByRole('button', { name: /try paying again/i });
+    await user.click(retryButton);
+
+    await waitFor(() => {
+      expect(assign).toHaveBeenCalledWith('https://pay.example/session/retry1');
+    });
+  });
+
+  it('never shows the retry button without ?cancelled=1', async () => {
+    mockTrpc({ 'checkout.bookingStatus': { ...BASE_STATUS, status: 'pending_payment' } });
+    renderStatusPage(BASE_STATUS.ref);
+
+    await screen.findByText(/waiting for your payment/i);
+    expect(screen.queryByRole('button', { name: /try paying again/i })).not.toBeInTheDocument();
   });
 });
