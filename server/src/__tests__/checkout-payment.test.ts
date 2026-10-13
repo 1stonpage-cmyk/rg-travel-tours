@@ -48,6 +48,7 @@ import { appRouter } from '../routers/_app';
 import { CHECKOUT_PAYMENT_METHODS } from '../routers/public/checkout';
 import { createPaymongoProvider, PaymongoNotConfiguredError } from '../services/payments/paymongo';
 import type { PaymentProvider } from '../services/payments/types';
+import { testContext } from './helpers/ctx';
 import { describeWithDb } from './helpers/db';
 
 /* -------------------------------------------------------------------------
@@ -138,7 +139,7 @@ afterAll(() => {
  * Fixtures — a real held booking, written by the real `createHold()`.
  * ---------------------------------------------------------------------- */
 
-const caller = appRouter.createCaller({});
+const caller = appRouter.createCaller(testContext());
 
 /**
  * This file's own tour day, **relative to the real clock**.

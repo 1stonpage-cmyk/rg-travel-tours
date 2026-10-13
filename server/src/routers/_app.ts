@@ -4,6 +4,7 @@ import { destinationsRouter } from './public/destinations';
 import { inquiriesRouter } from './public/inquiries';
 import { newsletterRouter } from './public/newsletter';
 import { packagesRouter } from './public/packages';
+import { portalRouter } from './public/portal';
 import { reviewsRouter } from './public/reviews';
 import { settingsRouter } from './public/settings';
 import { toursRouter } from './public/tours';
@@ -35,6 +36,15 @@ export const appRouter = router({
   // app.ts (Ruling 5) — no other mutation may be added under this
   // namespace without also updating that limiter and its guard test.
   checkout: checkoutRouter,
+
+  /*
+   * Customer portal (Week 4, Task 2). Login is `ref + email` (§7) and the
+   * session it mints is scoped to ONE booking. Its rate limit is SHARED
+   * with `checkout.bookingLookup` — the same credential pair against the
+   * same booking is one attack surface, so it is one budget of five failed
+   * attempts, not two. See `BOOKING_LOOKUP_PROCEDURES`.
+   */
+  portal: portalRouter,
 });
 
 export type AppRouter = typeof appRouter;

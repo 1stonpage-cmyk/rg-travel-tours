@@ -116,6 +116,7 @@ import {
   TourDateNotBookableError,
   TourDatePastError,
 } from '../../services/create-hold';
+import { findBookingByCredentials } from '../../services/portal-auth';
 import { loadQuoteInputs, priceQuote, quoteDigest } from '../../services/pricing';
 import { publicProcedure, router } from '../../trpc';
 
@@ -931,6 +932,21 @@ export const checkoutRouter = router({
     .input(bookingLookupInput)
     .query(async ({ input }): Promise<BookingLookupResult> => {
       try {
+        /*
+         * The credential check is `services/portal-auth.ts`'s (Week 4, Task
+         * 2), shared with `portal.login`: the same ref + email pair against
+         * the same booking must not be two different checks that have to
+         * agree forever. It answers an id or null and cannot report WHICH
+         * half was wrong, so the §7 "same error for both" guarantee no
+         * longer depends on this resolver remembering it.
+         *
+         * A consequence worth naming: `lead_email` is no longer loaded here
+         * at all, so the old warning comment about a field that must never
+         * be returned is gone with it.
+         */
+        const match = await findBookingByCredentials(input.ref, input.email);
+        if (!match) throw bookingNotFound();
+
         const [booking] = await getDb()
           .select({
             ref: bookings.ref,
@@ -941,19 +957,14 @@ export const checkoutRouter = router({
             totalCentavos: bookings.totalCentavos,
             paidCentavos: bookings.amountPaidCentavos,
             paymentReviewRequired: bookings.paymentReviewRequired,
-            // Compared below, never returned — see the note above on why
-            // the comparison must not be observable as a separate branch.
-            leadEmail: bookings.leadEmail,
             tourTitle: tours.title,
           })
           .from(bookings)
           .innerJoin(tours, eq(tours.id, bookings.tourId))
-          .where(eq(bookings.ref, input.ref))
+          .where(eq(bookings.id, match.id))
           .limit(1);
 
-        if (!booking || booking.leadEmail.toLowerCase() !== input.email.toLowerCase()) {
-          throw bookingNotFound();
-        }
+        if (!booking) throw bookingNotFound();
 
         return {
           ref: booking.ref,

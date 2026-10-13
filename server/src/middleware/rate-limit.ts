@@ -282,7 +282,16 @@ export function createCheckoutHoldLimiter(): RequestHandler {
  */
 export const BOOKING_LOOKUP_WINDOW_MS = 15 * 60_000;
 export const BOOKING_LOOKUP_MAX = 5;
-export const BOOKING_LOOKUP_PROCEDURES = ['checkout.bookingLookup'] as const;
+/*
+ * BOTH procedures that take a booking ref + email (Week 4, Task 2).
+ *
+ * `portal.login` is the same credential pair against the same booking as
+ * `checkout.bookingLookup`, so they are ONE attack surface and share ONE
+ * budget. A separate limiter for the login would have given an attacker
+ * five guesses here plus five on the lookup for the same pair — ten
+ * against the five §7 sets.
+ */
+export const BOOKING_LOOKUP_PROCEDURES = ['checkout.bookingLookup', 'portal.login'] as const;
 
 export function createBookingLookupLimiter(): RequestHandler {
   return createProcedureRateLimit([...BOOKING_LOOKUP_PROCEDURES], {

@@ -43,6 +43,7 @@
  * the response shape to begin with.
  */
 import { initTRPC } from '@trpc/server';
+import type { Context } from './context';
 import { ZodError, z } from 'zod';
 import type { AdminRole } from '@rg/shared';
 import {
@@ -107,31 +108,45 @@ export type ProcedureAccess =
       readonly roles: readonly AdminRole[];
     };
 
-const t = initTRPC.meta<ProcedureAccess>().create({
-  errorFormatter({ shape, error }) {
-    /*
-     * Input validation failures arrive as a BAD_REQUEST whose `cause` is the
-     * ZodError. Flattened field errors are published explicitly rather than
-     * left only inside the stringified `message` tRPC puts there by default,
-     * so a form has something to read per field without parsing prose. The
-     * strings come from Zod's own issue messages (client-supplied input is
-     * never echoed into them), and they are scrubbed anyway — a custom
-     * `.refine` message is project copy, and project copy can change.
-     */
-    const zodError = error.cause instanceof ZodError ? flatten(error.cause) : undefined;
+/*
+ * `.context<Context>()` is Week 4, Task 1's other half: `context.ts` builds
+ * the context at runtime, and this is what makes it visible to a resolver's
+ * TYPES. Without it `ctx` is `{}`, so `ctx.res` is a type error and no
+ * resolver can set a cookie — which is how typecheck caught the gap rather
+ * than it being discovered when `portal.login` silently had no `res`.
+ *
+ * It is also what gives `ctx.session` a type for `requireRole` to narrow.
+ * The runtime gate still re-validates the role rather than trusting it:
+ * a type is an assumption, and this one arrives from a cookie.
+ */
+const t = initTRPC
+  .context<Context>()
+  .meta<ProcedureAccess>()
+  .create({
+    errorFormatter({ shape, error }) {
+      /*
+       * Input validation failures arrive as a BAD_REQUEST whose `cause` is the
+       * ZodError. Flattened field errors are published explicitly rather than
+       * left only inside the stringified `message` tRPC puts there by default,
+       * so a form has something to read per field without parsing prose. The
+       * strings come from Zod's own issue messages (client-supplied input is
+       * never echoed into them), and they are scrubbed anyway — a custom
+       * `.refine` message is project copy, and project copy can change.
+       */
+      const zodError = error.cause instanceof ZodError ? flatten(error.cause) : undefined;
 
-    return {
-      message: scrubPaths(shape.message),
-      code: shape.code,
-      data: {
-        code: shape.data.code,
-        httpStatus: shape.data.httpStatus,
-        path: shape.data.path,
-        ...(zodError ? { zodError } : {}),
-      },
-    };
-  },
-});
+      return {
+        message: scrubPaths(shape.message),
+        code: shape.code,
+        data: {
+          code: shape.data.code,
+          httpStatus: shape.data.httpStatus,
+          path: shape.data.path,
+          ...(zodError ? { zodError } : {}),
+        },
+      };
+    },
+  });
 
 function flatten(error: ZodError): {
   formErrors: string[];

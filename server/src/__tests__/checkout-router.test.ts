@@ -36,9 +36,10 @@ import {
   createCheckoutHoldLimiter,
 } from '../middleware/rate-limit';
 import { appRouter } from '../routers/_app';
+import { testContext } from './helpers/ctx';
 import { describeWithDb } from './helpers/db';
 
-const caller = appRouter.createCaller({});
+const caller = appRouter.createCaller(testContext());
 
 /**
  * This file's own tour day, **relative to the real clock** rather than a

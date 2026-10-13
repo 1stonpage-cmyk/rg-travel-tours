@@ -107,7 +107,14 @@ function staffSession(role: unknown) {
 /** Calls one area with one context and reports what happened. */
 async function callArea(area: AdminArea, ctx: unknown) {
   const before = resolverRuns.length;
-  const caller = adminHarness.createCaller(ctx as object);
+  /*
+   * `as never`, deliberately. This suite feeds contexts the real factory
+   * could never produce — a session with an invalid role, a role as a
+   * number, no session at all — because the property under test is that
+   * `requireRole` RE-VALIDATES at runtime instead of trusting the type it
+   * was handed. Typing this argument properly would delete the test.
+   */
+  const caller = adminHarness.createCaller(ctx as never);
   try {
     await caller[area]();
   } catch (error) {

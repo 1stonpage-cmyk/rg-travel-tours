@@ -8,10 +8,11 @@ import {
   settings as settingsTable,
   tours as toursTable,
 } from '../db/schema';
+import { testContext } from './helpers/ctx';
 import { describeWithDb } from './helpers/db';
 import { appRouter } from '../routers/_app';
 
-const caller = appRouter.createCaller({});
+const caller = appRouter.createCaller(testContext());
 
 describeWithDb('public queries', () => {
   it('settings.get returns a complete, typed payload', async () => {

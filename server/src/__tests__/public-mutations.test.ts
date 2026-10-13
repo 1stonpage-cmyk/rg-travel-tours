@@ -1,11 +1,12 @@
 import { afterEach, expect, it } from 'vitest';
 import { eq, like } from 'drizzle-orm';
+import { testContext } from './helpers/ctx';
 import { describeWithDb } from './helpers/db';
 import { appRouter } from '../routers/_app';
 import { getDb } from '../db/client';
 import { inquiries, newsletterSubscribers } from '../db/schema';
 
-const caller = appRouter.createCaller({});
+const caller = appRouter.createCaller(testContext());
 const MARK = 'vitest+';
 
 describeWithDb('public mutations', () => {

@@ -61,7 +61,20 @@ const throwingRouter = router({
 function throwingApp() {
   const app = express();
   app.use(express.json());
-  app.use('/trpc', createExpressMiddleware({ router: throwingRouter }));
+  /*
+   * `createContext` is required now that the router carries a context type
+   * (Week 4, Task 1). This harness is about the ERROR SHAPE, so the real
+   * factory would be noise — and it would open a database connection to
+   * resolve a session that no throwing procedure reads. A fixed anonymous
+   * context is the honest stand-in.
+   */
+  app.use(
+    '/trpc',
+    createExpressMiddleware({
+      router: throwingRouter,
+      createContext: ({ req, res }) => ({ req, res, session: null }),
+    }),
+  );
   return app;
 }
 
