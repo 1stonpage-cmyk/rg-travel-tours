@@ -821,11 +821,17 @@ the Xendit stub that cannot mark anything paid, and the webhook route is mounted
 `/api/webhooks` from `server/src/routers/webhooks` — **not** the `server/src/webhooks` path this
 spec originally planned. `recordPayment()` is the only thing that can mark a booking paid.
 
-**Still absent, and each is a specific task's job:** there is no `server/src/jobs` and
-**`node-cron` is not yet a dependency** (3C's sweep adds both), and no email transport (3F).
-Of this plan's own open questions, **Q1 (scheduler) is answered — `node-cron` in the server
-process — and Q2 (email provider) is still open**, which is the only thing blocking the
-confirmation email in 3F.
+**The scheduler exists** (corrected 2026-10-13, final review F2: this paragraph still said
+there was no `server/src/jobs` and that `node-cron` was "not yet a dependency", ten lines above
+3C's own ✅ DONE line crediting the sweep to `node-cron` — the section contradicted itself, and
+in this repo the spec wins disagreements, so a reader hitting the preamble first concluded the
+sweep was unbuilt). `server/src/jobs/{expire-holds,index}.ts` are in the tree and
+`node-cron@^4.6.0` is in `server/package.json`.
+
+**Still absent, and it is a specific task's job: there is no email transport** (3F) — no
+provider, no SMTP client, no template. Of this plan's own open questions, **Q1 (scheduler) is
+answered — `node-cron` in the server process — and Q2 (email provider) is still open**, which
+is the only thing blocking the confirmation email in 3F.
 
 - **3A** Pricing service + tests (tiers, add-ons, coupons, deposit rounding). ✅ DONE —
   `services/pricing.ts`: pure `priceQuote()`, `loadQuoteInputs()` and the `quoteDigest()` that
@@ -853,22 +859,35 @@ confirmation email in 3F.
   the server would refuse; and `date_not_bookable` has its own amber sentence, distinct from the
   capacity copy, keyed off the single shared constant rather than a retyped literal.
 - **3E** Checkout session + webhook through the `PaymentProvider` seam (signature, idempotency
-  on `(provider, provider_event_id)`, amount check). ✅ DONE — `checkout.startPayment` starts a
-  PayMongo test-mode checkout from a held booking, sending the amount read off the booking row;
-  the webhook half, with the signature check and the `(provider, provider_event_id)` unique
-  index, predates this week. Xendit remains a stub that cannot mark anything paid — see the
-  2026-10-10 multi-gateway change in section 6.
+  on `(provider, provider_event_id)`, amount check). **Built and tested against a MOCK provider
+  — the live wire check is pending an account.** `checkout.startPayment` starts a checkout from a
+  held booking, sending the amount read off the booking row; the webhook half, with the signature
+  check and the `(provider, provider_event_id)` unique index, predates this week. Xendit remains
+  a stub that cannot mark anything paid — see the 2026-10-10 multi-gateway change in section 6.
+
+  **Not ✅ DONE, and the distinction is the point** (owner decision 2026-10-13: no PayMongo or
+  Xendit account exists yet, so the live test-mode check is deferred). Everything on OUR side of
+  the seam is proven — the refusals, the amount read off the row, the one-time hold extension,
+  the four fixed methods, `recordPayment`, the signature verifier and webhook idempotency. What
+  is **unproven** is PayMongo's side of it: that its real checkout response parses, that its real
+  signature header verifies against our verifier, and that its real event names match what the
+  webhook router switches on. All three were assumed from documentation and no real response has
+  ever been seen. A mismatch in any one means a guest pays and the booking never confirms, which
+  is why `docs/LAUNCH_CHECKLIST.md` carries it as a **blocking** pre-launch item rather than a
+  nice-to-have.
+
 - **3F** Confirmation page (read-only polling) + confirmation emails. **Partial.** The booking
   status page is **done** — `BookingStatusPage` polls `checkout.bookingStatus` (a query) and
   confirms nothing itself, mounted at the exact route `startPayment` sends PayMongo, asserted
   from the shared constant rather than a retyped path. The read-only guarantee is guarded three
   ways: `checkout` exposes exactly two mutations (`createHold`, `startPayment`), polling is
   asserted to fire none of them, and the one retry action is pinned to `startPayment` alone.
-  **Confirmation emails are NOT done**, and their scope is an OPEN question: the 2026-10-12
-  decision deferred email to Week 4, which would move this clause out of Week 3 altogether, but
-  that has not been confirmed in the executing session — so this line records the question
-  rather than asserting an answer. Nothing in Week 3 depends on email; a guest sees the booking
-  on screen and can find it again by ref + email.
+  **Confirmation emails are NOT part of Week 3** — settled, not open. The owner confirmed on
+  2026-10-13 that the 2026-10-12 deferral stands: confirmation emails move to **Week 4**, Task 12
+  is struck from Week 3, and **Week 3 completes without email**. The transport is decided
+  (`nodemailer` over SMTP, no other email library, every value in `.env`) and its account and DNS
+  work is tracked in `docs/LAUNCH_CHECKLIST.md`. Nothing in Week 3 depends on it: a guest sees
+  the booking on screen and can find it again by ref + email.
 
 Roadmap items to pick up in or after this week:
 

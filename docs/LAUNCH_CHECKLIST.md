@@ -222,6 +222,42 @@ works around, so finding it late means a rewrite rather than a fix.
       at `p=none` so nothing is silently discarded while the records are being proven, then
       tighten it.
 
+### The gateway wire check — BLOCKING, and no test in the suite can substitute for it
+
+Owner decision 2026-10-13: **no PayMongo or Xendit account exists yet**, so the live test-mode
+check is **deferred, not skipped**. Week 3's payment layer is built and tested against a **mock**
+provider, which proves our side of the seam and nothing at all about PayMongo's.
+
+What the suite already proves: `startPayment`'s refusals, the amount read off the booking row,
+the one-time hold extension, the four fixed methods, `recordPayment`, the signature check, and
+webhook idempotency on `(provider, provider_event_id)`. What it **cannot** prove, because no real
+response has ever been seen: that PayMongo's actual checkout response parses into what the
+provider expects, that its actual signature header verifies against our verifier, and that its
+actual event names match what the webhook router switches on. All three were assumed from
+documentation, and a mismatch in any one of them means **a guest pays and the booking never
+confirms** — money taken, no trip booked, and no error anyone sees until they complain.
+
+- [ ] **Create the PayMongo account** (R&G's own — it carries the merchant relationship, the
+      settlement bank account and the KYC), and Xendit later only if a second gateway is actually
+      wanted. The `PaymentProvider` seam already exists, so adding one is configuration, not a
+      rewrite.
+- [ ] **Put the TEST keys in `.env`** — `PAYMONGO_SECRET_KEY`, `PAYMONGO_PUBLIC_KEY`,
+      `PAYMONGO_WEBHOOK_SECRET`. **Never in chat, never in a commit, never in a screenshot.**
+      Test keys are lower-stakes than live ones, but the habit is what protects the live ones.
+- [ ] **Expose the dev server with a tunnel** (`cloudflared tunnel --url http://localhost:3100`)
+      and **register that URL as a TEST webhook** in the PayMongo dashboard. The webhook has to
+      reach the app from outside, and `localhost` cannot.
+- [ ] **Drive ONE real test-mode booking end to end** — quote, hold, pay with a test card or
+      test GCash, and confirm the **webhook** moves the booking to `confirmed`. Never the
+      redirect: a booking that only turns `confirmed` after the redirect is a defect, not a pass
+      (CLAUDE.md), and this is the one run that would catch it for real.
+- [ ] **Confirm the three assumed shapes one at a time** — the checkout response parses, the
+      signature header verifies, the event names match the router's switch — and treat any
+      difference as a bug to fix **and cover with a test**, not a surprise to work around.
+- [ ] **Delete the dev tunnel's webhook registration afterwards.** Left behind it is a dashboard
+      full of permanent delivery failures, and worse: a tunnel URL someone else may later be
+      issued becomes an endpoint that accepts unsigned traffic aimed at this app.
+
 ---
 
 ## (b) Launch day — point travelsugbo.com at the real app
