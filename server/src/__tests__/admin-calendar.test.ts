@@ -275,6 +275,23 @@ describeWithDb('admin.calendar', () => {
     // booking above is seeded with a known address and number, and this line
     // insists the payload actually contains trips before the absence below
     // means anything.
+    /*
+     * VACUITY GUARD, and the exactness is scoped to the DAY this test owns
+     * rather than the whole month — which is the honest boundary here.
+     *
+     * An earlier draft asserted `toHaveLength(1)` across the month and
+     * failed: other tests in this file seed their own November bookings, and
+     * they all share one database, so the month-wide count depends on test
+     * order and is not knowable. The day is: this test seeds exactly one
+     * booking on the 18th, so that is where an exact assertion can be made
+     * truthfully. `> 0` on the month stays as the floor, because the absence
+     * assertions below are about the WHOLE payload and need it to be
+     * non-empty to mean anything.
+     */
+    const seededDay = days.find((d) => d.date === '2026-11-18');
+    expect(seededDay, 'the day this test seeded must be in the month').toBeDefined();
+    expect(seededDay!.trips).toHaveLength(1);
+
     const trips = days.flatMap((d) => d.trips);
     expect(trips.length).toBeGreaterThan(0);
 
@@ -289,6 +306,20 @@ describeWithDb('admin.calendar', () => {
     await expect(api.admin.calendar.month({ year: 2026, month: 11 })).resolves.toBeTruthy();
     await expect(api.admin.calendar.dayOptions({ bookingId })).rejects.toMatchObject({
       code: 'FORBIDDEN',
+    });
+  });
+
+  /**
+   * `dayOptions`'s NOT_FOUND branch had no coverage either way (Task 8
+   * review). It matters because this is the procedure Task 12's dropdown
+   * calls on every day selection: a stale booking id — a trip cancelled in
+   * another tab, a bookmarked URL — must produce a clean refusal rather
+   * than a 500 or an empty dropdown that looks like "nothing is free".
+   */
+  it('refuses dayOptions for a booking id that does not exist', async () => {
+    const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+    await expect(api.admin.calendar.dayOptions({ bookingId: 99_999_999 })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
     });
   });
 

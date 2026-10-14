@@ -26,7 +26,7 @@
  */
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
-import { manilaCivilDate, vanInputSchema, type VanInput, type VanRow } from '@rg/shared';
+import { civilDateFromDate, vanInputSchema, type VanInput, type VanRow } from '@rg/shared';
 import { asc, eq } from 'drizzle-orm';
 import { getDb } from '../../db/client';
 import { isDuplicateKeyError } from '../../db/duplicate-key';
@@ -44,11 +44,6 @@ function toDbDate(value: string | null): Date | null {
   return value === null ? null : new Date(`${value}T00:00:00Z`);
 }
 
-/** The DB's `Date` (or null) back to the `YYYY-MM-DD` string every caller else uses. */
-function toCivilDate(value: Date | null): string | null {
-  return value === null ? null : manilaCivilDate(value);
-}
-
 function toVanRow(row: VanSelect): VanRow {
   return {
     id: row.id,
@@ -57,11 +52,11 @@ function toVanRow(row: VanSelect): VanRow {
     capacity: row.capacity,
     status: row.status,
     odometer: row.odometer,
-    lastService: toCivilDate(row.lastService),
-    nextService: toCivilDate(row.nextService),
-    orcrExpiry: toCivilDate(row.orcrExpiry),
+    lastService: civilDateFromDate(row.lastService),
+    nextService: civilDateFromDate(row.nextService),
+    orcrExpiry: civilDateFromDate(row.orcrExpiry),
     franchiseNo: row.franchiseNo,
-    franchiseExpiry: toCivilDate(row.franchiseExpiry),
+    franchiseExpiry: civilDateFromDate(row.franchiseExpiry),
     repairNotes: row.repairNotes,
     isActive: row.isActive,
   };

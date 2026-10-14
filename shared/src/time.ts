@@ -91,6 +91,28 @@ export function manilaCivilDate(now: Date): string {
 }
 
 /**
+ * A `date()` column's value back to the `YYYY-MM-DD` string every caller
+ * uses, passing `null` through.
+ *
+ * Extracted on its THIRD consumer (controller, 2026-10-14). The same three
+ * lines were written privately in `routers/admin/vans.ts` and
+ * `routers/admin/drivers.ts`, and Task 10 needs it again to hand
+ * `booking.tourDate` to `vansFreeOn(tx, date: string, …)`. `CLAUDE.md` asks
+ * for no duplicate data, and this project already set the precedent by
+ * extracting `civilDateSchema` rather than writing a third copy of a regex.
+ *
+ * Why it is `manilaCivilDate` underneath and not `toISOString().slice(0,10)`:
+ * the pool is configured `timezone: 'Z'`, so a `date` column comes back as
+ * UTC midnight. Reading the calendar day in Manila (+8) from that instant
+ * gives the same day — but the moment anything about that configuration
+ * changes, a UTC slice would silently shift dates by one and this will not.
+ * A tour date off by a day is a van sent on the wrong morning.
+ */
+export function civilDateFromDate(value: Date | null): string | null {
+  return value === null ? null : manilaCivilDate(value);
+}
+
+/**
  * The three `booking` settings the bookable window is computed from
  * (settings, not schema — owner decision 2026-10-13, _proposed by developer,
  * not yet confirmed with R&G_). Shaped here, in @rg/shared, so the server

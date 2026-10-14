@@ -6,6 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { driverAvailability, type DriverLeaveRow } from '../dispatch';
+import { civilDateFromDate } from '../time';
 
 const leave = (startDate: string, endDate: string): DriverLeaveRow => ({
   id: 1,
@@ -76,5 +77,27 @@ describe('driverAvailability', () => {
       state: 'on_leave',
       until: '2026-11-12',
     });
+  });
+});
+
+/**
+ * `civilDateFromDate` — extracted on its third consumer. The behaviour that
+ * matters is that a `date` column's UTC-midnight value keeps its calendar
+ * day, because the pool is configured `timezone: 'Z'`. A tour date off by
+ * one is a van sent on the wrong morning.
+ */
+describe('civilDateFromDate', () => {
+  it('keeps the calendar day of a UTC-midnight date column value', () => {
+    expect(civilDateFromDate(new Date('2026-11-10T00:00:00Z'))).toBe('2026-11-10');
+  });
+
+  it('passes null through', () => {
+    expect(civilDateFromDate(null)).toBeNull();
+  });
+
+  it('reads the Manila day, not the UTC day, for a late-evening instant', () => {
+    // 2026-11-10 17:00Z is 2026-11-11 01:00 in Manila — a UTC slice would
+    // say the 10th and be a day out.
+    expect(civilDateFromDate(new Date('2026-11-10T17:00:00Z'))).toBe('2026-11-11');
   });
 });

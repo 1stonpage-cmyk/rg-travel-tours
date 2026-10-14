@@ -33,7 +33,7 @@ import {
   CAPACITY_HOLDING_STATUSES,
   driverInputSchema,
   driverLeaveInputSchema,
-  manilaCivilDate,
+  civilDateFromDate,
   type DriverInput,
   type DriverLeaveRow,
   type DriverRow,
@@ -67,11 +67,6 @@ function toDbDate(value: string | null): Date | null {
   return value === null ? null : new Date(`${value}T00:00:00Z`);
 }
 
-/** The DB's `Date` (or null) back to the `YYYY-MM-DD` string every caller else uses. */
-function toCivilDate(value: Date | null): string | null {
-  return value === null ? null : manilaCivilDate(value);
-}
-
 function toDriverRow(row: DriverSelect, leaves: DriverLeaveRow[] = []): DriverRow {
   return {
     id: row.id,
@@ -79,7 +74,7 @@ function toDriverRow(row: DriverSelect, leaves: DriverLeaveRow[] = []): DriverRo
     code: row.code,
     phone: row.phone,
     licenseNo: row.licenseNo,
-    licenseExpiry: toCivilDate(row.licenseExpiry),
+    licenseExpiry: civilDateFromDate(row.licenseExpiry),
     languages: (row.languages as string[] | null) ?? null,
     emergencyContact: row.emergencyContact,
     status: row.status,
@@ -208,8 +203,8 @@ export const adminDriversRouter = router({
         id: row.id,
         // `date()` columns come back as Date objects; the wire carries civil
         // date strings, like every other date in this API.
-        startDate: toCivilDate(row.startDate) ?? '',
-        endDate: toCivilDate(row.endDate) ?? '',
+        startDate: civilDateFromDate(row.startDate) ?? '',
+        endDate: civilDateFromDate(row.endDate) ?? '',
         reason: row.reason,
       });
       byDriver.set(row.driverId, list);
