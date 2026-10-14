@@ -1,0 +1,538 @@
+/**
+ * The vans admin screen (Week 5 plan, Task 5; BUILD_SPEC §9 "Vans" / §5A,
+ * client half). `admin.vans.*` (Task 4) already exists and is `owner` /
+ * `dispatcher` only server-side — this page offers no control a
+ * `vansDrivers`-less role could use, but it does not re-check the role
+ * itself; that refusal is the server's (CLAUDE.md: hiding a button is not
+ * access control).
+ *
+ * ## One schema, two consumers
+ *
+ * Both the "Add a van" and "Edit van" forms validate with the exact
+ * `vanInputSchema` the server imports from `@rg/shared` — the same rule
+ * Week 3's Q10 established for phone numbers. A client that accepted a
+ * plate the server would reject would be a form that cannot be submitted
+ * and does not say why.
+ *
+ * ## No optimistic update
+ *
+ * A duplicate plate is a real, common failure on this screen (two people
+ * typing the same plate into two tabs, or a typo matching an existing
+ * van). An optimistic row that then has to vanish is worse than a short
+ * wait for the real list — so every mutation here waits for the server and
+ * then invalidates `admin.vans.list`, never writes to the cache itself.
+ *
+ * ## The empty-patch rule
+ *
+ * `admin.vans.update`'s patch must contain at least one field — a no-op
+ * patch is a validation error by design on the server (it used to write an
+ * audit row for a change that never happened). So `submitEdit` below diffs
+ * the parsed form values against the van being edited and only calls
+ * `update.mutate` when that diff is non-empty; an unchanged form shows a
+ * neutral notice and never reaches the network.
+ *
+ * ## The duplicate-plate path
+ *
+ * `create`/`update` throw `CONFLICT` with a human sentence when the plate
+ * already exists. That is surfaced on the plate field itself (wired
+ * through `EntityForm`'s `errors` map), not as a bare toast — it is the
+ * most common real failure here, and a banner that does not point at the
+ * field that caused it makes the admin go hunting.
+ *
+ * ## Status
+ *
+ * `on_trip` is derived from trips, never set by hand (§9) — so the status
+ * control only offers `available`, `parked` and `for_repair`, and is
+ * hidden entirely (leaving just the badge) while a van is `on_trip`. Every
+ * status renders as text inside its badge; colour is reinforcement, never
+ * the only signal, and `for_repair` is amber, never red.
+ */
+import { useState } from 'react';
+import { Loader2 } from 'lucide-react';
+import { TRPCClientError } from '@trpc/client';
+import { vanInputSchema, type VanInput, type VanRow } from '@rg/shared';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import EntityForm, { type EntityFormField } from '@/components/admin/EntityForm';
+import { trpc } from '@/lib/trpc';
+
+/**
+ * The three statuses a human may set. `on_trip` is deliberately absent —
+ * see the module note. Server-authoritative `VAN_STATUSES` lives in
+ * `server/src/db/schema.ts`; `@rg/shared` does not re-export it (`VanRow`'s
+ * own doc comment), so this short, settable-only subset is kept here.
+ */
+const SETTABLE_STATUSES = ['available', 'parked', 'for_repair'] as const;
+type SettableStatus = (typeof SETTABLE_STATUSES)[number];
+
+const STATUS_LABELS: Record<string, string> = {
+  available: 'Available',
+  on_trip: 'On trip',
+  parked: 'Parked',
+  for_repair: 'For repair',
+};
+
+/** Amber for `for_repair`, never red — text always renders too (no-colour-alone). */
+const STATUS_BADGE_CLASS: Record<string, string> = {
+  available: 'border-0 bg-brand-blue-50 text-brand-blue-800',
+  on_trip: 'border-0 bg-brand-blue-100 text-brand-blue-900',
+  parked: 'border-0 bg-muted text-foreground',
+  for_repair: 'border-0 bg-brand-gold-100 text-brand-gold-800',
+};
+
+const VAN_FIELDS: readonly EntityFormField[] = [
+  { name: 'plate', label: 'Plate', type: 'text', required: true },
+  { name: 'model', label: 'Model', type: 'text', required: true },
+  { name: 'capacity', label: 'Seats for guests', type: 'number', required: true },
+  {
+    name: 'odometer',
+    label: 'Odometer (km)',
+    type: 'number',
+    hint: "Leave blank if you don't know it.",
+  },
+  { name: 'lastService', label: 'Last service', type: 'date' },
+  { name: 'nextService', label: 'Next service due', type: 'date' },
+  { name: 'orcrExpiry', label: 'OR/CR expiry', type: 'date' },
+  { name: 'franchiseNo', label: 'Franchise number', type: 'text' },
+  { name: 'franchiseExpiry', label: 'Franchise expiry', type: 'date' },
+  { name: 'repairNotes', label: 'Repair notes', type: 'textarea', hint: 'Only shown to staff.' },
+];
+
+const EMPTY_VALUES: Record<string, string> = Object.fromEntries(
+  VAN_FIELDS.map((field) => [field.name, '']),
+);
+
+/** The typed-but-unparsed shape `vanInputSchema` expects, built from the form's strings. */
+function rawFromValues(values: Record<string, string>) {
+  return {
+    plate: values.plate ?? '',
+    model: values.model ?? '',
+    capacity:
+      values.capacity === '' || values.capacity === undefined ? NaN : Number(values.capacity),
+    odometer: !values.odometer ? null : Number(values.odometer),
+    lastService: values.lastService || null,
+    nextService: values.nextService || null,
+    orcrExpiry: values.orcrExpiry || null,
+    franchiseNo: values.franchiseNo || null,
+    franchiseExpiry: values.franchiseExpiry || null,
+    repairNotes: values.repairNotes || null,
+  };
+}
+
+/** A van row's typed fields, as the strings `EntityForm` wants to display. */
+function valuesFromRow(row: VanRow): Record<string, string> {
+  return {
+    plate: row.plate,
+    model: row.model,
+    capacity: String(row.capacity),
+    odometer: row.odometer === null ? '' : String(row.odometer),
+    lastService: row.lastService ?? '',
+    nextService: row.nextService ?? '',
+    orcrExpiry: row.orcrExpiry ?? '',
+    franchiseNo: row.franchiseNo ?? '',
+    franchiseExpiry: row.franchiseExpiry ?? '',
+    repairNotes: row.repairNotes ?? '',
+  };
+}
+
+/**
+ * The first issue per field, keyed by field name — what `EntityForm.errors`
+ * wants. A required field left empty gets its own plain "X is required."
+ * message rather than zod's own wording: zod v4's default `min()` message
+ * ("Too small: expected string to have >=3 characters") is correct but
+ * does not read like a form error for a blank field, and an empty plate is
+ * the single most common way this form gets submitted wrong. Anything
+ * else — a value that is present but still invalid — keeps zod's message.
+ */
+function errorsFromParse(
+  values: Record<string, string>,
+  result: ReturnType<typeof vanInputSchema.safeParse>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (result.success) return out;
+  for (const issue of result.error.issues) {
+    const key = String(issue.path[0] ?? '');
+    if (!key || key in out) continue;
+    const field = VAN_FIELDS.find((candidate) => candidate.name === key);
+    const isEmpty = !values[key] || values[key]!.trim() === '';
+    out[key] = field?.required && isEmpty ? `${field.label} is required.` : issue.message;
+  }
+  return out;
+}
+
+/** Only the keys that actually changed from `original` — the empty-patch rule. */
+function buildPatch(next: VanInput, original: VanRow): Partial<VanInput> {
+  const patch: Partial<VanInput> = {};
+  if (next.plate !== original.plate) patch.plate = next.plate;
+  if (next.model !== original.model) patch.model = next.model;
+  if (next.capacity !== original.capacity) patch.capacity = next.capacity;
+  if (next.odometer !== original.odometer) patch.odometer = next.odometer;
+  if (next.lastService !== original.lastService) patch.lastService = next.lastService;
+  if (next.nextService !== original.nextService) patch.nextService = next.nextService;
+  if (next.orcrExpiry !== original.orcrExpiry) patch.orcrExpiry = next.orcrExpiry;
+  if (next.franchiseNo !== original.franchiseNo) patch.franchiseNo = next.franchiseNo;
+  if (next.franchiseExpiry !== original.franchiseExpiry)
+    patch.franchiseExpiry = next.franchiseExpiry;
+  if (next.repairNotes !== original.repairNotes) patch.repairNotes = next.repairNotes;
+  return patch;
+}
+
+/** Any refusal under 500 carries the server's own human sentence; anything else is generic. */
+function describeVanError(error: unknown): string {
+  if (
+    error instanceof TRPCClientError &&
+    typeof error.data?.httpStatus === 'number' &&
+    error.data.httpStatus < 500
+  ) {
+    return error.message;
+  }
+  return 'Something went wrong saving this van. Please try again.';
+}
+
+function StatusCell({
+  van,
+  onSetStatus,
+  pending,
+}: {
+  van: VanRow;
+  onSetStatus: (id: number, status: SettableStatus) => void;
+  pending: boolean;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Badge className={STATUS_BADGE_CLASS[van.status] ?? 'bg-muted text-foreground border-0'}>
+        {STATUS_LABELS[van.status] ?? van.status}
+      </Badge>
+      {van.status === 'on_trip' ? null : (
+        // Deliberately uncontrolled-looking: `value` always stays `''` so
+        // `SelectValue` shows the "Change status" placeholder rather than
+        // mirroring the current status a second time — the badge above is
+        // the one place that status text lives. Each list only offers the
+        // OTHER two settable statuses, since re-picking the current one is
+        // a no-op write. `on_trip` itself is never offered (§9: derived
+        // from trips, never set by hand).
+        <Select
+          value=""
+          onValueChange={(value) => onSetStatus(van.id, value as SettableStatus)}
+          disabled={pending}
+        >
+          <SelectTrigger
+            size="sm"
+            aria-label={`Change status for ${van.plate}`}
+            className="tap-target"
+          >
+            <SelectValue placeholder="Change status" />
+          </SelectTrigger>
+          <SelectContent>
+            {SETTABLE_STATUSES.filter((value) => value !== van.status).map((value) => (
+              <SelectItem key={value} value={value}>
+                {STATUS_LABELS[value]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
+    </div>
+  );
+}
+
+export default function AdminVansPage() {
+  const utils = trpc.useUtils();
+  const list = trpc.admin.vans.list.useQuery(undefined, { retry: false });
+
+  const [createValues, setCreateValues] = useState<Record<string, string>>(EMPTY_VALUES);
+  const [createErrors, setCreateErrors] = useState<Record<string, string>>({});
+  const [createBanner, setCreateBanner] = useState<string | null>(null);
+  const [createNotice, setCreateNotice] = useState<string | null>(null);
+
+  const [editingVan, setEditingVan] = useState<VanRow | null>(null);
+  const [editValues, setEditValues] = useState<Record<string, string>>(EMPTY_VALUES);
+  const [editErrors, setEditErrors] = useState<Record<string, string>>({});
+  const [editBanner, setEditBanner] = useState<string | null>(null);
+  const [editNotice, setEditNotice] = useState<string | null>(null);
+
+  const create = trpc.admin.vans.create.useMutation({
+    onSuccess: () => {
+      void utils.admin.vans.list.invalidate();
+      setCreateValues(EMPTY_VALUES);
+      setCreateErrors({});
+      setCreateBanner(null);
+      setCreateNotice('Van added.');
+    },
+    onError: (error) => {
+      setCreateNotice(null);
+      if (error instanceof TRPCClientError && error.data?.code === 'CONFLICT') {
+        setCreateErrors((current) => ({ ...current, plate: error.message }));
+        setCreateBanner(null);
+      } else {
+        setCreateBanner(describeVanError(error));
+      }
+    },
+  });
+
+  const update = trpc.admin.vans.update.useMutation({
+    onSuccess: () => {
+      void utils.admin.vans.list.invalidate();
+      setEditingVan(null);
+      setEditErrors({});
+      setEditBanner(null);
+      setEditNotice(null);
+    },
+    onError: (error) => {
+      setEditNotice(null);
+      if (error instanceof TRPCClientError && error.data?.code === 'CONFLICT') {
+        setEditErrors((current) => ({ ...current, plate: error.message }));
+        setEditBanner(null);
+      } else {
+        setEditBanner(describeVanError(error));
+      }
+    },
+  });
+
+  const setStatus = trpc.admin.vans.setStatus.useMutation({
+    onSuccess: () => void utils.admin.vans.list.invalidate(),
+  });
+
+  function submitCreate() {
+    setCreateNotice(null);
+    setCreateBanner(null);
+    const parsed = vanInputSchema.safeParse(rawFromValues(createValues));
+    if (!parsed.success) {
+      setCreateErrors(errorsFromParse(createValues, parsed));
+      return;
+    }
+    setCreateErrors({});
+    create.mutate(parsed.data);
+  }
+
+  function startEdit(row: VanRow) {
+    setEditingVan(row);
+    setEditValues(valuesFromRow(row));
+    setEditErrors({});
+    setEditBanner(null);
+    setEditNotice(null);
+  }
+
+  function submitEdit() {
+    if (!editingVan) return;
+    setEditNotice(null);
+    setEditBanner(null);
+    const parsed = vanInputSchema.safeParse(rawFromValues(editValues));
+    if (!parsed.success) {
+      setEditErrors(errorsFromParse(editValues, parsed));
+      return;
+    }
+    const patch = buildPatch(parsed.data, editingVan);
+    if (Object.keys(patch).length === 0) {
+      setEditErrors({});
+      setEditNotice('No changes to save.');
+      return;
+    }
+    setEditErrors({});
+    update.mutate({ id: editingVan.id, patch });
+  }
+
+  const vans = list.data ?? [];
+
+  return (
+    <main className="mx-auto max-w-5xl px-4 py-8">
+      <h1 className="text-brand-blue-900 text-2xl font-bold">Vans</h1>
+      <p className="text-muted-foreground mt-1 text-sm">
+        The fleet. Plate, model and seats are what every other screen needs; service dates, papers
+        and repair notes live behind "More details".
+      </p>
+
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle className="text-brand-blue-900 text-base">Add a van</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {createNotice ? (
+            <p
+              role="status"
+              className="border-brand-blue-200 bg-brand-blue-50 text-brand-blue-900 mb-4 rounded-lg border p-3 text-sm font-medium"
+            >
+              {createNotice}
+            </p>
+          ) : null}
+          {createBanner ? (
+            <p
+              role="alert"
+              className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 mb-4 rounded-lg border p-3 text-sm font-medium"
+            >
+              {createBanner}
+            </p>
+          ) : null}
+          <EntityForm
+            fields={VAN_FIELDS}
+            values={createValues}
+            errors={createErrors}
+            pending={create.isPending}
+            submitLabel="Add van"
+            onChange={(name, value) =>
+              setCreateValues((current) => ({ ...current, [name]: value }))
+            }
+            onSubmit={submitCreate}
+          />
+        </CardContent>
+      </Card>
+
+      {editingVan ? (
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle className="text-brand-blue-900 text-base">Edit {editingVan.plate}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {editNotice ? (
+              <p
+                role="status"
+                className="border-brand-blue-200 bg-brand-blue-50 text-brand-blue-900 mb-4 rounded-lg border p-3 text-sm font-medium"
+              >
+                {editNotice}
+              </p>
+            ) : null}
+            {editBanner ? (
+              <p
+                role="alert"
+                className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 mb-4 rounded-lg border p-3 text-sm font-medium"
+              >
+                {editBanner}
+              </p>
+            ) : null}
+            <EntityForm
+              fields={VAN_FIELDS}
+              values={editValues}
+              errors={editErrors}
+              pending={update.isPending}
+              submitLabel="Save changes"
+              onChange={(name, value) =>
+                setEditValues((current) => ({ ...current, [name]: value }))
+              }
+              onSubmit={submitEdit}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              className="tap-target mt-3 w-full sm:w-auto"
+              onClick={() => setEditingVan(null)}
+            >
+              Cancel
+            </Button>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      <h2 className="text-brand-blue-900 mt-8 text-lg font-semibold">Fleet</h2>
+
+      {list.isPending ? (
+        <p className="text-muted-foreground mt-4 flex items-center gap-2 text-sm">
+          <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+          Loading vans…
+        </p>
+      ) : list.isError ? (
+        <p
+          role="alert"
+          className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 mt-4 rounded-lg border p-3 text-sm font-medium"
+        >
+          We could not load the fleet. Sign in again, or try once more in a moment.
+        </p>
+      ) : vans.length === 0 ? (
+        <p className="text-muted-foreground mt-4 text-sm">No vans yet — add the first one above.</p>
+      ) : (
+        <>
+          {/* Phone: one card per van. */}
+          <ul className="mt-4 space-y-3 md:hidden">
+            {vans.map((van) => (
+              <li
+                key={van.id}
+                className="border-border bg-background rounded-xl border p-4 text-sm"
+              >
+                <p className="text-brand-blue-900 font-mono font-semibold">{van.plate}</p>
+                <p className="text-muted-foreground">
+                  {van.model} · {van.capacity} seats
+                </p>
+                <div className="mt-2">
+                  <StatusCell
+                    van={van}
+                    onSetStatus={(id, status) => setStatus.mutate({ id, status })}
+                    pending={setStatus.isPending}
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="tap-target mt-3 w-full"
+                  onClick={() => startEdit(van)}
+                >
+                  Edit
+                </Button>
+              </li>
+            ))}
+          </ul>
+
+          {/* Laptop and up: the table, inside its own horizontal scroll container. */}
+          <div data-testid="vans-table-wrapper" className="mt-4 hidden overflow-x-auto md:block">
+            <table className="w-full text-left text-sm">
+              <thead className="text-muted-foreground border-b">
+                <tr>
+                  <th scope="col" className="py-2 pr-3 font-medium">
+                    Plate
+                  </th>
+                  <th scope="col" className="py-2 pr-3 font-medium">
+                    Model
+                  </th>
+                  <th scope="col" className="py-2 pr-3 font-medium">
+                    Seats
+                  </th>
+                  <th scope="col" className="py-2 pr-3 font-medium">
+                    Status
+                  </th>
+                  <th scope="col" className="py-2 text-right font-medium">
+                    &nbsp;
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {vans.map((van) => (
+                  <tr key={van.id} className="border-b last:border-0">
+                    <td className="text-brand-blue-900 py-3 pr-3 font-mono font-semibold">
+                      {van.plate}
+                    </td>
+                    <td className="py-3 pr-3">{van.model}</td>
+                    <td className="py-3 pr-3 tabular-nums">{van.capacity}</td>
+                    <td className="py-3 pr-3">
+                      <StatusCell
+                        van={van}
+                        onSetStatus={(id, status) => setStatus.mutate({ id, status })}
+                        pending={setStatus.isPending}
+                      />
+                    </td>
+                    <td className="py-3 text-right">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="tap-target"
+                        onClick={() => startEdit(van)}
+                      >
+                        Edit
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </main>
+  );
+}
