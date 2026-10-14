@@ -262,3 +262,25 @@ export interface CalendarDay {
   trips: CalendarTrip[];
   needsAssignmentCount: number;
 }
+
+/**
+ * `admin.dispatch.assign` (Week 5 plan, Task 10) — the assignment mutation.
+ * The first input in this project's history that is allowed to write
+ * `bookings.van_id` / `.driver_id`.
+ *
+ * `reason` is bounded here but **optional** in Zod, deliberately — Zod
+ * cannot see the booking's status, so it cannot know whether a reason is
+ * owed (that is a function of the row, read under the lock, not of the
+ * input). `assignVanAndDriver()` decides, inside the transaction; the
+ * refusal is `reason_required`. `.trim().min(3)` still means a
+ * whitespace-only reason fails Zod before the service ever runs.
+ */
+export const assignInputSchema = z
+  .object({
+    bookingId: z.number().int().positive(),
+    vanId: z.number().int().positive(),
+    driverId: z.number().int().positive(),
+    reason: z.string().trim().min(3).max(500).optional(),
+  })
+  .strict();
+export type AssignInput = z.infer<typeof assignInputSchema>;
