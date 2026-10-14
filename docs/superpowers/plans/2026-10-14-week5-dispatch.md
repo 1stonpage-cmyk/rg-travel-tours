@@ -2411,6 +2411,39 @@ the test setup is wrong.
 A purely presentational component that takes no query needs no `TrpcProviders` — only a
 `MemoryRouter` if it links. Decide per component, and say which you chose in your report.
 
+**The refusal reasons must be a type the client can see (controller ruling, 2026-10-15 — the
+code move lands before this task is dispatched).**
+
+`AssignRefusal` is currently declared in `server/src/services/dispatch/assign.ts`, which the client
+cannot import. Left alone, this task would hand-write the six strings into a copy map, and the
+**seventh reason someone adds next month would silently fall through to generic copy** — a contract
+the consumer cannot see, which is the same shape as this week's worst defect (`removeLeave`'s
+unobtainable id), just quieter.
+
+So the union moves to `shared/src/dispatch.ts` first, and this task's copy map is typed
+`Record<AssignRefusal, string>` — **exhaustive by the compiler**, so a new reason fails the build
+until the UI gives it words. The six, with the tRPC code each arrives as
+(`asTrpcError` in `routers/admin/dispatch.ts`):
+
+| Reason                   | Code          | What the dispatcher needs to read                                                 |
+| ------------------------ | ------------- | --------------------------------------------------------------------------------- |
+| `booking_not_found`      | `NOT_FOUND`   | the trip is gone — reload the day                                                 |
+| `booking_not_assignable` | `BAD_REQUEST` | this trip's status cannot take a van (unpaid hold, or already finished/cancelled) |
+| `van_unavailable`        | `CONFLICT`    | someone just took that van — the race loser's message                             |
+| `driver_unavailable`     | `CONFLICT`    | someone just took that driver, **or** they are on leave that day                  |
+| `van_too_small`          | `BAD_REQUEST` | name the numbers: too small for N guests                                          |
+| `reason_required`        | `BAD_REQUEST` | a mid-trip change needs a reason typed first                                      |
+
+**Two of these are not interchangeable even though they share a code.** `van_unavailable` and
+`driver_unavailable` are both `CONFLICT`, and both mean "re-check the day" — but a driver on leave
+is not a race, and telling a dispatcher "someone just took them" when the driver booked the day off
+sends them hunting for a colleague who did nothing. Copy that covers both honestly is better than
+copy that guesses: say the driver is not available for that date and show the refreshed list.
+
+Also: a **`CONFLICT` with no reason string** is the deadlock give-up from Task 10's retry ("this
+date is busy with other assignments right now"). Do not map it to one of the six — let it through
+as its own message.
+
 - [ ] **Step 1: Write the failing test**
 
 ```tsx
