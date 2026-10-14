@@ -29,6 +29,7 @@
  *
  * No money is read or written here: `pax` and dates only.
  */
+import { TRPCError } from '@trpc/server';
 import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { CAPACITY_HOLDING_STATUSES, civilDateFromDate } from '@rg/shared';
 import type { Transaction } from '../../db/client';
@@ -111,7 +112,23 @@ export async function suggestAssignment(tx: Transaction, bookingId: number): Pro
     // reach this with an id that does not exist. Loud rather than silently
     // suggesting nothing for a booking that was never there, same discipline
     // as `assignVanAndDriver`'s null-tour_date throw.
-    throw new Error(`booking ${bookingId} not found`);
+    /*
+     * A stale booking id is a REFUSAL, not a programmer error (controller
+     * fix, 2026-10-15). The implementer flagged that the brief's
+     * `Suggestion.note` union has no value for it and threw a plain
+     * `Error` rather than invent one — the right instinct, and the right
+     * answer is neither: a plain `Error` surfaces as a 500.
+     *
+     * This is reachable in ordinary use: a bookmarked day, a second tab, a
+     * trip cancelled by someone else while this screen sat open. The
+     * sibling `admin.calendar.dayOptions` — which the SAME screen calls on
+     * every day selection — already answers `NOT_FOUND` for exactly this,
+     * so the two now agree and the UI has one thing to handle.
+     *
+     * `note` stays reserved for "nothing is free", which is a successful
+     * answer to a valid question.
+     */
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'No booking with that id.' });
   }
 
   const date = civilDateFromDate(booking.tourDate);

@@ -46,7 +46,7 @@
  * see the mutation proof in the test file that pins this ordering.
  */
 import { eq } from 'drizzle-orm';
-import { civilDateFromDate, type BookingStatus } from '@rg/shared';
+import { civilDateFromDate, type AssignRefusal, type BookingStatus } from '@rg/shared';
 import type { Transaction } from '../../db/client';
 import { bookings, vans } from '../../db/schema';
 import { takeSlotLocks } from '../capacity';
@@ -54,14 +54,13 @@ import { writeAudit } from '../audit';
 import { driversFreeOn, vansFreeOn } from './availability';
 
 /** Why an assignment attempt was refused. Never thrown as a bare string. */
-export type AssignRefusal =
-  | 'booking_not_found'
-  | 'booking_not_assignable'
-  | 'van_unavailable'
-  | 'driver_unavailable'
-  | 'van_too_small'
-  /** An in_progress re-assignment arrived without a reason (Q3). */
-  | 'reason_required';
+/*
+ * `AssignRefusal` now lives in `@rg/shared` (controller ruling,
+ * 2026-10-15) so the admin UI can map every reason to copy exhaustively.
+ * Re-exported here because this module is where the reasons are PRODUCED,
+ * and a reader following `AssignVerdict` should not have to go hunting.
+ */
+export type { AssignRefusal };
 
 export type AssignVerdict = { ok: true } | { ok: false; reason: AssignRefusal };
 

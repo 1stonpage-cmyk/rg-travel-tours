@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import { driverAvailability, type DriverLeaveRow } from '../dispatch';
 import { civilDateFromDate } from '../time';
+import type { AssignRefusal } from '../dispatch';
 
 const leave = (startDate: string, endDate: string): DriverLeaveRow => ({
   id: 1,
@@ -99,5 +100,29 @@ describe('civilDateFromDate', () => {
     // 2026-11-10 17:00Z is 2026-11-11 01:00 in Manila — a UTC slice would
     // say the 10th and be a day out.
     expect(civilDateFromDate(new Date('2026-11-10T17:00:00Z'))).toBe('2026-11-11');
+  });
+});
+
+/**
+ * `AssignRefusal` is a shared type so the admin UI can map every reason to
+ * copy exhaustively. There is nothing to execute, so the guard is a
+ * compile-time exhaustiveness check that a reviewer can see and a future
+ * reason will break: add a seventh member to the union and this object
+ * stops compiling until it gets words.
+ */
+describe('AssignRefusal', () => {
+  it('has copy for every reason, enforced by the compiler', () => {
+    const copy: Record<AssignRefusal, string> = {
+      booking_not_found: 'That trip is no longer there — reload the day.',
+      booking_not_assignable: "This trip's status cannot take a van yet.",
+      van_unavailable: 'Someone just took that van. Here is the refreshed list.',
+      driver_unavailable: 'That driver is not available on this date.',
+      van_too_small: 'That van is too small for this group.',
+      reason_required: 'Changing a trip already under way needs a reason.',
+    };
+    // Six, exactly — a reason added without copy fails the line above, and a
+    // reason REMOVED without tidying this leaves an excess key, which
+    // `Record` also rejects.
+    expect(Object.keys(copy)).toHaveLength(6);
   });
 });

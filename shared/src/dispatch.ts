@@ -275,6 +275,33 @@ export interface CalendarDay {
  * refusal is `reason_required`. `.trim().min(3)` still means a
  * whitespace-only reason fails Zod before the service ever runs.
  */
+/**
+ * Why an assignment was refused (`admin.dispatch.assign`).
+ *
+ * Declared HERE, not in the server service that produces it (controller
+ * ruling, 2026-10-15), so the admin UI can type its copy map as
+ * `Record<AssignRefusal, string>` and the compiler refuses a build where a
+ * reason has no words. Left server-side, the client would hand-write these
+ * six strings and the seventh anyone adds later would fall through to
+ * generic copy — a contract the consumer cannot see, which is the shape of
+ * this week's most expensive defect.
+ *
+ * The tRPC code each arrives as is decided by `asTrpcError` in
+ * `server/src/routers/admin/dispatch.ts`. Two of them share `CONFLICT` and
+ * are NOT interchangeable: `driver_unavailable` covers both "someone just
+ * took them" and "they are on leave that day", and telling a dispatcher the
+ * first when the second is true sends them hunting for a colleague who did
+ * nothing.
+ */
+export type AssignRefusal =
+  | 'booking_not_found'
+  | 'booking_not_assignable'
+  | 'van_unavailable'
+  | 'driver_unavailable'
+  | 'van_too_small'
+  /** An `in_progress` re-assignment arrived without a reason (owner Q3). */
+  | 'reason_required';
+
 export const assignInputSchema = z
   .object({
     bookingId: z.number().int().positive(),

@@ -332,4 +332,20 @@ describeWithDb('admin.dispatch.suggest / suggestAssignment', () => {
     await getDb().transaction((tx) => suggestAssignment(tx, bookingId));
     expect(await bookingSnapshot(bookingId)).toEqual(before);
   });
+
+  /**
+   * A stale booking id is a refusal, not a 500 (controller fix,
+   * 2026-10-15). Reachable in ordinary use: a bookmarked day, a second tab,
+   * a trip someone else cancelled while this screen sat open.
+   *
+   * It matches `admin.calendar.dayOptions`, which the same screen calls on
+   * every day selection and which already answers NOT_FOUND — so the UI has
+   * one behaviour to handle rather than two.
+   */
+  it('refuses a booking id that does not exist, as NOT_FOUND rather than a 500', async () => {
+    const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+    await expect(api.admin.dispatch.suggest({ bookingId: 99_999_999 })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
 });
