@@ -319,15 +319,47 @@ describeWithDb('drivers', () => {
     await expect(verifyPassword(pin, row.pinHash)).resolves.toBe(true);
   });
 
+  /**
+   * ALL SIX procedures, live. An earlier version of this test called three
+   * of them while being named "every drivers procedure" — the gate was
+   * still proven generically by `procedure-role-metadata.test.ts` and
+   * `role-isolation.test.ts`, so nothing was unguarded, but the name
+   * claimed coverage the body did not have. §9's matrix is a security
+   * boundary and `CLAUDE.md` asks for a test per role per area, so the
+   * body now matches the name.
+   *
+   * None of the ids or payloads has to be valid: `requireRole` runs before
+   * the resolver, so a finance session is refused before any of these ever
+   * reads the database.
+   */
   it('REFUSES finance on every drivers procedure', async () => {
     const api = appRouter.createCaller(staffContext(financeId, 'finance') as never);
-    await expect(api.admin.drivers.list()).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    await expect(api.admin.drivers.resetPin({ id: driverId })).rejects.toMatchObject({
-      code: 'FORBIDDEN',
-    });
-    await expect(api.admin.drivers.addLeave(VALID_LEAVE)).rejects.toMatchObject({
-      code: 'FORBIDDEN',
-    });
+    const refusals = await Promise.all([
+      api.admin.drivers.list().catch((e: unknown) => e),
+      api.admin.drivers
+        .create({
+          name: 'Finance Should Not Reach This',
+          code: `FIN${unique()}`.slice(0, 20),
+          phone: '09170000000',
+          licenseNo: null,
+          licenseExpiry: null,
+          languages: null,
+          emergencyContact: null,
+        })
+        .catch((e: unknown) => e),
+      api.admin.drivers
+        .update({ id: driverId, patch: { name: 'Finance Should Not Reach This' } })
+        .catch((e: unknown) => e),
+      api.admin.drivers.resetPin({ id: driverId }).catch((e: unknown) => e),
+      api.admin.drivers.addLeave(VALID_LEAVE).catch((e: unknown) => e),
+      api.admin.drivers.removeLeave({ id: 1 }).catch((e: unknown) => e),
+    ]);
+
+    // Exactly six, every one FORBIDDEN — not "at least one refusal".
+    expect(refusals).toHaveLength(6);
+    for (const refusal of refusals) {
+      expect(refusal).toMatchObject({ code: 'FORBIDDEN' });
+    }
   });
 
   it('refuses a backwards leave range at the Zod boundary, before the DB CHECK', async () => {
