@@ -98,6 +98,40 @@ describe('AdminVansPage', () => {
     }
   });
 
+  /**
+   * The server REJECTS a patch with no fields (Task 4, fix round 1): an
+   * empty patch used to skip the update, skip the only existence check with
+   * it, and still commit a `van_updated` audit row for a change that never
+   * happened. The client's job is to never send one — so opening the edit
+   * form and saving without touching anything must show a notice and make
+   * NO mutation call at all. Asserting the notice alone would not prove it;
+   * the call count is the assertion that matters.
+   */
+  it('saves nothing, and calls nothing, when the edit form is unchanged', async () => {
+    const updateCalls: unknown[] = [];
+    mockTrpc({
+      'admin.vans.list': [VAN],
+      'admin.vans.create': () => ({ id: 99 }),
+      'admin.vans.update': (input: unknown) => {
+        updateCalls.push(input);
+        return { ok: true };
+      },
+      'admin.vans.setStatus': () => ({ ok: true }),
+    });
+    render(
+      <TrpcProviders>
+        <AdminVansPage />
+      </TrpcProviders>,
+    );
+
+    const editButtons = await screen.findAllByRole('button', { name: /^edit$/i });
+    await userEvent.click(editButtons[0]!);
+    await userEvent.click(await screen.findByRole('button', { name: /save changes/i }));
+
+    expect(await screen.findByText(/no changes to save/i)).toBeTruthy();
+    expect(updateCalls).toEqual([]);
+  });
+
   it('shows a field error beside the field, not only at the top', async () => {
     renderPage();
     await user.clear(screen.getByLabelText(/plate/i));
@@ -122,7 +156,14 @@ describe('AdminVansPage', () => {
   it('renders the repair status as text, not only a colour', async () => {
     renderPage({ vans: [{ ...VAN, status: 'for_repair' }] });
     const matches = await screen.findAllByText(/for repair/i);
-    expect(matches.length).toBeGreaterThan(0);
+    // EXACTLY two, not `> 0`: this page renders every van twice on purpose —
+    // once in the card list (below `md:`) and once in the table (above it) —
+    // and `admin-bookings.test.tsx` asserts the same shape with
+    // `toHaveLength(2)`. A `> 0` bracket would still pass if one of the two
+    // layouts silently stopped rendering the status text, which is half the
+    // colour-alone protection gone with the test still green. One van in,
+    // two renderings out.
+    expect(matches).toHaveLength(2);
   });
 
   /**
@@ -165,10 +206,24 @@ describe('AdminVansPage', () => {
     renderPage();
     // Same card-plus-table reason as the previous test.
     await screen.findAllByText(VAN.plate);
-    const controls = [...screen.getAllByRole('button'), ...screen.getAllByRole('textbox')];
-    expect(controls.length).toBeGreaterThan(0);
+    // Query the DOM, not ARIA roles. The role-based sweep this replaced saw
+    // `button` and `textbox` only — so it silently skipped the status
+    // `Select` (`role="combobox"`), every `type="number"` input
+    // (`spinbutton`), and every `type="date"` input (which has NO mapped
+    // role at all). On this page that is the capacity field, the odometer,
+    // four date fields and the status control: most of the screen's
+    // controls, all exempt from a test named "every control". The source
+    // happens to apply `tap-target` to them anyway, so nothing was masked —
+    // but the test was not checking.
+    const controls = Array.from(
+      document.querySelectorAll<HTMLElement>('button, input, select, textarea'),
+    );
+    expect(controls.length).toBeGreaterThan(8);
     for (const control of controls) {
-      expect(control.className).toMatch(/tap-target/);
+      expect(
+        control.className,
+        `${control.tagName}[${control.getAttribute('type') ?? 'n/a'}]`,
+      ).toMatch(/tap-target/);
     }
   });
 
