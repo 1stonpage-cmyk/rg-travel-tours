@@ -117,6 +117,47 @@ export interface DriverRow {
   leaves: DriverLeaveRow[];
 }
 
+/**
+ * BUILD_SPEC §9's driver availability model — **derived, not stored**
+ * (controller fix, 2026-10-14).
+ *
+ * §9 describes a driver as `active / on leave (with date ranges) / inactive`.
+ * The database has two unrelated things instead: `drivers.is_active` (the
+ * soft-delete flag) and `drivers.status`, whose values are
+ * `available | on_trip | off_duty` — a *dispatch* state, not §9's model. And
+ * "on leave" is deliberately NOT a flag: Q4 settled that leave is a date
+ * RANGE, because a flag set today would hide a driver from every future date
+ * until somebody remembered to clear it.
+ *
+ * So §9's three states are computed from the two sources that actually
+ * answer the question:
+ *
+ *  - `inactive`  — `is_active = 0`. Soft-deleted; nothing else matters.
+ *  - `on_leave`  — a `driver_leaves` row covers TODAY in Asia/Manila.
+ *  - `active`    — neither.
+ *
+ * `drivers.status` is left out on purpose: it is what the driver is doing
+ * right now, which is a different question from whether they are on the
+ * roster. The admin screen renders both, labelled differently.
+ *
+ * Inclusive at both ends, like every leave comparison in this codebase: a
+ * one-day leave has `startDate === endDate`, and string comparison is safe
+ * because both sides are zero-padded `YYYY-MM-DD`.
+ */
+export type DriverAvailability =
+  { state: 'inactive' } | { state: 'on_leave'; until: string } | { state: 'active' };
+
+export function driverAvailability(
+  driver: { isActive: boolean; leaves: DriverLeaveRow[] },
+  todayManila: string,
+): DriverAvailability {
+  if (!driver.isActive) return { state: 'inactive' };
+  const covering = driver.leaves.find(
+    (leave) => leave.startDate <= todayManila && leave.endDate >= todayManila,
+  );
+  return covering ? { state: 'on_leave', until: covering.endDate } : { state: 'active' };
+}
+
 /** One `driver_leaves` row as the admin screen receives it. */
 export interface DriverLeaveRow {
   id: number;

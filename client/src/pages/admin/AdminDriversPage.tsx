@@ -66,6 +66,7 @@ import { TRPCClientError } from '@trpc/client';
 import {
   driverInputSchema,
   driverLeaveInputSchema,
+  driverAvailability,
   manilaCivilDate,
   type DriverInput,
   type DriverRow,
@@ -268,6 +269,43 @@ function DriverPersonalData({ driver }: { driver: DriverRow }) {
       </div>
     </dl>
   );
+}
+
+/**
+ * BUILD_SPEC §9's roster state — `active / on leave (with date ranges) /
+ * inactive` — which the database does not store (controller fix,
+ * 2026-10-14). `driverAvailability()` derives it from `is_active` plus the
+ * leave rows `admin.drivers.list` now returns.
+ *
+ * It renders BESIDE `drivers.status`, not instead of it, because the two
+ * answer different questions: this one is "are they on the roster today",
+ * `status` is "what are they doing right now" (`available` / `on_trip` /
+ * `off_duty`). Collapsing them would lose one.
+ *
+ * Why this exists at all: `is_active` was fetched and never shown, so a
+ * soft-deleted driver looked identical to a working one — and soft-delete is
+ * the ONLY way a driver is ever removed (`CLAUDE.md`: never hard-delete),
+ * which made the one state that matters invisible.
+ *
+ * Text in every case, never colour alone. Amber for on-leave, neutral grey
+ * for inactive, and no red anywhere.
+ */
+function AvailabilityBadge({ driver }: { driver: DriverRow }) {
+  const availability = driverAvailability(driver, manilaCivilDate(new Date()));
+
+  if (availability.state === 'inactive') {
+    return (
+      <Badge className="bg-muted text-foreground border-0">Inactive — not on the roster</Badge>
+    );
+  }
+  if (availability.state === 'on_leave') {
+    return (
+      <Badge className="border-0 bg-amber-100 text-amber-900">
+        On leave to {formatCivilDate(availability.until)}
+      </Badge>
+    );
+  }
+  return <Badge className="bg-brand-blue-50 text-brand-blue-900 border-0">Active</Badge>;
 }
 
 export default function AdminDriversPage() {
@@ -631,14 +669,17 @@ export default function AdminDriversPage() {
                         <p className="text-brand-blue-900 font-semibold">{driver.name}</p>
                         <p className="text-muted-foreground font-mono text-sm">{driver.code}</p>
                       </div>
-                      <Badge
-                        className={
-                          DRIVER_STATUS_BADGE_CLASS[driver.status] ??
-                          'bg-muted text-foreground border-0'
-                        }
-                      >
-                        {DRIVER_STATUS_LABELS[driver.status] ?? driver.status}
-                      </Badge>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <AvailabilityBadge driver={driver} />
+                        <Badge
+                          className={
+                            DRIVER_STATUS_BADGE_CLASS[driver.status] ??
+                            'bg-muted text-foreground border-0'
+                          }
+                        >
+                          {DRIVER_STATUS_LABELS[driver.status] ?? driver.status}
+                        </Badge>
+                      </div>
                     </div>
 
                     <DriverPersonalData driver={driver} />

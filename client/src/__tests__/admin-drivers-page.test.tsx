@@ -62,6 +62,8 @@ const DRIVER = {
 };
 
 interface RenderOverrides {
+  /** Soft-delete flag — an inactive driver must look different. */
+  isActive?: boolean;
   onResetPin?: (input: unknown) => void;
   onRemoveLeave?: (input: unknown) => void;
   leaves?: Array<{ id: number; startDate: string; endDate: string; reason: string | null }>;
@@ -80,7 +82,11 @@ interface RenderOverrides {
  * `overrides.addLeaveError` makes `addLeave` reject.
  */
 function renderPage(overrides: RenderOverrides = {}) {
-  const driver = overrides.leaves ? { ...DRIVER, leaves: overrides.leaves } : DRIVER;
+  const driver = {
+    ...DRIVER,
+    ...(overrides.leaves ? { leaves: overrides.leaves } : {}),
+    ...(overrides.isActive === undefined ? {} : { isActive: overrides.isActive }),
+  };
   mockTrpc({
     'admin.drivers.list': [driver],
     'admin.drivers.create': () => ({ id: 2, pin: '654321' }),
@@ -111,6 +117,26 @@ function renderPage(overrides: RenderOverrides = {}) {
 }
 
 describe('AdminDriversPage', () => {
+  /**
+   * `isActive` was fetched from the server and never rendered, so a
+   * soft-deleted driver looked identical to a working one — and soft-delete
+   * is the ONLY way a driver is ever removed (`CLAUDE.md`: never
+   * hard-delete), which made the one state that matters invisible. Found by
+   * the Task 7 review.
+   *
+   * Text, not colour: the assertion is on words a dispatcher can read.
+   */
+  it('shows an inactive driver as off the roster, in words', async () => {
+    renderPage({ isActive: false });
+    expect(await screen.findByText(/inactive — not on the roster/i)).toBeTruthy();
+  });
+
+  it('shows an active driver with no current leave as active', async () => {
+    renderPage();
+    expect(await screen.findByText(/^active$/i)).toBeTruthy();
+    expect(screen.queryByText(/inactive/i)).toBeNull();
+  });
+
   /**
    * The panel is local state cleared on THREE triggers — dismiss, a
    * subsequent mutation, and a route change. This test covers the first two;

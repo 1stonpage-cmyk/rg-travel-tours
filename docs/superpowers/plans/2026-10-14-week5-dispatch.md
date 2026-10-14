@@ -3151,6 +3151,21 @@ Dropping a van's `capacity` from 15 to 10 does not re-check the trips already as
 
 ---
 
+## Declared gaps against §9 "Drivers" (controller, 2026-10-14)
+
+The Task 7 review found three §9 fields that this week does **not** deliver, none of them disclosed
+by the plan beforehand. Recording them rather than leaving them to be rediscovered:
+
+| §9 field                                 | State                                                     | Why                                                                                                                                                                                                                                                                                                                                                                                          |
+| ---------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **average rating**                       | **Not built, and deliberately not faked.**                | No driver-rating column exists anywhere in the schema, and `reviews` scores a _tour_, not a driver. Rendering a number here would be inventing one — `CLAUDE.md` forbids fabricated social proof in exactly these words. It needs a schema decision from the owner first: whether a driver rating is derived from `reviews.guide` on their assigned trips, or stored. **Not a Week 5 task.** |
+| **upcoming trips**                       | **Not built.**                                            | Needs a join from `drivers` to `bookings` on `(driver_id, tour_date)` — the index for it exists — plus a decision about how far ahead "upcoming" reaches. Genuinely useful for dispatch and a small task, but it is not in §13's 5A–5E list.                                                                                                                                                 |
+| **status: active / on leave / inactive** | **Built, derived** (`driverAvailability()` in `/shared`). | The database stores two unrelated things: `is_active` (soft delete) and `drivers.status` (`available`/`on_trip`/`off_duty`, a _dispatch_ state). §9's model is neither, and "on leave" is deliberately a date RANGE not a flag (Q4). So it is computed from `is_active` + the leave rows, and rendered BESIDE `drivers.status` because the two answer different questions.                   |
+
+The third was also a live defect, now fixed: `is_active` was fetched and never rendered, so a
+**soft-deleted driver looked identical to a working one** — and soft-delete is the only way a driver
+is ever removed, which made the one state that matters invisible.
+
 ## Self-review
 
 **1. Spec coverage.** §13's Week 5 lines map as: **5A** → Tasks 4 + 5 (+ Task 2 for the fourth status, gated); **5B** → Tasks 6 + 7; **5C** → Tasks 8 + 9; **5D** → Tasks 10 + 11 + 12; **5E** → Tasks 13 + 14. §9's "Calendar" exclusion list → Task 3, which is the module all of 5C/5D read. §9's "Vans" field list → already in the schema, surfaced by Task 4. §9's "Drivers" field list including PIN reset → Task 6. §9's five dashboard alerts → Task 13, one function each. §5's assignment rule (auto-suggest, smallest van that fits, the 48-hour alert) → Tasks 11 and 13. §15 open question 1 → **Q7**, asked rather than assumed. Seed and evidence → Tasks 15 and 16.
