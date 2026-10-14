@@ -886,9 +886,18 @@ it('labels every input with a real <label>', () => {
   for (const name of ['Plate', 'Model', 'Seats for guests']) {
     expect(screen.getByLabelText(new RegExp(name, 'i'))).toBeTruthy();
   }
-  // No input may rely on a placeholder for its name.
-  for (const input of screen.getAllByRole('textbox')) {
-    expect(input.getAttribute('aria-label') ?? input.id).toBeTruthy();
+
+  // No input may rely on a placeholder for its name. `.labels` is the DOM's
+  // own answer to "is there a <label> pointing at this control", so an
+  // input that merely HAS an id — with no label anywhere — fails here.
+  // An earlier draft asserted `input.getAttribute('aria-label') ?? input.id`,
+  // which an unlabelled input with an id passes while the test's own name
+  // claims a real label was found.
+  const textboxes = screen.getAllByRole('textbox') as HTMLInputElement[];
+  expect(textboxes.length).toBeGreaterThan(0);
+  for (const input of textboxes) {
+    const labelled = input.labels !== null && input.labels.length > 0;
+    expect(labelled || input.getAttribute('aria-label') !== null).toBe(true);
   }
 });
 
@@ -929,10 +938,21 @@ it('wraps the table in its own horizontal scroll container', () => {
   expect(wrapper!.querySelector('table')).not.toBeNull();
 });
 
-it('gives every control a 44px tap target', () => {
+/**
+ * jsdom does no layout, so no unit test here can measure 44 physical
+ * pixels. What it CAN prove is that every control carries the project's
+ * own `tap-target` utility (`client/src/index.css`), which is what sets
+ * the minimum. Named for the mechanism, not the outcome — an earlier draft
+ * was called "gives every control a 44px tap target" and accepted any of
+ * four classes, so it would have passed a control sized by an unrelated
+ * `h-12`. The 44px outcome is checked by hand in Task 16.
+ */
+it('gives every control the tap-target utility', () => {
   renderPage();
-  for (const button of screen.getAllByRole('button')) {
-    expect(button.className).toMatch(/tap-target|h-11|h-12|size-11/);
+  const controls = [...screen.getAllByRole('button'), ...screen.getAllByRole('textbox')];
+  expect(controls.length).toBeGreaterThan(0);
+  for (const control of controls) {
+    expect(control.className).toMatch(/tap-target/);
   }
 });
 ```
