@@ -1400,6 +1400,21 @@ whose role is not allowed), and **neither message contains the word the regex lo
 message-matching assertion fails against perfectly correct code. My brief had it wrong in eight
 places; Task 4's implementer caught it. `code` is the contract, the message is copy.
 
+**Mutation-proofing a REFUSAL test — the clean-up rule (owner instruction, 2026-10-14).**
+When you widen a role gate so a call that should be refused SUCCEEDS, that call **writes real
+rows**, and the test never tracked them for teardown because it never expected the call to work.
+One such leak — a single driver row — cascaded into **32 failures** across `capacity.test.ts` and
+others, whose job is counting free vans and drivers. The 32 looked like the mutation's doing and
+were not.
+
+So, after any mutation proof on a refusal test: **delete what the succeeding call created**, or run
+the proof inside a transaction you roll back. You no longer have to remember — the suite's
+`globalSetup` teardown now fails the run and names the table
+(`bookings`, `drivers`, `vans`, `payments`, `users`) if it ends with more rows than the post-seed
+baseline. **A fully green suite can still fail the run that way**, which is the point. If you see
+`rg_travel_test has rows no test cleaned up`, that is this check, and the fix is to clean the rows,
+never to weaken the check.
+
 - [ ] **Step 1: Write the failing test**
 
 ```ts
@@ -1786,6 +1801,21 @@ subject is not a staff user) and `'Not permitted for this account.'` (FORBIDDEN 
 whose role is not allowed), and **neither message contains the word the regex looks for**, so a
 message-matching assertion fails against perfectly correct code. My brief had it wrong in eight
 places; Task 4's implementer caught it. `code` is the contract, the message is copy.
+
+**Mutation-proofing a REFUSAL test — the clean-up rule (owner instruction, 2026-10-14).**
+When you widen a role gate so a call that should be refused SUCCEEDS, that call **writes real
+rows**, and the test never tracked them for teardown because it never expected the call to work.
+One such leak — a single driver row — cascaded into **32 failures** across `capacity.test.ts` and
+others, whose job is counting free vans and drivers. The 32 looked like the mutation's doing and
+were not.
+
+So, after any mutation proof on a refusal test: **delete what the succeeding call created**, or run
+the proof inside a transaction you roll back. You no longer have to remember — the suite's
+`globalSetup` teardown now fails the run and names the table
+(`bookings`, `drivers`, `vans`, `payments`, `users`) if it ends with more rows than the post-seed
+baseline. **A fully green suite can still fail the run that way**, which is the point. If you see
+`rg_travel_test has rows no test cleaned up`, that is this check, and the fix is to clean the rows,
+never to weaken the check.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2447,6 +2477,21 @@ Three things that decision pins, each with a test below:
 3. **The window is Manila-local, and this is where the bug would be.** `tour_date` is a civil date; the server's clock is UTC. A naive `now + 48h` compared against a civil date is out by eight hours, which for tours that leave at dawn is a whole tour day — the alert would either nag a day early or, worse, stay silent on the morning that matters. Build the window with `manilaCivilDate()` and `manilaInstant()` and compare civil date to civil date. **No `new Date()` arithmetic in this query.**
 
 `confirmed` only, per the decision — `pending_verification` is visible on the calendar but never counted (Q2), and `assigned` trips by definition have both.
+
+**Mutation-proofing a REFUSAL test — the clean-up rule (owner instruction, 2026-10-14).**
+When you widen a role gate so a call that should be refused SUCCEEDS, that call **writes real
+rows**, and the test never tracked them for teardown because it never expected the call to work.
+One such leak — a single driver row — cascaded into **32 failures** across `capacity.test.ts` and
+others, whose job is counting free vans and drivers. The 32 looked like the mutation's doing and
+were not.
+
+So, after any mutation proof on a refusal test: **delete what the succeeding call created**, or run
+the proof inside a transaction you roll back. You no longer have to remember — the suite's
+`globalSetup` teardown now fails the run and names the table
+(`bookings`, `drivers`, `vans`, `payments`, `users`) if it ends with more rows than the post-seed
+baseline. **A fully green suite can still fail the run that way**, which is the point. If you see
+`rg_travel_test has rows no test cleaned up`, that is this check, and the fix is to clean the rows,
+never to weaken the check.
 
 - [ ] **Step 1: Write the failing test**
 
