@@ -22,6 +22,14 @@
  * class the task's own brief warns about. Fixed here by making the test
  * `async` and using `findByText`, which is the only change from the
  * brief's literal body.
+ *
+ * **Fix round 1 (2026-10-14):** `DriverRow.leaves` is now real — the
+ * controller added it to `admin.drivers.list`'s response server-side, so
+ * `DRIVER.leaves` below is the actual wire shape, not a stand-in. There is
+ * no more test-only seam: `overrides.leaves` rides on the same `leaves`
+ * field the real server sends. A new test proves `removeLeave` is wired
+ * with the real id the server assigned, which the first version of this
+ * page could never obtain.
  */
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -48,10 +56,14 @@ const DRIVER = {
   emergencyContact: 'Juan Santos 09179876543',
   status: 'available',
   isActive: true,
+  // The real shape `admin.drivers.list` now sends (fix round 1,
+  // 2026-10-14) — a driver with no leaves gets `[]`, never `undefined`.
+  leaves: [] as Array<{ id: number; startDate: string; endDate: string; reason: string | null }>,
 };
 
 interface RenderOverrides {
   onResetPin?: (input: unknown) => void;
+  onRemoveLeave?: (input: unknown) => void;
   leaves?: Array<{ id: number; startDate: string; endDate: string; reason: string | null }>;
   addLeaveError?: string;
 }
@@ -61,12 +73,11 @@ interface RenderOverrides {
  * the page queries `admin.drivers.list`, and a `MemoryRouter` because the
  * page reads `useLocation()` to clear the PIN panel on a route change.
  *
- * `overrides.leaves`, when given, rides along on the mocked `list` row as
- * an extra `leaves` property — the test-only seam `AdminDriversPage.tsx`'s
- * module note documents: Task 6 built no procedure that LISTS a driver's
- * existing leaves, so there is no real endpoint this helper could mock
- * instead. `overrides.onResetPin` and `overrides.addLeaveError` configure
- * the two mutations whose behaviour each test cares about.
+ * `overrides.leaves`, when given, replaces the mocked `list` row's own
+ * `leaves` field with the exact rows a test wants to assert against — the
+ * real shape `admin.drivers.list` sends, not a seam. `overrides.onResetPin`
+ * and `overrides.onRemoveLeave` record what each mutation was called with;
+ * `overrides.addLeaveError` makes `addLeave` reject.
  */
 function renderPage(overrides: RenderOverrides = {}) {
   const driver = overrides.leaves ? { ...DRIVER, leaves: overrides.leaves } : DRIVER;
@@ -79,7 +90,10 @@ function renderPage(overrides: RenderOverrides = {}) {
           throw new Error(overrides.addLeaveError);
         }
       : () => ({ id: 99 }),
-    'admin.drivers.removeLeave': () => ({ ok: true }),
+    'admin.drivers.removeLeave': (input: unknown) => {
+      overrides.onRemoveLeave?.(input);
+      return { ok: true };
+    },
     'admin.drivers.resetPin': (input: unknown) => {
       overrides.onResetPin?.(input);
       return { pin: '123456' };
@@ -154,5 +168,21 @@ describe('AdminDriversPage', () => {
     renderPage({ addLeaveError: 'That overlaps an existing leave.' });
     await user.click(await screen.findByRole('button', { name: /add leave/i }));
     expect((await screen.findByRole('alert')).textContent).toMatch(/overlaps/i);
+  });
+
+  /**
+   * Fix round 1 (2026-10-14): before `DriverRow.leaves` existed, this
+   * button called `removeLeave` with an id the client had no way to have
+   * obtained — unreachable from the only UI that calls it. Now the id
+   * comes straight off the server-sent row.
+   */
+  it('removes a leave using the real id the server sent, not a guess', async () => {
+    const calls: unknown[] = [];
+    renderPage({
+      onRemoveLeave: (v: unknown) => calls.push(v),
+      leaves: [{ id: 42, startDate: '2026-11-10', endDate: '2026-11-12', reason: null }],
+    });
+    await user.click(await screen.findByRole('button', { name: /remove/i }));
+    expect(calls).toEqual([{ id: 42 }]);
   });
 });

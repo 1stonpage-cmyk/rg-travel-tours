@@ -28,22 +28,19 @@
  * colour — there is no red anywhere in this project, and a reset is a
  * correction a dispatcher makes routinely, not a one-way deletion.
  *
- * ## The leaves-listing gap (read before touching this section)
+ * ## Leaves — now a real, server-sourced list (fix round 1, 2026-10-14)
  *
- * Task 6 built `addLeave` and `removeLeave`, but no procedure that LISTS a
- * driver's existing leaves, and `admin.drivers.list`'s `DriverRow` carries
- * no `leaves` field — confirmed by reading `shared/src/dispatch.ts` and
- * `server/src/routers/admin/drivers.ts` directly. CLAUDE.md forbids this
- * task from touching the server or the schema, so this page cannot fetch a
- * driver's pre-existing leaves at all. `leavesByDriver` is therefore a
- * client-only cache, seeded empty and populated purely from this session's
- * own successful `addLeave` / `removeLeave` calls. A driver's leave history
- * from a PREVIOUS session is invisible until a future task adds a listing
- * endpoint — flagged in the task report, not silently worked around with a
- * fake endpoint. `leavesForDriver` also reads an optional `leaves` property
- * off the row `list` returns, which the real server never sends (it is not
- * part of `DriverRow`) but which the test suite uses as its only seam for
- * exercising the date-range rendering without a real listing endpoint.
+ * The first version of this page could not fetch a driver's leaves at all
+ * (Task 6 shipped `addLeave` / `removeLeave` with no way to read one back),
+ * so it kept a client-only cache seeded from this session's own mutations.
+ * That was worse than a display gap: `removeLeave` took a leave id the
+ * client had no way to obtain, and `addLeave`'s overlap refusal named no
+ * row the dispatcher could see. The controller's fix added `leaves` to
+ * `DriverRow` (`shared/src/dispatch.ts`) and to `admin.drivers.list`'s
+ * response (one grouped query, soonest first, past leaves included) — so
+ * this page now reads `driver.leaves` straight off the query result. There
+ * is no local cache and no test-only seam: every leave shown here, and
+ * every id `removeLeave` is called with, came from the server.
  *
  * ## No lockout state shown
  *
@@ -78,17 +75,6 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import EntityForm, { type EntityFormField } from '@/components/admin/EntityForm';
 import { trpc } from '@/lib/trpc';
-
-/** A driver leave as this page tracks it locally — see the module note. */
-interface DriverLeaveRow {
-  id: number;
-  startDate: string;
-  endDate: string;
-  reason: string | null;
-}
-
-/** The only shape `list` ever REALLY sends, plus the test-only seam. */
-type DriverListRow = DriverRow & { leaves?: DriverLeaveRow[] };
 
 const DRIVER_STATUS_LABELS: Record<string, string> = {
   available: 'Available',
@@ -307,8 +293,6 @@ export default function AdminDriversPage() {
   } | null>(null);
   const [confirmResetId, setConfirmResetId] = useState<number | null>(null);
 
-  /** The leaves-listing gap's client-only cache — see the module note. */
-  const [leavesByDriver, setLeavesByDriver] = useState<Record<number, DriverLeaveRow[]>>({});
   const [leaveForms, setLeaveForms] = useState<Record<number, LeaveFormState>>({});
   const [removeLeaveBanner, setRemoveLeaveBanner] = useState<string | null>(null);
 
@@ -320,13 +304,6 @@ export default function AdminDriversPage() {
     setPinPanel(null);
     setConfirmResetId(null);
   }, [location.pathname]);
-
-  function leavesForDriver(driverId: number, rows?: DriverListRow[]): DriverLeaveRow[] {
-    if (leavesByDriver[driverId] !== undefined) return leavesByDriver[driverId];
-    const source = rows ?? (list.data as DriverListRow[] | undefined) ?? [];
-    const row = source.find((candidate) => candidate.id === driverId);
-    return row?.leaves ?? [];
-  }
 
   function leaveFormFor(driverId: number): LeaveFormState {
     return leaveForms[driverId] ?? freshLeaveFormState();
@@ -372,31 +349,30 @@ export default function AdminDriversPage() {
 
   const resetPin = trpc.admin.drivers.resetPin.useMutation({
     onSuccess: (data, variables) => {
-      const rows = (list.data as DriverListRow[] | undefined) ?? [];
-      const driver = rows.find((candidate) => candidate.id === variables.id);
+      const driver = (list.data ?? []).find((candidate) => candidate.id === variables.id);
       setPinPanel({ kind: 'reset', name: driver?.name ?? 'this driver', pin: data.pin });
       setConfirmResetId(null);
     },
   });
 
+  /**
+   * `leaves` is server state now — no local cache to update. `onSuccess`
+   * only has to invalidate `list` (which re-fetches with the new leave
+   * included, soonest-first) and reset this driver's form back to today's
+   * defaults.
+   */
   const addLeave = trpc.admin.drivers.addLeave.useMutation({
-    onSuccess: (data, variables) => {
+    onSuccess: (_data, variables) => {
       setPinPanel(null);
-      setLeavesByDriver((current) => {
-        const rows = (list.data as DriverListRow[] | undefined) ?? [];
-        const seamRow = rows.find((row) => row.id === variables.driverId);
-        const existing = current[variables.driverId] ?? seamRow?.leaves ?? [];
-        const added: DriverLeaveRow = {
-          id: data.id,
-          startDate: variables.startDate,
-          endDate: variables.endDate,
-          reason: variables.reason,
-        };
-        return { ...current, [variables.driverId]: [...existing, added] };
-      });
+      void utils.admin.drivers.list.invalidate();
       setLeaveForms((current) => ({ ...current, [variables.driverId]: freshLeaveFormState() }));
     },
     onError: (error, variables) => {
+      // The dispatcher needs to see the row that caused an overlap refusal
+      // to act on the message — `driver.leaves` below is rendered
+      // unconditionally, so the full list (soonest first, past leaves
+      // included) stays visible right alongside this banner, not hidden
+      // behind the pending/error state.
       setLeaveForms((current) => ({
         ...current,
         [variables.driverId]: {
@@ -408,25 +384,10 @@ export default function AdminDriversPage() {
   });
 
   const removeLeave = trpc.admin.drivers.removeLeave.useMutation({
-    onSuccess: (_data, variables) => {
+    onSuccess: () => {
       setPinPanel(null);
       setRemoveLeaveBanner(null);
-      const rows = (list.data as DriverListRow[] | undefined) ?? [];
-      setLeavesByDriver((current) => {
-        const next = { ...current };
-        // Scan every driver's EFFECTIVE list (a local override if one
-        // exists, else the test-seam `leaves` field `list` may carry) to
-        // find which driver held this leave, and write an explicit
-        // override for just that one — the id alone doesn't say which
-        // driver it belonged to.
-        for (const row of rows) {
-          const effective = current[row.id] ?? row.leaves ?? [];
-          if (effective.some((leave) => leave.id === variables.id)) {
-            next[row.id] = effective.filter((leave) => leave.id !== variables.id);
-          }
-        }
-        return next;
-      });
+      void utils.admin.drivers.list.invalidate();
     },
     onError: (error) => {
       setRemoveLeaveBanner(errorMessage(error, 'Could not remove that leave. Please try again.'));
@@ -500,7 +461,7 @@ export default function AdminDriversPage() {
     }
   }
 
-  const drivers = (list.data as DriverListRow[] | undefined) ?? [];
+  const drivers = list.data ?? [];
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-8">
@@ -655,7 +616,7 @@ export default function AdminDriversPage() {
       ) : (
         <ul className="mt-4 space-y-4">
           {drivers.map((driver) => {
-            const leaves = leavesForDriver(driver.id, drivers);
+            const leaves = driver.leaves;
             const leaveForm = leaveFormFor(driver.id);
             const leaveMutationPending =
               addLeave.isPending && addLeave.variables?.driverId === driver.id;
