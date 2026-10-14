@@ -101,6 +101,28 @@ export interface DriverRow {
   emergencyContact: string | null;
   status: string;
   isActive: boolean;
+  /**
+   * This driver's leave rows, soonest first (controller fix, 2026-10-14).
+   *
+   * The plan shipped `addLeave` and `removeLeave` without any way to READ a
+   * leave, which left two things broken at once: §9 asks the drivers screen
+   * to show "on leave (with date ranges)" and it had nothing to show, and
+   * **`removeLeave` takes a leave id the client had no way to obtain** — a
+   * mutation unreachable from the only UI that calls it. Worse, `addLeave`
+   * refuses an overlap, so a dispatcher would be told "that overlaps an
+   * existing leave" while looking at a screen that could not name which one.
+   *
+   * Civil-date strings on the wire, like every other date in this API.
+   */
+  leaves: DriverLeaveRow[];
+}
+
+/** One `driver_leaves` row as the admin screen receives it. */
+export interface DriverLeaveRow {
+  id: number;
+  startDate: string;
+  endDate: string;
+  reason: string | null;
 }
 
 /**

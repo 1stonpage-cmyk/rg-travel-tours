@@ -35,6 +35,7 @@ import {
   driverLeaveInputSchema,
   manilaCivilDate,
   type DriverInput,
+  type DriverLeaveRow,
   type DriverRow,
 } from '@rg/shared';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
@@ -71,7 +72,7 @@ function toCivilDate(value: Date | null): string | null {
   return value === null ? null : manilaCivilDate(value);
 }
 
-function toDriverRow(row: DriverSelect): DriverRow {
+function toDriverRow(row: DriverSelect, leaves: DriverLeaveRow[] = []): DriverRow {
   return {
     id: row.id,
     name: row.name,
@@ -83,6 +84,7 @@ function toDriverRow(row: DriverSelect): DriverRow {
     emergencyContact: row.emergencyContact,
     status: row.status,
     isActive: row.isActive,
+    leaves,
   };
 }
 
@@ -177,7 +179,43 @@ export const adminDriversRouter = router({
       })
       .from(drivers)
       .orderBy(asc(drivers.name));
-    return rows.map(toDriverRow);
+
+    /*
+     * Leaves in ONE further query, grouped in memory — not a per-driver
+     * query in a loop (N+1 on a page that lists the whole roster) and not a
+     * LEFT JOIN onto the driver rows (which would multiply each driver by
+     * its leave count and make the caller de-duplicate).
+     *
+     * Soonest first, so the screen's list reads as a schedule. Past leaves
+     * are included deliberately: a dispatcher resolving an overlap refusal
+     * needs to see the row that caused it, whenever it was.
+     */
+    const leaveRows = await getDb()
+      .select({
+        id: driverLeaves.id,
+        driverId: driverLeaves.driverId,
+        startDate: driverLeaves.startDate,
+        endDate: driverLeaves.endDate,
+        reason: driverLeaves.reason,
+      })
+      .from(driverLeaves)
+      .orderBy(asc(driverLeaves.startDate), asc(driverLeaves.id));
+
+    const byDriver = new Map<number, DriverLeaveRow[]>();
+    for (const row of leaveRows) {
+      const list = byDriver.get(row.driverId) ?? [];
+      list.push({
+        id: row.id,
+        // `date()` columns come back as Date objects; the wire carries civil
+        // date strings, like every other date in this API.
+        startDate: toCivilDate(row.startDate) ?? '',
+        endDate: toCivilDate(row.endDate) ?? '',
+        reason: row.reason,
+      });
+      byDriver.set(row.driverId, list);
+    }
+
+    return rows.map((row) => toDriverRow(row, byDriver.get(row.id) ?? []));
   }),
 
   create: adminProcedure('vansDrivers')

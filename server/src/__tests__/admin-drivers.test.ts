@@ -374,6 +374,57 @@ describeWithDb('drivers', () => {
     ).rejects.toThrow(/end/i);
   });
 
+  /**
+   * `list` must return each driver's leaves (controller fix, 2026-10-14).
+   *
+   * The plan shipped `addLeave` and `removeLeave` with no way to READ a
+   * leave, which broke two things at once: §9 asks the drivers screen to
+   * show "on leave (with date ranges)" and it had nothing to show, and
+   * `removeLeave` takes a leave id **the client had no way to obtain**.
+   * Task 7 had to fake it with a client-only cache to render anything.
+   *
+   * Exact values, not shapes: a wrong-by-one-day date here is a driver
+   * dispatched on a day they booked off.
+   */
+  it('returns each driver leaves, soonest first, as civil-date strings', async () => {
+    const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
+    const freshDriverId = await makeDriver();
+
+    // Added out of order on purpose — the ordering is the assertion.
+    await api.admin.drivers.addLeave({
+      driverId: freshDriverId,
+      startDate: '2027-03-10',
+      endDate: '2027-03-12',
+      reason: 'Later leave',
+    });
+    await api.admin.drivers.addLeave({
+      driverId: freshDriverId,
+      startDate: '2027-01-05',
+      endDate: '2027-01-05',
+      reason: 'Single day, earlier',
+    });
+
+    const listed = await api.admin.drivers.list();
+    const mine = listed.find((d) => d.id === freshDriverId);
+    expect(mine, 'the driver just created must be in the list').toBeDefined();
+    expect(mine!.leaves).toHaveLength(2);
+    expect(mine!.leaves.map((l) => [l.startDate, l.endDate, l.reason])).toEqual([
+      ['2027-01-05', '2027-01-05', 'Single day, earlier'],
+      ['2027-03-10', '2027-03-12', 'Later leave'],
+    ]);
+    // Every id is real, so `removeLeave` is actually reachable from a client.
+    for (const leave of mine!.leaves) {
+      expect(leave.id).toBeGreaterThan(0);
+    }
+  });
+
+  it('gives a driver with no leaves an empty array, never undefined', async () => {
+    const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
+    const freshDriverId = await makeDriver();
+    const listed = await api.admin.drivers.list();
+    expect(listed.find((d) => d.id === freshDriverId)!.leaves).toEqual([]);
+  });
+
   it('refuses a leave that overlaps one the driver already has', async () => {
     const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
     await api.admin.drivers.addLeave({
