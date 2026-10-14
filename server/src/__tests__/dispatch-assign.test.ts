@@ -569,9 +569,23 @@ describeWithDb('admin.dispatch.assign', () => {
     created.leaveIds.push(leave.insertId);
 
     const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
-    await expect(api.admin.dispatch.assign({ bookingId, vanId, driverId })).rejects.toThrow(
-      /driver_unavailable/,
-    );
+    // Both halves: the CODE a client branches on, and the REASON Task 12
+    // maps to copy. `asTrpcError` sets `message` to the reason string, so a
+    // message match is meaningful here — unlike the role refusals, where
+    // `requireRole`'s message never names its code — but the code is the
+    // contract and is asserted first.
+    await expect(api.admin.dispatch.assign({ bookingId, vanId, driverId })).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: expect.stringContaining('driver_unavailable'),
+    });
+
+    // And nothing was written: a refused assignment leaves the booking
+    // exactly as it was, or the refusal is cosmetic.
+    const [row] = await getDb()
+      .select({ vanId: bookings.vanId, driverId: bookings.driverId, status: bookings.status })
+      .from(bookings)
+      .where(eq(bookings.id, bookingId));
+    expect(row).toEqual({ vanId: null, driverId: null, status: 'confirmed' });
   });
 
   /**
@@ -710,6 +724,60 @@ describeWithDb('admin.dispatch.assign', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  /**
+   * THE FLEET LOCK, FROM THE DRIVER SIDE (owner request, 2026-10-15).
+   *
+   * The van version of this test sits below. This is the same scenario with
+   * the scarce resource swapped: **one driver, two DIFFERENT tours, the same
+   * date.** Two dispatchers, two tour pages, one human being who can only be
+   * in one van.
+   *
+   * It is the fleet lock that stops it, not the tour lock — the two bookings
+   * are on different tours, so they lock different `tour_date_slots` rows
+   * and would never wait for each other. `fleet_date_slots(date)` is the
+   * only row they share.
+   *
+   * The loser must get a **CONFLICT**, not a 500 and not a silent overwrite:
+   * `driver_unavailable` maps to CONFLICT in `asTrpcError`, which is a
+   * sentence a dispatcher can act on ("someone just took that driver").
+   */
+  it('gives one driver to one of two tours competing on the same date', async () => {
+    const tourA = await makeTour();
+    const tourB = await makeTour();
+    const driverId = await makeDriver();
+    const vanA = await makeVan({ capacity: 4 });
+    const vanB = await makeVan({ capacity: 4 });
+    const bookingA = await makeBooking({ tourId: tourA, pax: 2, status: 'confirmed' });
+    const bookingB = await makeBooking({ tourId: tourB, pax: 2, status: 'confirmed' });
+
+    const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+    const results = await Promise.allSettled([
+      api.admin.dispatch.assign({ bookingId: bookingA, vanId: vanA, driverId }),
+      api.admin.dispatch.assign({ bookingId: bookingB, vanId: vanB, driverId }),
+    ]);
+
+    const fulfilled = results.filter((r) => r.status === 'fulfilled');
+    const rejected = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+
+    // A CLEAN refusal, which is the half a 500 would fail while still
+    // leaving exactly one winner — so asserting the count alone would miss
+    // it.
+    expect(rejected[0]!.reason).toMatchObject({
+      code: 'CONFLICT',
+      message: expect.stringContaining('driver_unavailable'),
+    });
+
+    // Exactly one booking holds the driver. A double-write shows up here
+    // even if both promises had somehow resolved.
+    const rows = await getDb()
+      .select({ id: bookings.id, driverId: bookings.driverId })
+      .from(bookings)
+      .where(inArray(bookings.id, [bookingA, bookingB]));
+    expect(rows.filter((r) => r.driverId === driverId)).toHaveLength(1);
   });
 
   it('gives one van to one of two tours competing on the same date', async () => {
