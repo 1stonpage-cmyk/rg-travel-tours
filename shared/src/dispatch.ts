@@ -14,6 +14,7 @@
  * programmer-error assertion and stays separate on purpose).
  */
 import { z } from 'zod';
+import type { BookingStatus } from './booking';
 import { civilDateSchema, phPhoneSchema } from './checkout';
 
 export const vanInputSchema = z
@@ -191,3 +192,73 @@ export const driverLeaveInputSchema = z
     path: ['endDate'],
   });
 export type DriverLeaveInput = z.infer<typeof driverLeaveInputSchema>;
+
+/**
+ * `admin.calendar.month({ year, month })` (Week 5 plan, Task 8; BUILD_SPEC
+ * §5C / §9 "Calendar").
+ *
+ * Bounded on both fields rather than left as a bare `z.number().int()`:
+ * `month` outside 1..12 cannot name a month at all, and `year` is bounded to
+ * a sane operating window (2020..2100) so a typo'd four-digit year cannot
+ * send the resolver off building a million-day range. There is no
+ * `.strict()` object nesting to guard here — both fields are required and
+ * there is nothing else to smuggle through.
+ */
+export const calendarMonthSchema = z
+  .object({
+    year: z.number().int().min(2020).max(2100),
+    month: z.number().int().min(1).max(12),
+  })
+  .strict();
+export type CalendarMonthInput = z.infer<typeof calendarMonthSchema>;
+
+/**
+ * One trip on the dispatch calendar (`admin.calendar.month`'s per-day
+ * payload).
+ *
+ * Deliberately NOT `leadEmail` / `leadPhone`: this is the first admin read
+ * whose rows are a list of *other people's* bookings rather than one a
+ * dispatcher opened deliberately, and RA 10173 says contact details do not
+ * belong in a list view. A ref and a tour title are enough to identify the
+ * trip; the detail screen (`admin.bookings.detail`) is where contact
+ * details live.
+ */
+export interface CalendarTrip {
+  bookingId: number;
+  ref: string;
+  tourTitle: string;
+  pax: number;
+  status: BookingStatus;
+  vanId: number | null;
+  vanPlate: string | null;
+  driverId: number | null;
+  driverName: string | null;
+  /**
+   * `status IN ('confirmed', 'assigned') AND (vanId IS NULL OR driverId IS
+   * NULL)`, computed once on the server. Both unpaid statuses
+   * (`pending_payment`, `pending_verification`) are excluded on purpose —
+   * see `awaitingPaymentCheck` below for why `pending_verification` still
+   * shows up without lighting this.
+   */
+  needsAssignment: boolean;
+  /**
+   * `status === 'pending_verification'` — a receipt is in, nobody has
+   * checked it yet (owner-decided 2026-10-14, Q2). The calendar SHOWS these
+   * trips, labelled in TEXT ("awaiting payment check"), they never count
+   * toward `needsAssignment`, and dispatch may still pre-assign them.
+   */
+  awaitingPaymentCheck: boolean;
+}
+
+/**
+ * One day of the dispatch calendar. Every civil day of the requested month
+ * gets a `CalendarDay`, including days with no trips at all — the calendar
+ * is generated from the month first and trips are bucketed into it, not the
+ * other way around, so an empty day still exists to be looked at.
+ */
+export interface CalendarDay {
+  /** Civil date, `YYYY-MM-DD`, Asia/Manila. */
+  date: string;
+  trips: CalendarTrip[];
+  needsAssignmentCount: number;
+}
