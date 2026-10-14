@@ -107,9 +107,25 @@ function toUpdateValues(patch: Partial<VanInput>): Partial<VanInsert> {
 /** The duplicate-plate message both `create` and `update` throw, worded for a human. */
 const DUPLICATE_PLATE_MESSAGE = 'A van with that plate number already exists.';
 
-const updateInput = z
-  .object({ id: z.number().int().positive(), patch: vanInputSchema.partial() })
-  .strict();
+/**
+ * `vanInputSchema.partial()`, refined to require at least one key.
+ *
+ * Fix round 1: an empty `{}` patch used to skip both the `.update()` call
+ * and the `affectedRows === 0` existence check that comes with it, while
+ * still committing a `van_updated` audit row — a row that claims a change
+ * happened (or even that the van exists) when neither is true. A request
+ * that changes nothing is a client bug, and the right answer is a
+ * validation error at the Zod boundary, not a silent no-op with a paper
+ * trail. `.partial()` is called first so the refinement sees the already-
+ * optional shape; `.strict()` on `vanInputSchema` carries through `.partial()`
+ * (proven by `admin-vans.test.ts`'s "rejects an unknown field in update's
+ * patch" test) and is unaffected by the `.refine()` wrapping it.
+ */
+const vanPatchSchema = vanInputSchema.partial().refine((patch) => Object.keys(patch).length > 0, {
+  message: 'Provide at least one field to update.',
+});
+
+const updateInput = z.object({ id: z.number().int().positive(), patch: vanPatchSchema }).strict();
 
 const setStatusInput = z
   .object({ id: z.number().int().positive(), status: z.enum(VAN_STATUSES) })
@@ -151,12 +167,22 @@ export const adminVansRouter = router({
     .mutation(async ({ input, ctx }) => {
       try {
         await getDb().transaction(async (tx) => {
+          /*
+           * No `if (Object.keys(setValues).length > 0)` guard here — Fix
+           * round 1 removed it rather than keeping it as a "defensive"
+           * belt. `vanPatchSchema`'s refine already guarantees `input.patch`
+           * is non-empty, every key in it is one of the ten fields
+           * `toUpdateValues` maps 1:1 (`.strict()` forbids any other key),
+           * so `setValues` cannot be empty either — the guard was dead code
+           * that happened to also be the ONLY path that could ever audit a
+           * change without the existence check running first. Removing it
+           * makes "check existence, then audit" unconditional instead of
+           * correct-by-the-current-shape-of-the-schema.
+           */
           const setValues = toUpdateValues(input.patch);
-          if (Object.keys(setValues).length > 0) {
-            const [result] = await tx.update(vans).set(setValues).where(eq(vans.id, input.id));
-            if (result.affectedRows === 0) {
-              throw new TRPCError({ code: 'NOT_FOUND', message: 'No van with that id.' });
-            }
+          const [result] = await tx.update(vans).set(setValues).where(eq(vans.id, input.id));
+          if (result.affectedRows === 0) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'No van with that id.' });
           }
           await writeAudit(tx, {
             actorType: 'user',

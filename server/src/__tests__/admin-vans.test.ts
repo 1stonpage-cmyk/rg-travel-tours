@@ -127,6 +127,28 @@ describeWithDb('vans', () => {
     });
   });
 
+  /**
+   * Fix round 1, addition 2: only `list` and `create` were exercised with a
+   * finance session before this. The shared gate plus
+   * `procedure-role-metadata.test.ts` cover the role list structurally, but
+   * §9's matrix is a security boundary and CLAUDE.md asks for a test per
+   * role per area — one procedure accidentally built on the wrong area is
+   * exactly the defect this catches. The id never has to resolve to a real
+   * van: `requireRole` runs before the resolver, so a finance session is
+   * refused before either procedure ever reads the database.
+   */
+  it('REFUSES finance for update and setStatus', async () => {
+    const api = appRouter.createCaller(staffContext(financeId, 'finance') as never);
+    await expect(
+      api.admin.vans.update({ id: 1, patch: { model: 'Valid model name' } }),
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    await expect(api.admin.vans.setStatus({ id: 1, status: 'parked' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+  });
+
   it('ALLOWS dispatcher and owner', async () => {
     for (const role of ['owner', 'dispatcher'] as const) {
       const api = appRouter.createCaller(staffContext(idFor(role), role) as never);
@@ -159,6 +181,27 @@ describeWithDb('vans', () => {
     ).rejects.toThrow();
   });
 
+  /**
+   * Fix round 1, addition 1: the review confirmed by reading Zod's source
+   * that `.strict()` on `vanInputSchema` survives `.partial()`, but nothing
+   * in the suite proved it. This is the guard that stops a client posting
+   * `isActive` or `status` through the `update` door instead of through
+   * `setStatus` — proven able to fail by dropping `.strict()` from
+   * `vanInputSchema` (same toggle the "rejects an unknown field" proof
+   * above used) and confirming this test goes red too.
+   */
+  it("rejects an unknown field in update's patch instead of silently stripping it", async () => {
+    const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
+    const { id } = await api.admin.vans.create({ ...VALID_VAN, plate: 'STR111' });
+    created.vanIds.push(id);
+    await expect(
+      api.admin.vans.update({
+        id,
+        patch: { model: 'Updated model', isActive: false } as never,
+      }),
+    ).rejects.toThrow();
+  });
+
   it('writes an audit row naming the actor on every change', async () => {
     const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
     const { id } = await api.admin.vans.create({ ...VALID_VAN, plate: 'AUD111' });
@@ -168,6 +211,54 @@ describeWithDb('vans', () => {
     expect(rows.map((r) => r.action)).toEqual(['van_created', 'van_status_changed']);
     expect(new Set(rows.map((r) => r.actorId))).toEqual(new Set([ownerId]));
     expect(new Set(rows.map((r) => r.actorType))).toEqual(new Set(['user']));
+  });
+
+  /**
+   * Fix round 1, blocking finding: `{}` used to skip both the `.update()`
+   * call and its `affectedRows === 0` existence check, while still
+   * committing a `van_updated` row — a row claiming a change happened (and
+   * even that the van exists) when neither was true. Fixed at the Zod
+   * boundary (`vanPatchSchema`'s `.refine()`), so this is checked both for
+   * a real van (no spurious audit row lands next to its `van_created` one)
+   * and for an id that does not exist at all — the exact case from the
+   * review.
+   */
+  it('rejects an empty patch instead of writing an audit row for nothing', async () => {
+    const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
+    const { id } = await api.admin.vans.create({ ...VALID_VAN, plate: 'EMP111' });
+    created.vanIds.push(id);
+
+    await expect(api.admin.vans.update({ id, patch: {} })).rejects.toThrow(/at least one/i);
+    await expect(api.admin.vans.update({ id: 999_999, patch: {} })).rejects.toThrow(
+      /at least one/i,
+    );
+
+    const rows = await auditRowsFor('van', id);
+    expect(rows.map((r) => r.action)).toEqual(['van_created']);
+  });
+
+  /**
+   * Fix round 1, addition 3: the review verified the `Date` <-> civil-date
+   * conversion by inspection; nobody had watched a date actually survive
+   * the trip. A one-day timezone slip here would silently move a service
+   * due date, and the symptom would not show up until months later as a
+   * van the dashboard thinks is fine but is actually overdue.
+   */
+  it('round-trips the four civil dates through create and list unchanged', async () => {
+    const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
+    const dates = {
+      lastService: '2026-02-15',
+      nextService: '2026-08-15',
+      orcrExpiry: '2027-03-01',
+      franchiseExpiry: '2028-04-20',
+    };
+    const { id } = await api.admin.vans.create({ ...VALID_VAN, plate: 'DATE111', ...dates });
+    created.vanIds.push(id);
+
+    const rows = await api.admin.vans.list();
+    const row = rows.find((r) => r.id === id);
+    expect(row).toBeDefined();
+    expect(row).toMatchObject(dates);
   });
 
   it('has no delete mutation — vans are soft-deleted through is_active', () => {
