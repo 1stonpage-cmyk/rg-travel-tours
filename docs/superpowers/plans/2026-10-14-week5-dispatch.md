@@ -1436,6 +1436,25 @@ baseline. **A fully green suite can still fail the run that way**, which is the 
 `rg_travel_test has rows no test cleaned up`, that is this check, and the fix is to clean the rows,
 never to weaken the check.
 
+**`tour_date` is a `date` column, which does not behave like a string (controller note,
+2026-10-14).** Drizzle types `bookings.tour_date` as **`Date`** for inserts and for `eq()`, while
+every civil date in this project's logic is a `YYYY-MM-DD` **string**. Two consequences for this
+task:
+
+- **Never `eq(bookings.tourDate, someString)`** — it does not compile. Compare with the house
+  raw-`sql` helper (`on()` in `capacity.ts:222`, `onDate()` in
+  `services/dispatch/availability.ts:104` — identical by design), which keeps the comparison on
+  civil-date strings end to end. The month range is a `BETWEEN` on two such strings.
+- **Fixture inserts must convert**: `tourDate: new Date(`${date}T00:00:00Z`)`, the shape
+  `admin-drivers.test.ts` already uses. A `makeBooking({ tourDate: '2026-11-13' })` helper takes
+  the string and converts inside.
+
+**Build the month from the civil date, never from a `Date` range.** `month: 11, year: 2026` means
+the days whose Manila civil date falls in November; `tour_date` is already a civil date, so there
+is no timezone conversion to do here at all. A `Date`-based range would shift the month boundary by
+eight hours and silently move trips between months — the same class of bug Q7's Manila boundary
+tests exist to catch in Task 13.
+
 - [ ] **Step 1: Write the failing test**
 
 ```ts
@@ -1494,12 +1513,35 @@ it('flags a pending_verification trip as awaiting a payment check', async () => 
   expect(day.needsAssignmentCount).toBe(1);
 });
 
-it('does NOT mark a cancelled or expired trip', async () => {
+/**
+ * Controller ruling, 2026-10-14: cancelled and expired trips are **absent
+ * from the month view entirely**, not merely uncounted.
+ *
+ * My plan left this ambiguous — the old version of this test asserted only
+ * `needsAssignmentCount === 0`, which an implementation passes whether it
+ * omits those trips or lists them. Deciding it:
+ *
+ *  - They hold no capacity (§5's status table), so they are not work.
+ *  - **Task 10 REFUSES to assign a cancelled or expired booking.** Showing
+ *    one in the dispatch calendar therefore offers a dispatcher an action
+ *    that can only ever fail, which is worse than hiding it.
+ *  - §9 gives cancellation history its own home: the bookings list, with a
+ *    status filter. The calendar answers "what is running, and what needs
+ *    staffing".
+ *
+ * So the assertion is emptiness, and the fixtures prove the day existed to
+ * be looked at.
+ */
+it('leaves a cancelled or expired trip out of the month entirely', async () => {
   const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
   await makeBooking({ tourDate: '2026-11-13', status: 'cancelled' });
   await makeBooking({ tourDate: '2026-11-13', status: 'expired' });
   const { days } = await api.admin.calendar.month({ year: 2026, month: 11 });
-  expect(days.find((d) => d.date === '2026-11-13')!.needsAssignmentCount).toBe(0);
+
+  const day = days.find((d) => d.date === '2026-11-13');
+  expect(day, 'the 13th must still be present as an empty day').toBeDefined();
+  expect(day!.trips).toEqual([]);
+  expect(day!.needsAssignmentCount).toBe(0);
 });
 
 it('never exposes a guest email or phone through the calendar', async () => {
