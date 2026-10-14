@@ -1279,7 +1279,15 @@ A purely presentational component that takes no query needs no `TrpcProviders` �
 - [ ] **Step 1: Write the failing test**
 
 ```tsx
-it('reveals a reset PIN once, in a status region, and not after a refetch', async () => {
+/**
+ * The panel is local state cleared on THREE triggers — dismiss, a
+ * subsequent mutation, and a route change. This test covers the first two;
+ * the route change is covered by the next test. An earlier draft was named
+ * "...and not after a refetch" while its body only clicked Dismiss, which
+ * is the name-claims-more-than-the-body defect that has appeared seven
+ * times in this plan.
+ */
+it('reveals a reset PIN once, in a status region, and clears it on dismiss', async () => {
   renderPage();
   await user.click(screen.getByRole('button', { name: /reset pin/i }));
   await user.click(screen.getByRole('button', { name: /^reset pin for/i }));
@@ -1289,6 +1297,19 @@ it('reveals a reset PIN once, in a status region, and not after a refetch', asyn
 
   await user.click(screen.getByRole('button', { name: /dismiss/i }));
   expect(screen.queryByRole('status')).toBeNull();
+});
+
+it('clears a revealed PIN when any other mutation runs', async () => {
+  // A PIN left on screen while the dispatcher does something else is a
+  // credential sitting in a shared office. Any subsequent mutation —
+  // adding a leave here — must take it down.
+  renderPage();
+  await user.click(screen.getByRole('button', { name: /reset pin/i }));
+  await user.click(screen.getByRole('button', { name: /^reset pin for/i }));
+  expect(await screen.findByRole('status')).toBeTruthy();
+
+  await user.click(screen.getByRole('button', { name: /add leave/i }));
+  await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
 });
 
 it('asks before resetting, and cancelling resets nothing', async () => {
