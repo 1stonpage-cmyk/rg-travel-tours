@@ -94,6 +94,7 @@ import {
 } from '@rg/shared';
 import { SETTING_SCHEMAS } from '../content/settings-schema';
 import { getDb, type Transaction } from '../db/client';
+import { withDeadlockRetry } from '../db/deadlock';
 import {
   bookingAddons,
   bookings,
@@ -232,7 +233,7 @@ export class HoldLimitReachedError extends Error {
 }
 
 /**
- * The booking lost {@link MAX_DEADLOCK_ATTEMPTS} deadlocks in a row — the
+ * The booking lost `MAX_DEADLOCK_ATTEMPTS` (`db/deadlock.ts`) deadlocks in a row — the
  * day is being hammered, and the honest answer to the guest is "try again",
  * not a 500.
  *
@@ -277,55 +278,18 @@ export class CouponExhaustedUnderLockError extends CouponUsageLimitReachedError 
 // The 1213 retry
 // ---------------------------------------------------------------------------
 
-/** Attempts at the WHOLE transaction before a deadlock is reported as one. */
-const MAX_DEADLOCK_ATTEMPTS = 3;
-
-/** See `booking-ref.ts`'s twin: Drizzle moves the mysql2 error onto `.cause`. */
-const MAX_CAUSE_DEPTH = 5;
-
-/**
- * True for MySQL's `ER_LOCK_DEADLOCK` (1213) anywhere in the first
- * {@link MAX_CAUSE_DEPTH} links of `err`'s cause chain.
- *
- * Both the numeric `errno` and the string `code` are accepted: mysql2 sets
- * both, and matching on either means a driver that stops decorating one of
- * them does not silently turn the retry off.
- *
- * It must stay NARROW. A lock-wait timeout (1205) is deliberately NOT
- * retried: it means some other transaction is holding a lock for a long
- * time, and re-running a 50-second wait helps nobody.
+/*
+ * `isDeadlockError` and `withDeadlockRetry` moved to `db/deadlock.ts` when
+ * `services/dispatch/assign.ts` became their second caller (Task 10 review,
+ * F5). Behaviour is unchanged — the two retry tests in
+ * `create-hold.test.ts` pin it — and the typed give-up below stays here,
+ * because `HoldContentionError` is this module's vocabulary and not the
+ * retry's.
  */
-function isDeadlockError(err: unknown): boolean {
-  let current: unknown = err;
-  for (let depth = 0; depth < MAX_CAUSE_DEPTH && current != null; depth += 1) {
-    if (typeof current !== 'object') break;
-    const candidate = current as { errno?: unknown; code?: unknown; cause?: unknown };
-    if (candidate.errno === 1213 || candidate.code === 'ER_LOCK_DEADLOCK') return true;
-    current = candidate.cause;
-  }
-  return false;
-}
 
-/**
- * Runs `attempt` again from the beginning if InnoDB killed it as a deadlock
- * victim. `attempt` must be the WHOLE transaction — a deadlocked transaction
- * is already rolled back, so there is nothing to resume.
- *
- * Retries immediately, with no backoff: the victim's locks are already gone
- * and a guest is waiting on an HTTP request. After
- * {@link MAX_DEADLOCK_ATTEMPTS} it gives up with a TYPED
- * {@link HoldContentionError}, so this module has no failure mode the router
- * has to recognise by string.
- */
-async function withDeadlockRetry<T>(attempt: () => Promise<T>): Promise<T> {
-  for (let tries = 1; ; tries += 1) {
-    try {
-      return await attempt();
-    } catch (error) {
-      if (!isDeadlockError(error)) throw error;
-      if (tries >= MAX_DEADLOCK_ATTEMPTS) throw new HoldContentionError(tries, error);
-    }
-  }
+/** Gives up in THIS module's vocabulary after the shared retry is exhausted. */
+function holdContention(tries: number, error: unknown): never {
+  throw new HoldContentionError(tries, error);
 }
 
 // ---------------------------------------------------------------------------
@@ -672,164 +636,166 @@ export async function createHold(
   // Ruling 17 — OUTSIDE the transaction. See step 0 in the module note.
   const tourId = await resolveActiveTourId(input.tourSlug);
 
-  return withDeadlockRetry(() =>
-    getDb().transaction(async (tx) => {
-      // 1. The locks, FIRST — before any consistent read. This is the
-      //    precondition `services/capacity.ts` documents and its hazard
-      //    guard test pins.
-      await takeSlotLocks(tx, tourId, input.date);
+  return withDeadlockRetry(
+    () =>
+      getDb().transaction(async (tx) => {
+        // 1. The locks, FIRST — before any consistent read. This is the
+        //    precondition `services/capacity.ts` documents and its hazard
+        //    guard test pins.
+        await takeSlotLocks(tx, tourId, input.date);
 
-      /*
-       * 2. §5 step 1's date guards (Ruling 15) — BEFORE capacity, and the
-       *    order inside them is most-specific-first, so a guest always gets
-       *    the sharpest true sentence: "that date has passed", then "the tour
-       *    is not running that day", then "we are not taking bookings for
-       *    that date".
-       *
-       *    **Why the whole group goes before capacity.** Both are true for a
-       *    guest who picks today on a tour that is also sold out, and only
-       *    one of the two sentences is useful: told "fully booked", they
-       *    abandon a tour that has seats on every other day; told "we're not
-       *    taking bookings for that date, pick one between X and Y", they
-       *    pick another day. `checkout.availability` answers in this same
-       *    order for the same reason, and that agreement is the point —
-       *    before this, the two surfaces gave different reasons for the same
-       *    request.
-       *
-       *    This now contains the transaction's FIRST non-locking read (the
-       *    `booking` settings block, and the blocked-dates lookup before it),
-       *    which is what pins the REPEATABLE READ snapshot. That is still
-       *    safe, and for the only reason that matters: it is after
-       *    `takeSlotLocks()`. The loser of a race is granted the fleet row
-       *    only once the winner has committed, so its snapshot — pinned here,
-       *    after that grant — already contains the winner's booking, and the
-       *    capacity counts below read it. See THE PRECONDITION in
-       *    `services/capacity.ts`: the rule is "locks before any consistent
-       *    read", never "capacity must read first".
-       */
-      assertDateNotPast(input.date, now);
-      await assertDateNotBlocked(tx, tourId, input.date);
-      await assertDateBookable(tx, input.date, now);
-
-      // 3. Capacity.
-      const verdict = await assessCapacity(tx, tourId, input.date, input.pax);
-      if (!verdict.ok) throw new CapacityRefusedError(verdict.reason);
-
-      // 4. The money — recomputed from the database, then the digest
-      //    compared. The client's `quoteId` is a change detector and never
-      //    an amount.
-      const inputs = await loadRecomputeInputs(tx, tourId, input.addonIds, input.couponCode);
-      const quote = priceQuote({ ...inputs, pax: input.pax });
-      const digest = quoteDigest({
-        tourId,
-        date: input.date,
-        pax: input.pax,
-        addonIds: input.addonIds,
-        couponCode: input.couponCode,
-        totalCentavos: quote.totalCentavos,
-      });
-      if (digest !== input.quoteId) throw new PriceChangedError();
-
-      // 5. The hold caps, under the locks.
-      await assertUnderHoldCaps(tx, input.lead.email, input.lead.phone);
-
-      // 6. The coupon: rules first, then its row locked LAST and the usage
-      //    cap re-checked under that lock.
-      if (input.couponCode) {
         /*
-         * `tx`, NOT the pool (Ruling 19, fix round 1). This transaction is
-         * already holding one of the pool's ten connections; a second
-         * connection checked out here would, at ten concurrent
-         * coupon-bearing holds, leave all ten held by transactions each
-         * waiting for an eleventh — and mysql2's connection queue is
-         * unbounded and untimed, so nothing releases and nothing times out.
-         * A transaction queueing for a connection is also one still holding
-         * the fleet, tour and coupon locks, which turns a competitor's wait
-         * into the 1205 this module deliberately does not retry.
+         * 2. §5 step 1's date guards (Ruling 15) — BEFORE capacity, and the
+         *    order inside them is most-specific-first, so a guest always gets
+         *    the sharpest true sentence: "that date has passed", then "the tour
+         *    is not running that day", then "we are not taking bookings for
+         *    that date".
+         *
+         *    **Why the whole group goes before capacity.** Both are true for a
+         *    guest who picks today on a tour that is also sold out, and only
+         *    one of the two sentences is useful: told "fully booked", they
+         *    abandon a tour that has seats on every other day; told "we're not
+         *    taking bookings for that date, pick one between X and Y", they
+         *    pick another day. `checkout.availability` answers in this same
+         *    order for the same reason, and that agreement is the point —
+         *    before this, the two surfaces gave different reasons for the same
+         *    request.
+         *
+         *    This now contains the transaction's FIRST non-locking read (the
+         *    `booking` settings block, and the blocked-dates lookup before it),
+         *    which is what pins the REPEATABLE READ snapshot. That is still
+         *    safe, and for the only reason that matters: it is after
+         *    `takeSlotLocks()`. The loser of a race is granted the fleet row
+         *    only once the winner has committed, so its snapshot — pinned here,
+         *    after that grant — already contains the winner's booking, and the
+         *    capacity counts below read it. See THE PRECONDITION in
+         *    `services/capacity.ts`: the rule is "locks before any consistent
+         *    read", never "capacity must read first".
          */
-        await validateCoupon(input.couponCode, quote.subtotalCentavos, now, tx);
-        // `inputs.coupon` is what the money above was actually computed
-        // from, and — both reads now going through `tx`, i.e. one snapshot —
-        // it is the same row version `validateCoupon` just approved. The
-        // guard stays as fail-closed defence, not as a live branch.
-        if (!inputs.coupon) throw new PriceChangedError();
-        await reserveCouponUnderLock(tx, inputs.coupon);
-      }
+        assertDateNotPast(input.date, now);
+        await assertDateNotBlocked(tx, tourId, input.date);
+        await assertDateBookable(tx, input.date, now);
 
-      // 7. The writes.
-      const holdExpiresAt = new Date(now.getTime() + HOLD_MINUTES * 60_000);
-      const snapshot = buildSnapshot(inputs, quote, input.pax);
+        // 3. Capacity.
+        const verdict = await assessCapacity(tx, tourId, input.date, input.pax);
+        if (!verdict.ok) throw new CapacityRefusedError(verdict.reason);
 
-      const { id: bookingId, ref } = await insertBookingWithRef(tx, {
-        tourId,
-        // UTC midnight of the civil date: the pool runs at `timezone: 'Z'`,
-        // so this stores the day the guest picked, in Cebu, exactly.
-        tourDate: new Date(`${input.date}T00:00:00Z`),
-        pax: input.pax,
-        leadName: input.lead.name,
-        leadEmail: input.lead.email,
-        leadPhone: input.lead.phone,
-        pickup: input.pickup ?? null,
-        pickupMapUrl: input.pickupMapUrl ?? null,
-        requests: input.requests ?? null,
-        status: 'pending_payment',
-        payMode: input.payMode,
-        priceSnapshot: snapshot,
-        subtotalCentavos: quote.subtotalCentavos,
-        discountCentavos: quote.discountCentavos,
-        totalCentavos: quote.totalCentavos,
-        couponId: inputs.coupon?.id ?? null,
-        holdExpiresAt,
-        createdAt: now,
-        updatedAt: now,
-      });
-
-      if (snapshot.addons.length > 0) {
-        await tx.insert(bookingAddons).values(
-          snapshot.addons.map((addon) => ({
-            bookingId,
-            addonId: addon.addonId,
-            name: addon.name,
-            priceCentavos: addon.priceCentavos,
-            perPerson: addon.perPerson,
-            qty: addon.qty,
-          })),
-        );
-      }
-
-      // Owner decision Q7/Q8: an active hold reserves the coupon's use, not
-      // just the capacity. The duplicate-key error `recordRedemption` can
-      // raise is deliberately NOT caught — it must propagate so this
-      // transaction rolls back rather than double-counting a coupon. The
-      // guest loses the hold; the coupon's count stays honest.
-      if (inputs.coupon) await recordRedemption(tx, inputs.coupon.id, bookingId);
-
-      await writeAudit(tx, {
-        // A guest, not staff and not a cron: `customer`. `actor_id` is null
-        // because a guest is not a row in any table — the portal identifies
-        // them by ref + email, and the booking this row points at IS the
-        // identification.
-        actorType: 'customer',
-        actorId: null,
-        action: 'booking.held',
-        entity: 'bookings',
-        entityId: bookingId,
-        // Identifiers and amounts only. No name, email or phone: audit rows
-        // are read by every admin and exported in reports.
-        data: {
-          ref,
+        // 4. The money — recomputed from the database, then the digest
+        //    compared. The client's `quoteId` is a change detector and never
+        //    an amount.
+        const inputs = await loadRecomputeInputs(tx, tourId, input.addonIds, input.couponCode);
+        const quote = priceQuote({ ...inputs, pax: input.pax });
+        const digest = quoteDigest({
           tourId,
-          tourDate: input.date,
+          date: input.date,
           pax: input.pax,
+          addonIds: input.addonIds,
+          couponCode: input.couponCode,
+          totalCentavos: quote.totalCentavos,
+        });
+        if (digest !== input.quoteId) throw new PriceChangedError();
+
+        // 5. The hold caps, under the locks.
+        await assertUnderHoldCaps(tx, input.lead.email, input.lead.phone);
+
+        // 6. The coupon: rules first, then its row locked LAST and the usage
+        //    cap re-checked under that lock.
+        if (input.couponCode) {
+          /*
+           * `tx`, NOT the pool (Ruling 19, fix round 1). This transaction is
+           * already holding one of the pool's ten connections; a second
+           * connection checked out here would, at ten concurrent
+           * coupon-bearing holds, leave all ten held by transactions each
+           * waiting for an eleventh — and mysql2's connection queue is
+           * unbounded and untimed, so nothing releases and nothing times out.
+           * A transaction queueing for a connection is also one still holding
+           * the fleet, tour and coupon locks, which turns a competitor's wait
+           * into the 1205 this module deliberately does not retry.
+           */
+          await validateCoupon(input.couponCode, quote.subtotalCentavos, now, tx);
+          // `inputs.coupon` is what the money above was actually computed
+          // from, and — both reads now going through `tx`, i.e. one snapshot —
+          // it is the same row version `validateCoupon` just approved. The
+          // guard stays as fail-closed defence, not as a live branch.
+          if (!inputs.coupon) throw new PriceChangedError();
+          await reserveCouponUnderLock(tx, inputs.coupon);
+        }
+
+        // 7. The writes.
+        const holdExpiresAt = new Date(now.getTime() + HOLD_MINUTES * 60_000);
+        const snapshot = buildSnapshot(inputs, quote, input.pax);
+
+        const { id: bookingId, ref } = await insertBookingWithRef(tx, {
+          tourId,
+          // UTC midnight of the civil date: the pool runs at `timezone: 'Z'`,
+          // so this stores the day the guest picked, in Cebu, exactly.
+          tourDate: new Date(`${input.date}T00:00:00Z`),
+          pax: input.pax,
+          leadName: input.lead.name,
+          leadEmail: input.lead.email,
+          leadPhone: input.lead.phone,
+          pickup: input.pickup ?? null,
+          pickupMapUrl: input.pickupMapUrl ?? null,
+          requests: input.requests ?? null,
+          status: 'pending_payment',
           payMode: input.payMode,
+          priceSnapshot: snapshot,
+          subtotalCentavos: quote.subtotalCentavos,
+          discountCentavos: quote.discountCentavos,
           totalCentavos: quote.totalCentavos,
           couponId: inputs.coupon?.id ?? null,
-          holdExpiresAt: holdExpiresAt.toISOString(),
-        },
-      });
+          holdExpiresAt,
+          createdAt: now,
+          updatedAt: now,
+        });
 
-      return { ref, bookingId, holdExpiresAt };
-    }),
+        if (snapshot.addons.length > 0) {
+          await tx.insert(bookingAddons).values(
+            snapshot.addons.map((addon) => ({
+              bookingId,
+              addonId: addon.addonId,
+              name: addon.name,
+              priceCentavos: addon.priceCentavos,
+              perPerson: addon.perPerson,
+              qty: addon.qty,
+            })),
+          );
+        }
+
+        // Owner decision Q7/Q8: an active hold reserves the coupon's use, not
+        // just the capacity. The duplicate-key error `recordRedemption` can
+        // raise is deliberately NOT caught — it must propagate so this
+        // transaction rolls back rather than double-counting a coupon. The
+        // guest loses the hold; the coupon's count stays honest.
+        if (inputs.coupon) await recordRedemption(tx, inputs.coupon.id, bookingId);
+
+        await writeAudit(tx, {
+          // A guest, not staff and not a cron: `customer`. `actor_id` is null
+          // because a guest is not a row in any table — the portal identifies
+          // them by ref + email, and the booking this row points at IS the
+          // identification.
+          actorType: 'customer',
+          actorId: null,
+          action: 'booking.held',
+          entity: 'bookings',
+          entityId: bookingId,
+          // Identifiers and amounts only. No name, email or phone: audit rows
+          // are read by every admin and exported in reports.
+          data: {
+            ref,
+            tourId,
+            tourDate: input.date,
+            pax: input.pax,
+            payMode: input.payMode,
+            totalCentavos: quote.totalCentavos,
+            couponId: inputs.coupon?.id ?? null,
+            holdExpiresAt: holdExpiresAt.toISOString(),
+          },
+        });
+
+        return { ref, bookingId, holdExpiresAt };
+      }),
+    { onExhausted: holdContention },
   );
 }
 

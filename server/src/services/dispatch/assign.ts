@@ -240,7 +240,17 @@ export async function assignVanAndDriver(
       driverId,
       previousVanId,
       previousDriverId,
-      ...(wasInProgress ? { reason: trimmedReason } : {}),
+      /*
+       * A reason is RECORDED whenever one was given, not only when it was
+       * demanded (Task 10 review, F3).
+       *
+       * `wasInProgress` gates whether a reason is REQUIRED — that is the
+       * owner's Q3 rule. Gating the audit on it too meant a dispatcher who
+       * typed an explanation for a pre-departure swap had it accepted by Zod
+       * and then silently dropped, which is the worst of both: the UI invited
+       * the note and the record threw it away.
+       */
+      ...(trimmedReason ? { reason: trimmedReason } : {}),
     },
   });
 

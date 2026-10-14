@@ -18,7 +18,7 @@
  * `'Admin sign-in required.'` / `'Not permitted for this account.'`, and
  * neither contains the word a message-matching regex would look for.
  */
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { BookingStatus, PriceSnapshot } from '@rg/shared';
 import { appRouter } from '../routers/_app';
@@ -445,7 +445,36 @@ describeWithDb('admin.dispatch.assign', () => {
         driverId: otherDriverId,
         reason: '   ',
       }),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  /**
+   * The SERVICE's guard, separately from Zod's (Task 10 review, F4).
+   *
+   * The whitespace case above is refused by `assignInputSchema`'s
+   * `.trim().min(3)` and never reaches the service, so a bare
+   * `.rejects.toThrow()` there proved only that Zod exists. The service's
+   * own `reason_required` — which is the rule that cannot live in Zod,
+   * because Zod cannot see the booking's status — is reached by omitting
+   * the field entirely, and that is what this asserts, by its exact code.
+   */
+  it('refuses an in_progress re-assignment at the SERVICE, not just at Zod', async () => {
+    const tourId = await makeTour();
+    const vanId = await makeVan({ capacity: 4 });
+    const otherVanId = await makeVan({ capacity: 4 });
+    const driverId = await makeDriver();
+    const otherDriverId = await makeDriver();
+    const bookingId = await makeBooking({ tourId, pax: 2, status: 'confirmed' });
+
+    const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+    await api.admin.dispatch.assign({ bookingId, vanId, driverId });
+    await getDb().update(bookings).set({ status: 'in_progress' }).where(eq(bookings.id, bookingId));
+
+    // A VALID Zod payload with no `reason` key at all — so the refusal can
+    // only have come from the service's status-aware check.
+    await expect(
+      api.admin.dispatch.assign({ bookingId, vanId: otherVanId, driverId: otherDriverId }),
+    ).rejects.toMatchObject({ message: expect.stringContaining('reason_required') });
   });
 
   it('does NOT demand a reason for an ordinary first assignment', async () => {
@@ -510,9 +539,18 @@ describeWithDb('admin.dispatch.assign', () => {
     const bookingId = await makeBooking({ tourId, pax: 6, status: 'confirmed' });
 
     const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+    /*
+     * EXACTLY `van_too_small` (Task 10 review, F1). The old alternation
+     * `/van_too_small|van_unavailable/` stayed green if the whole
+     * size-diagnostic branch were deleted, because a van too small is also
+     * simply absent from `vansFreeOn`'s answer and would fall through to
+     * `van_unavailable`. Pinning the specific reason is the point: Task 12
+     * maps these strings to copy, and "that van is too small for 6 guests"
+     * is a different sentence to "that van is not available".
+     */
     await expect(
       api.admin.dispatch.assign({ bookingId, vanId: tinyVanId, driverId }),
-    ).rejects.toThrow(/van_too_small|van_unavailable/);
+    ).rejects.toMatchObject({ message: expect.stringContaining('van_too_small') });
   });
 
   it('refuses a driver who is on leave that day', async () => {
@@ -564,6 +602,140 @@ describeWithDb('admin.dispatch.assign', () => {
       .select({ id: bookings.id, vanId: bookings.vanId })
       .from(bookings)
       .where(inArray(bookings.id, [firstBookingId, secondBookingId]));
+    expect(rows.filter((r) => r.vanId === vanId)).toHaveLength(1);
+  });
+
+  /**
+   * THE FLEET LOCK, which the two tests above do not actually prove
+   * (Task 10 review, F2).
+   *
+   * Both of those put their two bookings on the SAME tour, so
+   * `tour_date_slots(tour_id, date)` serialises them and the fleet lock
+   * never does any work. This is the case only the fleet lock can stop, and
+   * it is the one that stranded guests would come from: **one van, two
+   * DIFFERENT tours, the same date.** Two dispatchers, two tour pages, one
+   * physical vehicle.
+   *
+   * `schema.ts` says it in as many words on `fleetDateSlots`: "the fleet is
+   * global… two bookings for DIFFERENT tours on the same date lock different
+   * `tour_date_slots` rows, never wait for each other, and can both take the
+   * last van."
+   *
+   * Proven by narrowing `takeSlotLocks` to the tour lock alone — see the
+   * mutation list in the report. With the fleet lock gone this test reports
+   * two winners and one van double-booked, while the two tests above stay
+   * green, which is exactly why it had to exist separately.
+   */
+  /**
+   * The 1213 retry (Task 10 review, F5), injected rather than provoked for
+   * the same reason `create-hold.test.ts` injects it: InnoDB picks the
+   * victim, so provoking a deadlock reliably is exactly what cannot be
+   * made to work.
+   *
+   * It could never double-dispatch a van — InnoDB rolls the victim back —
+   * but without the retry the dispatcher saw Drizzle's opaque
+   * `Failed query` 500 on a busy morning, with the fleet apparently broken
+   * for no stated reason.
+   */
+  it('retries the whole transaction when InnoDB kills it as a deadlock victim', async () => {
+    const tourId = await makeTour();
+    const vanId = await makeVan({ capacity: 4 });
+    const driverId = await makeDriver();
+    const bookingId = await makeBooking({ tourId, pax: 2, status: 'confirmed' });
+
+    const db = getDb();
+    const realTransaction = db.transaction.bind(db);
+    let attempts = 0;
+    const spy = vi.spyOn(db, 'transaction').mockImplementation(((...args: unknown[]) => {
+      attempts += 1;
+      if (attempts === 1) {
+        const inner = Object.assign(new Error('ER_LOCK_DEADLOCK (1213)'), {
+          errno: 1213,
+          code: 'ER_LOCK_DEADLOCK',
+        });
+        return Promise.reject(Object.assign(new Error('Failed query'), { cause: inner }));
+      }
+      return (realTransaction as (...a: unknown[]) => unknown)(...args);
+    }) as typeof db.transaction);
+
+    try {
+      const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+      await expect(api.admin.dispatch.assign({ bookingId, vanId, driverId })).resolves.toEqual({
+        ok: true,
+      });
+      expect(attempts, 'the transaction was not retried').toBe(2);
+
+      // One assignment, not two half-written ones.
+      const [row] = await getDb()
+        .select({ vanId: bookings.vanId, driverId: bookings.driverId, status: bookings.status })
+        .from(bookings)
+        .where(eq(bookings.id, bookingId));
+      expect(row).toEqual({ vanId, driverId, status: 'assigned' });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('gives up as a CONFLICT, not a 500, after three deadlocks', async () => {
+    const tourId = await makeTour();
+    const vanId = await makeVan({ capacity: 4 });
+    const driverId = await makeDriver();
+    const bookingId = await makeBooking({ tourId, pax: 2, status: 'confirmed' });
+
+    const db = getDb();
+    let attempts = 0;
+    const spy = vi.spyOn(db, 'transaction').mockImplementation((() => {
+      attempts += 1;
+      const inner = Object.assign(new Error('ER_LOCK_DEADLOCK (1213)'), {
+        errno: 1213,
+        code: 'ER_LOCK_DEADLOCK',
+      });
+      return Promise.reject(Object.assign(new Error('Failed query'), { cause: inner }));
+    }) as typeof db.transaction);
+
+    try {
+      const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+      await expect(api.admin.dispatch.assign({ bookingId, vanId, driverId })).rejects.toMatchObject(
+        { code: 'CONFLICT' },
+      );
+      // EXACTLY three — the bound is the point, not "more than one".
+      expect(attempts).toBe(3);
+
+      // And nothing was written.
+      const [row] = await getDb()
+        .select({ vanId: bookings.vanId, status: bookings.status })
+        .from(bookings)
+        .where(eq(bookings.id, bookingId));
+      expect(row).toEqual({ vanId: null, status: 'confirmed' });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('gives one van to one of two tours competing on the same date', async () => {
+    const tourA = await makeTour();
+    const tourB = await makeTour();
+    const vanId = await makeVan({ capacity: 4 });
+    const driverA = await makeDriver();
+    const driverB = await makeDriver();
+    const bookingA = await makeBooking({ tourId: tourA, pax: 2, status: 'confirmed' });
+    const bookingB = await makeBooking({ tourId: tourB, pax: 2, status: 'confirmed' });
+
+    const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+    const results = await Promise.allSettled([
+      api.admin.dispatch.assign({ bookingId: bookingA, vanId, driverId: driverA }),
+      api.admin.dispatch.assign({ bookingId: bookingB, vanId, driverId: driverB }),
+    ]);
+
+    // Exactly one winner, and exactly one booking holding the van. The
+    // second assertion is the one that matters: a double-write would show
+    // up here as two rows even if both promises somehow resolved.
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+
+    const rows = await getDb()
+      .select({ id: bookings.id, vanId: bookings.vanId })
+      .from(bookings)
+      .where(inArray(bookings.id, [bookingA, bookingB]));
     expect(rows.filter((r) => r.vanId === vanId)).toHaveLength(1);
   });
 

@@ -17,6 +17,7 @@
 import { TRPCError } from '@trpc/server';
 import { assignInputSchema } from '@rg/shared';
 import { getDb } from '../../db/client';
+import { withDeadlockRetry } from '../../db/deadlock';
 import { type AssignRefusal, assignVanAndDriver } from '../../services/dispatch/assign';
 import { adminProcedure, router } from '../../trpc';
 
@@ -61,17 +62,48 @@ export const adminDispatchRouter = router({
   assign: adminProcedure('assignVanDriver')
     .input(assignInputSchema)
     .mutation(async ({ input, ctx }) => {
-      const verdict = await getDb().transaction((tx) =>
-        assignVanAndDriver(tx, {
-          bookingId: input.bookingId,
-          vanId: input.vanId,
-          driverId: input.driverId,
-          reason: input.reason,
-          // The LIVE session identity, never a value the request body
-          // could claim — same discipline `approveReceipt` uses for
-          // `verifier`.
-          actorUserId: ctx.session.subjectId,
-        }),
+      /*
+       * The WHOLE transaction runs inside the shared 1213 retry (Task 10
+       * review, F5), the same way `createHold()` does.
+       *
+       * `capacity.ts` records the measured reason: when a date's
+       * `fleet_date_slots` row does not exist yet, two concurrent
+       * `INSERT … ON DUPLICATE KEY UPDATE`s of it can deadlock, and at three
+       * or more concurrent requests for one date that becomes likely rather
+       * than theoretical. InnoDB rolls one back, so this was never able to
+       * double-dispatch a van — but without the retry the victim surfaced as
+       * a raw `Failed query` 500, and a dispatcher on a busy morning would
+       * see the fleet break for no stated reason.
+       *
+       * Retrying is the caller's business because a deadlocked transaction
+       * is already rolled back: there is nothing to resume from inside it.
+       * After three attempts it gives up as a CONFLICT — "two of you are
+       * assigning the same day, try again" is a sentence a dispatcher can
+       * act on, which a 500 is not.
+       */
+      const verdict = await withDeadlockRetry(
+        () =>
+          getDb().transaction((tx) =>
+            assignVanAndDriver(tx, {
+              bookingId: input.bookingId,
+              vanId: input.vanId,
+              driverId: input.driverId,
+              reason: input.reason,
+              // The LIVE session identity, never a value the request body
+              // could claim — same discipline `approveReceipt` uses for
+              // `verifier`.
+              actorUserId: ctx.session.subjectId,
+            }),
+          ),
+        {
+          onExhausted: (tries, error) => {
+            throw new TRPCError({
+              code: 'CONFLICT',
+              message: 'This date is busy with other assignments right now. Please try again.',
+              cause: error instanceof Error ? error : new Error(`deadlocked ${tries} times`),
+            });
+          },
+        },
       );
 
       if (!verdict.ok) throw asTrpcError(verdict.reason);
