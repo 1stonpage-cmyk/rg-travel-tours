@@ -70,8 +70,10 @@ describe('vans table', () => {
 
   /**
    * The order matters, and is why this test exists rather than just checking
-   * the index is present. The §5 capacity query filters active + not
-   * for_repair and only then needs `capacity >= pax`, so the two equality
+   * the index is present. The §5 capacity query filters active + status
+   * equal to `VAN_STATUS_SELLABLE` (the Q1 allow-list, owner-decided
+   * 2026-10-14 — it replaced a `<> 'for_repair'` deny-list) and only then
+   * needs `capacity >= pax`, so the two equality
    * columns must precede the range column — put `capacity` first and MySQL
    * can no longer use the index for the equality filters at all.
    */

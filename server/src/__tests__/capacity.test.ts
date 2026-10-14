@@ -48,7 +48,15 @@ import {
   type PriceSnapshot,
 } from '@rg/shared';
 import { getDb, getPool, type Transaction } from '../db/client';
-import { bookings, destinations, driverLeaves, drivers, tours, vans } from '../db/schema';
+import {
+  VAN_STATUSES,
+  bookings,
+  destinations,
+  driverLeaves,
+  drivers,
+  tours,
+  vans,
+} from '../db/schema';
 import { generateBookingRef } from '../services/booking-ref';
 import { assessCapacity, takeSlotLocks } from '../services/capacity';
 import { describeWithDb } from './helpers/db';
@@ -113,7 +121,7 @@ async function makeTour(opts: { groupsPerDay?: number; isActive?: boolean } = {}
 async function makeVan(
   opts: {
     capacity?: number;
-    status?: 'available' | 'on_trip' | 'for_repair';
+    status?: (typeof VAN_STATUSES)[number];
     isActive?: boolean;
   } = {},
 ) {
