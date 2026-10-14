@@ -1893,6 +1893,30 @@ baseline. **A fully green suite can still fail the run that way**, which is the 
 `rg_travel_test has rows no test cleaned up`, that is this check, and the fix is to clean the rows,
 never to weaken the check.
 
+**`booking.tourDate` is a `Date`, and both of this task's dependencies demand a STRING
+(controller note, 2026-10-14 — verified against source).**
+
+This is the single most likely way to get this task wrong, so it is spelled out:
+
+- `takeSlotLocks(tx, tourId, date: string)` (`capacity.ts:172`) calls **`assertCivilDate(date)` on
+  its first line**. Hand it a `Date` and it **throws** — the lock is never taken, and the failure
+  looks like a validation error rather than a missing lock.
+- `vansFreeOn(tx, date: string, minCapacity, opts?)` and `driversFreeOn(tx, date: string, opts?)`
+  compare civil-date strings in raw `sql`.
+
+But `bookings.tour_date` is a Drizzle `date()` column, so the row you read back gives you a
+**`Date`**. Convert it once, immediately after reading the booking, with
+**`civilDateFromDate(row.tourDate)`** from `@rg/shared` — extracted for exactly this call site
+(`shared/src/time.ts`). Do not call `toISOString().slice(0, 10)`: the pool is configured
+`timezone: 'Z'` today, so it would appear to work, and it would silently be a day out the moment
+that changes. A tour date off by one is a van sent on the wrong morning.
+
+**Column names, verified so you do not have to guess them** (`server/src/db/schema.ts`):
+`bookings.subtotalCentavos`, `.discountCentavos`, `.totalCentavos`, `.amountPaidCentavos`,
+`.payMode`, `.vanId`, `.driverId`, `.status`, `.pax`, `.tourId`, `.tourDate`; and
+`payments.amountCentavos`, `.status`, `.type`. Your `moneySnapshot` helper reads the first five
+plus the payment rows — if any name here is wrong, the tree wins and tell me.
+
 - [ ] **Step 1: Write the failing test**
 
 ```ts
