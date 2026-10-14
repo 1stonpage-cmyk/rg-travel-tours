@@ -284,7 +284,6 @@ import { expect, it } from 'vitest';
 import { getDb } from '../db/client';
 import { VAN_STATUSES, VAN_STATUS_SELLABLE, vans } from '../db/schema';
 import { assessCapacity } from '../services/capacity';
-import { vansFreeOn } from '../services/dispatch/availability';
 import { describeWithDb } from './helpers/db';
 
 it('names all four statuses from BUILD_SPEC §9', () => {
@@ -323,32 +322,16 @@ describeWithDb('vans', () => {
     const verdict = await db.transaction((tx) => assessCapacity(tx, { tourId, date, pax: 2 }));
     expect(verdict).toEqual({ ok: true });
   });
-
-  /**
-   * The owner's second named test: capacity and dispatch availability must
-   * AGREE about what a status means. They ask different questions — one
-   * counts, one identifies — but they must never disagree about whether a
-   * given van is usable at all.
-   */
-  it.each([...VAN_STATUSES])('capacity and dispatch agree about a %s van', async (status) => {
-    const db = getDb();
-    await db.update(vans).set({ status }).where(eq(vans.id, onlyVanId));
-    const [verdict, free] = await db.transaction(async (tx) => [
-      await assessCapacity(tx, { tourId, date, pax: 2 }),
-      await vansFreeOn(tx, date, 2),
-    ]);
-    const sellable = verdict.ok;
-    const dispatchable = free.some((v) => v.id === onlyVanId);
-    expect(dispatchable).toBe(sellable);
-  });
 });
 ```
 
-The agreement test is written to be **symmetric on status alone** — one van, one date, no other
-bookings — because that is the only condition under which capacity's counting and availability's
-identifying must give the same answer. Task 3's own agreement test covers the asymmetry that
-appears once bookings exist, and the two must not be merged: merging them would force one of them
-to assert something false.
+**Ruling (controller, 2026-10-14): the owner's SECOND named Q1 test lives in Task 3, not here.**
+The owner named two tests — every non-`available` status excluded (above, in full), and _capacity
+and dispatch availability agree_. The second one has to import `vansFreeOn`, which **Task 3
+creates**, so written here it would not compile. It is therefore a **requirement on Task 3**, which
+owns both modules, and Task 3's brief carries it. Both named tests get written; only the file
+differs. Do not attempt the agreement assertion in this task, and do not import anything from
+`services/dispatch/` here.
 
 - [ ] **Step 2: Run it and watch it fail**
 
@@ -556,6 +539,25 @@ describeWithDb('vans', () => {
     expect(free.map((d) => d.id)).not.toContain(driverId);
   });
 
+  /**
+   * THE STATUS-AGREEMENT TEST — the owner's second named Q1 test, moved here
+   * from Task 2 because it needs both modules (controller ruling).
+   *
+   * Capacity COUNTS and availability IDENTIFIES, so they answer different
+   * questions — but they must never disagree about whether a van's status
+   * makes it usable at all. One van, one date, no other bookings: the only
+   * condition under which the two answers must be identical.
+   */
+  it.each([...VAN_STATUSES])('capacity and dispatch agree about a %s van', async (status) => {
+    const db = getDb();
+    await db.update(vans).set({ status }).where(eq(vans.id, onlyVanId));
+    const [verdict, free] = await db.transaction(async (tx) => [
+      await assessCapacity(tx, { tourId, date: DATE, pax: 2 }),
+      await vansFreeOn(tx, DATE, 2),
+    ]);
+    expect(free.some((v) => v.id === onlyVanId)).toBe(verdict.ok);
+  });
+
   it('orders vans smallest first so auto-suggest can take [0]', async () => {
     const db = getDb();
     const free = await db.transaction((tx) => vansFreeOn(tx, DATE, 1));
@@ -644,6 +646,9 @@ This project has found twelve-plus tests that could not fail, so each mutation b
 2. Replace `CAPACITY_HOLDING_STATUSES` with every status → "does NOT exclude a van assigned to a booking that no longer holds capacity" goes red.
 3. Drop the `excludeBookingId` clause → the re-assign test goes red.
 4. Change the leave comparison from `<=`/`>=` to `<`/`>` → the inclusive-leave test goes red.
+5. Filter on `status <> 'for_repair'` instead of `eq(status, VAN_STATUS_SELLABLE)` → **the
+   status-agreement test goes red for `parked` and `on_trip`**. This is the owner's Q1 test, and
+   it is the one that proves the allow-list reaches dispatch and not only capacity.
 
 Restore after each. Any mutation that leaves everything green is a bug — log it in `docs/BUGS_LOG.md`.
 
@@ -1979,6 +1984,14 @@ git commit -m "feat(dispatch): a suggestion that fits, and that spreads the work
 - **Error handling follows `QueryBoundary`'s existing rules**: the dropdown contents are handled by hand rather than by `QueryBoundary`, because that component renders a "Try again" `<button>` on failure and a button must never appear inside a Radix listbox — this is the exact lesson `HeroSection.tsx` already carries in a comment. On failure the panel shows an error region **outside** the listbox and keeps the Assign button disabled.
 - **Auto-suggest fills the dropdowns; it does not assign.** The button's label is "Suggest", the result is two pre-selected values and a line saying why, and the dispatcher still presses "Assign".
 - **The "unpaid" label (owner-decided 2026-10-14, Q2).** When the booking is `pending_verification`, the panel and the assignment it produces both carry an **"unpaid - receipt not yet checked"** label, in **text**, beside the van and driver. Amber, never red. A dispatcher looking at tomorrow's board must be able to see which staffed trips are still unverified without clicking anything, because that is the set where the money can still fall through.
+- **The panel renders only for owner and dispatcher** (controller ruling, 2026-10-14).
+  `admin.calendar.month` is `bookingsView`, so **finance can open the calendar**, but `dayOptions`
+  and `dispatch.assign` are `assignVanDriver`. Without a gate, a finance user would trip a
+  `FORBIDDEN` just by selecting a day. So read the role from `staffAuth.me`, render nothing for
+  finance, and **do not issue the `dayOptions` query at all** in that case. **Hiding the panel is
+  not the access control** — `CLAUDE.md` is explicit about that, and the server procedures stay the
+  enforcement (Task 8's role test already proves finance is refused). The gate only stops showing
+  someone an error for a thing they never asked for.
 - **The reason field appears only for an `in_progress` trip (Q3)**, where it is **required**: a labelled `<textarea>`, a visible "Required" hint, and the Assign button disabled until it is non-empty. It is **absent** for every other status rather than present-and-optional, because an optional box beside a van swap invites a blank one.
 - Pending state on both buttons, and a `role="status"` confirmation naming the van and the driver after a successful assignment.
 
@@ -2060,6 +2073,23 @@ it('offers no reason field at all for a confirmed booking', () => {
   renderPanel({ status: 'confirmed', options: { vans: [VAN_10], drivers: [DRIVER_A] } });
   expect(screen.queryByLabelText(/reason/i)).toBeNull();
 });
+
+/* ---- Controller ruling: finance sees no panel and triggers no query ---- */
+
+it('renders nothing for finance, and asks for no options', () => {
+  const queries: string[] = [];
+  renderPanel({ role: 'finance', onQuery: (name: string) => queries.push(name) });
+  expect(screen.queryByRole('button', { name: /^assign$/i })).toBeNull();
+  expect(queries).not.toContain('dayOptions');
+});
+
+it('renders the panel for owner and for dispatcher', () => {
+  for (const role of ['owner', 'dispatcher'] as const) {
+    const { unmount } = renderPanel({ role, options: { vans: [VAN_10], drivers: [DRIVER_A] } });
+    expect(screen.getByRole('button', { name: /^assign$/i })).toBeTruthy();
+    unmount();
+  }
+});
 ```
 
 - [ ] **Step 2: Run them and watch them fail**
@@ -2109,6 +2139,17 @@ export const UNASSIGNED_ALERT_HOURS = 48; // §9, counted BACK from the tour dat
 export const SERVICE_DUE_DAYS = 14; // §9 "Van service due within 14 days"
 export const PAPERS_EXPIRING_DAYS = 30; // §9 "licence, OR/CR and franchise expiring within 30 days"
 
+/**
+ * Every alert function takes an EXPLICIT `now` (controller ruling,
+ * 2026-10-14). A time-dependent query that reads the system clock
+ * internally cannot be tested at a boundary without faking timers
+ * globally — which is exactly how a timezone bug survives its own test
+ * suite. The router passes `new Date()`; the CLIENT never supplies a time,
+ * so nobody can move the alert window from a browser.
+ *
+ * Same discipline as `isDriverVisible(status, tourDate, now)` and
+ * `bookableDateRange(settings, now)` in `/shared`.
+ */
 export interface DashboardAlert {
   kind:
     'payments_to_verify' | 'unassigned_soon' | 'vans_in_repair' | 'service_due' | 'papers_expiring';
@@ -2116,7 +2157,13 @@ export interface DashboardAlert {
   /** At most five examples, for the card's secondary line. Never the whole list. */
   examples: Array<{ id: number; label: string; date: string | null }>;
 }
+export async function unassignedSoon(tx: Transaction, now: Date): Promise<DashboardAlert>;
+export async function paymentsToVerify(tx: Transaction, now: Date): Promise<DashboardAlert>;
+export async function vansInRepair(tx: Transaction, now: Date): Promise<DashboardAlert>;
+export async function serviceDue(tx: Transaction, now: Date): Promise<DashboardAlert>;
+export async function papersExpiring(tx: Transaction, now: Date): Promise<DashboardAlert>;
 // admin.dashboard.alerts() -> DashboardAlert[]  (always five entries, zeroes included)
+// The procedure takes NO input: it passes its own `new Date()`.
 ```
 
 **Always five entries, zeroes included.** A dashboard that hides the empty alerts teaches an operator that an absent card means "fine", which is indistinguishable from "the query broke". Five cards, every load, each saying its number.
