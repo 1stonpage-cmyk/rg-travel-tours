@@ -883,10 +883,26 @@ it('renders the repair status as text, not only a colour', () => {
   expect(screen.getByText(/for repair/i)).toBeTruthy();
 });
 
-it('never scrolls the page sideways at 360px', () => {
-  renderPage();
+/**
+ * NOTE ON WHAT THIS TEST CAN AND CANNOT PROVE. jsdom does no layout: it
+ * cannot measure a scroll width, so no unit test here can honestly claim
+ * "the page never scrolls sideways at 360px". What it CAN prove is that the
+ * wide element is inside a scroll container of its own, which is the
+ * mechanism that prevents the page from scrolling. The test is named for
+ * the mechanism it checks, not for the outcome it would like to claim —
+ * a name that over-claims is the same defect as an assertion that is
+ * missing, and harder to spot, because the name reads like coverage.
+ *
+ * The 360px outcome itself is verified by hand in Task 16's walkthrough.
+ */
+it('wraps the table in its own horizontal scroll container', () => {
+  renderPage({ vans: [VAN, { ...VAN, id: 2, plate: 'DEF456' }] });
   const wrapper = document.querySelector('[data-testid="vans-table-wrapper"]');
-  expect(wrapper?.className).toMatch(/overflow-x-auto/);
+  expect(wrapper).not.toBeNull();
+  expect(wrapper!.className).toMatch(/overflow-x-auto/);
+  // The table must be INSIDE the scroll container, not a sibling of it —
+  // a wrapper with the class and the table outside it scrolls nothing.
+  expect(wrapper!.querySelector('table')).not.toBeNull();
 });
 
 it('gives every control a 44px tap target', () => {
@@ -1308,8 +1324,26 @@ it('does NOT mark a cancelled or expired trip', async () => {
 
 it('never exposes a guest email or phone through the calendar', async () => {
   const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+  await makeBooking({
+    tourDate: '2026-11-18',
+    status: 'confirmed',
+    leadEmail: 'guest@example.com',
+    leadPhone: '+639081234567',
+  });
   const { days } = await api.admin.calendar.month({ year: 2026, month: 11 });
-  expect(JSON.stringify(days)).not.toMatch(/@|\+639/);
+
+  // VACUITY GUARD, and it is the whole test. A "no email appears" assertion
+  // over an empty month passes perfectly while proving nothing, so the
+  // booking above is seeded with a known address and number, and this line
+  // insists the payload actually contains trips before the absence below
+  // means anything.
+  const trips = days.flatMap((d) => d.trips);
+  expect(trips.length).toBeGreaterThan(0);
+
+  const payload = JSON.stringify(days);
+  expect(payload).not.toContain('guest@example.com');
+  expect(payload).not.toContain('+639081234567');
+  expect(payload).not.toMatch(/@|\+639/);
 });
 
 it('lets finance READ the month but not the dropdown options', async () => {
@@ -1608,10 +1642,46 @@ it('writes an audit row naming the actor and both previous values', async () => 
 
 it('changes no money and no payment row', async () => {
   const before = await moneySnapshot(bookingId);
+  // VACUITY GUARD: two empty snapshots are equal, so a `moneySnapshot` that
+  // silently returns nothing would make this test pass while watching
+  // nothing at all. Assert it actually captured the money columns first.
+  expect(before).toMatchObject({
+    totalCentavos: expect.any(Number),
+    amountPaidCentavos: expect.any(Number),
+  });
+
   const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
   await api.admin.dispatch.assign({ bookingId, vanId, driverId });
   expect(await moneySnapshot(bookingId)).toEqual(before);
 });
+
+/**
+ * `moneySnapshot` must read EVERY money-bearing column on the booking plus
+ * its payment rows, or the test above is only as good as its projection.
+ * Define it in this file as:
+ *
+ *   async function moneySnapshot(id: number) {
+ *     const [b] = await getDb()
+ *       .select({
+ *         subtotalCentavos: bookings.subtotalCentavos,
+ *         discountCentavos: bookings.discountCentavos,
+ *         totalCentavos: bookings.totalCentavos,
+ *         amountPaidCentavos: bookings.amountPaidCentavos,
+ *         payMode: bookings.payMode,
+ *       })
+ *       .from(bookings)
+ *       .where(eq(bookings.id, id));
+ *     const rows = await getDb()
+ *       .select({ id: payments.id, status: payments.status, amount: payments.amountCentavos })
+ *       .from(payments)
+ *       .where(eq(payments.bookingId, id))
+ *       .orderBy(payments.id);
+ *     return { ...b, payments: rows };
+ *   }
+ *
+ * Check the exact column names in `server/src/db/schema.ts` before writing
+ * it — do not guess them from this comment.
+ */
 
 it('REFUSES finance — §9 gives assignment to owner and dispatcher only', async () => {
   const api = appRouter.createCaller(staffContext(financeId, 'finance') as never);
@@ -1919,13 +1989,22 @@ it('breaks a tie by name so the suggestion is stable across calls', async () => 
 it('never suggests a van or driver that assign() would refuse', async () => {
   // The property that matters: suggest and assign must agree, because a
   // suggestion the mutation rejects makes the button look broken.
+  //
+  // NO `if (s.van && s.driver)` GUARD AROUND THE ASSERTION. An earlier draft
+  // of this test wrapped the body in exactly that condition, which makes the
+  // test pass by asserting NOTHING the moment `suggestAssignment` returns
+  // nulls — and returning nulls is the most likely way for it to be broken.
+  // The fixture guarantees a free van and a free driver, so nulls here are a
+  // failure, and the two assertions below say so out loud before the
+  // agreement is checked at all.
   const s = await getDb().transaction((tx) => suggestAssignment(tx, bookingId));
-  if (s.van && s.driver) {
-    const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
-    await expect(
-      api.admin.dispatch.assign({ bookingId, vanId: s.van.id, driverId: s.driver.id }),
-    ).resolves.toEqual({ ok: true });
-  }
+  expect(s.van, 'fixture guarantees a free van; a null here is the bug').not.toBeNull();
+  expect(s.driver, 'fixture guarantees a free driver; a null here is the bug').not.toBeNull();
+
+  const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+  await expect(
+    api.admin.dispatch.assign({ bookingId, vanId: s.van!.id, driverId: s.driver!.id }),
+  ).resolves.toEqual({ ok: true });
 });
 
 it('writes nothing at all', async () => {
