@@ -18,7 +18,9 @@ import { z } from 'zod';
 import { PAY_MODES } from './booking';
 
 /** A civil date in Asia/Manila — the tour day, not an instant. */
-const civilDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected a YYYY-MM-DD date');
+export const civilDateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected a YYYY-MM-DD date');
 
 /**
  * A Philippine mobile number, in any of the forms a guest might type it.
@@ -48,7 +50,7 @@ export const phPhoneSchema = z
 export const quoteInput = z
   .object({
     tourSlug: z.string().min(1).max(160),
-    date: civilDate,
+    date: civilDateSchema,
     pax: z.number().int().min(1).max(12),
     addonIds: z.array(z.number().int().positive()).max(20).default([]),
     couponCode: z.string().min(1).max(40).optional(),

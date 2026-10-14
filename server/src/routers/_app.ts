@@ -5,6 +5,7 @@ import { inquiriesRouter } from './public/inquiries';
 import { newsletterRouter } from './public/newsletter';
 import { packagesRouter } from './public/packages';
 import { adminBookingsRouter } from './admin/bookings';
+import { adminVansRouter } from './admin/vans';
 import { staffAuthRouter } from './admin/auth';
 import { portalRouter } from './public/portal';
 import { reviewsRouter } from './public/reviews';
@@ -70,6 +71,7 @@ export const appRouter = router({
    */
   admin: router({
     bookings: adminBookingsRouter,
+    vans: adminVansRouter,
   }),
 });
 
