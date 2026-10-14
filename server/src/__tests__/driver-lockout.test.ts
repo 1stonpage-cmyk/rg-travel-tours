@@ -357,7 +357,23 @@ describe('driver login per-IP limiter', () => {
       (appRouter as unknown as { _def: { procedures: Record<string, unknown> } })._def.procedures,
     );
     const driverLogin = procedures.filter(
-      (p) => /driver/i.test(p) && /log_?in|sign_?in|authenticate|pin/i.test(p),
+      (p) =>
+        // `admin.*` is excluded deliberately (owner-decided 2026-10-14).
+        // Week 5's `admin.drivers.resetPin` matches both patterns below —
+        // "drivers" and "Pin" — but it is an `adminProcedure('vansDrivers')`,
+        // not a login surface: it mints a PIN for a dispatcher who is already
+        // signed in, and `procedure-role-metadata.test.ts` separately proves
+        // every `admin.*` procedure is role-gated. A per-IP login limiter on
+        // it would protect nothing, while the false positive would either
+        // block the build or push someone into renaming a procedure §9 calls
+        // "PIN reset".
+        //
+        // The guard keeps its teeth for what it was written for: a PUBLIC
+        // driver login. `driver.login`, `driverAuth.verifyPin` and anything
+        // else outside `admin.` still trips it.
+        !p.startsWith('admin.') &&
+        /driver/i.test(p) &&
+        /log_?in|sign_?in|authenticate|pin/i.test(p),
     );
 
     if (driverLogin.length === 0) {

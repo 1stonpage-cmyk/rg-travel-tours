@@ -2975,6 +2975,26 @@ at 5am needs the dispatcher on duty, not the owner's phone.
 
 Named test: **dispatcher vs owner vs finance access per the role matrix**, each proven able to fail.
 
+### Q5b — ✅ ANSWERED: the driver-login limiter guard skips `admin.*` (owner-decided 2026-10-14)
+
+Task 6 named its procedure `admin.drivers.resetPin`, which trips the pre-existing guard in
+`driver-lockout.test.ts` — it scans for any procedure matching `/driver/i` **and**
+`/log_?in|sign_?in|authenticate|pin/i` and demands a per-IP login limiter be mounted for it.
+"drivers" and "Pin" both match, so a correct admin procedure turned a correct security guard red.
+
+**Owner decision: scope the guard to non-admin procedures.** `admin.*` is excluded because every
+procedure there is an `adminProcedure(area)` — role-gated, and separately proven so by
+`procedure-role-metadata.test.ts` — and `resetPin` mints a PIN for a dispatcher who is _already_
+signed in, so a login limiter on it would protect nothing. The guard keeps its teeth for what it
+was written for: a **public** driver login. `driver.login`, `driverAuth.verifyPin` and anything
+else outside `admin.` still trip it, **proven** by adding a public `driver.login` with no limiter
+and watching the guard fail.
+
+**Rejected:** rate-limiting `resetPin` as well (the threat is a compromised dispatcher session, not
+brute force, and it is better answered by the audit trail that already records every reset with its
+actor), and renaming the procedure (§9 calls it "PIN reset"; the next spec-faithful name could
+collide again).
+
 ### Q6 — How should auto-suggest pick a driver? (Task 11)
 
 §5 says "auto-suggests a van (smallest that fits) and **an available driver**". The van half is unambiguous; the driver half is not.
