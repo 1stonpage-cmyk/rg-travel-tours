@@ -860,6 +860,23 @@ export interface EntityFormProps {
 - **Progressive disclosure**: eleven van fields is too many for one wall. Plate, model and capacity are the identity; service dates, papers and repair notes go behind a disclosure (the vendored `accordion`), open by default on `lg:` and collapsed on mobile.
 - **Status is never colour alone**: each status renders as a `badge` with its text, and the `for_repair` badge is **amber** — never red, whatever an admin would expect from another product.
 
+**Test rendering — the house pattern, and it is not optional (controller note, 2026-10-14).**
+`renderPage` is a helper YOU write at the top of the test file. It MUST wrap the component in
+`TrpcProviders` from `@/lib/trpc`, and in a `MemoryRouter` if the component uses any router hook,
+`<Link>` or `<NavLink>`. Copy the shape from `client/src/__tests__/admin-bookings.test.tsx`
+(lines 125-132), which is the closest existing analogue.
+
+**Why this is spelled out:** Task 1's implementer hit a provider-less render, correctly diagnosed
+that `trpc.*` hooks throw without a Provider, and then worked around it by adding a React error
+boundary to the component. That cost two fix rounds and I rejected the boundary — it would have
+silently hidden a real failure in production. The defect was my brief omitting the wrapper, not
+their implementation. Do not repeat either half of that: wrap the test, and **never add
+defensive machinery to a component to satisfy a test**. If a component cannot render in a test,
+the test setup is wrong.
+
+A purely presentational component that takes no query needs no `TrpcProviders` — only a
+`MemoryRouter` if it links. Decide per component, and say which you chose in your report.
+
 - [ ] **Step 1: Write the failing test**
 
 ```tsx
@@ -1148,6 +1165,23 @@ git commit -m "feat(drivers): leaves that cannot overlap, and a PIN nobody can r
 - **Leave ranges** render as a list with an explicit "to" and both dates spelled out (`10 Nov 2026 to 12 Nov 2026`), because an en-dash between two numerals is ambiguous at a glance and a leave off by one day puts a driver on a trip.
 - Personal data (phone, licence number, emergency contact) is visible on this admin screen and **nowhere else** (RA 10173).
 
+**Test rendering — the house pattern, and it is not optional (controller note, 2026-10-14).**
+`renderPage` is a helper YOU write at the top of the test file. It MUST wrap the component in
+`TrpcProviders` from `@/lib/trpc`, and in a `MemoryRouter` if the component uses any router hook,
+`<Link>` or `<NavLink>`. Copy the shape from `client/src/__tests__/admin-bookings.test.tsx`
+(lines 125-132), which is the closest existing analogue.
+
+**Why this is spelled out:** Task 1's implementer hit a provider-less render, correctly diagnosed
+that `trpc.*` hooks throw without a Provider, and then worked around it by adding a React error
+boundary to the component. That cost two fix rounds and I rejected the boundary — it would have
+silently hidden a real failure in production. The defect was my brief omitting the wrapper, not
+their implementation. Do not repeat either half of that: wrap the test, and **never add
+defensive machinery to a component to satisfy a test**. If a component cannot render in a test,
+the test setup is wrong.
+
+A purely presentational component that takes no query needs no `TrpcProviders` — only a
+`MemoryRouter` if it links. Decide per component, and say which you chose in your report.
+
 - [ ] **Step 1: Write the failing test**
 
 ```tsx
@@ -1428,6 +1462,23 @@ Grid mechanics, from the UX guidance (`"calendar grid keyboard navigation month"
 - **one tab stop for the whole grid** (`tabIndex=0` on the selected cell, `-1` on the rest), with arrow keys moving by day, `PageUp`/`PageDown` by month, `Home`/`End` to the ends of the week — the roving-tabindex pattern, because 30 tab stops to cross a month is the "100 tabs to reach content" anti-pattern in miniature;
 - **at 360px the grid does not try to show trips inside cells.** Each cell is a date, a trip count and the marker; selecting a day renders that day's trips in a list **below** the grid. That is the progressive-disclosure call, and it is what keeps a seven-column grid usable at 45px per column;
 - week starts **Monday** (Philippine business convention), and the leading/trailing cells from adjacent months are rendered empty and `aria-hidden`, never clickable.
+
+**Test rendering — the house pattern, and it is not optional (controller note, 2026-10-14).**
+`MonthGrid directly (no query) — see the note on which half needs a provider` is a helper YOU write at the top of the test file. It MUST wrap the component in
+`TrpcProviders` from `@/lib/trpc`, and in a `MemoryRouter` if the component uses any router hook,
+`<Link>` or `<NavLink>`. Copy the shape from `client/src/__tests__/admin-bookings.test.tsx`
+(lines 125-132), which is the closest existing analogue.
+
+**Why this is spelled out:** Task 1's implementer hit a provider-less render, correctly diagnosed
+that `trpc.*` hooks throw without a Provider, and then worked around it by adding a React error
+boundary to the component. That cost two fix rounds and I rejected the boundary — it would have
+silently hidden a real failure in production. The defect was my brief omitting the wrapper, not
+their implementation. Do not repeat either half of that: wrap the test, and **never add
+defensive machinery to a component to satisfy a test**. If a component cannot render in a test,
+the test setup is wrong.
+
+A purely presentational component that takes no query needs no `TrpcProviders` — only a
+`MemoryRouter` if it links. Decide per component, and say which you chose in your report.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2081,6 +2132,23 @@ git commit -m "feat(dispatch): a suggestion that fits, and that spreads the work
 - **The reason field appears only for an `in_progress` trip (Q3)**, where it is **required**: a labelled `<textarea>`, a visible "Required" hint, and the Assign button disabled until it is non-empty. It is **absent** for every other status rather than present-and-optional, because an optional box beside a van swap invites a blank one.
 - Pending state on both buttons, and a `role="status"` confirmation naming the van and the driver after a successful assignment.
 
+**Test rendering — the house pattern, and it is not optional (controller note, 2026-10-14).**
+`renderPanel` is a helper YOU write at the top of the test file. It MUST wrap the component in
+`TrpcProviders` from `@/lib/trpc`, and in a `MemoryRouter` if the component uses any router hook,
+`<Link>` or `<NavLink>`. Copy the shape from `client/src/__tests__/admin-bookings.test.tsx`
+(lines 125-132), which is the closest existing analogue.
+
+**Why this is spelled out:** Task 1's implementer hit a provider-less render, correctly diagnosed
+that `trpc.*` hooks throw without a Provider, and then worked around it by adding a React error
+boundary to the component. That cost two fix rounds and I rejected the boundary — it would have
+silently hidden a real failure in production. The defect was my brief omitting the wrapper, not
+their implementation. Do not repeat either half of that: wrap the test, and **never add
+defensive machinery to a component to satisfy a test**. If a component cannot render in a test,
+the test setup is wrong.
+
+A purely presentational component that takes no query needs no `TrpcProviders` — only a
+`MemoryRouter` if it links. Decide per component, and say which you chose in your report.
+
 - [ ] **Step 1: Write the failing test**
 
 ```tsx
@@ -2475,6 +2543,23 @@ git commit -m "feat(admin): five alerts, including the ones that say zero"
 - **Each card links to the surface that resolves it**: payments → `/admin/bookings?filter=pending_verification`; unassigned → `/admin/calendar`; repair, service, papers → `/admin/vans` and `/admin/drivers`. An alert with no route to its fix is a nag.
 - **One `role="status"` region for the whole set**, not one per card — five competing live regions is the named anti-pattern.
 - The dashboard says plainly that **today's departures with check-in progress arrive in Week 6**, rather than leaving a blank panel the owner has to ask about.
+
+**Test rendering — the house pattern, and it is not optional (controller note, 2026-10-14).**
+`renderDashboard` is a helper YOU write at the top of the test file. It MUST wrap the component in
+`TrpcProviders` from `@/lib/trpc`, and in a `MemoryRouter` if the component uses any router hook,
+`<Link>` or `<NavLink>`. Copy the shape from `client/src/__tests__/admin-bookings.test.tsx`
+(lines 125-132), which is the closest existing analogue.
+
+**Why this is spelled out:** Task 1's implementer hit a provider-less render, correctly diagnosed
+that `trpc.*` hooks throw without a Provider, and then worked around it by adding a React error
+boundary to the component. That cost two fix rounds and I rejected the boundary — it would have
+silently hidden a real failure in production. The defect was my brief omitting the wrapper, not
+their implementation. Do not repeat either half of that: wrap the test, and **never add
+defensive machinery to a component to satisfy a test**. If a component cannot render in a test,
+the test setup is wrong.
+
+A purely presentational component that takes no query needs no `TrpcProviders` — only a
+`MemoryRouter` if it links. Decide per component, and say which you chose in your report.
 
 - [ ] **Step 1: Write the failing test**
 
