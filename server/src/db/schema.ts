@@ -1003,10 +1003,17 @@ export const bookings = mysqlTable(
      * silent deviation here.
      *
      * `bookings_driver_date_idx` is the driver portal's "my trips today".
+     *
+     * `bookings_van_date_idx` is `vansFreeOn()`'s index (Week 5 Task 3):
+     * the correlated `NOT EXISTS` it runs per van filters this table on
+     * `van_id` and `tour_date`, exactly as `bookings_driver_date_idx`
+     * already does for `driversFreeOn()` — there was no van equivalent
+     * until now.
      */
     index('bookings_tour_date_status_idx').on(t.tourId, t.tourDate, t.status),
     index('bookings_ref_idx').on(t.ref),
     index('bookings_driver_date_idx').on(t.driverId, t.tourDate),
+    index('bookings_van_date_idx').on(t.vanId, t.tourDate),
     /** Added by the plan: the cron that expires holds scans this every minute. */
     index('bookings_hold_expiry_idx').on(t.status, t.holdExpiresAt),
     /**

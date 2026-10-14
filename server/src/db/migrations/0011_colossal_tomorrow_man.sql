@@ -1,0 +1,1 @@
+CREATE INDEX `bookings_van_date_idx` ON `bookings` (`van_id`,`tour_date`);
