@@ -708,17 +708,17 @@ import { describeWithDb } from './helpers/db';
 describeWithDb('vans', () => {
   it('REFUSES a caller with no session', async () => {
     const api = appRouter.createCaller(testContext() as never);
-    await expect(api.admin.vans.list()).rejects.toThrow(/UNAUTHORIZED|FORBIDDEN/);
+    await expect(api.admin.vans.list()).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
   });
 
   it('REFUSES a customer session', async () => {
     const api = appRouter.createCaller(customerContext(1) as never);
-    await expect(api.admin.vans.list()).rejects.toThrow(/UNAUTHORIZED|FORBIDDEN/);
+    await expect(api.admin.vans.list()).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
   });
 
   it('REFUSES finance — §9 gives vans to owner and dispatcher only', async () => {
     const api = appRouter.createCaller(staffContext(financeId, 'finance') as never);
-    await expect(api.admin.vans.list()).rejects.toThrow(/FORBIDDEN/);
+    await expect(api.admin.vans.list()).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await expect(api.admin.vans.create({ ...VALID_VAN, plate: 'XYZ999' })).rejects.toThrow(
       /FORBIDDEN/,
     );
@@ -997,6 +997,15 @@ git commit -m "feat(fleet): the vans screen, eleven fields without a wall of inp
 
 See **Q5** on whether a dispatcher may reset a PIN or only an owner. Until it is answered, the procedure is `adminProcedure('vansDrivers')` (owner + dispatcher), matching §9's "Vans, drivers" row, which is where §9 lists PIN reset.
 
+**Role refusals are asserted on `code`, never on the message (controller note, 2026-10-14).**
+Use `.rejects.toMatchObject({ code: 'FORBIDDEN' })` / `{ code: 'UNAUTHORIZED' }`, the pattern
+`admin-bookings.test.ts:256-272` already uses. **Not** `.rejects.toThrow(/FORBIDDEN/)`:
+`requireRole()` throws `'Admin sign-in required.'` (UNAUTHORIZED — no session, or a session whose
+subject is not a staff user) and `'Not permitted for this account.'` (FORBIDDEN — a staff user
+whose role is not allowed), and **neither message contains the word the regex looks for**, so a
+message-matching assertion fails against perfectly correct code. My brief had it wrong in eight
+places; Task 4's implementer caught it. `code` is the contract, the message is copy.
+
 - [ ] **Step 1: Write the failing test**
 
 ```ts
@@ -1054,9 +1063,13 @@ it('clears the lockout so a locked-out driver can sign in again', async () => {
 
 it('REFUSES finance on every drivers procedure', async () => {
   const api = appRouter.createCaller(staffContext(financeId, 'finance') as never);
-  await expect(api.admin.drivers.list()).rejects.toThrow(/FORBIDDEN/);
-  await expect(api.admin.drivers.resetPin({ id: driverId })).rejects.toThrow(/FORBIDDEN/);
-  await expect(api.admin.drivers.addLeave(VALID_LEAVE)).rejects.toThrow(/FORBIDDEN/);
+  await expect(api.admin.drivers.list()).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  await expect(api.admin.drivers.resetPin({ id: driverId })).rejects.toMatchObject({
+    code: 'FORBIDDEN',
+  });
+  await expect(api.admin.drivers.addLeave(VALID_LEAVE)).rejects.toMatchObject({
+    code: 'FORBIDDEN',
+  });
 });
 
 it('refuses a backwards leave range at the Zod boundary, before the DB CHECK', async () => {
@@ -1297,6 +1310,15 @@ export interface CalendarDay {
 
 The month is **Manila-local**: `month: 11, year: 2026` means the days whose Manila civil date falls in November, and `tour_date` is already a civil date, so the query is a `BETWEEN` on strings with no timezone conversion at all. Do not build this from a `Date` range.
 
+**Role refusals are asserted on `code`, never on the message (controller note, 2026-10-14).**
+Use `.rejects.toMatchObject({ code: 'FORBIDDEN' })` / `{ code: 'UNAUTHORIZED' }`, the pattern
+`admin-bookings.test.ts:256-272` already uses. **Not** `.rejects.toThrow(/FORBIDDEN/)`:
+`requireRole()` throws `'Admin sign-in required.'` (UNAUTHORIZED — no session, or a session whose
+subject is not a staff user) and `'Not permitted for this account.'` (FORBIDDEN — a staff user
+whose role is not allowed), and **neither message contains the word the regex looks for**, so a
+message-matching assertion fails against perfectly correct code. My brief had it wrong in eight
+places; Task 4's implementer caught it. `code` is the contract, the message is copy.
+
 - [ ] **Step 1: Write the failing test**
 
 ```ts
@@ -1390,7 +1412,9 @@ it('never exposes a guest email or phone through the calendar', async () => {
 it('lets finance READ the month but not the dropdown options', async () => {
   const api = appRouter.createCaller(staffContext(financeId, 'finance') as never);
   await expect(api.admin.calendar.month({ year: 2026, month: 11 })).resolves.toBeTruthy();
-  await expect(api.admin.calendar.dayOptions({ bookingId })).rejects.toThrow(/FORBIDDEN/);
+  await expect(api.admin.calendar.dayOptions({ bookingId })).rejects.toMatchObject({
+    code: 'FORBIDDEN',
+  });
 });
 
 it('rejects a month outside 1..12 and a year outside 2020..2100', async () => {
@@ -1673,6 +1697,15 @@ and `in_progress` keep their status — writing `assigned` over either would be 
 everywhere else in the system (§5's status table) and the receipt has not been checked. A single
 unconditional `status: 'assigned'` write is the bug this table exists to prevent.
 
+**Role refusals are asserted on `code`, never on the message (controller note, 2026-10-14).**
+Use `.rejects.toMatchObject({ code: 'FORBIDDEN' })` / `{ code: 'UNAUTHORIZED' }`, the pattern
+`admin-bookings.test.ts:256-272` already uses. **Not** `.rejects.toThrow(/FORBIDDEN/)`:
+`requireRole()` throws `'Admin sign-in required.'` (UNAUTHORIZED — no session, or a session whose
+subject is not a staff user) and `'Not permitted for this account.'` (FORBIDDEN — a staff user
+whose role is not allowed), and **neither message contains the word the regex looks for**, so a
+message-matching assertion fails against perfectly correct code. My brief had it wrong in eight
+places; Task 4's implementer caught it. `code` is the contract, the message is copy.
+
 - [ ] **Step 1: Write the failing test**
 
 ```ts
@@ -1870,7 +1903,7 @@ it('REFUSES finance an in_progress re-assignment', async () => {
   await getDb().update(bookings).set({ status: 'in_progress' }).where(eq(bookings.id, bookingId));
   await expect(
     api.admin.dispatch.assign({ bookingId, vanId, driverId, reason: 'Breakdown' }),
-  ).rejects.toThrow(/FORBIDDEN/);
+  ).rejects.toMatchObject({ code: 'FORBIDDEN' });
 });
 
 it('refuses a van too small for the group', async () => {
