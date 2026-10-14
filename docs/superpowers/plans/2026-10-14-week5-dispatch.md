@@ -2262,6 +2262,24 @@ export async function suggestAssignment(tx: Transaction, bookingId: number): Pro
 
 **Suggest never writes.** It returns a suggestion; the dispatcher presses Assign, and Task 10's locked mutation is the only writer. A suggest that assigned would be a dispatcher's mis-click becoming a driver's morning.
 
+**The same `tour_date` conversion Task 10 needs, for the same reason (controller note,
+2026-10-14).** `suggestAssignment` reads the booking to learn its date and `pax`, and
+`bookings.tour_date` is a Drizzle `date()` column — so you get a **`Date`**, while
+`vansFreeOn(tx, date: string, …)` and `driversFreeOn(tx, date: string, …)` compare civil-date
+strings. Convert once with **`civilDateFromDate(row.tourDate)`** from `@rg/shared`. Not
+`toISOString().slice(0, 10)`: the pool is `timezone: 'Z'` today so it would appear to work, and
+would be a day out the moment that changes.
+
+**This module writes NOTHING.** No `INSERT`, no `UPDATE`, no `DELETE`, and it must not call
+`assignVanAndDriver`. A suggest that assigned would turn a dispatcher's mis-click into a driver's
+morning. Task 10's locked mutation stays the only writer, and the brief's final test asserts the
+booking row is byte-identical afterwards.
+
+**`bookingSnapshot(id)` is a helper YOU write** in the test file — read the booking's columns back
+so the no-write test has something to compare. Copy the projection shape from Task 10's
+`moneySnapshot` if it is already in the tree, and include `vanId`, `driverId` and `status`, which
+are the fields a stray write would touch.
+
 - [ ] **Step 1: Write the failing test**
 
 ```ts
