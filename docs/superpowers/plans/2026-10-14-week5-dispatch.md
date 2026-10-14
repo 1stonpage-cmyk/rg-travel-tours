@@ -1007,7 +1007,49 @@ git commit -m "feat(fleet): the vans screen, eleven fields without a wall of inp
 - Consumes: `adminProcedure('vansDrivers')`, `hashPassword()` from `server/src/services/password.ts` (the scrypt helper — **owner decision 2026-10-14**, the same one staff passwords use), `writeAudit`.
 - Produces: `admin.drivers.list | create | update | addLeave | removeLeave | resetPin`.
 
-**`resetPin` is the one procedure in this week that touches auth**, so it is specified tightly and nothing is left to the implementer's judgment:
+**`resetPin` is the one procedure in this week that touches auth**, so it is specified tightly and nothing is left to the implementer's judgment.
+
+> **Owner instruction, 2026-10-14 — the admin reset from the Q9 lockout policy.** A PIN reset is
+> also the admin unlock. It MUST clear, in the same transaction: the **failed-attempt count**, any
+> **active lockout**, and the **24-hour lockout-escalation state** — i.e. `failed_attempts = 0`,
+> `locked_until = NULL`, `lockout_count = 0`, `lockout_window_started_at = NULL`,
+> `requires_admin_unlock = false`. All five, not a subset: `requires_admin_unlock` is the terminal
+> flag that `evaluatePinAttempt()` checks before anything else and that **nothing but an admin
+> action ever clears** (see the comment on that function), so a reset that leaves it set hands the
+> dispatcher a driver who still cannot sign in and no way to fix it.
+>
+> **Audit the reset with actor, driver and timestamp — and never the PIN.** `writeAudit` already
+> stamps `created_at`, and `actorId` is the staff user; the `data` payload records that the lockout
+> was cleared, nothing more.
+>
+> **Four named tests, each proven able to fail:**
+>
+> 1. A driver **locked after 3 lockouts** can sign in with the new PIN **immediately** after the
+>    reset — no waiting for the 15-minute timer or the 24-hour window.
+> 2. The **old PIN no longer works**.
+> 3. **Dispatcher, owner and finance** access per the role matrix (Q5: owner ✅, dispatcher ✅,
+>    finance ❌).
+> 4. The PIN appears **nowhere** it should not — not in `list`, not in the audit row, not in a log.
+
+**How test 1 is written, and what it does NOT claim (controller ruling, 2026-10-14).** "Can sign in
+immediately" has no endpoint to exercise this week: **there is no driver login procedure.** The
+driver portal is Week 6 (6A/6B), and `evaluatePinAttempt(state, now, pinOk)`
+(`server/src/services/driver-lockout.ts:103`) is a **pure function** over lockout state with no
+database and no caller yet. So test 1 is written as a three-part composition at the layer that
+actually exists:
+
+1. put the driver row into the fully locked state — `failed_attempts = 5`, `locked_until` in the
+   future, `lockout_count = 3`, `requires_admin_unlock = true`;
+2. call `admin.drivers.resetPin`, then **read the row back** and assert all five fields cleared;
+3. feed that post-reset row state into `evaluatePinAttempt(state, now, true)` and assert the
+   outcome is a **success**, not `needs_admin_unlock` and not `locked` — that function is the gate
+   Week 6's login will sit behind, so admitting the driver is precisely what "can sign in" means
+   today — and assert `verifyPassword(newPin, pin_hash)` is `true` while the old PIN is `false`.
+
+That proves the policy and the credential. It does **not** prove an end-to-end login, because
+nothing can this week, and the report must say so rather than imply otherwise. **Carry-forward to
+Week 6:** when 6A builds the driver login, it owes the end-to-end version of test 1 — reset, then
+actually sign in.
 
 - The server **generates** the six-digit PIN. The client never sends one — a client-chosen PIN means "123456" on every driver in the fleet.
 - The PIN is returned **once**, in the mutation's response, for the dispatcher to read out to the driver. It is never stored in plaintext, never written to `audit_log`, never logged, and never returned by `list` or `update`.
@@ -2925,13 +2967,13 @@ The plan **does not** exclude `off_duty` drivers from future dates, because a fl
 
 **Default if unanswered:** today-only; leave ranges are what block a date.
 
-### Q5 — Who may reset a driver's PIN? (Task 6)
+### Q5 — ✅ ANSWERED: owner and dispatcher, per the role matrix (owner-decided 2026-10-14)
 
-§9's role matrix has a "Vans, drivers" row (owner ✅, dispatcher ✅, finance ❌) and lists PIN reset under Drivers, so the plan makes `resetPin` an `adminProcedure('vansDrivers')` — a dispatcher can do it.
+**Owner decision.** PIN reset follows §9's "Vans, drivers" row exactly: **owner ✅, dispatcher ✅,
+finance ❌** — so `adminProcedure('vansDrivers')`, which is already that pair. A driver locked out
+at 5am needs the dispatcher on duty, not the owner's phone.
 
-That is probably right operationally: a driver locked out at 5am needs the dispatcher on duty, not the owner. But a PIN reset is a credential operation, and the row it sits in was written for "edit a van's odometer".
-
-**Confirm:** dispatcher **and** owner (the plan's default), or owner only?
+Named test: **dispatcher vs owner vs finance access per the role matrix**, each proven able to fail.
 
 ### Q6 — How should auto-suggest pick a driver? (Task 11)
 
