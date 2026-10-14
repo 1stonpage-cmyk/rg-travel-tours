@@ -1026,6 +1026,25 @@ whose role is not allowed), and **neither message contains the word the regex lo
 message-matching assertion fails against perfectly correct code. My brief had it wrong in eight
 places; Task 4's implementer caught it. `code` is the contract, the message is copy.
 
+**Three things about this task's test code, before you write any of it (controller note,
+2026-10-14).**
+
+1. **`driver_leaves.start_date` / `.end_date` are Drizzle `date()` columns, which type as `Date`
+   for inserts — not strings.** Your Zod schema accepts `YYYY-MM-DD` strings (civil dates, per
+   `CLAUDE.md`), so `addLeave` must convert at the boundary, and so must any fixture that inserts
+   a leave row directly. Task 3 hit exactly this. For COMPARISONS, use the house raw-`sql`
+   helper pattern (`on()` in `capacity.ts:222`, `onDate()` in
+   `services/dispatch/availability.ts:104`) rather than `eq()` against a string, which does not
+   compile. Never change a column's type to make a query easier.
+2. **The helpers the tests below call do not exist — you write them** in the test file:
+   `auditRowsFor(entity, id)`, `pinHashFor(driverId)`, `VALID_LEAVE`, `idFor(role)`, and the
+   `makeStaff` / `makeDriver` fixtures. Copy the shapes from
+   `server/src/__tests__/admin-vans.test.ts` and `capacity.test.ts`, which already have working
+   versions of most of them. Do not invent a different convention.
+3. **`hashPassword(plain, cost?)`** — `server/src/services/password.ts:113`. The production path
+   passes `plain` only; `cost` exists so a test can use a cheap N. `verifyPassword(plain, stored)`
+   returns a boolean. Hashes are self-describing and start with `scrypt$`.
+
 - [ ] **Step 1: Write the failing test**
 
 ```ts
