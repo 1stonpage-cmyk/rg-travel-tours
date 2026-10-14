@@ -764,11 +764,19 @@ describeWithDb('vans', () => {
   });
 
   it('has no delete mutation — vans are soft-deleted through is_active', () => {
-    expect(
-      Object.keys(appRouter._def.procedures)
-        .filter((k) => /^admin\.vans\./.test(k))
-        .sort(),
-    ).toEqual([
+    // `_def.procedures` is not in tRPC v11's public types, so it needs the
+    // cast the rest of this suite already uses — see
+    // `checkout-router.test.ts:629` and `driver-lockout.test.ts:357`. Copy
+    // that shape rather than inventing one.
+    const procedures = (appRouter as unknown as { _def: { procedures: Record<string, unknown> } })
+      ._def.procedures;
+    const vanProcedures = Object.keys(procedures)
+      .filter((k) => /^admin\.vans\./.test(k))
+      .sort();
+    // Vacuity guard: a typo in the filter would make the comparison below
+    // empty-vs-empty, which passes while proving nothing.
+    expect(vanProcedures.length).toBe(4);
+    expect(vanProcedures).toEqual([
       'admin.vans.create',
       'admin.vans.list',
       'admin.vans.setStatus',
