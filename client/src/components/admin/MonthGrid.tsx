@@ -280,7 +280,18 @@ export default function MonthGrid({ days, selected, onSelect }: MonthGridProps) 
                   }}
                   role="gridcell"
                   aria-label={name}
-                  aria-selected={isTabStop ? 'true' : 'false'}
+                  /*
+                   * `aria-selected` tracks the USER'S selection, not the
+                   * roving tab stop (Task 9 review).
+                   *
+                   * They coincide once a day is selected, which is why this
+                   * looked right — but before any selection the grid still
+                   * needs somewhere for the tab stop to live (day 1), and
+                   * announcing that day as "selected" tells a screen-reader
+                   * user they picked a day they never picked. `isTabStop`
+                   * drives `tabIndex` alone; selection drives this.
+                   */
+                  aria-selected={isSelected ? 'true' : 'false'}
                   tabIndex={isTabStop ? 0 : -1}
                   data-date={day.date}
                   onClick={() => onSelect(day.date)}
@@ -314,7 +325,20 @@ export default function MonthGrid({ days, selected, onSelect }: MonthGridProps) 
                           data-testid="needs-assignment-dot"
                           className="bg-brand-gold-600 inline-block size-1.5 rounded-full"
                         />
-                        <span className="text-brand-gold-800 text-[11px] font-semibold tabular-nums">
+                        {/* `brand-gold-800`, not `-600`: CLAUDE.md records that
+                            `brand-gold-600` measures below AA for normal-size
+                            text. The DOT may be gold-600 — it is decorative and
+                            carries no information on its own — but this numeral
+                            IS the information, so it has to be readable.
+
+                            Its own testid, so the "no dot" test can assert the
+                            numeral is absent too. They are rendered by one
+                            conditional today; a test that only checks the dot
+                            would not notice if that ever stopped being true. */}
+                        <span
+                          data-testid="needs-assignment-count"
+                          className="text-brand-gold-800 text-[11px] font-semibold tabular-nums"
+                        >
                           {needsCount}
                         </span>
                       </span>

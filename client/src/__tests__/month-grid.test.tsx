@@ -95,13 +95,25 @@ describe('MonthGrid', () => {
     expect(cell).toBeTruthy();
   });
 
-  it('shows the needs-assignment count as a numeral beside the dot', () => {
+  it('shows the needs-assignment count as a numeral in the day cell, not only a dot', () => {
     render(<MonthGrid days={DAYS} selected={null} onSelect={noop} />);
     const cell = screen.getByRole('gridcell', { name: /10 November/i });
+
+    // Named for what it checks. The old name said "beside the dot", which
+    // promised spatial adjacency the body never verified (Task 9 review) —
+    // and jsdom does no layout, so adjacency is not checkable here anyway.
+    // What IS checkable, and what the colour-alone rule actually requires:
+    // the numeral and the dot both live in this cell, and the numeral
+    // carries the number as text.
+    const dot = cell.querySelector('[data-testid="needs-assignment-dot"]');
+    const count = cell.querySelector('[data-testid="needs-assignment-count"]');
+    expect(dot).not.toBeNull();
+    expect(count).not.toBeNull();
+    expect(count!.textContent?.trim()).toBe('2');
     expect(cell.textContent).toMatch(/\b2\b/);
   });
 
-  it('marks a day with no unstaffed trips without any dot at all', () => {
+  it('marks a day with no unstaffed trips without any dot or numeral', () => {
     render(
       <MonthGrid
         days={[{ date: '2026-11-04', trips: [TRIP_STAFFED], needsAssignmentCount: 0 }]}
@@ -109,7 +121,28 @@ describe('MonthGrid', () => {
         onSelect={noop}
       />,
     );
+    // Both, independently. One conditional renders the pair today, so a test
+    // that only checked the dot would not notice if that ever changed and
+    // left a bare "0" sitting in the cell (Task 9 review).
     expect(document.querySelector('[data-testid="needs-assignment-dot"]')).toBeNull();
+    expect(document.querySelector('[data-testid="needs-assignment-count"]')).toBeNull();
+  });
+
+  it('announces no day as selected until one is selected', () => {
+    // The tab stop still has to live somewhere before any selection — day 1
+    // — but announcing that day as `aria-selected` tells a screen-reader
+    // user they chose a day they never chose (Task 9 review).
+    render(<MonthGrid days={DAYS} selected={null} onSelect={noop} />);
+    const selectedCells = screen
+      .getAllByRole('gridcell')
+      .filter((c) => c.getAttribute('aria-selected') === 'true');
+    expect(selectedCells).toEqual([]);
+
+    // And exactly one tab stop exists regardless.
+    const tabStops = screen
+      .getAllByRole('gridcell')
+      .filter((c) => c.getAttribute('tabindex') === '0');
+    expect(tabStops).toHaveLength(1);
   });
 
   it('keeps exactly one tab stop in the grid', () => {
