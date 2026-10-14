@@ -4,6 +4,7 @@ import AdminLayout from '@/components/layout/AdminLayout';
 import PublicLayout from '@/components/layout/PublicLayout';
 import AdminBookingDetailPage from '@/pages/admin/AdminBookingDetailPage';
 import AdminBookingsPage from '@/pages/admin/AdminBookingsPage';
+import AdminCalendarPage from '@/pages/admin/AdminCalendarPage';
 import AdminDriversPage from '@/pages/admin/AdminDriversPage';
 import AdminLoginPage from '@/pages/admin/AdminLoginPage';
 import AdminVansPage from '@/pages/admin/AdminVansPage';
@@ -72,13 +73,8 @@ export default function App() {
        * rather than any data.
        *
        * The index route is a one-line stand-in for Task 14's dashboard,
-       * which does not exist yet. `/admin/calendar` is NOT routed here on
-       * purpose — the nav links to it already (`AdminLayout`'s `NAV`), and
-       * until Task 9 adds its own `<Route>`, visiting it 404s through this
-       * router's ordinary unmatched-route behaviour. Do not add a
-       * placeholder page for it: the task that owns it must find the file
-       * unwritten. `/admin/vans` (Task 5) and `/admin/drivers` (Task 7) are
-       * routed below.
+       * which does not exist yet. `/admin/vans` (Task 5), `/admin/drivers`
+       * (Task 7) and `/admin/calendar` (Task 9) are routed below.
        */}
       <Route path="admin" element={<AdminLayout />}>
         <Route
@@ -87,6 +83,7 @@ export default function App() {
         />
         <Route path="bookings" element={<AdminBookingsPage />} />
         <Route path="bookings/:ref" element={<AdminBookingDetailPage />} />
+        <Route path="calendar" element={<AdminCalendarPage />} />
         <Route path="vans" element={<AdminVansPage />} />
         <Route path="drivers" element={<AdminDriversPage />} />
       </Route>
