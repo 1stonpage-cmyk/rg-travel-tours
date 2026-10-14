@@ -242,89 +242,169 @@ git commit -m "feat(admin): a shell the four dispatch screens can hang off"
 
 ---
 
-### Task 2: The fourth van status — `parked` — GATED ON Q1
+### Task 2: The fourth van status, and an allow-list for sellable fleet — ✅ Q1 ANSWERED
 
-**Do not start this task until Q1 is answered.** It is a schema change, and `CLAUDE.md` says stop and ask before changing the schema in a way the spec does not describe. §9 does describe four statuses, so this is a gap rather than an invention — but the _consequence_ below is not in the spec at all, and it is a money consequence.
+**Owner-decided 2026-10-14 (Q1).** Add §9's `parked`, and change `assessCapacity()`'s Gate 2 from
+the deny-list `status <> 'for_repair'` to the **allow-list `status = 'available'`**. A new or
+unknown status is excluded by default — the gate fails closed.
 
 **Files:**
 
-- Modify: `server/src/db/schema.ts` (`VAN_STATUSES`)
-- Modify: `server/src/services/capacity.ts` (Gate 2) — **only if Q1 is answered yes**
+- Modify: `server/src/db/schema.ts` (`VAN_STATUSES`, plus the new `VAN_STATUS_SELLABLE`)
+- Modify: `server/src/services/capacity.ts` (Gate 2 → allow-list)
 - Create: `server/src/db/migrations/00NN_vans_parked_status.sql` (**check the next free number yourself**)
 - Test: `server/src/__tests__/capacity-van-status.test.ts`
 
 **Interfaces:**
 
-- Produces: `VAN_STATUSES` including `'parked'`, and a `VAN_STATUSES_UNAVAILABLE` export naming the statuses that disqualify a van from dispatch, which Task 3 imports rather than restating.
+- Produces: `VAN_STATUSES` including `'parked'`, and **`VAN_STATUS_SELLABLE = 'available'`** — the
+  single allow-listed status, which **Task 3 imports** so `vansFreeOn()` and `assessCapacity()`
+  cannot disagree about what a status means. There is deliberately **no** `VAN_STATUSES_UNAVAILABLE`
+  export: a list of what is forbidden is the deny-list this task exists to remove, and leaving one
+  in the codebase invites the next person to filter on it.
 
-**Why this is not a one-line enum change.** `assessCapacity()`'s Gate 2 counts a van as available when `status <> 'for_repair'`. Add `parked` and a parked van is silently counted as bookable fleet — so the site would sell a trip against a van nobody can drive. The enum and the gate have to move together, and the gate is core booking logic, which is why Q1 asks before anything is touched.
+**Why the allow-list, in one sentence a reviewer can check the code against.** A deny-list makes
+every status anyone adds later sellable until somebody notices; an allow-list makes it unsellable
+until somebody decides. The first direction oversells a trip, the second refuses a booking, and
+only one of those strands a guest at a pier.
 
-- [ ] **Step 1: Write the failing test**
+**The `on_trip` consequence, which must be written into the schema comment, not just here.**
+`on_trip` is now unsellable. §9 intends it as a derived _today_ status ("'On tour' is derived from
+in-progress trips"), and nothing in the codebase sets or clears it yet — check-ins are Week 6 (6C)
+— so today no van is ever `on_trip` and this costs nothing. **When Week 6 starts writing `on_trip`
+it must also clear it**, or a van that drove one trip stops being bookable for every future date.
+Put that sentence in the comment beside `VAN_STATUSES`, where whoever builds 6C will read it.
+
+- [ ] **Step 1: Write the failing tests**
 
 ```ts
 // server/src/__tests__/capacity-van-status.test.ts
+import { eq } from 'drizzle-orm';
 import { expect, it } from 'vitest';
-import { VAN_STATUSES, VAN_STATUSES_UNAVAILABLE } from '../db/schema';
+import { getDb } from '../db/client';
+import { VAN_STATUSES, VAN_STATUS_SELLABLE, vans } from '../db/schema';
+import { assessCapacity } from '../services/capacity';
+import { vansFreeOn } from '../services/dispatch/availability';
+import { describeWithDb } from './helpers/db';
 
 it('names all four statuses from BUILD_SPEC §9', () => {
   expect([...VAN_STATUSES].sort()).toEqual(['available', 'for_repair', 'on_trip', 'parked']);
 });
 
-it('treats parked and for_repair as unavailable, and on_trip as available', () => {
-  // `on_trip` is where a van is TODAY, not a claim on a future date — the
-  // reasoning already written into capacity.ts's Gate 2 comment.
-  expect([...VAN_STATUSES_UNAVAILABLE].sort()).toEqual(['for_repair', 'parked']);
-  expect(VAN_STATUSES_UNAVAILABLE).not.toContain('on_trip');
+it('allow-lists exactly one status as sellable', () => {
+  expect(VAN_STATUS_SELLABLE).toBe('available');
+});
+
+it('exports no deny-list for anyone to filter on by mistake', async () => {
+  const schema = await import('../db/schema');
+  expect(Object.keys(schema)).not.toContain('VAN_STATUSES_UNAVAILABLE');
+});
+
+describeWithDb('vans', () => {
+  /**
+   * The owner's first named test: EVERY non-available status is excluded.
+   * Written as a loop over VAN_STATUSES rather than three hand-written
+   * cases, so a fifth status added later is covered the day it is added
+   * instead of the day someone remembers this file.
+   */
+  it.each(VAN_STATUSES.filter((s) => s !== VAN_STATUS_SELLABLE))(
+    'does not count a %s van as sellable fleet',
+    async (status) => {
+      const db = getDb();
+      await db.update(vans).set({ status }).where(eq(vans.id, onlyVanId));
+      const verdict = await db.transaction((tx) => assessCapacity(tx, { tourId, date, pax: 2 }));
+      expect(verdict).toEqual({ ok: false, reason: 'no_van_available' });
+    },
+  );
+
+  it('counts an available van as sellable fleet', async () => {
+    const db = getDb();
+    await db.update(vans).set({ status: 'available' }).where(eq(vans.id, onlyVanId));
+    const verdict = await db.transaction((tx) => assessCapacity(tx, { tourId, date, pax: 2 }));
+    expect(verdict).toEqual({ ok: true });
+  });
+
+  /**
+   * The owner's second named test: capacity and dispatch availability must
+   * AGREE about what a status means. They ask different questions — one
+   * counts, one identifies — but they must never disagree about whether a
+   * given van is usable at all.
+   */
+  it.each([...VAN_STATUSES])('capacity and dispatch agree about a %s van', async (status) => {
+    const db = getDb();
+    await db.update(vans).set({ status }).where(eq(vans.id, onlyVanId));
+    const [verdict, free] = await db.transaction(async (tx) => [
+      await assessCapacity(tx, { tourId, date, pax: 2 }),
+      await vansFreeOn(tx, date, 2),
+    ]);
+    const sellable = verdict.ok;
+    const dispatchable = free.some((v) => v.id === onlyVanId);
+    expect(dispatchable).toBe(sellable);
+  });
 });
 ```
 
-And the one that actually matters — a parked van must not be sellable:
-
-```ts
-// in server/src/__tests__/capacity-van-status.test.ts, inside describeWithDb('vans')
-it('does not count a parked van as available fleet', async () => {
-  const db = getDb();
-  await db.update(vans).set({ status: 'parked' }).where(eq(vans.id, onlyVanId));
-  const verdict = await db.transaction((tx) => assessCapacity(tx, { tourId, date, pax: 2 }));
-  expect(verdict).toEqual({ ok: false, reason: 'no_van_available' });
-});
-```
+The agreement test is written to be **symmetric on status alone** — one van, one date, no other
+bookings — because that is the only condition under which capacity's counting and availability's
+identifying must give the same answer. Task 3's own agreement test covers the asymmetry that
+appears once bookings exist, and the two must not be merged: merging them would force one of them
+to assert something false.
 
 - [ ] **Step 2: Run it and watch it fail**
 
 Run: `pnpm --filter @rg/server test -- capacity-van-status`
-Expected: FAIL — `VAN_STATUSES_UNAVAILABLE` is not exported, and the parked van is counted as available.
+Expected: FAIL — `VAN_STATUS_SELLABLE` is not exported, and a `parked` van is still counted as
+sellable fleet by Gate 2's deny-list.
 
-- [ ] **Step 3: Change the enum, export the unavailable set, and fix Gate 2**
+- [ ] **Step 3: Add the status, export the allow-list, and make Gate 2 an allow-list**
 
 ```ts
 // server/src/db/schema.ts
+/**
+ * §9's four van statuses.
+ *
+ * `on_trip` is DERIVED, not administrative: §9 says "'On tour' is derived
+ * from in-progress trips", and the other three are set by hand.
+ *
+ * **Week 6 (6C) owes this list a clearing step.** Nothing writes `on_trip`
+ * today, so nothing has to clear it. The moment check-ins start setting it,
+ * they must also unset it when a trip completes — a van left `on_trip`
+ * stops being sellable on EVERY future date, because `VAN_STATUS_SELLABLE`
+ * below allow-lists `available` alone.
+ */
 export const VAN_STATUSES = ['available', 'on_trip', 'parked', 'for_repair'] as const;
 
 /**
- * The statuses that disqualify a van from being sold or dispatched.
+ * The ONLY status a van may have to be sold or dispatched (owner decision
+ * 2026-10-14, Q1).
  *
- * `on_trip` is deliberately absent: it says where a van is TODAY, not that
- * it is unavailable on some future date. `parked` and `for_repair` are both
- * manual, deliberate statements that this van is not working.
+ * An allow-list, deliberately, replacing the deny-list `status <> 'for_repair'`
+ * that `assessCapacity()` used until now. A deny-list makes every status
+ * added later sellable until somebody notices; an allow-list makes it
+ * unsellable until somebody decides. The first direction oversells a trip,
+ * the second refuses a booking, and only one of those strands a guest.
  *
- * Exported so `assessCapacity()` (which counts) and `vansFreeOn()` (which
- * identifies) read the SAME list. Two copies of this list is how a parked
- * van becomes bookable in one of them.
+ * Imported by BOTH `assessCapacity()` (which counts free vans) and
+ * `vansFreeOn()` (which identifies them), so the two can never disagree
+ * about whether a status is usable.
  */
-export const VAN_STATUSES_UNAVAILABLE = ['parked', 'for_repair'] as const;
+export const VAN_STATUS_SELLABLE = 'available' as const;
 ```
 
 ```ts
-// server/src/services/capacity.ts — Gate 2
+// server/src/services/capacity.ts — Gate 2, now an allow-list
 .where(
   and(
     eq(vans.isActive, true),
-    notInArray(vans.status, [...VAN_STATUSES_UNAVAILABLE]),
+    eq(vans.status, VAN_STATUS_SELLABLE),
     gte(vans.capacity, pax),
   ),
 )
 ```
+
+**Delete Gate 2's old comment** explaining why `status <> 'for_repair'` was preferable to
+`status = 'available'` — it now argues for the opposite of what the code does, and a stale comment
+that contradicts its own code is worse than none. Replace it with the allow-list reasoning above.
 
 - [ ] **Step 4: Generate and apply the migration**
 
@@ -369,7 +449,7 @@ Say in the report: **migration NNNN must be applied to the server database when 
 
 **Interfaces:**
 
-- Consumes: `CAPACITY_HOLDING_STATUSES` (`/shared`), `VAN_STATUSES_UNAVAILABLE` (Task 2; if Q1 is answered **no**, use the literal `['for_repair']` and say so in a comment), `Transaction` (`server/src/db/client`).
+- Consumes: `CAPACITY_HOLDING_STATUSES` (`/shared`), **`VAN_STATUS_SELLABLE`** (Task 2 — the allow-list, owner-decided 2026-10-14), `Transaction` (`server/src/db/client`).
 - Produces, and every later task uses exactly these signatures:
 
 ```ts
@@ -406,12 +486,12 @@ export async function driversFreeOn(
 
 **The exclusion rules, from §9 "Calendar", written once here and nowhere else:**
 
-| Excluded van                                                         | Why                                    |
-| -------------------------------------------------------------------- | -------------------------------------- |
-| `is_active = 0`                                                      | Soft-deleted.                          |
-| `status IN VAN_STATUSES_UNAVAILABLE`                                 | In repair (and parked, if Q1 says so). |
-| `capacity < minCapacity`                                             | Too small for this group.              |
-| Assigned to another booking on this date whose status holds capacity | Already booked that day.               |
+| Excluded van                                                         | Why                                                                             |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `is_active = 0`                                                      | Soft-deleted.                                                                   |
+| `status <> VAN_STATUS_SELLABLE`                                      | Anything but `available` — in repair, parked, or on a trip. Allow-list, per Q1. |
+| `capacity < minCapacity`                                             | Too small for this group.                                                       |
+| Assigned to another booking on this date whose status holds capacity | Already booked that day.                                                        |
 
 | Excluded driver                                                      | Why                               |
 | -------------------------------------------------------------------- | --------------------------------- |
@@ -1131,6 +1211,13 @@ export interface CalendarTrip {
   driverId: number | null;
   driverName: string | null;
   needsAssignment: boolean;
+  /**
+   * `status === 'pending_verification'` — a receipt is in, nobody has
+   * checked it yet (owner-decided 2026-10-14, Q2). The calendar SHOWS these
+   * trips, labelled in TEXT ("awaiting payment check"), they never count
+   * toward `needsAssignment`, and dispatch may still pre-assign them.
+   */
+  awaitingPaymentCheck: boolean;
 }
 export interface CalendarDay {
   /** Civil date, `YYYY-MM-DD`, Asia/Manila. */
@@ -1142,7 +1229,9 @@ export interface CalendarDay {
 // admin.calendar.dayOptions({ bookingId }) -> { vans: FreeVan[]; drivers: FreeDriver[] }
 ```
 
-`needsAssignment` is computed **once, on the server**: `status is in CAPACITY_HOLDING_STATUSES AND (van_id IS NULL OR driver_id IS NULL) AND status is not pending_payment or pending_verification`. A trip nobody has paid for is not a dispatch problem, and marking it would make the gold dot meaningless by lighting up every unpaid hold. See **Q2**, which asks the owner to confirm that reading.
+`needsAssignment` is computed **once, on the server**: `status IN ('confirmed', 'assigned') AND (van_id IS NULL OR driver_id IS NULL)`. Both unpaid statuses are excluded — `pending_payment` because a fifteen-minute hold is not a dispatch problem, and `pending_verification` because the owner decided so (Q2): it shows on the calendar and may be pre-assigned, but it never lights the dot and never inflates the dashboard count. Marking either would make the gold dot meaningless by lighting up every hold every morning.
+
+**Owner-decided 2026-10-14 (Q2), and all four parts are testable here:** a `pending_verification` trip (1) appears in `trips`, (2) carries `awaitingPaymentCheck: true` which the client renders as **text, not colour**, (3) contributes **0** to `needsAssignmentCount`, and (4) is assignable — which is Task 10's half of the ruling.
 
 The month is **Manila-local**: `month: 11, year: 2026` means the days whose Manila civil date falls in November, and `tour_date` is already a civil date, so the query is a `BETWEEN` on strings with no timezone conversion at all. Do not build this from a `Date` range.
 
@@ -1180,14 +1269,28 @@ it('marks a trip with a van but no driver as STILL needing assignment', async ()
   expect(days.find((d) => d.date === '2026-11-11')!.needsAssignmentCount).toBe(1);
 });
 
-it('does NOT mark an unpaid hold as needing assignment', async () => {
+it('does NOT mark an unpaid hold as needing assignment, but still SHOWS it', async () => {
   const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
   await makeBooking({ tourDate: '2026-11-12', status: 'pending_payment' });
   await makeBooking({ tourDate: '2026-11-12', status: 'pending_verification' });
   const { days } = await api.admin.calendar.month({ year: 2026, month: 11 });
   const day = days.find((d) => d.date === '2026-11-12')!;
+  // Both are visible — a dispatcher planning a week needs to see probable
+  // trips — and neither counts. Q2.
   expect(day.trips).toHaveLength(2);
   expect(day.needsAssignmentCount).toBe(0);
+});
+
+it('flags a pending_verification trip as awaiting a payment check', async () => {
+  const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
+  await makeBooking({ tourDate: '2026-11-14', status: 'pending_verification' });
+  await makeBooking({ tourDate: '2026-11-14', status: 'confirmed' });
+  const { days } = await api.admin.calendar.month({ year: 2026, month: 11 });
+  const day = days.find((d) => d.date === '2026-11-14')!;
+  expect(day.trips.filter((t) => t.awaitingPaymentCheck)).toHaveLength(1);
+  expect(day.trips.find((t) => t.status === 'confirmed')!.awaitingPaymentCheck).toBe(false);
+  // It is awaiting a payment check AND unstaffed, and still counts zero.
+  expect(day.needsAssignmentCount).toBe(1);
 });
 
 it('does NOT mark a cancelled or expired trip', async () => {
@@ -1235,7 +1338,7 @@ Expected: PASS (9 tests).
 
 - [ ] **Step 5: Prove the tests can fail**
 
-Include `pending_payment` in the needs-assignment condition → the unpaid-hold test goes red. Restore. Change the `needsAssignment` condition from `OR` to `AND` on the two null checks → the van-but-no-driver test goes red. Restore. Add `leadEmail` to the trip projection → the privacy test goes red. Restore.
+Include `pending_payment` in the needs-assignment condition → the unpaid-hold test goes red. Restore. Include `pending_verification` → the awaiting-payment-check test's `needsAssignmentCount` assertion goes red. Restore. Change the `needsAssignment` condition from `OR` to `AND` on the two null checks → the van-but-no-driver test goes red. Restore. Hard-code `awaitingPaymentCheck: false` → its test goes red. Restore. Add `leadEmail` to the trip projection → the privacy test goes red. Restore.
 
 - [ ] **Step 6: Commit**
 
@@ -1393,12 +1496,43 @@ export type AssignRefusal =
   | 'booking_not_assignable'
   | 'van_unavailable'
   | 'driver_unavailable'
-  | 'van_too_small';
+  | 'van_too_small'
+  /** An in_progress re-assignment arrived without a reason (Q3). */
+  | 'reason_required';
 export async function assignVanAndDriver(
   tx: Transaction,
-  input: { bookingId: number; vanId: number; driverId: number; actorUserId: number },
+  input: {
+    bookingId: number;
+    vanId: number;
+    driverId: number;
+    actorUserId: number;
+    /** REQUIRED when the booking is `in_progress` (owner-decided 2026-10-14,
+     *  Q3); ignored — and must not be demanded — otherwise. */
+    reason?: string;
+  },
 ): Promise<{ ok: true } | { ok: false; reason: AssignRefusal }>;
 // admin.dispatch.assign(assignInputSchema) -> { ok: true }, or a TRPCError carrying the reason
+
+// shared/src/dispatch.ts
+export const assignInputSchema = z
+  .object({
+    bookingId: z.number().int().positive(),
+    vanId: z.number().int().positive(),
+    driverId: z.number().int().positive(),
+    reason: z.string().trim().min(3).max(500).optional(),
+  })
+  .strict();
+```
+
+**`reason` is optional in Zod and required by the service, deliberately.** Zod cannot see the
+booking's status, so it cannot know whether a reason is owed — the requirement is a function of
+the row, not of the input. Enforcing it in Zod would mean either demanding a reason for every
+first assignment (noise the owner did not ask for) or trusting the client to tell the truth about
+the status. So Zod bounds the string and `assignVanAndDriver()` decides, inside the transaction,
+after it has read the status under the lock. The refusal is `reason_required`.
+
+```ts
+
 ```
 
 **This is the first code in the project's history to write `bookings.van_id`.** Four rules, each of which has a test below, and none of which is negotiable:
@@ -1406,9 +1540,41 @@ export async function assignVanAndDriver(
 1. **Lock before you look.** Take `takeSlotLocks(tx, booking.tourId, booking.tourDate)` — fleet row then tour row, the established global order — **before** reading availability. This project has already been bitten by the opposite: under InnoDB's REPEATABLE READ, a non-locking read taken before the lock returns the pre-lock snapshot even after the lock is granted, which is exactly how the cash double-verify bug worked. Acquire the locks, then read.
 2. **Re-check inside the lock.** The dropdown the dispatcher clicked was rendered seconds ago. Re-run `vansFreeOn` / `driversFreeOn` inside the transaction and refuse if the chosen van or driver is no longer free. The dropdown is a convenience; this check is the enforcement.
 3. **No money, no payment fields.** The update writes `van_id`, `driver_id`, `status` and nothing else.
-4. **Audit with the actor.** `writeAudit(tx, { actorType: 'user', actorId: actorUserId, action: 'booking_assigned', entity: 'booking', entityId: bookingId, data: { vanId, driverId, previousVanId, previousDriverId } })`.
+4. **Audit with the actor, and name the action for what happened.** `booking_assigned` for a
+   first assignment or a pre-departure re-assignment; **`booking_reassigned_in_progress`** for a
+   Q3 mid-trip change, whose `data` additionally carries the **`reason`**. Both carry
+   `previousVanId` and `previousDriverId` - old to new, as the owner required. Two action names
+   rather than one, because "a van was swapped mid-trip" is the row an operations review will go
+   looking for, and it should not have to infer it from a timestamp.
 
-**Which statuses may be assigned** is **Q3**. Until it is answered this plan implements: `confirmed` → `assigned`, and `assigned` → `assigned` (a re-assignment, which is the normal case when a van breaks down). `pending_payment`, `pending_verification`, `in_progress`, `completed`, `cancelled` and `expired` are all refused with `booking_not_assignable`. Assigning an unpaid hold would staff a trip nobody has paid for; re-assigning an `in_progress` trip is a real need but it interacts with Week 6's check-ins, which do not exist yet.
+```ts
+writeAudit(tx, {
+  actorType: 'user',
+  actorId: actorUserId,
+  action: wasInProgress ? 'booking_reassigned_in_progress' : 'booking_assigned',
+  entity: 'booking',
+  entityId: bookingId,
+  data: { vanId, driverId, previousVanId, previousDriverId, ...(reason ? { reason } : {}) },
+});
+```
+
+**Which statuses may be assigned — owner-decided 2026-10-14 (Q2 and Q3 together):**
+
+| Status                              | Assignable? | Reason required? | Why                                                                                                                                                                                                                                         |
+| ----------------------------------- | ----------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `confirmed`                         | ✅          | no               | The normal first assignment. Status moves to `assigned`.                                                                                                                                                                                    |
+| `assigned`                          | ✅          | no               | Re-assignment before departure. Nothing is being undone.                                                                                                                                                                                    |
+| `pending_verification`              | ✅ **(Q2)** | no               | A receipt is in and the trip is probable, so dispatch may **pre-assign**. **The status does NOT change** — it stays `pending_verification` until the payment is checked, and the assignment carries an "unpaid" label wherever it is shown. |
+| `in_progress`                       | ✅ **(Q3)** | **YES**          | A van breaking down mid-trip is real, and the record must be able to say so. Status stays `in_progress`.                                                                                                                                    |
+| `pending_payment`                   | ❌          | —                | A fifteen-minute unpaid hold. Staffing it is staffing nothing.                                                                                                                                                                              |
+| `completed`, `cancelled`, `expired` | ❌          | —                | The day is over or called off; the capacity is already released.                                                                                                                                                                            |
+
+**The status transition is now conditional, and that is the subtlety a reviewer should check first.**
+`confirmed` → `assigned` is the only status _change_ this mutation makes. `pending_verification`
+and `in_progress` keep their status — writing `assigned` over either would be a lie, and over
+`pending_verification` it would also be a **money lie**, because `assigned` reads as paid
+everywhere else in the system (§5's status table) and the receipt has not been checked. A single
+unconditional `status: 'assigned'` write is the bug this table exists to prevent.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1449,14 +1615,129 @@ it('REFUSES finance — §9 gives assignment to owner and dispatcher only', asyn
   );
 });
 
-it('refuses an unpaid hold', async () => {
+it('refuses a pending_payment hold', async () => {
   const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
-  for (const status of ['pending_payment', 'pending_verification'] as const) {
+  await getDb()
+    .update(bookings)
+    .set({ status: 'pending_payment' })
+    .where(eq(bookings.id, bookingId));
+  await expect(api.admin.dispatch.assign({ bookingId, vanId, driverId })).rejects.toThrow(
+    /not_assignable/,
+  );
+});
+
+it('refuses a completed, cancelled or expired booking', async () => {
+  const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+  for (const status of ['completed', 'cancelled', 'expired'] as const) {
     await getDb().update(bookings).set({ status }).where(eq(bookings.id, bookingId));
     await expect(api.admin.dispatch.assign({ bookingId, vanId, driverId })).rejects.toThrow(
       /not_assignable/,
     );
   }
+});
+
+/* ---- Q2: pre-assigning an unverified receipt (owner-decided 2026-10-14) ---- */
+
+it('ALLOWS pre-assigning a pending_verification booking', async () => {
+  const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+  await getDb()
+    .update(bookings)
+    .set({ status: 'pending_verification' })
+    .where(eq(bookings.id, bookingId));
+  await expect(api.admin.dispatch.assign({ bookingId, vanId, driverId })).resolves.toEqual({
+    ok: true,
+  });
+});
+
+it('does NOT move a pre-assigned booking to assigned - it is still unpaid', async () => {
+  // `assigned` reads as paid everywhere else in the system (section 5's
+  // status table). Writing it over an unchecked receipt would be a money lie.
+  const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+  await getDb()
+    .update(bookings)
+    .set({ status: 'pending_verification' })
+    .where(eq(bookings.id, bookingId));
+  await api.admin.dispatch.assign({ bookingId, vanId, driverId });
+  const [row] = await getDb().select().from(bookings).where(eq(bookings.id, bookingId));
+  expect(row.status).toBe('pending_verification');
+  expect({ vanId: row.vanId, driverId: row.driverId }).toEqual({ vanId, driverId });
+});
+
+/* ---- Q3: re-assigning a trip already under way (owner-decided 2026-10-14) ---- */
+
+it('ALLOWS re-assigning an in_progress trip when a reason is given', async () => {
+  const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+  await api.admin.dispatch.assign({ bookingId, vanId, driverId });
+  await getDb().update(bookings).set({ status: 'in_progress' }).where(eq(bookings.id, bookingId));
+  await expect(
+    api.admin.dispatch.assign({
+      bookingId,
+      vanId: otherVanId,
+      driverId: otherDriverId,
+      reason: 'Van ABC 123 broke down at Carcar; swapped to DEF 456.',
+    }),
+  ).resolves.toEqual({ ok: true });
+  const [row] = await getDb().select().from(bookings).where(eq(bookings.id, bookingId));
+  expect(row.status).toBe('in_progress'); // the trip is still under way
+});
+
+it('REFUSES an in_progress re-assignment with no reason', async () => {
+  const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+  await getDb().update(bookings).set({ status: 'in_progress' }).where(eq(bookings.id, bookingId));
+  await expect(
+    api.admin.dispatch.assign({ bookingId, vanId: otherVanId, driverId: otherDriverId }),
+  ).rejects.toThrow(/reason_required/);
+});
+
+it('REFUSES an in_progress re-assignment whose reason is only whitespace', async () => {
+  const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+  await getDb().update(bookings).set({ status: 'in_progress' }).where(eq(bookings.id, bookingId));
+  await expect(
+    api.admin.dispatch.assign({
+      bookingId,
+      vanId: otherVanId,
+      driverId: otherDriverId,
+      reason: '   ',
+    }),
+  ).rejects.toThrow();
+});
+
+it('does NOT demand a reason for an ordinary first assignment', async () => {
+  const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+  await expect(api.admin.dispatch.assign({ bookingId, vanId, driverId })).resolves.toEqual({
+    ok: true,
+  });
+});
+
+it('audits an in_progress re-assignment with old -> new values and the reason', async () => {
+  const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+  await api.admin.dispatch.assign({ bookingId, vanId, driverId });
+  await getDb().update(bookings).set({ status: 'in_progress' }).where(eq(bookings.id, bookingId));
+  await api.admin.dispatch.assign({
+    bookingId,
+    vanId: otherVanId,
+    driverId: otherDriverId,
+    reason: 'Breakdown at Carcar',
+  });
+  const rows = await auditRowsFor('booking', bookingId);
+  const last = rows.at(-1)!;
+  expect(last.action).toBe('booking_reassigned_in_progress');
+  expect(last.actorId).toBe(dispatcherId);
+  expect(last.data).toMatchObject({
+    previousVanId: vanId,
+    previousDriverId: driverId,
+    vanId: otherVanId,
+    driverId: otherDriverId,
+    reason: 'Breakdown at Carcar',
+  });
+});
+
+it('REFUSES finance an in_progress re-assignment', async () => {
+  const api = appRouter.createCaller(staffContext(financeId, 'finance') as never);
+  await getDb().update(bookings).set({ status: 'in_progress' }).where(eq(bookings.id, bookingId));
+  await expect(
+    api.admin.dispatch.assign({ bookingId, vanId, driverId, reason: 'Breakdown' }),
+  ).rejects.toThrow(/FORBIDDEN/);
 });
 
 it('refuses a van too small for the group', async () => {
@@ -1526,14 +1807,17 @@ Expected: FAIL — `admin.dispatch` does not exist.
 Order inside the transaction, and it is the whole implementation:
 
 ```
-1. read the booking (FOR UPDATE)            -- its tourId, tourDate, pax, status, current van/driver
-2. refuse unless status is assignable
-3. takeSlotLocks(tx, booking.tourId, booking.tourDate)
-4. vansFreeOn(tx, tourDate, booking.pax, { excludeBookingId: bookingId })
-5. driversFreeOn(tx, tourDate, { excludeBookingId: bookingId })
-6. refuse unless the chosen ids are in those lists
-7. update bookings SET van_id, driver_id, status='assigned'
-8. writeAudit
+1. read the booking (FOR UPDATE)            -- tourId, tourDate, pax, status, current van/driver
+2. refuse unless status is in the assignable set   (the Q2/Q3 table above)
+3. refuse 'reason_required' if status is in_progress and no trimmed reason came in
+4. takeSlotLocks(tx, booking.tourId, booking.tourDate)
+5. vansFreeOn(tx, tourDate, booking.pax, { excludeBookingId: bookingId })
+6. driversFreeOn(tx, tourDate, { excludeBookingId: bookingId })
+7. refuse unless the chosen ids are in those lists
+8. update bookings SET van_id, driver_id
+      , status = 'assigned'  ONLY IF the current status is 'confirmed' or 'assigned'
+                             -- never over pending_verification, never over in_progress
+9. writeAudit (action depends on whether the status was in_progress)
 ```
 
 Step 1 is `.for('update')` and step 3's locks come **before** steps 4 and 5. Both facts are load-bearing; put the reason in a comment, because the next person to read this will want to "simplify" the double locking.
@@ -1547,8 +1831,14 @@ Expected: PASS (10 tests).
 
 1. **Delete the `takeSlotLocks` call.** Both concurrency tests must go red. If they stay green, they are not testing concurrency — they are two sequential calls wearing a `Promise.allSettled`, and the lock is unproven. **Log it and fix the test before continuing.**
 2. **Move `takeSlotLocks` to after the availability reads.** At least one concurrency test must go red — this is the REPEATABLE READ snapshot trap, and if neither test notices, neither test is sensitive to lock ordering.
-3. Drop the `excludeBookingId` from step 4 → the re-assignment test goes red.
-4. Remove the status guard → the unpaid-hold test goes red.
+3. Drop the `excludeBookingId` from step 5 -> the re-assignment test goes red.
+4. Remove the status guard -> the `pending_payment` and completed/cancelled/expired tests go red.
+5. Make the status write unconditional (`status: 'assigned'` always) -> **the pre-assignment test
+   "does NOT move a pre-assigned booking to assigned" goes red**, and so does the `in_progress`
+   one. This is the money-adjacent mutation in this task; if both stay green, neither test is
+   reading the status back and both are worthless.
+6. Drop the `reason_required` check -> the no-reason test goes red.
+7. Use one audit action name for both paths -> the `booking_reassigned_in_progress` test goes red.
 
 Restore after each.
 
@@ -1680,7 +1970,7 @@ git commit -m "feat(dispatch): a suggestion that fits, and that spreads the work
 **Interfaces:**
 
 - Consumes: `trpc.admin.calendar.dayOptions`, `trpc.admin.dispatch.suggest | assign`, the vendored `select`.
-- Produces: `AssignPanel` with props `{ bookingId: number; pax: number; currentVanId: number | null; currentDriverId: number | null; onAssigned(): void }` — used from the calendar's day list **and** from the booking detail page, since §9 lists "Assign van + driver" under Bookings detail as well. One component, two mount points, so the two surfaces cannot drift.
+- Produces: `AssignPanel` with props `{ bookingId: number; pax: number; status: BookingStatus; currentVanId: number | null; currentDriverId: number | null; onAssigned(): void }` — used from the calendar's day list **and** from the booking detail page, since §9 lists "Assign van + driver" under Bookings detail as well. One component, two mount points, so the two surfaces cannot drift. **`status` is a required prop**, not derived inside the component: it decides whether the unpaid label shows (Q2) and whether the reason field exists and is required (Q3), and a component that guessed it would guess wrong on the detail page.
 
 **Design (run `ui-ux-pro-max` first).** Queries: `"select dropdown structure" --stack shadcn`, `"submit feedback loading state" --domain ux`, `"inline validation error clarity" --domain ux`. Binding decisions:
 
@@ -1688,6 +1978,8 @@ git commit -m "feat(dispatch): a suggestion that fits, and that spreads the work
 - **The dropdowns contain only what the server said is free.** No disabled-but-visible options for excluded vans: §9 says the dropdowns _exclude_, and a greyed row inviting a click that will be refused is worse than an absence. The count of excluded vans is reported as plain text beneath (`3 vans are unavailable that day`) so the absence is explained rather than mysterious.
 - **Error handling follows `QueryBoundary`'s existing rules**: the dropdown contents are handled by hand rather than by `QueryBoundary`, because that component renders a "Try again" `<button>` on failure and a button must never appear inside a Radix listbox — this is the exact lesson `HeroSection.tsx` already carries in a comment. On failure the panel shows an error region **outside** the listbox and keeps the Assign button disabled.
 - **Auto-suggest fills the dropdowns; it does not assign.** The button's label is "Suggest", the result is two pre-selected values and a line saying why, and the dispatcher still presses "Assign".
+- **The "unpaid" label (owner-decided 2026-10-14, Q2).** When the booking is `pending_verification`, the panel and the assignment it produces both carry an **"unpaid - receipt not yet checked"** label, in **text**, beside the van and driver. Amber, never red. A dispatcher looking at tomorrow's board must be able to see which staffed trips are still unverified without clicking anything, because that is the set where the money can still fall through.
+- **The reason field appears only for an `in_progress` trip (Q3)**, where it is **required**: a labelled `<textarea>`, a visible "Required" hint, and the Assign button disabled until it is non-empty. It is **absent** for every other status rather than present-and-optional, because an optional box beside a van swap invites a blank one.
 - Pending state on both buttons, and a `role="status"` confirmation naming the van and the driver after a successful assignment.
 
 - [ ] **Step 1: Write the failing test**
@@ -1735,6 +2027,39 @@ it('confirms the assignment by naming the van and the driver', async () => {
   await user.click(screen.getByRole('button', { name: /^assign$/i }));
   expect((await screen.findByRole('status')).textContent).toMatch(/ABC 123.*Maria/i);
 });
+
+/* ---- Q2: the unpaid label ---- */
+
+it('labels a pending_verification assignment as unpaid, in text', () => {
+  renderPanel({ status: 'pending_verification', options: { vans: [VAN_10], drivers: [DRIVER_A] } });
+  const label = screen.getByText(/unpaid .*receipt not yet checked/i);
+  expect(label).toBeTruthy();
+  expect(label.closest('[data-testid="unpaid-label"]')?.className).not.toMatch(
+    /red|rose|destructive/,
+  );
+});
+
+it('shows no unpaid label for a confirmed booking', () => {
+  renderPanel({ status: 'confirmed', options: { vans: [VAN_10], drivers: [DRIVER_A] } });
+  expect(screen.queryByText(/unpaid/i)).toBeNull();
+});
+
+/* ---- Q3: the reason field, only where it is required ---- */
+
+it('requires a reason before assigning an in_progress trip', async () => {
+  renderPanel({ status: 'in_progress', options: { vans: [VAN_10], drivers: [DRIVER_A] } });
+  await pickBoth();
+  const reason = screen.getByLabelText(/reason/i);
+  expect(reason).toBeTruthy();
+  expect(screen.getByRole('button', { name: /^assign$/i })).toBeDisabled();
+  await user.type(reason, 'Breakdown at Carcar');
+  expect(screen.getByRole('button', { name: /^assign$/i })).toBeEnabled();
+});
+
+it('offers no reason field at all for a confirmed booking', () => {
+  renderPanel({ status: 'confirmed', options: { vans: [VAN_10], drivers: [DRIVER_A] } });
+  expect(screen.queryByLabelText(/reason/i)).toBeNull();
+});
 ```
 
 - [ ] **Step 2: Run them and watch them fail**
@@ -1751,7 +2076,7 @@ Expected: PASS (5 tests).
 
 - [ ] **Step 5: Prove they can fail**
 
-Render excluded vans as disabled options → the first test goes red. Have "Suggest" call assign → the third test goes red. Restore both.
+Render excluded vans as disabled options -> the first test goes red. Have "Suggest" call assign -> the third test goes red. Show the reason field for every status -> the "no reason field for a confirmed booking" test goes red. Drop the disabled state while the reason is empty -> the required-reason test goes red. Restore each.
 
 - [ ] **Step 6: Guards, then commit**
 
@@ -1780,7 +2105,7 @@ git commit -m "feat(dispatch): two dropdowns that only offer what is actually fr
 - Produces:
 
 ```ts
-export const UNASSIGNED_ALERT_HOURS = 48; // §9 "Unassigned trips within 48 hours" — see Q7
+export const UNASSIGNED_ALERT_HOURS = 48; // §9, counted BACK from the tour date (Q7)
 export const SERVICE_DUE_DAYS = 14; // §9 "Van service due within 14 days"
 export const PAPERS_EXPIRING_DAYS = 30; // §9 "licence, OR/CR and franchise expiring within 30 days"
 
@@ -1796,7 +2121,17 @@ export interface DashboardAlert {
 
 **Always five entries, zeroes included.** A dashboard that hides the empty alerts teaches an operator that an absent card means "fine", which is indistinguishable from "the query broke". Five cards, every load, each saying its number.
 
-All date arithmetic goes through `shared/src/time.ts`. The expiry comparisons are string comparisons on civil dates; the 48-hour one is the only instant-based alert, and **its meaning is ambiguous in the spec** — see Q7.
+All date arithmetic goes through `shared/src/time.ts`. The expiry comparisons are string comparisons on civil dates.
+
+**The 48-hour alert — owner-decided 2026-10-14 (Q7), which also settles BUILD_SPEC §15 open question 1.** It counts **back from the tour date**: flag `confirmed` bookings whose tour date falls within the next 48 hours in **Asia/Manila** and which still lack a van **OR** a driver.
+
+Three things that decision pins, each with a test below:
+
+1. **Back from the tour date**, not forward from the booking. The risk being managed is a trip departing unstaffed, not a dispatcher being slow.
+2. **`OR`, not `AND`.** A trip with a van and no driver is exactly as stranded as one with neither, and an `AND` would hide the half-staffed trips a dispatcher most needs.
+3. **The window is Manila-local, and this is where the bug would be.** `tour_date` is a civil date; the server's clock is UTC. A naive `now + 48h` compared against a civil date is out by eight hours, which for tours that leave at dawn is a whole tour day — the alert would either nag a day early or, worse, stay silent on the morning that matters. Build the window with `manilaCivilDate()` and `manilaInstant()` and compare civil date to civil date. **No `new Date()` arithmetic in this query.**
+
+`confirmed` only, per the decision — `pending_verification` is visible on the calendar but never counted (Q2), and `assigned` trips by definition have both.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1828,6 +2163,51 @@ it('does NOT count a trip outside the window', async () => {
     driverId: null,
   });
   expect(alertFor(await callAlerts(), 'unassigned_soon').count).toBe(0);
+});
+
+it('counts a trip with a driver but NO van - OR, not AND', async () => {
+  await makeBooking({ tourDate: inManilaDays(1), status: 'confirmed', vanId: null, driverId });
+  expect(alertFor(await callAlerts(), 'unassigned_soon').count).toBe(1);
+});
+
+/* ---- Q7: the boundary, in Manila time (owner-decided 2026-10-14) ---- */
+
+/**
+ * The owner named these tests, and the reason is that a timezone slip here
+ * is invisible: every assertion passes in UTC+0 and the alert is wrong by a
+ * tour day in Manila. `atManila()` builds a fixed instant from a civil date
+ * and a Manila wall-clock time, so these cases do not drift with the day
+ * the suite happens to run.
+ */
+it('counts a trip just INSIDE 48 hours, Manila', async () => {
+  // Manila "now" = 2026-11-10 08:00. Tour date 2026-11-12 is 40 hours out.
+  const now = atManila('2026-11-10', '08:00');
+  await makeBooking({ tourDate: '2026-11-12', status: 'confirmed', vanId: null, driverId: null });
+  expect(alertFor(await callAlerts({ now }), 'unassigned_soon').count).toBe(1);
+});
+
+it('does NOT count a trip just OUTSIDE 48 hours, Manila', async () => {
+  // Manila "now" = 2026-11-10 08:00. Tour date 2026-11-13 is 64 hours out.
+  const now = atManila('2026-11-10', '08:00');
+  await makeBooking({ tourDate: '2026-11-13', status: 'confirmed', vanId: null, driverId: null });
+  expect(alertFor(await callAlerts({ now }), 'unassigned_soon').count).toBe(0);
+});
+
+it('does not shift the boundary across Manila midnight', async () => {
+  // 23:30 Manila on the 10th is 15:30 UTC on the 10th. A UTC-based window
+  // would place "now" on a different civil day and move the boundary by one
+  // whole tour date. The 12th must still be inside; the 13th must not.
+  const now = atManila('2026-11-10', '23:30');
+  await makeBooking({ tourDate: '2026-11-12', status: 'confirmed', vanId: null, driverId: null });
+  await makeBooking({ tourDate: '2026-11-13', status: 'confirmed', vanId: null, driverId: null });
+  expect(alertFor(await callAlerts({ now }), 'unassigned_soon').count).toBe(1);
+});
+
+it('counts a trip departing TODAY that is still unstaffed', async () => {
+  // The most urgent case of all, and the one a strict "> now" window drops.
+  const now = atManila('2026-11-10', '06:00');
+  await makeBooking({ tourDate: '2026-11-10', status: 'confirmed', vanId: null, driverId: null });
+  expect(alertFor(await callAlerts({ now }), 'unassigned_soon').count).toBe(1);
 });
 
 it('does NOT count an unpaid hold as an unassigned trip', async () => {
@@ -1919,8 +2299,13 @@ Expected: PASS (12 tests).
 
 1. Change `next_service <= today + SERVICE_DUE_DAYS` to a `BETWEEN` → the overdue test goes red.
 2. Drop the `is_active` filter → the inactive test goes red.
-3. Include `pending_payment` in the unassigned query → that test goes red.
-4. Return only the non-empty alerts → the five-entries test goes red.
+3. Include `pending_payment` in the unassigned query -> that test goes red.
+4. Return only the non-empty alerts -> the five-entries test goes red.
+5. **Change the `OR` between the two null checks to an `AND`** -> the driver-but-no-van test goes red.
+6. **Build the window from `new Date()` + 48h instead of the Manila helpers** -> the midnight test
+   goes red. If it stays green, the boundary tests are not timezone-sensitive and Q7's named
+   requirement is unmet, whatever the other assertions say. Log it and fix the test first.
+7. Change the tour-date comparison from `<=` to `<` -> the departing-today test goes red.
 
 Restore after each.
 
@@ -2122,6 +2507,15 @@ Not a code task. Drive every 5A–5E flow against the running app and record wha
 - [ ] **Step 6:** Dashboard: all five alerts non-zero against the seed, then resolve one and watch its count fall.
 - [ ] **Step 7:** Fix anything found, with a test per fix, then re-run the whole pass.
 - [ ] **Step 8:** Update `docs/BUILD_SPEC.md` §13's Week 5 preamble, which currently says "Nothing in this week is built." **Rewrite it to say what is true** and mark 5A–5E — the same correction Week 3's Task 13 and Week 4's close both had to make, which is now three weeks in a row and worth doing as part of the week rather than after it.
+- [ ] **Step 9a: Record the two carry-forward constraints Week 6 inherits.** Neither is optional
+      and neither is visible from Week 6's own task list, so both go into §13's **Week 6**
+      preamble, not only into this plan: 1. **`on_trip` must be cleared when a trip completes (from Q1's allow-list).** 6C's
+      check-ins are the first code to set it, and `VAN_STATUS_SELLABLE` allow-lists
+      `available` alone — so a van left `on_trip` stops being sellable on every future date. 2. **The driver portal must reflect a mid-trip re-assignment (owner-decided 2026-10-14,
+      Q3).** A driver whose trip was taken off them must stop seeing it, and the driver who
+      received it must start. 6A/6B build that portal; this week creates the event it has to
+      respond to.
+
 - [ ] **Step 9:** Add to `CLAUDE.md`: the availability module is the single source of truth for van/driver freeness, and the dispatch lock order is `fleet_date_slots` → `tour_date_slots` → the booking row, matching the existing booking path.
 - [ ] **Step 10:** Five checks, **each run separately with its exit code reported**, then commit, then write **✅ WEEK 5 COMPLETE** — with any unproven step named in the marker itself, Week 4's convention.
 
@@ -2162,33 +2556,74 @@ Not a code task. Drive every 5A–5E flow against the running app and record wha
 
 Listed, not guessed. **Q1, Q2, Q3 and Q7 block tasks** and are marked so. The rest have a stated default that the plan implements if no answer arrives, and each default is the conservative choice.
 
-### Q1 — The fourth van status (BLOCKS Task 2, and touches booking logic)
+### Q1 — ✅ ANSWERED: add `parked`, and make Gate 2 an ALLOW-LIST (owner-decided 2026-10-14)
 
-§9 names four van statuses — **Available / On tour / Parked / For repair** — and the schema has three: `available`, `on_trip`, `for_repair`. **`parked` does not exist.**
+**Owner decision.** Add §9's fourth van status, and change `assessCapacity()`'s Gate 2 from a
+deny-list to an **allow-list**: **only `status = 'available'` counts as sellable fleet.** Never
+`status <> 'for_repair'`. A new or unknown status is therefore excluded by default.
 
-Adding it is a one-line enum change with a consequence that is not: `assessCapacity()`'s Gate 2 counts a van as sellable when `status <> 'for_repair'`, so a parked van would be counted as fleet the site can sell against. The enum and the capacity gate have to change together.
+This is a stronger answer than the plan's option (a), and the reason is the direction it fails in.
+A deny-list says "everything is sellable except the things I remembered to list", so the next
+status anyone adds — `parked`, `impounded`, `sold` — is silently sellable until someone notices.
+An allow-list says "nothing is sellable unless it is available", and a forgotten status costs a
+refused booking instead of an oversold trip. **Fail closed**, which is `CLAUDE.md`'s rule for
+exactly this kind of gate.
 
-**Options:** (a) add `parked` and change Gate 2 to exclude both `parked` and `for_repair` — Task 2 as written; (b) add `parked` as a purely informational status that does **not** affect availability (a van parked at the office is still bookable tomorrow); (c) leave the schema at three and accept that §9's "Parked" is covered by `available`.
+Two tests came with the decision, and Task 2 owes both: **every non-`available` status is
+excluded**, and **capacity and dispatch availability agree** on what a van's status means.
 
-**The plan's default if unanswered:** do **not** execute Task 2. Three statuses, and `parked` noted as a spec gap. A silent change to what the fleet-capacity query counts is exactly the class of change `CLAUDE.md` says to stop and ask about.
+**One consequence to carry into Week 6, flagged rather than buried.** `on_trip` is now unsellable
+too. §9 says "'On tour' is derived from in-progress trips", so it is meant to be a _today_ status
+that clears when the trip ends — and while nothing in the codebase sets or clears it (check-ins
+are Week 6, 6C), no van is ever `on_trip` and the allow-list costs nothing. **When Week 6 starts
+writing `on_trip`, it must also clear it**, or a van that drove one trip stops being bookable for
+every future date. Task 2 writes that requirement into the schema comment beside the status, where
+the person building 6C will actually read it.
 
-### Q2 — What counts as "needs assignment"? (BLOCKS Task 8's gold dot)
+### Q2 — ✅ ANSWERED: visible, labelled, not counted, and pre-assignable (owner-decided 2026-10-14)
 
-The gold dot means "needs assignment", and the plan reads that as **paid-or-confirmed trips with no van or no driver** — specifically `confirmed` and `assigned`, excluding `pending_payment` and `pending_verification`.
+**Owner decision**, and it is four separate rulings on one booking status:
 
-The reasoning: an unpaid hold expires on its own in fifteen minutes, and lighting the dot for every hold would make the month gold every morning and the signal worthless.
+1. A `pending_verification` booking **appears on the dispatch calendar** — it is a probable trip
+   and a dispatcher planning a week needs to see it.
+2. It is **labelled "awaiting payment check"** — **as text, not as a colour** (the §9 gold-dot rule
+   applies to every marker on this screen, not only that one).
+3. It does **not** count toward **"needs assignment"**, so it never lights the gold dot and never
+   inflates the dashboard's unassigned count.
+4. Dispatch **may pre-assign** it, and the assignment then **shows an "unpaid" label** wherever it
+   appears.
 
-**Confirm:** does a `pending_verification` booking — a receipt uploaded, awaiting an admin — count as needing assignment? It holds capacity and will probably become a real trip, but nobody has verified the money yet.
+They keep holding capacity exactly as today — `CAPACITY_HOLDING_STATUSES` is unchanged.
 
-**Default if unanswered:** exclude both unpaid statuses, as written.
+This changes the plan as written in two places, and both changes are real work, not wording:
+**Task 8** gains the `awaitingPaymentCheck` flag on `CalendarTrip` and a test that it is text;
+**Task 10**'s status guard must now **admit `pending_verification`**, where the plan's default
+refused it. `pending_payment` is still refused — an unpaid hold with fifteen minutes left on it is
+not something to staff a van against.
 
-### Q3 — Which statuses may be assigned or re-assigned? (BLOCKS Task 10's status guard)
+### Q3 — ✅ ANSWERED: yes, `in_progress` may be re-assigned, with a required reason (owner-decided 2026-10-14)
 
-The plan allows `confirmed → assigned` and `assigned → assigned` (re-assignment), and refuses everything else.
+**Owner decision.** A trip already under way **may** have its van and/or its driver changed —
+a van breaking down mid-trip is a real morning, and dispatch must be able to record what actually
+happened rather than leave the record wrong.
 
-**The real question is `in_progress`.** A van that breaks down mid-trip is a genuine operational event, and refusing to re-assign means a dispatcher cannot record what actually happened. But `in_progress` means check-ins exist, and check-ins are Week 6 — re-assigning a trip whose driver has already checked in at two stops raises a question this plan cannot answer: does the check-in history belong to the trip or to the driver?
+Four conditions came with it, all binding on Task 10:
 
-**Options:** (a) refuse `in_progress`, revisit in Week 6 when check-ins exist — the plan's default; (b) allow it now, with the audit row recording the mid-trip change; (c) allow it now and also require a reason, like a rejection reason.
+1. **Owner and dispatcher only** — `adminProcedure('assignVanDriver')`, which is already that pair.
+   Finance is refused, and owes a test.
+2. **A reason is REQUIRED** for an `in_progress` re-assignment. Not optional, not defaulted.
+3. **The audit row carries old → new values** for both van and driver, plus the reason.
+4. **The driver portal must reflect the change.** That portal does not exist yet — it is Week 6
+   (6A/6B) — so this becomes a **carry-forward constraint on Week 6**, recorded in Task 16 and in
+   §13's Week 6 preamble rather than silently owed: a driver whose trip was taken off them must
+   stop seeing it, and the driver who received it must start.
+
+Three named tests: **a missing reason is refused**, **finance is refused**, **the audit row is
+written** with both old and new values.
+
+The reason is required only where the owner required it — an `in_progress` change. A
+`confirmed → assigned` first assignment and a `confirmed`/`assigned` re-assignment before
+departure take no reason, because nothing is being undone.
 
 ### Q4 — Does `drivers.status = 'off_duty'` block dispatch? (Task 3)
 
@@ -2216,13 +2651,21 @@ The plan proposes **the free driver with the fewest assigned trips in the seven 
 
 **Alternatives:** by language match against the booking's requests; by the driver's average rating; by seniority; or genuinely arbitrary, leaving fairness to the dispatcher. **Default if unanswered:** fewest nearby trips, as proposed.
 
-### Q7 — The 48-hour deadline, which §15 open question 1 already asks (BLOCKS Task 13's second alert)
+### Q7 — ✅ ANSWERED: count BACK from the tour date (owner-decided 2026-10-14)
 
-§5 says "unassigned bookings raise a dashboard alert 48 hours before the tour date", §9 says "unassigned trips **within 48 hours**", and **BUILD_SPEC §15 open question 1 asks this explicitly and says "Before Week 5"**: is it "assign at least 48 hours before the tour" or "within 48 hours of booking"?
+**Owner decision**, which also settles BUILD_SPEC §15's open question 1. The alert flags
+**`confirmed` bookings whose tour date is within 48 hours (Asia/Manila) and which still lack a van
+OR a driver.** Back from the tour date, not forward from the booking.
 
-The two produce different dashboards. **Tour-date reading:** alert when `tour_date` is less than 48 hours away and the trip is unstaffed — the operational reading, since the risk is a trip departing with no van. **Booking-date reading:** alert when a booking has sat unassigned for 48 hours since it was made — a service-level reading about dispatch responsiveness.
+`OR`, not `AND`: a trip with a van and no driver is just as stranded as one with neither, and an
+`AND` would hide exactly the half-staffed trips a dispatcher most needs to see.
 
-**Default if unanswered:** the **tour-date** reading, because §9's wording ("trips within 48 hours") is about trips, not about bookings, and because a trip tomorrow with no driver is the failure that actually strands guests. **This is the one question whose answer changes a number an operator will stare at every morning, so it is worth answering rather than defaulting.**
+**Tests at the 48-hour boundary, in Manila time** — named by the owner, and the reason they are
+named is that this is the one calculation in the week where a timezone slip is invisible. The
+server stores UTC and the boundary is Manila-local, so a naive `now + 48h` against a civil
+`tour_date` is wrong by eight hours — which, for a business whose tours leave at dawn, is a whole
+tour day. The window comes from `manilaCivilDate()` / `manilaInstant()` in `shared/src/time.ts`,
+never from `new Date()` arithmetic.
 
 ### Q8 — May this week vendor three more shadcn primitives? (Tasks 5, 7, 12)
 
@@ -2261,6 +2704,6 @@ Dropping a van's `capacity` from 15 to 10 does not re-check the trips already as
 
 **2. Placeholder scan.** No "TBD", no "add appropriate error handling", no "similar to Task N" — each task repeats the code it needs. Tasks 1–3 and 8–14 carry full test code. Tasks 4, 5, 6, 7, 12, 13 and 14 carry full test code for the assertions that matter and **named** implementation shapes rather than complete component bodies, because the JSX depends on a `ui-ux-pro-max` query the implementer must actually run — a plan that pre-writes the markup would make that query decorative. Task 2 is deliberately incomplete until **Q1** is answered, and says so in its first line rather than hiding it behind a guess.
 
-**3. Type consistency.** Checked across tasks: `FreeVan` / `FreeDriver` / `FreeOnOptions` are defined in Task 3 and consumed unchanged by Tasks 8, 10, 11 and 12. `vansFreeOn(tx, date, minCapacity, opts?)` — four parameters, that order — is called identically in Tasks 8, 10 and 11. `driversFreeOn(tx, date, opts?)` likewise. `CalendarDay` / `CalendarTrip` are defined in Task 8 and consumed by Task 9. `DashboardAlert` is defined in Task 13 and consumed by Task 14. `EntityFormProps` is defined in Task 5 and reused in Task 7. `AssignRefusal`'s five members are the only refusal strings Task 12's UI maps to copy. `VAN_STATUSES_UNAVAILABLE` is produced by Task 2 and consumed by Task 3 — **and Task 3 says what to do if Task 2 does not run**, which is the one cross-task dependency a gated task could have broken.
+**3. Type consistency.** Checked across tasks: `FreeVan` / `FreeDriver` / `FreeOnOptions` are defined in Task 3 and consumed unchanged by Tasks 8, 10, 11 and 12. `vansFreeOn(tx, date, minCapacity, opts?)` — four parameters, that order — is called identically in Tasks 8, 10 and 11. `driversFreeOn(tx, date, opts?)` likewise. `CalendarDay` / `CalendarTrip` are defined in Task 8 and consumed by Task 9. `DashboardAlert` is defined in Task 13 and consumed by Task 14. `EntityFormProps` is defined in Task 5 and reused in Task 7. `AssignRefusal`'s five members are the only refusal strings Task 12's UI maps to copy. **`VAN_STATUS_SELLABLE` is produced by Task 2 and consumed by both Task 3 and `assessCapacity()`** — the single allow-listed status, which is what makes Task 2's agreement test possible at all. Task 2 is no longer gated (Q1 answered), so Task 3's dependency on it is a plain ordering requirement: Task 2 ships first.
 
 **4. One thing I want to flag rather than bury.** Task 10 is the first code in this project to write `bookings.van_id`, and its two concurrency tests are the only thing standing between this week and a van sent to two trips on one morning. Both tests are written as overlapping transactions, and Task 10's Step 5 requires deleting the lock and watching them go red **before** the task is allowed to close. If either test stays green with the lock deleted, it is not testing what it claims, and this project has already found twelve-plus tests in exactly that condition. That step is not optional polish; it is the task.
