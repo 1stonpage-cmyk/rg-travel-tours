@@ -935,6 +935,43 @@ Not a code task. Drive every Phase 1 flow against the running app and record wha
 
 ---
 
+## ✅ WEEK 4 COMPLETE
+
+Tasks 1–12 done and verified. Five checks green, each run separately with its exit code shown
+(`pnpm lint` 0 · `pnpm typecheck` 0 · `pnpm test` 0 · `pnpm format:check` 0 ·
+`ALLOW_PLACEHOLDER_BUILD=1 pnpm build` 0), 1,666 tests passing across `shared` (67), `client` (377)
+and `server` (1,222), plus the `check:coming-soon` and `check:contact` guards.
+
+**Step 1 — the online gateway path — is `mocked`: the live wire check is pending the PayMongo
+account, a blocking item in `docs/LAUNCH_CHECKLIST.md` ("The gateway wire check").** This is the
+same rule Week 3 closed under (owner decision 2026-10-13, re-confirmed 2026-10-14): our side of
+the `PaymentProvider` seam is built and tested against a **mock** provider — `startPayment`'s
+refusals, the amount read off the booking row, the one-time hold extension, the four fixed
+methods, `recordPayment`, the signature check and webhook idempotency on
+`(provider, provider_event_id)`. What no test can prove is PayMongo's side: that a real checkout
+response parses, that a real signature header verifies, and that the real event names match what
+the webhook router switches on. The Task 12 walkthrough adds only that **asking to pay marks
+nothing paid** — it ran with no provider configured at all, so it proves the refusal path, not the
+mock's happy path.
+
+Everything else in Phase 1 is proven against the running app and re-runnable: manual QR
+hold → receipt → approve → confirmed → email; reject → reason shown → re-upload → approve; portal
+login parity, tracker and review-after-completion; hold expiry returning both capacity and coupon
+use. Evidence: `docs/superpowers/plans/2026-10-13-week4-phase1-walkthrough.md`.
+
+**Schema:** migration `0009_payments_superseded_status.sql` is applied to **both** `rg_travel` and
+`rg_travel_test` as of 2026-10-14 — 30 tables, 23 FKs, 9 CHECKs, 10 migrations, schemas compared
+column-for-column and identical. **The server database does not exist yet; this migration must be
+applied there when it is created** (`docs/LAUNCH_CHECKLIST.md`).
+
+**Carried into Week 5, not silently dropped:** the day-before reminder email (Q10 — `node-cron` and
+`server/src/jobs/` now exist, but §13's 4A–4E never gave it a task), SMS (Q13, optional and off by
+default), the 12-hour re-upload window still marked "proposed by developer — pending R&G
+confirmation" (Q8), and Q9's definition of when a tour day "ends" for the driver card, which was
+answered for Task 9 by a working rule rather than by R&G policy.
+
+---
+
 ## Questions — answered by the owner 2026-10-13, except where noted
 
 Four answers arrived before execution and are folded into the tasks above. The rest are
@@ -942,10 +979,20 @@ answered **per task when reached**, and anything touching **money, auth or roles
 (owner instruction, and CLAUDE.md's own rule).
 
 **Q1 — ANSWERED: yes, pull staff login (1C) into Week 4, before the manual-QR approval task.**
-Session cookies (httpOnly, `secure` in production, `sameSite=lax`), argon2/bcrypt per BUILD_SPEC
-§2, a rate-limited login, roles `owner` / `finance` / `dispatcher` through the existing
-`adminProcedure`. It is **Task 5** of this plan, which is why the old Tasks 5–11 are now 6–12.
-Task 11's admin screens are no longer gated on anything.
+Session cookies (httpOnly, `secure` in production, `sameSite=lax`), a rate-limited login, roles
+`owner` / `finance` / `dispatcher` through the existing `adminProcedure`. It is **Task 5** of this
+plan, which is why the old Tasks 5–11 are now 6–12. Task 11's admin screens are no longer gated on
+anything.
+
+**Password hashing is scrypt via `node:crypto` — owner decision 2026-10-14, re-confirmed
+2026-10-14 — replacing BUILD_SPEC §2's argon2/bcrypt.** This paragraph previously said
+"argon2/bcrypt per BUILD_SPEC §2", which contradicted `CLAUDE.md`'s stack line while Task 5
+shipped on scrypt; CLAUDE.md is the correct record and this is now aligned to it. The reasons the
+owner gave: **no native dependency to build on the VPS**, OWASP-recommended parameters, and
+**self-describing hashes** (the algorithm and its parameters are stored in the hash string), so a
+later migration to argon2 is additive — new logins re-hash on success, old hashes keep verifying,
+and no password reset is forced on anyone. A deliberate deviation from the spec, recorded as one
+rather than silently absorbed.
 
 **Q2 — moot.** It asked what to do if an admin could not log in. Q1 settles it: they can.
 

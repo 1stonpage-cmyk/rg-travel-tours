@@ -29,10 +29,13 @@ than bypassing it.
 
 ---
 
-## Step 1 — the online payment path: **NOT PROVEN**
+## Step 1 — the online payment path: **MOCKED — live wire check pending**
 
-**Status: blocked on the PayMongo account.** This is recorded as untested rather than papered
-over.
+**Status: mocked; the live wire check is pending the PayMongo account** (a blocking item in
+`docs/LAUNCH_CHECKLIST.md`, "The gateway wire check"). Week 3 built and tested our side of the
+`PaymentProvider` seam against a mock provider; what is pending is PayMongo's side. Recorded as
+unproven-against-the-real-gateway rather than papered over — "mocked" is the label, not a claim
+that the gateway works.
 
 What cannot be proven without an account: that `startPayment` produces a usable checkout session,
 that the redirect lands back correctly, that a real webhook's signature verifies, that the event
@@ -153,7 +156,7 @@ cover them already existed and already pass.
 | Reject → reason shown → re-upload → approve             | **PROVEN**                           |
 | Portal login parity, tracker, review-after-completion   | **PROVEN**                           |
 | Hold expiry, capacity return, coupon release            | **PROVEN**                           |
-| Online gateway payment, webhook, confirmation           | **NOT PROVEN — no PayMongo account** |
+| Online gateway payment, webhook, confirmation           | **MOCKED — live wire check pending** |
 
 Everything in Phase 1 that can be proven without a payment gateway account is proven and
 re-runnable. The gateway path remains the one blocking pre-launch item, and it is written down as

@@ -918,15 +918,43 @@ Roadmap items to pick up in or after this week:
   bookings (plan decision D8) rather than a number that drops to near-zero at launch.
 - **Pricing engine** — peak and holiday pricing, once the tier engine (3A) exists.
 
-### Week 4 — Manual QR & customer portal (Phase 1 review)
+### Week 4 — Manual QR & customer portal (Phase 1 review) — ✅ WEEK 4 COMPLETE (2026-10-14)
 
-Nothing in this week is built. There is no `client/src/pages/portal` or `.../admin`.
+> **Preamble rewritten 2026-10-14.** It said "Nothing in this week is built. There is no
+> `client/src/pages/portal` or `.../admin`." Both statements are now false. §13's markers were
+> audited once before for exactly this reason, so this is corrected at the moment the week closes
+> rather than left to be discovered.
 
-- **4A** Manual QR flow: QR display, timer, download, txn ref, receipt upload.
-- **4B** Customer portal login + rate limiting.
-- **4C** 5-step tracker, receipt re-upload, auto-refresh.
-- **4D** Basic admin bookings list + detail.
-- **4E** End-to-end test of every Phase 1 flow; fix and retest.
+**All of 4A–4E is built, tested and committed.** Plan:
+`docs/superpowers/plans/2026-10-13-week4-manual-qr-and-portal.md` (12 tasks); evidence:
+`docs/superpowers/plans/2026-10-13-week4-phase1-walkthrough.md`.
+
+**Three things this week added that the spec did not describe as Week 4 work**, each because
+nothing downstream worked without it: the **tRPC context factory** (`server/src/context.ts`) —
+until Task 1, `ctx` was `{}` and so **every `adminProcedure` refused everything**; **staff login**
+(Week 1's 1C, pulled in on the owner's answer to this plan's Q1); and the **reject half** of
+receipt verification, which §6 implies but no code did — `payments.reject_reason` was written
+nowhere and `'rejected'` was never set.
+
+- **4A** ✅ Manual QR flow: QR display, timer, download, txn ref, receipt upload.
+  A new receipt marks the previous row `superseded` — never deleted, never approvable — and
+  only the newest `pending` row can be decided; capped at five uploads per booking.
+  Needed migration `0009_payments_superseded_status.sql`.
+- **4B** ✅ Customer portal login (booking ref + email) + rate limiting, with wrong-credential
+  responses that are deeply equal so neither half of the pair is revealed.
+- **4C** ✅ 5-step tracker, receipt re-upload, auto-refresh, rejection reason shown in amber.
+- **4D** ✅ Basic admin bookings list + detail, including the verification queue and the
+  approve/reject decision.
+- **4E** ✅ End-to-end test of every Phase 1 flow. **Except the online gateway path, which is
+  `mocked` — the live wire check is pending the PayMongo account and remains a BLOCKING
+  pre-launch item** (`docs/LAUNCH_CHECKLIST.md`, "The gateway wire check"), under the same
+  rule Week 3 closed on. The walkthrough found no application bugs; three guards refused it
+  and were right to (capacity, the per-contact hold cap, the per-IP hold limiter).
+
+**Still unbuilt and deliberately carried forward, not dropped:** the day-before reminder email
+(§11 — `node-cron` and `server/src/jobs/` exist, but 4A–4E never gave it a task), SMS (§11,
+optional and off by default), and the **12-hour re-upload window after a rejection**, which is
+still _proposed by developer — pending R&G confirmation_.
 
 → **Client demo / Phase 1 approval.**
 

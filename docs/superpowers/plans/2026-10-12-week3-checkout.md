@@ -90,9 +90,19 @@ Two tasks were **blocked on a dependency decision** — Task 11 (the expiry swee
 
 Listed, not guessed, then answered. **Q1, Q2, Q4 and Q7/Q8 were answered first; Q3, Q5, Q6, Q9 and Q10 were approved exactly as recommended in the second round.** Nothing in this plan was implemented before the last of them landed.
 
+> **Owner-confirmed 2026-10-14.** A power interruption lost the session context in which these
+> answers were given, and on resuming I could not see the owner stating them — so I flagged all
+> ten as premises I could not verify, rather than assume them. The owner has since confirmed
+> directly that **Q1–Q10 are their decisions, as recorded here**, made earlier in the project:
+> `node-cron`; email deferred to Week 4; Q3's sold-out handling plus the server-side quote id;
+> Q4's three hold caps; Q5's one-time 30-minute extension; Q6's `card` / `gcash` / `maya` /
+> `grab_pay` online set; Q7/Q8's hold reserving capacity **and** coupon usage; Q9's guest-checkout
+> fields; Q10's PH mobile normalisation. Each heading below carries the confirmation date. The
+> text of the answers is unchanged — nothing was rewritten to fit the confirmation.
+
 Each answer is recorded with the alternatives it beat, rather than the alternatives being deleted — a decision whose rejected options are gone reads later as an arbitrary preference, and gets quietly re-litigated.
 
-### Q1 — ✅ ANSWERED: use `node-cron`. (Blocked Task 11.)
+### Q1 — ✅ ANSWERED: use `node-cron`. (Blocked Task 11.) **(owner-confirmed 2026-10-14)**
 
 **Owner decision: option B, `node-cron`** — CLAUDE.md's approved stack already names it, so it is not a new dependency decision. This overrides the plan's own recommendation of option A (`setInterval`), which stays recorded below.
 
@@ -104,19 +114,19 @@ Three conditions came with it, all binding on Task 11:
 
 Alternatives recorded: **A. `setInterval`** (no dependency; one job, one minute; crontab syntax buys nothing) and **C. OS-level cron hitting an authenticated endpoint** (no dependency, but needs deploy wiring that does not exist and an endpoint that must be protected).
 
-### Q2 — ✅ ANSWERED: defer email to Week 4. (Blocked Task 12.)
+### Q2 — ✅ ANSWERED: defer email to Week 4. (Blocked Task 12.) **(owner-confirmed 2026-10-14)**
 
 **Owner decision: defer**, as recommended. **Task 12 is dropped from Week 3** — dropped, not deferred inside it — so this week is **12 tasks** and ships **on-screen confirmation (Task 9) plus booking lookup (Task 10)**. Week 4 builds the layer once, with `nodemailer` over SMTP per §2's stack, covering all seven of §11's notification events together.
 
 **`LAUNCH_CHECKLIST.md` now carries: test SMTP sending from the VPS EARLY**, before Week 4 writes code against it. IONOS has blocked outbound SMTP on another of the owner's projects, so this is a known failure mode, and it is a hosting-level block no application code works around. The fallback, if it is blocked, is a provider's REST API over plain `fetch` — the same pattern as the PayMongo provider, and no new dependency.
 
-### Q3 — ✅ ANSWERED: stay on checkout, clear the date, offer the next three; and yes, a server-side quote id.
+### Q3 — ✅ ANSWERED: stay on checkout, clear the date, offer the next three; and yes, a server-side quote id. **(owner-confirmed 2026-10-14)**
 
 **Owner decision: approved as recommended.** When capacity goes between quote and submit, the loser **stays on the checkout page** with the date cleared, an **amber** "just sold out" notice (never red — CLAUDE.md) and **the next 3 available dates offered inline**, so the guest's typing is never thrown away. §5's "one wins, one gets 'just sold out'" is the behaviour; this is the copy and the recovery path.
 
 **And the quote carries a short-lived server-side quote id**, so a price cannot be replayed after an admin edits a tier. The id is the handle; the money stays on the server, which is what keeps this consistent with "the server computes all money" — the browser never holds a signed total it could replay.
 
-### Q4 — ✅ ANSWERED: limit holds, three ways.
+### Q4 — ✅ ANSWERED: limit holds, three ways. **(owner-confirmed 2026-10-14)**
 
 **Owner decision.** All three apply together, and **each owes its own test**:
 
@@ -130,7 +140,7 @@ Holds expire on the spec's existing hold window; this adds no new expiry concept
 
 Two things Task 5 must honour. The email and phone caps are **AND, not OR** — one guest must not take four slots by reusing an email with two phone numbers — and both must be counted **inside the same locked transaction that creates the hold**, or two concurrent submits both read "1 active hold" and both win, leaving a limit that reads as enforced while not being. The per-IP limiter is the weakest of the three alone (office and carrier NAT share addresses), which is why it is a third layer rather than the only one.
 
-### Q5 — ✅ ANSWERED: measured from creation, and extended ONCE at the gateway redirect.
+### Q5 — ✅ ANSWERED: measured from creation, and extended ONCE at the gateway redirect. **(owner-confirmed 2026-10-14)**
 
 **Owner decision: approved as recommended.** `hold_expires_at = created_at + 15 min` per §5. **At the moment the guest is redirected to the gateway, the hold is extended once to 30 minutes total** — a single, bounded extension, written to `audit_log`, and never repeatable.
 
@@ -138,14 +148,14 @@ The reason: a guest who has reached the payment page has committed, and `recordP
 
 **It does not change what happens if the money still lands late:** `recordPayment()` records it, leaves the status alone and raises `payment_review_required`. The extension makes that path rarer; it must not be mistaken for removing it.
 
-### Q6 — ✅ ANSWERED: card, GCash, Maya, GrabPay. Nothing else.
+### Q6 — ✅ ANSWERED: card, GCash, Maya, GrabPay. Nothing else. **(owner-confirmed 2026-10-14)**
 
 **Owner decision: approved as recommended.** `createCheckout` requests exactly **`card`, `gcash`, `maya`, `grab_pay`**.
 
 - **`bank_transfer` and `cash` are never offered online** — both are manual flows an admin reconciles by hand (§6's QR path, and §8's driver cash, which `recordPendingCash()` already keeps out of `amount_paid_centavos`).
 - **`qrph` is held back** until §15's own open Q2 (QR payments) is answered. Offering it now would mean guessing how the QR flow reconciles, which is exactly the kind of guess that becomes a money bug.
 
-### Q7 + Q8 — ✅ ANSWERED: a hold reserves capacity AND coupon usage in one locked transaction; expiry releases both.
+### Q7 + Q8 — ✅ ANSWERED: a hold reserves capacity AND coupon usage in one locked transaction; expiry releases both. **(owner-confirmed 2026-10-14)**
 
 **Owner decision.** An active hold reserves **both** capacity (fleet slot + tour slot) **and** coupon usage, all **inside the same locked transaction**. Expiry releases both. A coupon slot therefore behaves exactly like a seat: reserved while held, returned when the hold lapses. That settles Q8 by the same mechanism — a cancellation or refund releases the redemption the way expiry does, because the reservation is tied to the hold's life, not to the payment.
 
@@ -157,7 +167,7 @@ Three things this binds, which the implementer must not rediscover by guessing:
 2. `coupon_redemptions` is unique on `(coupon_id, booking_id)`, which stops one booking double-redeeming but **not** two bookings racing the last slot, so `used_count` must move under the lock rather than be derived afterwards.
 3. The expiry sweep (Task 11) now releases **two** things per hold, and Q1's idempotency condition covers both: a second run must not decrement `used_count` twice.
 
-### Q9 — ✅ ANSWERED: guest checkout, no account, exactly §6's fields.
+### Q9 — ✅ ANSWERED: guest checkout, no account, exactly §6's fields. **(owner-confirmed 2026-10-14)**
 
 **Owner decision: approved as recommended.** A guest checks out with **no account and no password**, and **no account is created at checkout**. The form collects exactly §6's fields: **full name, PH mobile, email, pickup location text + optional Google Maps pin, special requests**. The **pin is optional at launch**.
 
@@ -165,7 +175,7 @@ Portal access afterwards is §7's **booking ref + email** — which is why the b
 
 The Data Privacy Act consent checkbox (RA 10173) is part of this form, not a later addition.
 
-### Q10 — ✅ ANSWERED: accept both forms, store one.
+### Q10 — ✅ ANSWERED: accept both forms, store one. **(owner-confirmed 2026-10-14)**
 
 **Owner decision: approved as recommended.** Accept **both `09XXXXXXXXX` and `+639XXXXXXXXX`**, **strip spaces and dashes before validating** (the seed's own numbers are `0908 469 6246` style, and a guest who types their number the way they read it must not be rejected), **store normalised as `+639XXXXXXXXX`**, and reject everything else.
 
