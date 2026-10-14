@@ -284,3 +284,16 @@ export const assignInputSchema = z
   })
   .strict();
 export type AssignInput = z.infer<typeof assignInputSchema>;
+
+/**
+ * `admin.dispatch.suggest` (Week 5 plan, Task 11) — auto-suggest. Read-only:
+ * it names the booking to suggest for and nothing else, because the
+ * resolver computes everything the suggestion needs (date, pax, the free
+ * fleet) from that one id.
+ */
+export const suggestInputSchema = z
+  .object({
+    bookingId: z.number().int().positive(),
+  })
+  .strict();
+export type SuggestInput = z.infer<typeof suggestInputSchema>;

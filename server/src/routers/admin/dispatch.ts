@@ -15,10 +15,11 @@
  * decides nothing.
  */
 import { TRPCError } from '@trpc/server';
-import { assignInputSchema } from '@rg/shared';
+import { assignInputSchema, suggestInputSchema } from '@rg/shared';
 import { getDb } from '../../db/client';
 import { withDeadlockRetry } from '../../db/deadlock';
 import { type AssignRefusal, assignVanAndDriver } from '../../services/dispatch/assign';
+import { suggestAssignment } from '../../services/dispatch/suggest';
 import { adminProcedure, router } from '../../trpc';
 
 /**
@@ -108,5 +109,22 @@ export const adminDispatchRouter = router({
 
       if (!verdict.ok) throw asTrpcError(verdict.reason);
       return { ok: true as const };
+    }),
+
+  /**
+   * `admin.dispatch.suggest` (Task 11; BUILD_SPEC §5 "Admin calendar
+   * auto-suggests a van (smallest that fits) and an available driver").
+   *
+   * Same role gate as `assign` — `adminProcedure('assignVanDriver')`,
+   * because the suggestion only exists to feed the same Assign button. No
+   * `withDeadlockRetry` here: `suggestAssignment` takes no locks and writes
+   * nothing, so there is nothing for InnoDB to pick as a deadlock victim.
+   *
+   * A query, not a mutation: it reads, it never changes anything.
+   */
+  suggest: adminProcedure('assignVanDriver')
+    .input(suggestInputSchema)
+    .query(async ({ input }) => {
+      return await getDb().transaction((tx) => suggestAssignment(tx, input.bookingId));
     }),
 });
