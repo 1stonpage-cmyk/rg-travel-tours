@@ -93,12 +93,12 @@ async function makeVan(
   return van.insertId;
 }
 
-async function makeDriver(opts: { isActive?: boolean } = {}) {
+async function makeDriver(opts: { isActive?: boolean; name?: string } = {}) {
   const suffix = unique();
   const [driver] = await getDb()
     .insert(drivers)
     .values({
-      name: `Availability Fixture Driver ${suffix}`,
+      name: opts.name ?? `Availability Fixture Driver ${suffix}`,
       code: `AVL${suffix}`.slice(0, 20),
       phone: '09170000000',
       // Not a real hash and not a real PIN: nothing here logs in.
@@ -277,6 +277,42 @@ describeWithDb('vans', () => {
       await vansFreeOn(tx, DATE, 2),
     ]);
     expect(free.some((v) => v.id === onlyVanId)).toBe(verdict.ok);
+  });
+
+  /**
+   * Both ordering tie-breaks below were flagged as UNPROVEN by the Task 3
+   * review: the capacity test above uses three distinct capacities, so
+   * `asc(vans.id)` never fires, and `driversFreeOn`'s `name, id` ordering
+   * had no coverage at all. Neither is cosmetic — Task 11's auto-suggest
+   * takes `[0]` from each list and owes a test that the same booking
+   * suggests the same driver twice running. An unstable sort would make
+   * that test flaky rather than failing, which is the worse outcome: a
+   * flake gets re-run, a failure gets fixed.
+   */
+  it('breaks a van capacity tie by id, so the order is deterministic', async () => {
+    // Same capacity on purpose. Inserted largest-id-first would still come
+    // back id-ascending if the tie-break is doing its job.
+    const firstId = await makeVan({ capacity: 8 });
+    const secondId = await makeVan({ capacity: 8 });
+    const thirdId = await makeVan({ capacity: 8 });
+
+    const db = getDb();
+    const free = await db.transaction((tx) => vansFreeOn(tx, DATE, 1));
+    const ids = free.filter((v) => v.capacity === 8).map((v) => v.id);
+    expect(ids).toEqual([firstId, secondId, thirdId]);
+  });
+
+  it('orders free drivers by name, then id', async () => {
+    const zeldaId = await makeDriver({ name: 'Zelda Zulueta' });
+    const arturoId = await makeDriver({ name: 'Arturo Abella' });
+    const mariaId = await makeDriver({ name: 'Maria Medina' });
+
+    const db = getDb();
+    const free = await db.transaction((tx) => driversFreeOn(tx, DATE));
+    const mine = free.filter((d) => [zeldaId, arturoId, mariaId].includes(d.id));
+    // Vacuity guard: an empty `mine` would satisfy any ordering assertion.
+    expect(mine).toHaveLength(3);
+    expect(mine.map((d) => d.name)).toEqual(['Arturo Abella', 'Maria Medina', 'Zelda Zulueta']);
   });
 
   it('orders vans smallest first so auto-suggest can take [0]', async () => {
