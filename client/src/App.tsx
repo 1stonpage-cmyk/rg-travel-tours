@@ -1,5 +1,6 @@
 import { Route, Routes } from 'react-router-dom';
 import { BOOKING_PAGE_ROUTE } from '@rg/shared';
+import AdminLayout from '@/components/layout/AdminLayout';
 import PublicLayout from '@/components/layout/PublicLayout';
 import AdminBookingDetailPage from '@/pages/admin/AdminBookingDetailPage';
 import AdminBookingsPage from '@/pages/admin/AdminBookingsPage';
@@ -60,15 +61,31 @@ export default function App() {
       <Route path="admin/login" element={<AdminLoginPage />} />
 
       {/*
-       * The admin bookings screens (Week 4, Task 11). Outside
-       * `PublicLayout` like the sign-in: they render their own `<main>`,
-       * and `/admin/*` is kept out of every index by the `X-Robots-Tag`
-       * middleware. The SERVER gates them — every procedure behind these
-       * pages is an `adminProcedure`, so an unauthenticated visitor sees
-       * the pages' own "sign in again" state rather than any data.
+       * The dispatch shell (Week 5, Task 1) and everything under it.
+       * Outside `PublicLayout` like the sign-in: `AdminLayout` renders its
+       * own nav and `<main>`, and `/admin/*` is kept out of every index by
+       * the `X-Robots-Tag` middleware. The SERVER gates every screen here
+       * — every procedure behind them is an `adminProcedure`, so an
+       * unauthenticated visitor sees the pages' own "sign in again" state
+       * rather than any data.
+       *
+       * The index route is a one-line stand-in for Task 14's dashboard,
+       * which does not exist yet. `/admin/calendar`, `/admin/vans` and
+       * `/admin/drivers` are NOT routed here on purpose — the nav links to
+       * them already (`AdminLayout`'s `NAV`), and until Tasks 9, 5 and 7
+       * add their own `<Route>`, visiting one 404s through this router's
+       * ordinary unmatched-route behaviour. Do not add placeholder pages
+       * for those three: the tasks that own them must find the files
+       * unwritten.
        */}
-      <Route path="admin/bookings" element={<AdminBookingsPage />} />
-      <Route path="admin/bookings/:ref" element={<AdminBookingDetailPage />} />
+      <Route path="admin" element={<AdminLayout />}>
+        <Route
+          index
+          element={<p className="px-4 py-8 text-sm">The dashboard arrives later this week.</p>}
+        />
+        <Route path="bookings" element={<AdminBookingsPage />} />
+        <Route path="bookings/:ref" element={<AdminBookingDetailPage />} />
+      </Route>
 
       {/*
        * The guest portal (Week 4, Tasks 8 and 9). OUTSIDE `PublicLayout`
