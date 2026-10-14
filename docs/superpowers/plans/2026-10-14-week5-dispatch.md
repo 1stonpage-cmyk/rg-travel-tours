@@ -1709,9 +1709,22 @@ it('moves selection with the arrow keys', async () => {
 
 it('does not make adjacent-month padding cells reachable', () => {
   render(<MonthGrid days={DAYS} selected={null} onSelect={noop} />);
-  for (const pad of document.querySelectorAll('[data-testid="pad-cell"]')) {
+  const pads = document.querySelectorAll('[data-testid="pad-cell"]');
+
+  // VACUITY GUARD, and it is load-bearing here. A `for` loop over an empty
+  // NodeList asserts nothing and passes — so if the component ever stopped
+  // emitting pad cells (or renamed the testid), this test would go green
+  // while checking zero elements. November 2026 starts on a Sunday and the
+  // week starts Monday, so there are always leading pads; the exact count
+  // depends on whether the grid renders five week rows or six, which is the
+  // component's choice and not something this test should pin.
+  expect(pads.length).toBeGreaterThan(0);
+
+  for (const pad of pads) {
     expect(pad.getAttribute('aria-hidden')).toBe('true');
     expect(pad.getAttribute('tabindex')).toBeNull();
+    // A pad cell with a date in it is a cell a dispatcher will try to click.
+    expect(pad.textContent?.trim()).toBe('');
   }
 });
 ```
