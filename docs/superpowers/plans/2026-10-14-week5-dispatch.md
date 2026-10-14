@@ -2611,6 +2611,28 @@ baseline. **A fully green suite can still fail the run that way**, which is the 
 `rg_travel_test has rows no test cleaned up`, that is this check, and the fix is to clean the rows,
 never to weaken the check.
 
+**Four of this task's five alerts compare `date()` columns, which are not strings (controller
+note, 2026-10-15).** `vans.next_service`, `.orcr_expiry`, `.franchise_expiry` and
+`drivers.license_expiry` are all Drizzle `date()` columns, as is `bookings.tour_date` — so they
+type as **`Date`**, while every threshold you compute is a `YYYY-MM-DD` **string**.
+
+- **Comparisons:** use the house raw-`sql` pattern (`on()` in `capacity.ts:222`, `onDate()` /
+  `betweenDates()` in `services/dispatch/availability.ts` and `routers/admin/calendar.ts`), which
+  keeps both sides as civil-date strings. **Never `eq()` or `lte()` against a string** — it does not
+  compile, and making it compile by converting the threshold to a `Date` reintroduces the
+  eight-hour shift this whole convention exists to avoid.
+- **Reading a value back out** (for an alert's `examples`): `civilDateFromDate(row.nextService)`
+  from `@rg/shared`.
+- **Fixture inserts:** `new Date(`${civilDate}T00:00:00Z`)`, the shape `admin-drivers.test.ts`
+  already uses.
+
+**And the one that is genuinely instant-based:** the 48-hour unassigned window (Q7). Build it from
+`manilaCivilDate()` / `manilaInstant()`, compare civil date to civil date, and **pass `now` in**
+rather than reading the clock inside the query — Ruling 2 requires an explicit `now: Date` on every
+alert function precisely so the owner's four Manila boundary tests can sit on the boundary. A
+`new Date()` read inside the function cannot be tested at a boundary without faking timers
+globally, which is how a timezone bug survives its own suite.
+
 - [ ] **Step 1: Write the failing test**
 
 ```ts
@@ -2922,6 +2944,35 @@ Every screen in this week is empty on a fresh clone, because the seed has no van
 Seed, at minimum: **four vans** (6, 10, 15 and 15 seats, one of them `for_repair` with repair notes, one with `next_service` inside 14 days and one with `franchise_expiry` inside 30 days, so the dashboard has something true to show), **four drivers** (one with a licence expiring inside 30 days, one on leave across a weekend), and **two confirmed unassigned bookings** inside the 48-hour window so the unassigned alert and the gold dot both have a real example.
 
 **Permit and franchise numbers stay fictional-but-obviously-fake** (`FR-SEED-0001`), never a plausible-looking real number. `CLAUDE.md`: never invent an accreditation number. A seeded franchise number that looks real could end up in a screenshot or a demo and be taken as R&G's actual franchise.
+
+**STOP — seeding a fleet into the TEST database would break the capacity suite (controller
+ruling, 2026-10-15).**
+
+`server/src/__tests__/capacity.test.ts` asserts in its `beforeEach` that `vans` and `drivers`
+contain **exactly 0 rows**, and says why in a comment: _"These tests count the WHOLE fleet, so a van
+or driver left behind by another suite would change every number in this file. The seed creates
+neither, so the premise is an empty fleet — prove it rather than assume it."_
+
+This task adds vans and drivers to the seed. `globalSetup` seeds the test database. So a naive
+implementation **breaks every test in `capacity.test.ts`** — the suite that guards the booking
+path's capacity arithmetic, including the concurrency tests that stop the fleet being oversold.
+
+**The ruling: seed the fleet into the APP database only.** `seed(context)` already takes
+`'app' | 'test'` (`server/src/db/seed.ts:276`) and branches on it for the connection URL — so gate
+the vans, drivers, leaves and the two unassigned bookings on `context === 'app'`. The test database
+keeps its empty-fleet premise; `rg_travel` gets the dispatcher demo data this task exists to
+provide.
+
+**Do NOT "fix" the capacity suite's sanity check to accommodate the seed.** It is a guard on the
+money path, it is correct, and loosening it to make a seed fit would remove a protection to add a
+convenience. If you believe the fleet genuinely must be in the test database, that is a STOP AND
+ASK — report it and do not change that assertion.
+
+Everything else in this task is unchanged: the fleet still needs a mix of sizes, one `for_repair`
+van with notes, a van with `next_service` inside 14 days, one with `franchise_expiry` inside 30
+days, four drivers with one licence expiring inside 30 days and one on leave across a weekend, and
+two confirmed unassigned bookings inside the 48-hour window — so every dashboard alert has a real
+row behind it.
 
 - [ ] **Step 1: Write the failing test**
 
