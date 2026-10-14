@@ -447,17 +447,29 @@ describeWithDb('capacity', () => {
     expect(await assess(tourId, DAY, 6)).toEqual({ ok: true });
   });
 
-  it('does not count a van that is for_repair or has left the fleet', async () => {
+  it('does not count a van unless it is available, or if it has left the fleet', async () => {
     const tourId = await makeTour({ groupsPerDay: 1 });
     await makeDriver();
     const repairVanId = await makeVan({ status: 'for_repair' });
 
     expect(await assess(tourId, DAY, 4)).toEqual({ ok: false, reason: 'no_van_available' });
 
-    // `on_trip` is today's dispatch state, not a claim on a future date, so
-    // §5 excludes `for_repair` only — that van still counts.
+    /*
+     * Gate 2 is an ALLOW-list (owner decision 2026-10-14, Q1; Ruling 6):
+     * only `status = VAN_STATUS_SELLABLE` ('available') counts, so a van
+     * left `on_trip` does not count either — even though §9 means `on_trip`
+     * as a today-only DERIVED status, not a claim on a future date. That is
+     * the deliberate consequence of the allow-list, not an oversight: Week
+     * 6's check-ins must CLEAR `on_trip` when a trip ends, or the van stops
+     * being sellable on every future date (see the comment beside
+     * `VAN_STATUS_SELLABLE` in `schema.ts`).
+     */
     await getPool().query('UPDATE vans SET status = ? WHERE id = ?', ['on_trip', repairVanId]);
-    expect(await assess(tourId, DAY, 4)).toEqual({ ok: true });
+    expect(await assess(tourId, DAY, 4)).toEqual({ ok: false, reason: 'no_van_available' });
+
+    // `parked` — BUILD_SPEC §9's fourth status — is excluded the same way.
+    await getPool().query('UPDATE vans SET status = ? WHERE id = ?', ['parked', repairVanId]);
+    expect(await assess(tourId, DAY, 4)).toEqual({ ok: false, reason: 'no_van_available' });
 
     // A van soft-deleted out of the fleet does not count either.
     await getPool().query('UPDATE vans SET is_active = 0 WHERE id = ?', [repairVanId]);

@@ -10,8 +10,8 @@
  *
  * and never overbook automatically. §5's checklist spells the fleet half out
  * in two parts, and both are enforced here: at least one VAN free that day
- * (active, not `for_repair`, `capacity >= pax`) and at least one DRIVER free
- * that day (active, not on leave) — with every booking already holding
+ * (active, `status = VAN_STATUS_SELLABLE`, `capacity >= pax`) and at least
+ * one DRIVER free that day (active, not on leave) — with every booking already holding
  * capacity that day counting as one van and one driver taken, "so we never
  * sell more trips than the fleet can run".
  *
@@ -98,10 +98,10 @@
  * `groups_per_day` is either unknowable or not for sale. The caller still
  * owes the past-date and `tour_blocked_dates` checks.
  */
-import { and, eq, gte, inArray, ne, notExists, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, notExists, sql } from 'drizzle-orm';
 import { CAPACITY_HOLDING_STATUSES } from '@rg/shared';
 import type { Transaction } from '../db/client';
-import { bookings, driverLeaves, drivers, tours, vans } from '../db/schema';
+import { bookings, driverLeaves, drivers, tours, vans, VAN_STATUS_SELLABLE } from '../db/schema';
 
 /**
  * Why a booking was refused. Each one is a different sentence to a guest —
@@ -294,9 +294,14 @@ export async function assessCapacity(
   );
 
   /*
-   * Gate 2 — a van. `status <> 'for_repair'` rather than
-   * `status = 'available'`: `on_trip` is where a van is TODAY, not a claim
-   * on a future date, and §5 names `for_repair` as the disqualifying one.
+   * Gate 2 — a van. `status = VAN_STATUS_SELLABLE` (an ALLOW-list), rather
+   * than the old deny-list `status <> 'for_repair'` (owner decision
+   * 2026-10-14, Q1). A deny-list makes every status added later sellable
+   * until somebody notices; an allow-list makes it unsellable until somebody
+   * decides. The first direction oversells a trip, the second refuses a
+   * booking, and only one of those strands a guest at a pier — see the
+   * comment beside `VAN_STATUS_SELLABLE` in `schema.ts` for the `on_trip`
+   * consequence this carries.
    *
    * `capacity >= pax` filters the whole fleet by the size of THIS group
    * while the subtraction above counts every held booking regardless of the
@@ -308,7 +313,9 @@ export async function assessCapacity(
     await tx
       .select(TOTAL)
       .from(vans)
-      .where(and(eq(vans.isActive, true), ne(vans.status, 'for_repair'), gte(vans.capacity, pax))),
+      .where(
+        and(eq(vans.isActive, true), eq(vans.status, VAN_STATUS_SELLABLE), gte(vans.capacity, pax)),
+      ),
   );
   if (vansThatFit - heldAcrossTheFleet < 1) return { ok: false, reason: 'no_van_available' };
 

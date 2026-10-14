@@ -1,0 +1,1 @@
+ALTER TABLE `vans` MODIFY COLUMN `status` enum('available','on_trip','parked','for_repair') NOT NULL DEFAULT 'available';

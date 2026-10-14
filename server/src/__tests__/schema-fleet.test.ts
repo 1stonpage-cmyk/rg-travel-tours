@@ -55,8 +55,8 @@ describe('vans table', () => {
     expect(column('plate')?.notNull).toBe(true);
   });
 
-  it('constrains status to the three fleet states, defaulting to available', () => {
-    expect([...VAN_STATUSES]).toEqual(['available', 'on_trip', 'for_repair']);
+  it('constrains status to the four fleet states from BUILD_SPEC §9, defaulting to available', () => {
+    expect([...VAN_STATUSES]).toEqual(['available', 'on_trip', 'parked', 'for_repair']);
     expect(column('status')?.enumValues).toEqual([...VAN_STATUSES]);
     expect(column('status')?.default).toBe('available');
     expect(column('status')?.notNull).toBe(true);

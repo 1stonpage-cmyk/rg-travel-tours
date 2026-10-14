@@ -375,7 +375,35 @@ export const auditLog = mysqlTable(
   ],
 );
 
-export const VAN_STATUSES = ['available', 'on_trip', 'for_repair'] as const;
+/**
+ * §9's four van statuses.
+ *
+ * `on_trip` is DERIVED, not administrative: §9 says "'On tour' is derived
+ * from in-progress trips", and the other three are set by hand.
+ *
+ * **Week 6 (6C) owes this list a clearing step.** Nothing writes `on_trip`
+ * today, so nothing has to clear it. The moment check-ins start setting it,
+ * they must also unset it when a trip completes — a van left `on_trip`
+ * stops being sellable on EVERY future date, because `VAN_STATUS_SELLABLE`
+ * below allow-lists `available` alone.
+ */
+export const VAN_STATUSES = ['available', 'on_trip', 'parked', 'for_repair'] as const;
+
+/**
+ * The ONLY status a van may have to be sold or dispatched (owner decision
+ * 2026-10-14, Q1).
+ *
+ * An allow-list, deliberately, replacing the deny-list `status <> 'for_repair'`
+ * that `assessCapacity()` used until now. A deny-list makes every status
+ * added later sellable until somebody notices; an allow-list makes it
+ * unsellable until somebody decides. The first direction oversells a trip,
+ * the second refuses a booking, and only one of those strands a guest.
+ *
+ * Imported by BOTH `assessCapacity()` (which counts free vans) and
+ * `vansFreeOn()` (which identifies them), so the two can never disagree
+ * about whether a status is usable.
+ */
+export const VAN_STATUS_SELLABLE = 'available' as const;
 
 /**
  * The fleet (BUILD_SPEC §9 "Vans"). `capacity` feeds the §5 capacity check,
