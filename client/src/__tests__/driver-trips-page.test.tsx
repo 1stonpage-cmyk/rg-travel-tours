@@ -171,7 +171,7 @@ describe('DriverTripsPage — a bar one thumb can reach', () => {
    * fixed to the bottom with the safe-area utility on it and that the list
    * reserves room for it, which is the pairing BUG-079 was about.
    */
-  it('anchors the tabs to the bottom with the safe-area utilities on both halves', async () => {
+  it('carries the fixed, bottom-0 and safe-area utilities on both halves', async () => {
     mockTrpc({ 'driver.trips': TRIPS });
     renderTrips();
 
@@ -188,7 +188,7 @@ describe('DriverTripsPage — a bar one thumb can reach', () => {
     expect(page.className.split(/\s+/)).toContain('pb-driver-tabs-safe');
   });
 
-  it('puts the 44px floor utility and the 56px height on all three tabs', async () => {
+  it('puts the 44px floor and the h-14 (56px) utility on all three tabs', async () => {
     mockTrpc({ 'driver.trips': TRIPS });
     renderTrips();
 

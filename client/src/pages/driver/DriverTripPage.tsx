@@ -17,11 +17,16 @@
  * the answer to "is it today" comes from `driver.trips` — whose rows carry
  * a `bucket` resolved on the SERVER from the Manila civil date. Not from
  * `new Date()` in a handset that may be eight hours out, and not from a
- * second copy of the bucket rule. If that row is missing the button stays
- * hidden: the fail-closed direction is "do not offer to take money".
+ * second copy of the bucket rule. If that row is missing the answer is
+ * `null` — **not `false`** — and the button stays hidden: the fail-closed
+ * direction is "do not offer to take money", but `false` is a claim about
+ * what day it is, and claiming one nobody established is a different bug
+ * (fix round 1, 2026-10-16; see `PaymentBox`'s `isToday`).
  *
- * That query is the same one `/driver` loaded a moment ago, so in practice
- * it is served from the React Query cache rather than refetched.
+ * That query is the same one `/driver` loaded a moment ago, and
+ * `httpBatchLink` puts it in the same HTTP request as `driver.trip` on a
+ * cold open, so in practice it costs nothing and is served from the React
+ * Query cache (`staleTime: 60_000`) when arriving from `/driver`.
  *
  * ## Everything the guest's privacy allows and nothing more
  *
@@ -69,7 +74,7 @@ function TripScreen({
   onChanged,
 }: {
   trip: TripDetail;
-  isToday: boolean;
+  isToday: boolean | null;
   onChanged: () => void;
 }) {
   return (
@@ -248,10 +253,15 @@ export default function DriverTripPage() {
   }
 
   /*
-   * Fail closed: no row, no answer about today, no cash button. The server
-   * refuses a non-today claim regardless.
+   * `null`, not `false`, when there is no row to read it off — an
+   * unresolved or failed `driver.trips`, or a trip that is somehow not on
+   * the list this driver was handed (fix round 1, 2026-10-16). Both hide
+   * the cash button, which is the fail-closed direction and is what the
+   * server enforces anyway; what `false` must not do is let the box
+   * ASSERT that the trip is not today when nobody has established it.
    */
-  const isToday = trips.data?.find((row) => row.bookingId === bookingId)?.bucket === 'today';
+  const row = trips.data?.find((entry) => entry.bookingId === bookingId);
+  const isToday = row === undefined ? null : row.bucket === 'today';
 
   return <TripScreen trip={trip.data} isToday={isToday} onChanged={refetch} />;
 }

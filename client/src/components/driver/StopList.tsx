@@ -29,9 +29,10 @@
  *
  * The control is also VISUALLY SEPARATED from the check-in buttons, in its
  * own section below them, and appears only against the most recent
- * un-undone check-in — the only one the server will accept. Adjacency
- * between "Arrived" and "Undo" is how a bump in the road rewrites a trip
- * record.
+ * un-undone check-in **by time** — the only one the server will accept, and
+ * NOT the same thing as the last one in itinerary order (see `lastDone`).
+ * Adjacency between "Arrived" and "Undo" is how a bump in the road rewrites
+ * a trip record.
  *
  * ## The refusal copy is exhaustive, and it lives next door
  *
@@ -107,7 +108,14 @@ export default function StopList({ bookingId, status, progress, onChanged }: Sto
       onChanged();
       return;
     }
-    setNotice(CHECK_IN_REFUSAL_COPY[result.reason]);
+    /*
+     * `?? NOT_SAVED` is the house guard (`AssignPanel.tsx`,
+     * `DriverLoginPage.tsx`): the compiler cannot vouch for a `reason` that
+     * arrived over the wire, and an unrecognised one would otherwise leave
+     * `notice` undefined — a tap that silently does nothing, which is the
+     * worst thing this screen can do.
+     */
+    setNotice(CHECK_IN_REFUSAL_COPY[result.reason] ?? NOT_SAVED);
   }
 
   const onFailure = () => setNotice(NOT_SAVED);
@@ -120,12 +128,40 @@ export default function StopList({ bookingId, status, progress, onChanged }: Sto
   const busy = start.isPending || checkIn.isPending || complete.isPending || undo.isPending;
 
   /**
-   * The most recent un-undone check-in — the ONLY one the server accepts an
-   * undo for, so the only one this screen offers it against. Last in array
-   * order, because `stops` arrives in itinerary order with trip start
-   * first.
+   * The check-in the SERVER would retract — **the most recent in TIME, not
+   * the last one in itinerary order.**
+   *
+   * Those are not the same question, and treating them as the same was a
+   * real defect in this file (fix round 1, 2026-10-16). `undoLastCheckIn`
+   * orders by `checked_at DESC, id DESC`
+   * (`server/src/services/trips/checkins.ts`), and nothing makes a trip's
+   * check-ins arrive in itinerary order: `driver.checkIn` accepts any stop
+   * on the tour, and this screen deliberately keeps every un-checked stop
+   * live, because a driver may genuinely reach stops out of order. Pick by
+   * position in the list and the button says it will retract Drop-off while
+   * the server retracts the Oslob stop checked in after it — a label that
+   * is confidently wrong, which is worse than no label and is the exact
+   * harm ruling 2 exists to prevent.
+   *
+   * `checked_at` is a MySQL `datetime` with **no sub-second precision**, so
+   * two check-ins in the same second are ordinary rather than impossible.
+   * The server breaks that tie on `tripCheckpoints.id` — the insertion
+   * order — which this payload does not carry (`TripProgressStop` has no
+   * checkpoint id, by design: a driver needs the stop, not the row). The
+   * array index is the tiebreak instead: deterministic, and right for the
+   * in-order case that produces most same-second pairs. A tie it still
+   * guessed wrong costs a label, not a record — the undo refetches
+   * `driver.trip`, so the SERVER remains the authority on what happened.
+   *
+   * Compared as milliseconds rather than as strings: `checkedAt` is an ISO
+   * instant today, and a lexicographic compare would quietly stop being
+   * chronological the day that format changed.
    */
-  const lastDone = [...progress.stops].reverse().find(isDone) ?? null;
+  const lastDone =
+    progress.stops
+      .map((stop, index) => ({ stop, index, at: Date.parse(stop.checkedAt ?? '') }))
+      .filter(({ stop }) => isDone(stop))
+      .sort((a, b) => (a.at === b.at ? b.index - a.index : b.at - a.at))[0]?.stop ?? null;
 
   /*
    * Ruling: the control says what it will actually do. A `completed`
