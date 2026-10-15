@@ -1031,6 +1031,29 @@ Nothing in this week is built. There is no `client/src/pages/driver`.
 Nothing in this week is built. Public _display_ of reviews, packages and the newsletter form
 exists (it is part of 2B), but no submission, moderation, admin or export side of any of it.
 
+> **What Week 6 hands this week: an orphaned `on_trip` van has no sweep, and that is a declared
+> gap rather than an oversight** (Task 7, 2026-10-15).
+>
+> 6C sets `vans.status = 'on_trip'` on Start and clears it on completion, one transaction each,
+> and `server/src/__tests__/trip-van-status.test.ts` proves dispatch honours both halves by asking
+> `assessCapacity` / `vansFreeOn` about a date thirty days out. What nothing does is clear
+> `on_trip` for a trip **nobody ever completes**. A driver whose phone dies at the last stop, or
+> who simply forgets, leaves that van unsellable on every future date at once — `available` is the
+> only sellable status (Week 5's allow-list) and `vans.status` is not date-scoped. The symptom
+> arrives weeks later as "we're fully booked" on a day with idle vans, with nothing in the logs,
+> and the only cures today are the driver finishing the trip and a hand-written `UPDATE vans`.
+>
+> **Two candidate fixes, both needing an owner decision because both are new surface area:** a
+> `node-cron` job that frees a van whose booking is still `in_progress` past its tour date
+> (`node-cron` is already an approved dependency, but a new scheduled job is a new failure mode of
+> its own), or a dispatcher-facing **force complete** on the booking detail, audited like any other
+> status change (no scheduler, but somebody has to notice first). If 7E's day-before reminder cron
+> gets built, the sweep is the cheaper of the two to add beside it.
+>
+> The current behaviour is pinned by the last test in `trip-van-status.test.ts`, so the gap is a
+> known quantity with a name. Building either fix turns that test red — that is the intended
+> signal. Replace it with the new behaviour's own proof rather than loosening it.
+
 - **7A** Reviews: submit (portal + public), moderation, replies, helpful votes, verified badge.
 - **7B** Coupons admin + redemption log.
 - **7C** Packages + inquiries admin; newsletter signup + export. (The public signup and both

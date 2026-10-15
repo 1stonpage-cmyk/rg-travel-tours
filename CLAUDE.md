@@ -232,8 +232,29 @@ Every page reads tours, destinations, packages, reviews, FAQs and settings from 
   Three copies of that question is how a van gets sent to two trips on one morning.
 - **Only `status = 'available'` is sellable or dispatchable fleet** (`VAN_STATUS_SELLABLE`, owner
   decision 2026-10-14). An allow-list, not a deny-list: a status added later is unsellable until
-  someone decides otherwise. `on_trip` is included in "not sellable" — it is meant to be a
-  today-only derived status, so **whatever sets it must also clear it**.
+  someone decides otherwise. `on_trip` is included in "not sellable", and because `vans.status` is
+  not date-scoped, a van left there is refused on **every future date at once**.
+- **`on_trip` is set and cleared by `server/src/services/trips/checkins.ts` and by nothing else.**
+  `startTrip` sets it, `finishTrip` clears it (both routes into it — the Complete tap and the
+  last-stop check-in), and undoing a completion puts it back; each half runs in the same
+  transaction as its checkpoint write, so there is no window in which a running trip has an
+  `available` van. `moveVanStatus` is conditional in SQL in both directions — the `from` status is
+  in the `WHERE` — which is what stops a completion from putting a van a dispatcher marked
+  `for_repair` back on sale. The proof is `server/src/__tests__/trip-van-status.test.ts`, and it reads
+  **capacity** — `assessCapacity` / `vansFreeOn`, on a date thirty days out — rather than the
+  `vans.status` column: the column only proves the write landed, availability proves dispatch
+  honours it. A van-status test that reads the column alone is not a test of this rule.
+- **KNOWN GAP: nothing sweeps a van left `on_trip` by a trip nobody ever completed.** A driver
+  whose phone dies at the last stop, or who simply forgets, leaves that van unsellable
+  indefinitely — and the symptom arrives weeks later as "we're fully booked" on a day with idle
+  vans, with nothing in the logs. The only cures today are the driver completing the trip and a
+  hand-written `UPDATE vans`. Two candidate fixes are on the table, and both need an owner
+  decision because both are new surface area: a `node-cron` job that frees a van whose booking is
+  still `in_progress` past its tour date (a new scheduled job is a new failure mode), or a
+  dispatcher-facing "force complete" on the §9 booking detail, audited like any other status
+  change (no scheduler, but somebody has to notice first). Until one is built the gap is pinned by
+  the last test in `trip-van-status.test.ts` — building the sweep reddens that test, and whoever
+  does should replace it with the sweep's own proof rather than loosen it.
 - **Lock order for anything that touches a day's capacity is absolute:** `fleet_date_slots(date)`
   → `tour_date_slots(tour_id, date)` → the booking row. `createHold()`, the expiry sweep and
   `assignVanAndDriver()` all take it in that order. Two paths taking the same pair in opposite
