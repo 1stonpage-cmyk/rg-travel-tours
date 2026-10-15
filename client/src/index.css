@@ -256,6 +256,30 @@
   }
 
   /*
+   * The driver portal's bottom tab bar (Week 6, Task 10) and the room the
+   * trip list reserves for it. Two rules rather than one so the bar's own
+   * padding and the list's reservation cannot drift apart.
+   *
+   * Same BUG-079 lesson as `.pb-mobile-bar-safe` above: the inset is
+   * ADDITIVE on top of the bar's own padding, so the reservation grows with
+   * it instead of assuming a fixed worst case. `env(safe-area-inset-bottom)`
+   * resolves to 0px without `viewport-fit=cover` on the viewport meta tag
+   * (client/index.html carries it), which degrades both rules to their flat
+   * values rather than breaking them.
+   *
+   * No `md:` cancellation, unlike the public mobile bar: the driver portal
+   * has no desktop layout at all — the tabs are the only navigation a
+   * driver gets, at every width.
+   */
+  .driver-tabs-safe {
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+  }
+
+  .pb-driver-tabs-safe {
+    padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
+  }
+
+  /*
    * Scroll affordance for a horizontally scrollable row — the destination chip
    * row, which only overflows on a narrow screen. The edges fade the row's own
    * content out with a mask instead of painting a gradient strip over it: there

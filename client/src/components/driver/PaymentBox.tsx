@@ -1,0 +1,369 @@
+/**
+ * §8's payment box — **the single most consequential thing in the driver
+ * portal**, because it is what tells a driver whether to take money from a
+ * guest (Week 6 plan, Task 10).
+ *
+ * The three states come from the SERVER, already decided
+ * (`PaymentBoxState` in `@rg/shared`, computed by `driver.trip`). This file
+ * renders them and computes nothing: a second derivation in the browser is
+ * a second chance to get it wrong, and getting it wrong either takes a
+ * guest's money twice or lets them ride for free.
+ *
+ * ## Four rules, and each one is a test
+ *
+ * 1. **A trip that is not live shows NO collection instruction** (ruling
+ *    2026-10-15, from Task 4's review). `PaymentBoxState` is computed from
+ *    the money alone and deliberately ignores `bookings.status`, so a
+ *    `cancelled` booking with an outstanding balance still resolves to
+ *    `collect_cash` with a real amount on it. The server is right to report
+ *    the money truth — but this screen must not turn that truth into an
+ *    instruction. When the status is not one of the four live ones, the
+ *    booking's STATE is rendered in words and the amount is not rendered at
+ *    all.
+ * 2. **Text first, in all three states.** `unverified_do_not_collect` is
+ *    amber *and* carries the words "Do not collect — call the office."
+ *    Colour alone is a WCAG 1.4.1 failure, and this is the state where a
+ *    misread costs real money. (Amber, never red — CLAUDE.md.)
+ * 3. **The amount is stated in figures AND in words**, so a mis-read digit
+ *    is caught by a driver glancing at a phone through a windscreen.
+ * 4. **The cash button is today-only and confirms in place.** The server
+ *    refuses a non-today trip (`FORBIDDEN`) and a second claim (`CONFLICT`)
+ *    — `isToday` here only stops the UI offering an action it knows will be
+ *    refused, because hiding a button is not access control. Confirmation
+ *    is two-step INLINE rather than a modal: no `dialog` primitive is
+ *    vendored, and a modal in a moving van is worse than a second tap.
+ */
+import { useState } from 'react';
+import { BanknoteArrowDown, CircleCheckBig, Loader2, TriangleAlert } from 'lucide-react';
+import { formatPeso, type BookingStatus, type PaymentBoxState } from '@rg/shared';
+import { Button } from '@/components/ui/button';
+import { trpc } from '@/lib/trpc';
+
+/* ------------------------------------------------------------------ *
+ * Ruling 1: which statuses may show a collection instruction at all
+ * ------------------------------------------------------------------ */
+
+/**
+ * The four statuses a trip can be in and still be something a driver is
+ * standing in front of a guest for. An ALLOW-LIST, in the spirit of
+ * `VAN_STATUS_SELLABLE`: a status added later shows no instruction until
+ * somebody decides it should.
+ */
+const LIVE_STATUSES = ['confirmed', 'pending_verification', 'assigned', 'in_progress'] as const;
+type LiveStatus = (typeof LIVE_STATUSES)[number];
+
+function isLive(status: BookingStatus): status is LiveStatus {
+  return (LIVE_STATUSES as readonly BookingStatus[]).includes(status);
+}
+
+/**
+ * What a driver reads instead of the box when the trip is not live.
+ *
+ * `Record<Exclude<BookingStatus, LiveStatus>, …>` so the COMPILER refuses a
+ * build where a new booking status has no words here — the same discipline
+ * `AssignPanel`'s `REFUSAL_COPY` established. Falling through to a generic
+ * sentence on this box is exactly the failure that would turn a cancelled
+ * booking back into "collect ₱1,500".
+ *
+ * `tone` is `warn` wherever a driver might otherwise be tempted to take
+ * money, and `neutral` for a trip that simply finished.
+ */
+const NOT_LIVE_COPY: Record<
+  Exclude<BookingStatus, LiveStatus>,
+  { tone: 'warn' | 'neutral'; heading: string; body: string }
+> = {
+  pending_payment: {
+    tone: 'warn',
+    heading: 'Not paid — this booking is not confirmed',
+    body: 'Nobody has paid for this booking yet. Do not collect anything — ring the office.',
+  },
+  completed: {
+    tone: 'neutral',
+    heading: 'Trip completed',
+    body: 'This trip is finished. There is nothing to collect here.',
+  },
+  cancelled: {
+    tone: 'warn',
+    heading: 'Booking cancelled',
+    body: 'This booking was cancelled. Do not collect anything — ring the office.',
+  },
+  expired: {
+    tone: 'warn',
+    heading: 'Booking expired',
+    body: 'This booking expired before it was confirmed. Do not collect anything — ring the office.',
+  },
+};
+
+/* ------------------------------------------------------------------ *
+ * Rule 3: the amount, in words
+ * ------------------------------------------------------------------ */
+
+const ONES = [
+  'zero',
+  'one',
+  'two',
+  'three',
+  'four',
+  'five',
+  'six',
+  'seven',
+  'eight',
+  'nine',
+  'ten',
+  'eleven',
+  'twelve',
+  'thirteen',
+  'fourteen',
+  'fifteen',
+  'sixteen',
+  'seventeen',
+  'eighteen',
+  'nineteen',
+];
+
+const TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
+
+const SCALES = [
+  { value: 1_000_000_000, name: 'billion' },
+  { value: 1_000_000, name: 'million' },
+  { value: 1_000, name: 'thousand' },
+] as const;
+
+function underHundred(n: number): string {
+  if (n < 20) return ONES[n]!;
+  const tens = TENS[Math.floor(n / 10)]!;
+  const rest = n % 10;
+  return rest === 0 ? tens : `${tens}-${ONES[rest]}`;
+}
+
+function underThousand(n: number): string {
+  if (n < 100) return underHundred(n);
+  const hundreds = `${ONES[Math.floor(n / 100)]} hundred`;
+  const rest = n % 100;
+  return rest === 0 ? hundreds : `${hundreds} ${underHundred(rest)}`;
+}
+
+function wholeNumberInWords(n: number): string {
+  if (n < 1000) return underThousand(n);
+  for (const scale of SCALES) {
+    if (n < scale.value) continue;
+    const head = `${wholeNumberInWords(Math.floor(n / scale.value))} ${scale.name}`;
+    const rest = n % scale.value;
+    return rest === 0 ? head : `${head} ${wholeNumberInWords(rest)}`;
+  }
+  // Unreachable: anything >= 1000 matched a scale above.
+  return underThousand(n);
+}
+
+/**
+ * `450_000` centavos -> `'Four thousand five hundred pesos'`.
+ *
+ * **Rounded exactly the way `formatPeso` rounds**, deliberately: the words
+ * exist to catch a mis-read digit in the figures beside them, so a pairing
+ * that disagreed would be worse than no words at all. Every price in this
+ * system is whole pesos, so the rounding never actually bites — but if it
+ * ever did, both halves would move together.
+ */
+function pesosInWords(centavos: number): string {
+  const pesos = Math.round(centavos / 100);
+  const words = wholeNumberInWords(pesos);
+  return `${words.charAt(0).toUpperCase()}${words.slice(1)} ${pesos === 1 ? 'peso' : 'pesos'}`;
+}
+
+/* ------------------------------------------------------------------ *
+ * The box
+ * ------------------------------------------------------------------ */
+
+/**
+ * The shared frame. `border-4` and the heading size are what make this the
+ * loudest element on the trip screen; the TONE is carried by the words
+ * inside it, never by the colour on its own.
+ */
+const FRAME = 'rounded-xl border-4 p-4';
+const TONES = {
+  collect: 'border-brand-blue-900 bg-background',
+  calm: 'border-brand-blue-200 bg-background',
+  warn: 'border-amber-600 bg-amber-50',
+} as const;
+
+const HEADING = 'text-xl font-bold leading-tight';
+
+export interface PaymentBoxProps {
+  bookingId: number;
+  /** REQUIRED and never derived here — ruling 1 above depends on it. */
+  status: BookingStatus;
+  payment: PaymentBoxState;
+  /**
+   * Whether the tour date is today in Manila, **as resolved by the server**
+   * (`driver.trips` sends each row's `bucket`). Never computed from the
+   * handset's clock: for the whole 00:00-07:59 Manila window the device's
+   * UTC day is still yesterday.
+   */
+  isToday: boolean;
+  /** Called after a successful cash claim so the caller can refetch. */
+  onCollected: () => void;
+}
+
+export default function PaymentBox({
+  bookingId,
+  status,
+  payment,
+  isToday,
+  onCollected,
+}: PaymentBoxProps) {
+  const [confirming, setConfirming] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+
+  const recordCash = trpc.driver.recordCash.useMutation({
+    onSuccess: () => {
+      setConfirming(false);
+      onCollected();
+    },
+    onError: () =>
+      setFailed(
+        'That cash record did not save. Check your signal and try again, or ring the office.',
+      ),
+  });
+
+  /* Ruling 1. The amount is not rendered at all — not greyed, not struck. */
+  if (!isLive(status)) {
+    const copy = NOT_LIVE_COPY[status];
+    return (
+      <section
+        aria-labelledby="payment-box-heading"
+        className={`${FRAME} ${copy.tone === 'warn' ? TONES.warn : TONES.calm}`}
+      >
+        <h2
+          id="payment-box-heading"
+          className={`${HEADING} ${copy.tone === 'warn' ? 'text-amber-900' : 'text-brand-blue-900'}`}
+        >
+          {copy.heading}
+        </h2>
+        <p
+          className={`mt-2 text-base font-medium ${
+            copy.tone === 'warn' ? 'text-amber-900' : 'text-brand-blue-900'
+          }`}
+        >
+          {copy.body}
+        </p>
+      </section>
+    );
+  }
+
+  if (payment.kind === 'fully_paid') {
+    return (
+      <section aria-labelledby="payment-box-heading" className={`${FRAME} ${TONES.calm}`}>
+        <h2 id="payment-box-heading" className={`${HEADING} text-brand-blue-900`}>
+          <CircleCheckBig className="mr-2 inline size-6 align-[-5px]" aria-hidden="true" />
+          Paid in full — collect nothing.
+        </h2>
+        <p className="text-brand-blue-900 mt-2 text-base font-medium">
+          The office has this trip paid for. Take no money from the guest.
+        </p>
+      </section>
+    );
+  }
+
+  if (payment.kind === 'unverified_do_not_collect') {
+    return (
+      <section aria-labelledby="payment-box-heading" className={`${FRAME} ${TONES.warn}`}>
+        {/*
+         * The WORDS, not the amber. A driver glancing at a phone must not
+         * be able to read this state as "collect" — see rule 2.
+         */}
+        <h2 id="payment-box-heading" className={`${HEADING} text-amber-900`}>
+          <TriangleAlert className="mr-2 inline size-6 align-[-5px]" aria-hidden="true" />
+          Do not collect — call the office.
+        </h2>
+        <p className="mt-2 text-base font-medium text-amber-900">
+          Payment for this trip has not been verified. Do not take money from the guest.
+        </p>
+      </section>
+    );
+  }
+
+  const figures = formatPeso(payment.amountCentavos);
+  const words = pesosInWords(payment.amountCentavos);
+
+  return (
+    <section aria-labelledby="payment-box-heading" className={`${FRAME} ${TONES.collect}`}>
+      <h2 id="payment-box-heading" className={`${HEADING} text-brand-blue-900`}>
+        Collect {figures} cash
+      </h2>
+      {/* Figures above, words below. Rule 3. */}
+      <p className="text-brand-blue-900 mt-1 text-lg font-semibold">{words}</p>
+
+      {isToday ? (
+        confirming ? (
+          /*
+           * Step two, IN PLACE. Not a modal: nothing vendored provides one,
+           * and a driver one-handed in a van should not have to dismiss a
+           * layer. Cancel calls nothing at all.
+           */
+          <div className="border-brand-blue-200 mt-4 space-y-3 border-t pt-4">
+            <p className="text-brand-blue-900 text-base font-semibold">
+              Only confirm once the guest has handed you {figures}.
+            </p>
+            <Button
+              type="button"
+              onClick={() => {
+                setFailed(null);
+                recordCash.mutate({ bookingId });
+              }}
+              disabled={recordCash.isPending}
+              className="tap-target h-14 w-full text-base font-semibold"
+            >
+              {recordCash.isPending ? (
+                <>
+                  <Loader2 className="mr-2 size-5 animate-spin" aria-hidden="true" />
+                  Saving…
+                </>
+              ) : (
+                `Yes — I have taken ${figures}`
+              )}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setConfirming(false)}
+              disabled={recordCash.isPending}
+              className="tap-target text-brand-blue-900 h-14 w-full text-base font-semibold"
+            >
+              Cancel
+            </Button>
+          </div>
+        ) : (
+          <Button
+            type="button"
+            onClick={() => {
+              setFailed(null);
+              setConfirming(true);
+            }}
+            className="tap-target mt-4 h-14 w-full text-base font-semibold"
+          >
+            <BanknoteArrowDown className="mr-2 size-5" aria-hidden="true" />
+            Record cash collected
+          </Button>
+        )
+      ) : (
+        /*
+         * Not today. The server refuses it outright (`FORBIDDEN`); this
+         * sentence is only so the absence of the button is explained
+         * rather than mysterious.
+         */
+        <p className="text-brand-blue-900 mt-4 text-base font-medium">
+          Cash can only be recorded on the day of the trip.
+        </p>
+      )}
+
+      {failed ? (
+        <p
+          role="alert"
+          className="text-brand-error border-brand-error mt-3 border-l-4 py-1 pl-3 text-base font-medium"
+        >
+          {failed}
+        </p>
+      ) : null}
+    </section>
+  );
+}

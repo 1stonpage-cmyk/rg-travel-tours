@@ -18,10 +18,16 @@
  *
  * jsdom performs no layout and loads no stylesheet. It can read a class
  * attribute; it cannot measure a box. So the assertions below check that
- * `tap-target` (the 44px utility) and the taller `h-14`/`h-16` classes are
- * PRESENT — not that anything is 44px or 56px on a screen, and not that
+ * `tap-target` (the 44px utility) and the taller `h-14` / `h-16` classes
+ * are PRESENT (and, for the one control whose height comes from
+ * `inset-y-0` inside a 56px field rather than from a class, that it
+ * stretches to that field) — not that anything is 44px or 56px on a
+ * screen, not that
  * the pad falls in the thumb-reachable lower two-thirds of a 360px
- * viewport. Those are Task 14's walkthrough in a real browser.
+ * viewport, and not where a fixed bar actually lands. Those are Task 14's
+ * walkthrough in a real browser. DOM ORDER, on the other hand, jsdom does
+ * see, so the pad's position relative to the identity field is asserted
+ * rather than described.
  */
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -29,6 +35,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
 import DriverLayout from '@/components/layout/DriverLayout';
 import DriverLoginPage from '@/pages/driver/DriverLoginPage';
+import { SITE } from '@/lib/site';
 import { TrpcProviders } from '@/lib/trpc';
 import { mockTrpc, mockTrpcError, resetTrpcMock } from './helpers/mock-trpc';
 
@@ -271,6 +278,30 @@ describe('DriverLoginPage — reachable by one thumb', () => {
       .filter((el) => !el.className.split(/\s+/).includes('tap-target'))
       .map((el) => el.getAttribute('aria-label') ?? el.textContent ?? el.id);
     expect(missing).toEqual([]);
+
+    /*
+     * And the 56px class on top of the 44px floor — `h-14`, which is what
+     * the design doc asks the driver screens' real targets to be. The
+     * CLASS is what jsdom can see; the pixels are Task 14's.
+     *
+     * The show/hide toggle is excluded and checked separately BECAUSE IT
+     * HAS NO HEIGHT CLASS: it is `absolute inset-y-0` inside the `h-14`
+     * PIN field, so its 56px comes from stretching to that field. jsdom
+     * resolves no layout, so it cannot confirm that — asserting `h-14` on
+     * it would mean adding a redundant class to satisfy a test, and
+     * claiming the height was proved would be the lie this suite is being
+     * cleaned of.
+     */
+    const toggle = screen.getByLabelText(/(show|hide) pin/i);
+    const toggleClasses = toggle.className.split(/\s+/);
+    expect(toggleClasses).toContain('inset-y-0');
+    expect(toggleClasses).toContain('w-14');
+
+    const shortOfFiftySix = controls
+      .filter((el) => el !== toggle)
+      .filter((el) => !el.className.split(/\s+/).includes('h-14'))
+      .map((el) => el.getAttribute('aria-label') ?? el.textContent ?? el.id);
+    expect(shortOfFiftySix).toEqual([]);
   });
 
   it('keeps the pad in its own group below the identity field', () => {
@@ -279,9 +310,13 @@ describe('DriverLoginPage — reachable by one thumb', () => {
 
     // A group, so a screen reader announces the keypad as one thing — and
     // so the pad's position in the DOM is assertable at all. Where it lands
-    // on a 360px screen is not something jsdom can see.
+    // on a 360px screen is not something jsdom can see; which side of the
+    // identity field it is on, it is.
     const pad = screen.getByRole('group', { name: /pin keypad/i });
     expect(within(pad).getAllByRole('button')).toHaveLength(12);
+
+    const code = screen.getByLabelText(/driver code/i);
+    expect(code.compareDocumentPosition(pad) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
 
@@ -304,6 +339,16 @@ describe('DriverLayout', () => {
 
     expect(screen.getByRole('link', { name: /skip to main content/i })).toBeInTheDocument();
     expect(screen.getByText('today')).toBeInTheDocument();
+
+    /*
+     * The portal name, which the test's own title claims. The BRAND, not
+     * the legal operator: this is a working screen, not a receipt
+     * (CLAUDE.md "Brand vs legal entity"). The header is `h-16` — the
+     * class, not the pixels.
+     */
+    const name = screen.getByText(`${SITE.name} drivers`);
+    expect(name).toBeInTheDocument();
+    expect(name.parentElement!.className.split(/\s+/)).toContain('h-16');
 
     await user.click(screen.getByRole('button', { name: /sign out/i }));
     await screen.findByText('driver sign-in');

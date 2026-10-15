@@ -11,6 +11,8 @@ import AdminLoginPage from '@/pages/admin/AdminLoginPage';
 import AdminVansPage from '@/pages/admin/AdminVansPage';
 import DriverLayout from '@/components/layout/DriverLayout';
 import DriverLoginPage from '@/pages/driver/DriverLoginPage';
+import DriverTripPage from '@/pages/driver/DriverTripPage';
+import DriverTripsPage from '@/pages/driver/DriverTripsPage';
 import ManualQrPage from '@/pages/portal/ManualQrPage';
 import PortalBookingPage from '@/pages/portal/PortalBookingPage';
 import PortalLoginPage from '@/pages/portal/PortalLoginPage';
@@ -106,18 +108,17 @@ export default function App() {
        * chrome that assumes one. `/driver` already gets an `X-Robots-Tag`
        * from the server middleware, so nothing here needs indexing work.
        *
-       * The index route is a one-line stand-in for Task 10's trip list,
-       * which owns the Today / Upcoming / History tabs. Every procedure
-       * behind that screen is a `driverProcedure`, so the SERVER is the
-       * gate on all of this — an unauthenticated visitor reaching
-       * `/driver` sees the shell and no data, never a shortcut in.
+       * The index is Task 10's trip list, which owns the Today / Upcoming /
+       * History tabs because it owns the three buckets they switch between
+       * — and `/driver/trip/:bookingId` is one trip's screen. Every
+       * procedure behind both is a `driverProcedure`, so the SERVER is the
+       * gate on all of this: an unauthenticated visitor reaching `/driver`
+       * sees the shell and no data, never a shortcut in.
        */}
       <Route path="driver/login" element={<DriverLoginPage />} />
       <Route path="driver" element={<DriverLayout />}>
-        <Route
-          index
-          element={<p className="text-brand-blue-900 text-base">You are signed in.</p>}
-        />
+        <Route index element={<DriverTripsPage />} />
+        <Route path="trip/:bookingId" element={<DriverTripPage />} />
       </Route>
 
       <Route path="portal/login" element={<PortalLoginPage />} />
