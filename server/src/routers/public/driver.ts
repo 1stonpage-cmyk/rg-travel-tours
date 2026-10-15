@@ -48,15 +48,23 @@ import {
   driverStopCheckInSchema,
   driverTripBucket,
   driverTripInputSchema,
+  driverUndoCheckInSchema,
   manilaCivilDate,
   type CheckInResult,
+  type CheckInUndoResult,
   type DriverTripRow,
   type PaymentBoxState,
   type TripDetail,
 } from '@rg/shared';
 import { getDb } from '../../db/client';
 import { bookingNotes, bookings, payments, tours, vans } from '../../db/schema';
-import { checkInStop, completeTrip, runCheckIn, startTrip } from '../../services/trips/checkins';
+import {
+  checkInStop,
+  completeTrip,
+  runCheckIn,
+  startTrip,
+  undoLastCheckIn,
+} from '../../services/trips/checkins';
 import { tripProgress } from '../../services/trips/progress';
 import { driverProcedure, router } from '../../trpc';
 
@@ -393,6 +401,35 @@ export const driverTripsRouter = router({
           await completeTrip(tx, {
             bookingId: input.bookingId,
             driverId: ctx.driver.driverId,
+          }),
+      ),
+  ),
+
+  /**
+   * §8 item 4 — Undo the last check-in, or reopen a trip that was completed
+   * by mistake (owner decisions 2026-10-15, Q4 and Q5).
+   *
+   * The ONLY input on the four that carries a second field, and it is a
+   * **required `reason`** — `driverUndoCheckInSchema`, so an empty or
+   * whitespace-only reason is a `BAD_REQUEST` at the input stage and never
+   * reaches the service. An undo rewrites what the system says happened on a
+   * trip; the reason is the one part of it a column cannot infer, so it is
+   * refused rather than defaulted.
+   *
+   * Still no timestamp and still no driver: `undone_at` is this server's
+   * clock, read here at the request boundary like the other three, and
+   * `undone_by` is `ctx.driver.driverId` — a DRIVER, which is what that
+   * column means.
+   */
+  undoCheckIn: driverProcedure.input(driverUndoCheckInSchema).mutation(
+    async ({ ctx, input }): Promise<CheckInUndoResult> =>
+      await runCheckIn(
+        async (tx) =>
+          await undoLastCheckIn(tx, {
+            bookingId: input.bookingId,
+            driverId: ctx.driver.driverId,
+            reason: input.reason,
+            now: new Date(),
           }),
       ),
   ),

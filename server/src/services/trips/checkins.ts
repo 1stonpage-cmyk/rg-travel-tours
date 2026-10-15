@@ -1,6 +1,7 @@
 /**
- * Week 6 "Drivers & verification", Task 5 — `startTrip`, `checkInStop`,
- * `completeTrip` (BUILD_SPEC §8 "Itinerary check-ins").
+ * Week 6 "Drivers & verification", Tasks 5 and 6 — `startTrip`,
+ * `checkInStop`, `completeTrip`, `undoLastCheckIn` (BUILD_SPEC §8 "Itinerary
+ * check-ins" and "Undo last check-in").
  *
  * **The first code in this project's history to write `trip_checkpoints`,
  * and the first to write `vans.status = 'on_trip'`.** Read it with that
@@ -111,6 +112,26 @@
  * be locking, and only `progress.total` (the tour's itinerary, which is not
  * the racing table) is read from the snapshot.
  *
+ * ## Task 6: one row per stop, and the audit trail as its history
+ *
+ * `undone` MARKS, never deletes (CLAUDE.md), and a stop checked in again
+ * after an undo gets **the same row back** rather than a second one (owner
+ * decision 2026-10-15, Q5) — so the UNIQUE index survives and the double tap
+ * stays arbitrated by the database. The reactivation therefore lives inside
+ * `insertCheckpoint`'s duplicate-key catch, AFTER the collision, and not in
+ * a read before the INSERT; see the long note there, which is the one place
+ * in this file where getting the ORDER of two statements wrong would quietly
+ * un-prove two concurrency tests.
+ *
+ * The cost of one row per stop is that the row cannot show that a stop was
+ * claimed, retracted and re-claimed. `audit_log` is where that history
+ * lives, and it is the justification for one row at all: every check-in,
+ * undo and re-check-in writes a row with `actor_type = 'driver'`, `entity`
+ * the plural `'bookings'` and a dotted action — `trip.started`,
+ * `trip.checked_in`, `trip.completed`, `trip.checkin_undone`,
+ * `trip.completion_undone`. **Task 12 reads those strings, so they are a
+ * contract**, not labels.
+ *
  * ## Both halves in one transaction
  *
  * Start writes the checkpoint, `bookings.status = 'in_progress'` and
@@ -123,8 +144,8 @@
  * retries it on a deadlock, and converts a post-write refusal back into a
  * verdict after the rollback.
  */
-import { and, eq, inArray } from 'drizzle-orm';
-import type { BookingStatus, CheckInRefusal, CheckInResult } from '@rg/shared';
+import { and, desc, eq, inArray } from 'drizzle-orm';
+import type { BookingStatus, CheckInRefusal, CheckInResult, CheckInUndoResult } from '@rg/shared';
 import { getDb, type Transaction } from '../../db/client';
 import {
   VAN_STATUS_SELLABLE,
@@ -166,7 +187,14 @@ const STARTABLE_STATUSES: readonly BookingStatus[] = [
   'in_progress',
 ];
 
-function refuse(reason: CheckInRefusal): CheckInResult {
+/**
+ * The refusal arm, which `CheckInResult` and `CheckInUndoResult` share
+ * verbatim — so one `refuse()` serves all four mutations and `runCheckIn`
+ * can convert a rolled-back refusal without knowing which it is wrapping.
+ */
+type CheckInRefused = { ok: false; reason: CheckInRefusal };
+
+function refuse(reason: CheckInRefusal): CheckInRefused {
   return { ok: false, reason };
 }
 
@@ -271,13 +299,35 @@ async function moveVanStatus(
     .where(and(eq(vans.id, vanId), eq(vans.status, from)));
 }
 
+/**
+ * What the one checkpoint write did.
+ *
+ *  - `inserted` — the first tap on that stop. The INSERT won.
+ *  - `reactivated` — the stop had been checked in and UNDONE, and this tap
+ *    brought the same row back to life (owner decision 2026-10-15, Q5).
+ *  - `already_live` — a row for that stop already stands. The double tap.
+ *
+ * Three values rather than a boolean because the first two are both
+ * successes that must be audited identically (the driver did check in) while
+ * the third is `already_checked_in`, and a boolean cannot carry that.
+ */
+type CheckpointWrite = 'inserted' | 'reactivated' | 'already_live';
+
+/**
+ * `trip_checkpoints.stop_key` is `GENERATED ALWAYS AS (coalesce(stop_id, 0))
+ * STORED`, so `0` is the trip-start event's key — safe as a sentinel because
+ * `tour_itinerary_stops.id` is an AUTO_INCREMENT primary key and never
+ * issues 0. Read in a `WHERE`, never written (see the module note).
+ */
+const TRIP_START_KEY = 0;
+
 /** The checkpoint write, and the ONLY place `trip_checkpoints` is inserted. */
 async function insertCheckpoint(
   tx: Transaction,
   bookingId: number,
   stopId: number | null,
   now: Date,
-): Promise<boolean> {
+): Promise<CheckpointWrite> {
   try {
     await tx.insert(tripCheckpoints).values({
       bookingId,
@@ -295,7 +345,7 @@ async function insertCheckpoint(
        */
       checkedAt: now,
     });
-    return true;
+    return 'inserted';
   } catch (error) {
     /*
      * The double tap, arbitrated by the index rather than by a `SELECT`
@@ -306,8 +356,54 @@ async function insertCheckpoint(
      * or a constraint this code does not know about must not be reported to
      * a driver as "already checked in".
      */
-    if (isDuplicateKeyError(error)) return false;
-    throw error;
+    if (!isDuplicateKeyError(error)) throw error;
+
+    /*
+     * ## The reactivation (owner decision 2026-10-15, Q5), and why it is HERE
+     *
+     * A stop that was checked in, UNDONE, and then checked in again gets
+     * **the same row back**: fresh `checked_at`, `undone` false, `undone_at`
+     * and `undone_by` cleared. No second row, and **the UNIQUE index stays**
+     * — which is the whole reason this lives in the duplicate-key catch and
+     * not in a `SELECT` before the INSERT.
+     *
+     * Read that ordering as the implementation, because it is: the INSERT is
+     * still the FIRST move, so the index is still the thing that arbitrates
+     * two racing taps, and this branch is a RECOVERY AFTER the collision
+     * rather than a pre-check. Lifting it in front of the INSERT — "read the
+     * row, update it if undone, otherwise insert" — would serialise nothing
+     * and make a check-then-insert implementation correct, at which point
+     * the two concurrency tests can no longer tell the two apart and a test
+     * that cannot fail is a bug (CLAUDE.md).
+     *
+     * **`undone = true` is in the WHERE and that is the double-tap guard.**
+     * The UPDATE is conditional rather than read-then-write for the same
+     * reason the status writes in this file are: an `UPDATE` re-reads the
+     * row under its own X lock, so it sees the latest COMMITTED state rather
+     * than this transaction's pinned snapshot — and by the time a duplicate
+     * key surfaces at all, the winner has committed (InnoDB makes the loser
+     * WAIT on the key and only then reports `ER_DUP_ENTRY`). So a row that
+     * still stands matches nothing, zero rows come back, and the tap is
+     * `already_checked_in`. Without that one clause every double tap would
+     * re-stamp `checked_at` and quietly rewrite when the van arrived.
+     *
+     * `stop_key` in the `WHERE`, not `stop_id`: it is the UNIQUE index's own
+     * second column, so this finds the exact row the INSERT collided with —
+     * including the trip-start row, whose `stop_id` is NULL and would need
+     * `IS NULL` rather than `=`. Reading a generated column is fine; only
+     * WRITING one is refused by the engine.
+     */
+    const [header] = await tx
+      .update(tripCheckpoints)
+      .set({ checkedAt: now, undone: false, undoneAt: null, undoneBy: null })
+      .where(
+        and(
+          eq(tripCheckpoints.bookingId, bookingId),
+          eq(tripCheckpoints.stopKey, stopId ?? TRIP_START_KEY),
+          eq(tripCheckpoints.undone, true),
+        ),
+      );
+    return header.affectedRows === 0 ? 'already_live' : 'reactivated';
   }
 }
 
@@ -443,7 +539,7 @@ export async function startTrip(
   if (!trip) return refuse('not_your_trip');
   if (!STARTABLE_STATUSES.includes(trip.status)) return refuse('trip_not_startable');
 
-  if (!(await insertCheckpoint(tx, bookingId, null, now))) {
+  if ((await insertCheckpoint(tx, bookingId, null, now)) === 'already_live') {
     return refuse('already_checked_in');
   }
 
@@ -475,6 +571,15 @@ export async function startTrip(
      * reports as zero CHANGED rows even though the row matched. A LOCKING
      * read, because a plain one would answer from the same stale snapshot
      * that sent us here.
+     *
+     * **The already-`in_progress` arm was unreachable until Task 6 and is
+     * reachable now** (Task 5 re-review, item 2). It used to be dead code
+     * that read as covered: a second Start tap was refused by the UNIQUE
+     * index before it ever got here. Undo changed that — retract the
+     * trip-start checkpoint and the booking stays `in_progress`, so the next
+     * Start tap REACTIVATES the row (Q5), reaches this `UPDATE`, matches a
+     * row whose status is already the one being written, and lands here.
+     * `trip-checkins.test.ts` drives exactly that sequence.
      */
     const [current] = await tx
       .select({ status: bookings.status })
@@ -549,7 +654,13 @@ export async function checkInStop(
    */
   if (trip.status !== 'in_progress') return refuse('trip_not_started');
 
-  if (!(await insertCheckpoint(tx, bookingId, stopId, now))) {
+  /*
+   * `inserted` and `reactivated` are both the driver checking in and are
+   * audited identically — one `trip.checked_in` row per tap, which is what
+   * makes the audit trail the only place the claimed → retracted →
+   * re-claimed history of a one-row-per-stop table exists.
+   */
+  if ((await insertCheckpoint(tx, bookingId, stopId, now)) === 'already_live') {
     return refuse('already_checked_in');
   }
 
@@ -630,17 +741,183 @@ export async function completeTrip(
   return { ok: true, progress: { ...(await tripProgress(tx, bookingId)), status } };
 }
 
+/**
+ * §8 item 4: **Undo last check-in** — "only the most recent; marked
+ * `undone`, not deleted" — with the owner's two decisions of 2026-10-15.
+ *
+ * ## It reverses ONE event, and a completion is an event
+ *
+ * The branch at the top is the whole shape of this function. If the booking
+ * is `completed` the most recent thing that happened to this trip is the
+ * COMPLETION, so that is what an undo reverses: booking back to
+ * `in_progress`, van back to `on_trip`, `trip.completion_undone`, and **no
+ * checkpoint row is touched**. Only if the trip is still running does the
+ * undo retract a check-in.
+ *
+ * **Q4, and why the van half is not optional.** `VAN_STATUS_SELLABLE`
+ * allow-lists `available` alone, so a completion that is undone while
+ * leaving the van `available` offers dispatch a van with guests still in it
+ * — on every future date at once, because the status is not date-scoped. A
+ * mistaken Complete tap must put the van back on the road.
+ *
+ * **Why the completion undo leaves the checkpoints alone**, which is the one
+ * reading of "restores the previous state exactly" that works for both ways
+ * a trip can close:
+ *
+ *  - `completeTrip` writes NO checkpoint (there is no stop for "the trip
+ *    ended" — `stop_key` 0 is already trip start). The state before it was
+ *    `in_progress` with every recorded tap standing, which is exactly what
+ *    this restores. An undo that also retracted "the newest check-in" here
+ *    would retract the trip-start row — plainly wrong, and the state nobody
+ *    was ever in.
+ *  - A last-stop check-in closes the trip in ONE transaction, so strictly
+ *    the state before it had that stop un-tapped too. Reversing both halves
+ *    at once would mean deciding WHICH route closed the trip, and the only
+ *    record of that is the `trip.completed` audit row's `lastStopId` —
+ *    reading the audit log to decide a write is a dependency this module
+ *    will not take. So the driver taps Undo twice: once to reopen the trip,
+ *    once to un-tick the stop. Two events, two undos, two audit rows, and
+ *    the second tap is a `trip.checkin_undone` like any other.
+ *
+ * ## The locks, and why they are the opposite call from `checkInStop`'s
+ *
+ * This takes the booking row `FOR UPDATE` and then reads the newest
+ * standing checkpoint `FOR UPDATE` too — both locking, deliberately, which
+ * is the reverse of the ruling in `checkInStop`. The index-arbitration proof
+ * there exists because a double TAP must be told apart by the database; an
+ * undo has no index to arbitrate it (it writes an existing row), so its
+ * guard is a read whose answer decides a write, and CLAUDE.md's rule
+ * applies without qualification: take the lock BEFORE reading availability,
+ * and make the deciding read locking or it answers from the pre-lock
+ * snapshot. Two concurrent Undo taps therefore serialise, and the second
+ * finds the row it would otherwise have retracted a second time already
+ * retracted — so it moves on to the next-newest, or answers
+ * `nothing_to_undo`.
+ *
+ * A locking read does NOT pin the REPEATABLE READ snapshot, so there is no
+ * stale-snapshot correction to make here (the same note `completeTrip`
+ * carries).
+ *
+ * ## "Most recent" is `checked_at`, and `undone = false`
+ *
+ * By `checked_at` DESC then `id` DESC, among rows that STAND. Two rows can
+ * share a second — MySQL's `datetime` here has no sub-second precision —
+ * and `id` breaks that tie in insertion order, so "the most recent" is a
+ * total order rather than whatever the engine returns. Undoing an arbitrary
+ * stop would let a driver rewrite a trip's history after the fact; undoing
+ * a row that is already undone would let one tap retract two stops.
+ *
+ * Note that `checked_at` is the REACTIVATED time for a stop that was undone
+ * and tapped again (Q5), which is correct: the most recent claim about that
+ * stop is the one an undo should reverse.
+ *
+ * ## Marked, never deleted
+ *
+ * `undone = true`, `undone_at = now`, `undone_by = driverId` — a DRIVER, not
+ * an admin (the column's own ruling). CLAUDE.md forbids hard deletes, and
+ * "arrived 10:15, retracted 10:16" versus "retracted three days later, after
+ * the complaint" are very different facts in a refund argument.
+ *
+ * `reason` is required by the input schema and goes into the audit row's
+ * `data`. It is the only part of an undo a column cannot infer.
+ */
+export async function undoLastCheckIn(
+  tx: Transaction,
+  input: { bookingId: number; driverId: number; reason: string; now: Date },
+): Promise<CheckInUndoResult> {
+  const { bookingId, driverId, reason, now } = input;
+
+  const trip = await readTrip(tx, bookingId, driverId, true);
+  if (!trip) return refuse('not_your_trip');
+
+  if (trip.status === 'completed') {
+    /*
+     * Conditional in SQL like every other status write in this file, even
+     * though the `FOR UPDATE` above already holds this row — so the claim
+     * "the booking was `completed` when we wrote" is enforced by the
+     * database rather than by remembering that the lock is there. The
+     * zero-row arm is therefore **unreachable by construction** while that
+     * lock stands; it is here so the undo fails closed if it ever does not,
+     * rather than auditing a reversal that did not happen.
+     */
+    const [header] = await tx
+      .update(bookings)
+      .set({ status: 'in_progress' })
+      .where(and(eq(bookings.id, bookingId), eq(bookings.status, 'completed')));
+    if (header.affectedRows === 0) return refuse('nothing_to_undo');
+
+    // Q4. Conditional on `available`, so a van a dispatcher marked
+    // `for_repair` while the trip was closed is left where they put it —
+    // the mirror of `finishTrip`'s clearing half.
+    await moveVanStatus(tx, trip.vanId, VAN_STATUS_SELLABLE, 'on_trip');
+    await writeAudit(tx, {
+      actorType: 'driver',
+      actorId: driverId,
+      action: 'trip.completion_undone',
+      // PLURAL, like every other row this file writes: the §9 trail on
+      // `admin.bookings.detail` filters on `entity = 'bookings'`.
+      entity: 'bookings',
+      entityId: bookingId,
+      data: { vanId: trip.vanId, reason },
+    });
+    return { ok: true, stopId: null };
+  }
+
+  const [latest] = await tx
+    .select({ id: tripCheckpoints.id, stopId: tripCheckpoints.stopId })
+    .from(tripCheckpoints)
+    .where(and(eq(tripCheckpoints.bookingId, bookingId), eq(tripCheckpoints.undone, false)))
+    .orderBy(desc(tripCheckpoints.checkedAt), desc(tripCheckpoints.id))
+    .limit(1)
+    .for('update');
+
+  if (!latest) return refuse('nothing_to_undo');
+
+  /*
+   * `undone = false` stays in the WHERE for the same reason the status write
+   * above keeps its condition: the row is held `FOR UPDATE`, so the
+   * zero-row arm is unreachable by construction, and the condition is what
+   * makes that true rather than assumed. A double-retraction must never be
+   * audited as one.
+   */
+  const [header] = await tx
+    .update(tripCheckpoints)
+    .set({ undone: true, undoneAt: now, undoneBy: driverId })
+    .where(and(eq(tripCheckpoints.id, latest.id), eq(tripCheckpoints.undone, false)));
+  if (header.affectedRows === 0) return refuse('nothing_to_undo');
+
+  await writeAudit(tx, {
+    actorType: 'driver',
+    actorId: driverId,
+    action: 'trip.checkin_undone',
+    entity: 'bookings',
+    entityId: bookingId,
+    // `stopId` is null for the trip-start row, which is a legitimate thing
+    // to retract: a driver who tapped Start at the wrong pickup.
+    data: { stopId: latest.stopId, reason },
+  });
+
+  return { ok: true, stopId: latest.stopId };
+}
+
 /* ------------------------------------------------------------------ *
- * The transaction each of the three mutations runs in
+ * The transaction each of the four mutations runs in
  * ------------------------------------------------------------------ */
 
 /**
  * Runs ONE check-in as one transaction, retried if InnoDB kills it, and
  * turns a post-write refusal back into an ordinary verdict.
  *
- * Here rather than in the router because all three mutations need exactly
+ * Here rather than in the router because all four mutations need exactly
  * this shape and two of its three jobs are properties of this module's
  * locking, not of tRPC:
+ *
+ * Generic over the verdict so Task 6's undo — whose success arm is a
+ * `stopId` rather than a `TripProgress` — runs through the SAME transaction,
+ * retry and rollback machinery rather than a second copy of it. The refusal
+ * arm is `CheckInRefused`, which both result types include verbatim, so the
+ * conversion below is sound for either without this function knowing which
+ * it is wrapping.
  *
  * **1. One transaction.** Every statement of a check-in goes through one
  * `tx` — the checkpoint, the booking status and the van together — because
@@ -671,9 +948,9 @@ export async function completeTrip(
  * `{ ok: false, reason }` it would have got had the race resolved the other
  * way, and nothing is left on the trip.
  */
-export async function runCheckIn(
-  attempt: (tx: Transaction) => Promise<CheckInResult>,
-): Promise<CheckInResult> {
+export async function runCheckIn<T extends CheckInResult | CheckInUndoResult>(
+  attempt: (tx: Transaction) => Promise<T>,
+): Promise<T | CheckInRefused> {
   try {
     return await withDeadlockRetry(async () => await getDb().transaction(attempt));
   } catch (error) {

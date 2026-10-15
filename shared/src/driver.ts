@@ -375,3 +375,53 @@ export const driverStopCheckInSchema = z
   })
   .strict();
 export type DriverStopCheckInInput = z.infer<typeof driverStopCheckInSchema>;
+
+/* ------------------------------------------------------------------ *
+ * Undo the last check-in (Week 6 plan, Task 6 — BUILD_SPEC §8 "Undo last
+ * check-in (only the most recent; marked `undone`, not deleted)")
+ * ------------------------------------------------------------------ */
+
+/**
+ * Which booking, and **why** — `.strict()`, like every other input here.
+ *
+ * `reason` is REQUIRED and non-empty after trimming (owner decision
+ * 2026-10-15, Q4), which is the one way this schema differs from
+ * `driverTripInputSchema`. An undo rewrites what the system says happened
+ * on a trip: "arrived 10:15, retracted 10:16" and "retracted three days
+ * later, after the complaint" are different facts in a refund argument, and
+ * the reason is the only part of that a column cannot infer. `.trim()`
+ * before `.min(1)` so a reason of three spaces is refused rather than
+ * stored — an optional-in-practice field is not a required one.
+ *
+ * There is deliberately no timestamp and no driver field: `undone_at` is
+ * server time and `undone_by` comes from the session, exactly as
+ * `checked_at` does.
+ */
+export const driverUndoCheckInSchema = z
+  .object({
+    bookingId: z.number().int().positive(),
+    reason: z.string().trim().min(1).max(500),
+  })
+  .strict();
+export type DriverUndoCheckInInput = z.infer<typeof driverUndoCheckInSchema>;
+
+/**
+ * What an undo answers: which stop was retracted, or a reason it was not.
+ *
+ * A VERDICT and not a thrown error, the same contract `CheckInResult`
+ * carries — `nothing_to_undo` is an ordinary outcome of a driver tapping
+ * Undo twice, not a failure.
+ *
+ * `stopId` is `null` for two different retractions, and that is deliberate
+ * rather than an omission: the trip-start pseudo-stop has no `stop_id`, and
+ * an undone COMPLETION has no stop at all. Nothing decides anything from
+ * this field — the screen refetches `driver.trip`, whose `progress` and
+ * `status` are the authority — so a discriminator here would be a second
+ * source of truth for a question already answered.
+ *
+ * It is NOT a `CheckInResult`: an undo returns no `TripProgress`, because
+ * the one thing it must not do is let a client redraw a trip from a payload
+ * that says the trip is further along than the database does.
+ */
+export type CheckInUndoResult =
+  { ok: true; stopId: number | null } | { ok: false; reason: CheckInRefusal };

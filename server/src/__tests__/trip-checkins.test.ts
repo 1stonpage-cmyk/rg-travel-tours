@@ -64,7 +64,9 @@ import {
   vans,
 } from '../db/schema';
 import { generateBookingRef } from '../services/booking-ref';
-import { runCheckIn, startTrip } from '../services/trips/checkins';
+import { assessCapacity, takeSlotLocks } from '../services/capacity';
+import { vansFreeOn } from '../services/dispatch/availability';
+import { checkInStop, runCheckIn, startTrip, undoLastCheckIn } from '../services/trips/checkins';
 import { driverCaller } from './helpers/ctx';
 import { describeWithDb } from './helpers/db';
 
@@ -173,6 +175,9 @@ async function checkpointsOf(bookingId: number) {
       stopKey: tripCheckpoints.stopKey,
       checkedAt: tripCheckpoints.checkedAt,
       undone: tripCheckpoints.undone,
+      /** Task 6: an undo MARKS, so these three are the whole record of it. */
+      undoneAt: tripCheckpoints.undoneAt,
+      undoneBy: tripCheckpoints.undoneBy,
     })
     .from(tripCheckpoints)
     .where(eq(tripCheckpoints.bookingId, bookingId))
@@ -208,13 +213,57 @@ async function trailOf(bookingId: number) {
     .where(
       and(
         eq(auditLog.entityId, bookingId),
-        inArray(auditLog.action, ['trip.started', 'trip.checked_in', 'trip.completed']),
+        /*
+         * Task 12 reads these exact strings, so they are a contract — which
+         * is also why the two Task 6 added are listed here rather than the
+         * filter being loosened to `LIKE 'trip.%'`: a typo'd action would
+         * then be collected silently instead of making the assertions below
+         * fail by name.
+         */
+        inArray(auditLog.action, [
+          'trip.started',
+          'trip.checked_in',
+          'trip.completed',
+          'trip.checkin_undone',
+          'trip.completion_undone',
+        ]),
       ),
     )
     .orderBy(asc(auditLog.id));
 }
 
+/**
+ * `assessCapacity` as `createHold()` asks it — both slot locks in the fixed
+ * order, then the verdict — which is the shape `capacity.test.ts` uses and
+ * the shape checkout really runs.
+ *
+ * It is here because Task 6's owner-named test reads **availability** rather
+ * than `vans.status`: the column proves the van write happened, and only
+ * this proves that dispatch HONOURS it. A van with guests still in it must
+ * not be sellable, and `vans.status = 'on_trip'` is only the mechanism.
+ */
+function assess(tour: number, date: string, pax: number) {
+  return getDb().transaction(async (tx) => {
+    await takeSlotLocks(tx, tour, date);
+    return assessCapacity(tx, tour, date, pax);
+  });
+}
+
+/**
+ * The other half of the same question, from the surface dispatch itself
+ * reads: the calendar dropdowns, the auto-suggest and the assignment
+ * re-check all go through `vansFreeOn`.
+ *
+ * In a transaction because that is the only handle the function takes — it
+ * is written to run inside the assignment's own locks.
+ */
+function freeVans(date: string, minCapacity: number) {
+  return getDb().transaction((tx) => vansFreeOn(tx, date, minCapacity));
+}
+
 let TOUR_DATE = '';
+/** A date no fixture books, so capacity there is a question about the FLEET. */
+let FUTURE_DATE = '';
 let tourId = 0;
 let vanId = 0;
 let driverA = 0;
@@ -227,6 +276,9 @@ describeWithDb('driver check-ins', () => {
     // Any civil date: none of these mutations buckets or expires, so the
     // date is data rather than a clock question.
     TOUR_DATE = new Date().toISOString().slice(0, 10);
+    // Thirty days out, so no fixture booking holds capacity there and the
+    // only thing that can refuse it is the fleet's own state.
+    FUTURE_DATE = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
 
     expect(await count(sql`SELECT COUNT(*) n FROM vans`), 'leftover vans in rg_travel_test').toBe(
       0,
@@ -269,8 +321,6 @@ describeWithDb('driver check-ins', () => {
   afterEach(async () => {
     const pool = getPool();
     for (const id of created.bookingIds) {
-      // `trip_checkpoints` is NOT one of global-setup.ts's leak tables, so
-      // these rows are removed by hand rather than reported by the teardown.
       await pool.query('DELETE FROM trip_checkpoints WHERE booking_id = ?', [id]);
       await pool.query('DELETE FROM payments WHERE booking_id = ?', [id]);
       /*
@@ -286,7 +336,20 @@ describeWithDb('driver check-ins', () => {
     }
     for (const id of created.tourIds) {
       await pool.query('DELETE FROM tour_itinerary_stops WHERE tour_id = ?', [id]);
+      /*
+       * Task 6's availability test calls `takeSlotLocks`, which creates this
+       * lock row on demand — and the row POINTS AT THE TOUR with no cascade,
+       * so the `DELETE FROM tours` below fails on the foreign key without
+       * this line. `capacity.test.ts` deletes it in the same order and for
+       * the same reason.
+       */
+      await pool.query('DELETE FROM tour_date_slots WHERE tour_id = ?', [id]);
       await pool.query('DELETE FROM tours WHERE id = ?', [id]);
+    }
+    // The fleet half of the same lock pair — no FK, but a row this file
+    // created, so this file removes it.
+    for (const day of [TOUR_DATE, FUTURE_DATE]) {
+      if (day) await pool.query('DELETE FROM fleet_date_slots WHERE date = ?', [day]);
     }
     for (const id of created.destIds) {
       await pool.query('DELETE FROM destinations WHERE id = ?', [id]);
@@ -1019,5 +1082,479 @@ describeWithDb('driver check-ins', () => {
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     // Refused at the input stage means nothing was written.
     expect(await checkpointsOf(booking.id)).toEqual([]);
+  });
+
+  /* ---------------------------------------------------------------- *
+   * §8 item 4 — Undo the last check-in (Task 6), plus the owner's two
+   * decisions of 2026-10-15: Q4 (undoing a completion puts the van back
+   * out) and Q5 (a re-check-in reactivates the one row).
+   * ---------------------------------------------------------------- */
+
+  /** The undo, through the mount — the driver from the session, always. */
+  const undo = (driverId: number, bookingId: number, reason: string) =>
+    driverCaller(driverId).driver.undoCheckIn({ bookingId, reason });
+
+  it('marks the newest check-in undone and leaves the earlier ones alone', async () => {
+    const booking = await makeBooking({ driverId: driverA });
+    const caller = driverCaller(driverA);
+    await caller.driver.startTrip({ bookingId: booking.id });
+    await caller.driver.checkIn({ bookingId: booking.id, stopId: stopIds[0] as number });
+    await caller.driver.checkIn({ bookingId: booking.id, stopId: stopIds[1] as number });
+
+    expect(await undo(driverA, booking.id, 'Tapped the wrong stop.')).toEqual({
+      ok: true,
+      stopId: stopIds[1],
+    });
+
+    const rows = await checkpointsOf(booking.id);
+    // Only the most recent. Undoing an arbitrary stop would let a driver
+    // rewrite the trip's history after the fact.
+    expect(rows.find((row) => row.stopId === stopIds[1])?.undone).toBe(true);
+    expect(rows.find((row) => row.stopId === stopIds[0])?.undone).toBe(false);
+    // And trip start, the oldest standing row, is untouched.
+    expect(rows.find((row) => row.stopId === null)?.undone).toBe(false);
+  });
+
+  it('keeps the row — an undo is never a delete', async () => {
+    const booking = await makeBooking({ driverId: driverA });
+    const caller = driverCaller(driverA);
+    await caller.driver.startTrip({ bookingId: booking.id });
+    await caller.driver.checkIn({ bookingId: booking.id, stopId: stopIds[0] as number });
+
+    await undo(driverA, booking.id, 'Mis-tap.');
+
+    const [row] = (await checkpointsOf(booking.id)).filter(
+      (candidate) => candidate.stopId === stopIds[0],
+    );
+    expect(row, 'the undo deleted the row instead of marking it').toBeDefined();
+    expect(row?.undone).toBe(true);
+    // WHEN it was retracted, not just that it was: "arrived 10:15, retracted
+    // 10:16" and "retracted three days later, after the complaint" are
+    // different facts in a refund argument.
+    expect(row?.undoneAt).not.toBeNull();
+    // A DRIVER, not an admin — the column's own ruling.
+    expect(row?.undoneBy).toBe(driverA);
+    // The original claim survives the retraction.
+    expect(row?.checkedAt).not.toBeNull();
+  });
+
+  it('undoes the next-newest on a second undo, not the same row twice', async () => {
+    const booking = await makeBooking({ driverId: driverA });
+    const caller = driverCaller(driverA);
+    await caller.driver.startTrip({ bookingId: booking.id });
+    await caller.driver.checkIn({ bookingId: booking.id, stopId: stopIds[0] as number });
+    await caller.driver.checkIn({ bookingId: booking.id, stopId: stopIds[1] as number });
+
+    expect(await undo(driverA, booking.id, 'Wrong stop.')).toEqual({
+      ok: true,
+      stopId: stopIds[1],
+    });
+    // The SECOND undo must walk back one more, not retract the same row
+    // again — a single tap must never retract two stops.
+    expect(await undo(driverA, booking.id, 'That one too.')).toEqual({
+      ok: true,
+      stopId: stopIds[0],
+    });
+
+    const rows = await checkpointsOf(booking.id);
+    expect(rows.find((row) => row.stopId === stopIds[1])?.undone).toBe(true);
+    expect(rows.find((row) => row.stopId === stopIds[0])?.undone).toBe(true);
+    expect(rows.find((row) => row.stopId === null)?.undone).toBe(false);
+    // Two undos, two audit rows — one per event, which is the only place
+    // this one-row-per-stop table's history exists.
+    expect(
+      (await trailOf(booking.id)).filter((row) => row.action === 'trip.checkin_undone'),
+    ).toHaveLength(2);
+  });
+
+  it('refuses nothing_to_undo when every row is already undone', async () => {
+    const booking = await makeBooking({ driverId: driverA });
+    const caller = driverCaller(driverA);
+    await caller.driver.startTrip({ bookingId: booking.id });
+
+    // Trip start is the only row, and the only thing there is to undo.
+    expect(await undo(driverA, booking.id, 'Started at the wrong pickup.')).toEqual({
+      ok: true,
+      stopId: null,
+    });
+    expect(await undo(driverA, booking.id, 'Again.')).toEqual({
+      ok: false,
+      reason: 'nothing_to_undo',
+    });
+
+    // The refused undo wrote nothing: still one row, still one undo audited.
+    const rows = await checkpointsOf(booking.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.undone).toBe(true);
+    expect(
+      (await trailOf(booking.id)).filter((row) => row.action === 'trip.checkin_undone'),
+    ).toHaveLength(1);
+  });
+
+  it('refuses nothing_to_undo on a trip with no check-ins at all', async () => {
+    const booking = await makeBooking({ driverId: driverA });
+    expect(await undo(driverA, booking.id, 'Nothing happened yet.')).toEqual({
+      ok: false,
+      reason: 'nothing_to_undo',
+    });
+    expect(await bookingStatus(booking.id)).toBe('assigned');
+    expect(await trailOf(booking.id)).toEqual([]);
+  });
+
+  /**
+   * Another driver's trip, and an absent one, refused IDENTICALLY — the
+   * property every driver procedure holds: `driver_id` is half of the
+   * `WHERE`, so a booking that is not yours and a booking that does not
+   * exist return the same zero rows. A distinguishable answer would hand
+   * back the enumeration oracle, over ids that lead to a guest's phone
+   * number (RA 10173).
+   */
+  it('refuses another driver undoing your check-in', async () => {
+    const booking = await makeBooking({ driverId: driverA });
+    const caller = driverCaller(driverA);
+    await caller.driver.startTrip({ bookingId: booking.id });
+    await caller.driver.checkIn({ bookingId: booking.id, stopId: stopIds[0] as number });
+
+    expect(await undo(driverB, booking.id, 'Not mine to undo.')).toEqual({
+      ok: false,
+      reason: 'not_your_trip',
+    });
+    expect(await undo(driverB, 2_000_000_000, 'Nor this.')).toEqual({
+      ok: false,
+      reason: 'not_your_trip',
+    });
+
+    // Driver A's record is exactly as they left it.
+    const rows = await checkpointsOf(booking.id);
+    expect(rows.every((row) => row.undone === false)).toBe(true);
+    expect(rows.every((row) => row.undoneBy === null)).toBe(true);
+  });
+
+  /**
+   * The reason is REQUIRED (owner decision 2026-10-15, Q4) and refused at
+   * the INPUT stage, so nothing reaches the service to be written. Three
+   * spaces is refused too — `.trim()` before `.min(1)`, because an
+   * optional-in-practice field is not a required one.
+   */
+  it('requires a reason, and refuses an input carrying anything else', async () => {
+    const booking = await makeBooking({ driverId: driverA });
+    const caller = driverCaller(driverA);
+    await caller.driver.startTrip({ bookingId: booking.id });
+
+    await expect(
+      caller.driver.undoCheckIn({ bookingId: booking.id, reason: '' }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    await expect(
+      caller.driver.undoCheckIn({ bookingId: booking.id, reason: '   ' }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    await expect(
+      caller.driver.undoCheckIn({ bookingId: booking.id } as never),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    // `.strict()`: no driver and no timestamp may arrive on an undo either.
+    await expect(
+      caller.driver.undoCheckIn({
+        bookingId: booking.id,
+        reason: 'Mis-tap.',
+        undoneAt: '2020-01-01T00:00:00Z',
+      } as never),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+    // Refused at the input stage means nothing was retracted.
+    expect((await checkpointsOf(booking.id)).every((row) => row.undone === false)).toBe(true);
+  });
+
+  /* ---------------------------------------------------------------- *
+   * Q5 — tap → undo → tap again, ONE row throughout.
+   * ---------------------------------------------------------------- */
+
+  /**
+   * Driven through the SERVICE rather than the mount, for one reason: the
+   * assertion is that `checked_at` becomes the NEW time, and MySQL's
+   * `datetime` here has no sub-second precision — two router calls in the
+   * same second would stamp the same value and the test would pass against
+   * an implementation that never re-stamped at all. Explicit `now`s a minute
+   * apart make the claim real. Everything else here goes through the mount.
+   */
+  it('lets the same stop be checked in again after an undo, reusing the one row', async () => {
+    const booking = await makeBooking({ driverId: driverA });
+    const stopId = stopIds[0] as number;
+    /*
+     * Whole seconds, because `checked_at` is a `datetime` with no fractional
+     * precision — a `Date` carrying milliseconds would be rounded by MySQL
+     * and the exact assertion below would be about rounding rather than
+     * about re-stamping. Sixty seconds apart, so "the NEW time" is a claim
+     * no precision question can satisfy by accident.
+     */
+    const T2 = new Date(Math.floor(Date.now() / 1000) * 1000);
+    const T1 = new Date(T2.getTime() - 60_000);
+
+    await runCheckIn((tx) => startTrip(tx, { bookingId: booking.id, driverId: driverA, now: T1 }));
+    await runCheckIn((tx) =>
+      checkInStop(tx, { bookingId: booking.id, driverId: driverA, stopId, now: T1 }),
+    );
+    await runCheckIn((tx) =>
+      undoLastCheckIn(tx, {
+        bookingId: booking.id,
+        driverId: driverA,
+        reason: 'Tapped before we actually arrived.',
+        now: T1,
+      }),
+    );
+
+    const again = await runCheckIn((tx) =>
+      checkInStop(tx, { bookingId: booking.id, driverId: driverA, stopId, now: T2 }),
+    );
+    expect(again, JSON.stringify(again)).toMatchObject({ ok: true });
+
+    const rows = (await checkpointsOf(booking.id)).filter((row) => row.stopId === stopId);
+    // Reactivated, not duplicated — and the UNIQUE index is still what makes
+    // that the only possibility.
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.undone).toBe(false);
+    // Both undo columns CLEARED, not left pointing at a retraction that has
+    // been reversed: a dispatcher reading this row must not see it as undone.
+    expect(rows[0]?.undoneAt).toBeNull();
+    expect(rows[0]?.undoneBy).toBeNull();
+    // The NEW time. A stop re-recorded at 11:30 did not happen at 11:29.
+    expect(rows[0]?.checkedAt.getTime()).toBe(T2.getTime());
+    // And the reactivation counts as done again.
+    expect((await driverCaller(driverA).driver.trip({ bookingId: booking.id })).progress.done).toBe(
+      2,
+    );
+  });
+
+  /**
+   * **The test that keeps the one above from being implemented by weakening
+   * the unique index**, and it is CONCURRENT on purpose: a bumpy-road double
+   * tap IS a race, and a sequential pair passes against a check-then-insert
+   * (or against a reactivation that does not check `undone` first) and
+   * therefore proves nothing.
+   */
+  it('still cannot create two rows for one stop without an undo', async () => {
+    const booking = await makeBooking({ driverId: driverA });
+    const caller = driverCaller(driverA);
+    await caller.driver.startTrip({ bookingId: booking.id });
+    const stopId = stopIds[0] as number;
+
+    const settled = await Promise.allSettled([
+      caller.driver.checkIn({ bookingId: booking.id, stopId }),
+      caller.driver.checkIn({ bookingId: booking.id, stopId }),
+    ]);
+    expect(
+      settled
+        .filter((outcome) => outcome.status === 'rejected')
+        .map((outcome) => String((outcome as PromiseRejectedResult).reason)),
+      'a concurrent double tap threw instead of answering a verdict',
+    ).toEqual([]);
+
+    const rows = (await checkpointsOf(booking.id)).filter((row) => row.stopId === stopId);
+    expect(rows).toHaveLength(1);
+
+    const outcomes = settled.map((outcome) =>
+      outcome.status === 'fulfilled' ? outcome.value : null,
+    );
+    expect(outcomes.filter((outcome) => outcome?.ok === true)).toHaveLength(1);
+    expect(
+      outcomes
+        .filter((outcome) => outcome?.ok === false)
+        .map((outcome) => outcome && 'reason' in outcome && outcome.reason),
+    ).toEqual(['already_checked_in']);
+    // The surviving row is the winner's, never re-stamped by the loser.
+    expect(
+      (await trailOf(booking.id)).filter((row) => row.action === 'trip.checked_in'),
+    ).toHaveLength(1);
+  });
+
+  it('writes an audit row for the check-in, the undo AND the re-check-in', async () => {
+    const booking = await makeBooking({ driverId: driverA });
+    const caller = driverCaller(driverA);
+    const stopId = stopIds[0] as number;
+    await caller.driver.startTrip({ bookingId: booking.id });
+    await caller.driver.checkIn({ bookingId: booking.id, stopId });
+    await undo(driverA, booking.id, 'Mis-tap.');
+    await caller.driver.checkIn({ bookingId: booking.id, stopId });
+
+    const trail = await trailOf(booking.id);
+    const actions = trail.map((row) => row.action);
+    // TWO check-ins for one row: the row itself cannot show that a stop was
+    // claimed, retracted and re-claimed, so the audit trail is where that
+    // history lives — and that is the justification for one row at all.
+    expect(actions.filter((action) => action === 'trip.checked_in')).toHaveLength(2);
+    expect(actions).toContain('trip.checkin_undone');
+    expect(actions).toEqual([
+      'trip.started',
+      'trip.checked_in',
+      'trip.checkin_undone',
+      'trip.checked_in',
+    ]);
+
+    const undone = trail.find((row) => row.action === 'trip.checkin_undone');
+    expect(undone).toMatchObject({
+      actorType: 'driver',
+      actorId: driverA,
+      // PLURAL: `admin.bookings.detail` filters its trail on `entity =
+      // 'bookings'`, so a singular row is invisible on the screen that shows it.
+      entity: 'bookings',
+      entityId: booking.id,
+    });
+    expect(undone?.data).toMatchObject({ stopId, reason: 'Mis-tap.' });
+  });
+
+  /**
+   * The `startTrip` arm that was **unreachable until this task** (Task 5
+   * re-review, item 2): a zero-rows `UPDATE` whose cause is that the booking
+   * is ALREADY `in_progress`. A second Start tap used to be refused by the
+   * UNIQUE index long before that `UPDATE`, so the branch read as covered
+   * and was dead. Undo makes it live — retract the trip-start checkpoint and
+   * the booking stays `in_progress`, so the next Start reactivates the row,
+   * reaches the `UPDATE`, matches a row already carrying the status being
+   * written, and lands in that disambiguation.
+   */
+  it('starts again after the trip-start check-in was undone, reusing the one row', async () => {
+    const booking = await makeBooking({ driverId: driverA });
+    const caller = driverCaller(driverA);
+    await caller.driver.startTrip({ bookingId: booking.id });
+    await undo(driverA, booking.id, 'Started at the wrong pickup.');
+    // The undo retracts the tap, not the trip: the booking is still running.
+    expect(await bookingStatus(booking.id)).toBe('in_progress');
+
+    const restarted = await caller.driver.startTrip({ bookingId: booking.id });
+    expect(restarted.ok, JSON.stringify(restarted)).toBe(true);
+    if (!restarted.ok) return;
+    expect(restarted.progress.done).toBe(1);
+    expect(restarted.progress.status).toBe('in_progress');
+
+    const rows = await checkpointsOf(booking.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.stopId).toBeNull();
+    expect(rows[0]?.undone).toBe(false);
+    expect(rows[0]?.undoneAt).toBeNull();
+    expect(rows[0]?.undoneBy).toBeNull();
+    // The booking did not move and the van is still out.
+    expect(await bookingStatus(booking.id)).toBe('in_progress');
+    expect(await vanStatus(vanId)).toBe('on_trip');
+  });
+
+  /* ---------------------------------------------------------------- *
+   * Q4 — undoing a completion puts the van back out.
+   * ---------------------------------------------------------------- */
+
+  it('restores in_progress and on_trip when a completion is undone', async () => {
+    const booking = await makeBooking({ driverId: driverA });
+    const caller = driverCaller(driverA);
+    await caller.driver.startTrip({ bookingId: booking.id });
+    await caller.driver.completeTrip({ bookingId: booking.id });
+    expect(await vanStatus(vanId)).toBe('available');
+
+    expect(
+      await undo(driverA, booking.id, 'Completed by mistake — still at the last stop.'),
+    ).toEqual({ ok: true, stopId: null });
+
+    expect(await bookingStatus(booking.id)).toBe('in_progress');
+    // The half that costs real money: a mistaken completion must not free a
+    // van that is still on the road.
+    expect(await vanStatus(vanId)).toBe('on_trip');
+    // "Restores the previous state EXACTLY" — the trip-start tap stands,
+    // because `completeTrip` never retracted it.
+    const rows = await checkpointsOf(booking.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.undone).toBe(false);
+  });
+
+  /**
+   * **The owner's named test, and it reads AVAILABILITY rather than the
+   * column.** `vans.status = 'on_trip'` proves the write happened; it does
+   * not prove dispatch honours it. A van with guests in it must not be
+   * sellable, and `VAN_STATUS_SELLABLE` allow-lists `available` alone — so
+   * the question is asked of the two functions that answer it for real:
+   * `assessCapacity` (checkout) and `vansFreeOn` (the calendar dropdowns,
+   * the auto-suggest and the assignment re-check).
+   *
+   * `FUTURE_DATE`, not the trip's own date, because `vans.status` is NOT
+   * date-scoped: a van left out is unsellable on every future date at once,
+   * which is the consequence that matters.
+   */
+  it('does NOT offer that van for any date while it is back on_trip', async () => {
+    const booking = await makeBooking({ driverId: driverA });
+    const caller = driverCaller(driverA);
+    await caller.driver.startTrip({ bookingId: booking.id });
+    await caller.driver.completeTrip({ bookingId: booking.id });
+    // The premise, proven rather than assumed: with the van back, that date
+    // is bookable. Without this the assertion below could pass for any
+    // reason at all.
+    expect(await assess(tourId, FUTURE_DATE, 2)).toEqual({ ok: true });
+    expect((await freeVans(FUTURE_DATE, 2)).map((van) => van.id)).toContain(vanId);
+
+    await undo(driverA, booking.id, 'Completed by mistake.');
+
+    expect(await assess(tourId, FUTURE_DATE, 2)).toEqual({
+      ok: false,
+      reason: 'no_van_available',
+    });
+    /*
+     * Scoped to the van THIS test created, never `toEqual([])`. The test
+     * database keeps an empty fleet, but a sibling file creating its own van
+     * would turn an exact-emptiness assertion into a flaky test wearing a
+     * precise number — Week 5's lesson, applied.
+     */
+    expect((await freeVans(FUTURE_DATE, 2)).map((van) => van.id)).not.toContain(vanId);
+  });
+
+  it('audits the undone completion with the actor and the reason', async () => {
+    const booking = await makeBooking({ driverId: driverA });
+    const caller = driverCaller(driverA);
+    await caller.driver.startTrip({ bookingId: booking.id });
+    await caller.driver.completeTrip({ bookingId: booking.id });
+    await undo(driverA, booking.id, 'Completed by mistake.');
+
+    const trail = await trailOf(booking.id);
+    expect(trail.map((row) => row.action)).toEqual([
+      'trip.started',
+      'trip.completed',
+      'trip.completion_undone',
+    ]);
+    const row = trail.find((candidate) => candidate.action === 'trip.completion_undone');
+    expect(row).toBeDefined();
+    expect(row?.actorType).toBe('driver');
+    expect(row?.actorId).toBe(driverA);
+    expect(row?.entity).toBe('bookings');
+    // The required reason, in the one place it is kept.
+    expect(JSON.stringify(row?.data)).toContain('Completed by mistake.');
+    expect(row?.data).toMatchObject({ vanId });
+  });
+
+  /**
+   * Two undos reverse two events, in order: the completion first, then the
+   * stop whose tap closed the trip. One undo per event is what keeps "only
+   * the most recent" meaning anything — see the ruling in
+   * `undoLastCheckIn`'s note for why the completion does not retract that
+   * stop in the same breath.
+   */
+  it('reopens a stop-closed trip, then retracts that stop, on two undos', async () => {
+    const booking = await makeBooking({ driverId: driverA });
+    const caller = driverCaller(driverA);
+    await caller.driver.startTrip({ bookingId: booking.id });
+    for (const stopId of stopIds) {
+      await caller.driver.checkIn({ bookingId: booking.id, stopId });
+    }
+    expect(await bookingStatus(booking.id)).toBe('completed');
+
+    expect(await undo(driverA, booking.id, 'Not finished — one stop to go.')).toEqual({
+      ok: true,
+      stopId: null,
+    });
+    expect(await bookingStatus(booking.id)).toBe('in_progress');
+    expect(await vanStatus(vanId)).toBe('on_trip');
+
+    expect(await undo(driverA, booking.id, 'And that stop was a mis-tap.')).toEqual({
+      ok: true,
+      stopId: stopIds.at(-1),
+    });
+    const rows = await checkpointsOf(booking.id);
+    expect(rows).toHaveLength(4);
+    expect(rows.filter((row) => row.undone)).toHaveLength(1);
+    expect(await bookingStatus(booking.id), 'the reopened trip closed itself again').toBe(
+      'in_progress',
+    );
   });
 });
