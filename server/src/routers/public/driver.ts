@@ -55,9 +55,8 @@ import {
   type TripDetail,
 } from '@rg/shared';
 import { getDb } from '../../db/client';
-import { withDeadlockRetry } from '../../db/deadlock';
 import { bookingNotes, bookings, payments, tours, vans } from '../../db/schema';
-import { checkInStop, completeTrip, startTrip } from '../../services/trips/checkins';
+import { checkInStop, completeTrip, runCheckIn, startTrip } from '../../services/trips/checkins';
 import { tripProgress } from '../../services/trips/progress';
 import { driverProcedure, router } from '../../trpc';
 
@@ -352,72 +351,49 @@ export const driverTripsRouter = router({
    * that" is an ordinary outcome of a van with one bar of signal, and a
    * `TRPCError` would reach the screen as a failure instead of as a shrug.
    *
-   * Each transaction is wrapped in `withDeadlockRetry()` — the same shape
-   * `createHold` and `assignVanAndDriver` use, and for the reason
-   * `deadlock.ts` documents: a deadlocked transaction is already rolled
-   * back, so only its owner can start another. It is needed here and the
-   * reason is measured, not hypothetical: a checkpoint INSERT takes a
-   * SHARED foreign-key lock on its parent booking row, so the winner's
-   * `UPDATE bookings` is an S->X upgrade while the loser still holds S and
-   * waits on the duplicate key — a textbook cycle. Without the wrapper the
-   * harmless second tap comes back as a 500 instead of
-   * `already_checked_in`, and the retried attempt hits the duplicate key
-   * cleanly and answers properly. The same cycle exists between two
-   * check-ins racing `countStandingCheckpoints`'s next-key lock.
-   *
-   * It does NOT weaken the index-arbitrated proof: `isDeadlockError()` is
-   * deliberately narrow (1213 / `ER_LOCK_DEADLOCK` only — even a lock-wait
-   * timeout is excluded), while a check-then-insert implementation fails
-   * with an uncaught `ER_DUP_ENTRY`, which the predicate rejects and the
-   * wrapper re-throws on the first attempt. MEASURED: the two concurrent
-   * tests still redden under that mutation with the wrapper in place.
+   * `runCheckIn()` (in `services/trips/checkins.ts`) owns the transaction:
+   * one per call, retried if InnoDB kills it as a deadlock victim, and a
+   * refusal discovered after a write comes back as a verdict with the write
+   * rolled back. The reasoning for all three lives with the locking it
+   * protects rather than here — see that function.
    * ---------------------------------------------------------------- */
 
   /** §8 item 1 — Start trip: booking `in_progress`, van `on_trip`. */
   startTrip: driverProcedure.input(driverTripInputSchema).mutation(
     async ({ ctx, input }): Promise<CheckInResult> =>
-      await withDeadlockRetry(
-        async () =>
-          await getDb().transaction(
-            async (tx) =>
-              await startTrip(tx, {
-                bookingId: input.bookingId,
-                driverId: ctx.driver.driverId,
-                now: new Date(),
-              }),
-          ),
+      await runCheckIn(
+        async (tx) =>
+          await startTrip(tx, {
+            bookingId: input.bookingId,
+            driverId: ctx.driver.driverId,
+            now: new Date(),
+          }),
       ),
   ),
 
   /** §8 item 2 — one stop, on arrival. The last one completes the trip. */
   checkIn: driverProcedure.input(driverStopCheckInSchema).mutation(
     async ({ ctx, input }): Promise<CheckInResult> =>
-      await withDeadlockRetry(
-        async () =>
-          await getDb().transaction(
-            async (tx) =>
-              await checkInStop(tx, {
-                bookingId: input.bookingId,
-                stopId: input.stopId,
-                driverId: ctx.driver.driverId,
-                now: new Date(),
-              }),
-          ),
+      await runCheckIn(
+        async (tx) =>
+          await checkInStop(tx, {
+            bookingId: input.bookingId,
+            stopId: input.stopId,
+            driverId: ctx.driver.driverId,
+            now: new Date(),
+          }),
       ),
   ),
 
   /** §8 item 3 — Complete trip: booking `completed`, van freed. */
   completeTrip: driverProcedure.input(driverTripInputSchema).mutation(
     async ({ ctx, input }): Promise<CheckInResult> =>
-      await withDeadlockRetry(
-        async () =>
-          await getDb().transaction(
-            async (tx) =>
-              await completeTrip(tx, {
-                bookingId: input.bookingId,
-                driverId: ctx.driver.driverId,
-              }),
-          ),
+      await runCheckIn(
+        async (tx) =>
+          await completeTrip(tx, {
+            bookingId: input.bookingId,
+            driverId: ctx.driver.driverId,
+          }),
       ),
   ),
 });

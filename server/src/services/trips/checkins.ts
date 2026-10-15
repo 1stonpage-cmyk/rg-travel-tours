@@ -81,7 +81,8 @@
  * widens with latency and pool contention.
  *
  * It is handled where a deadlock has to be handled — at the transaction
- * owner, by `withDeadlockRetry()` in the router (see the note there).
+ * owner, by `withDeadlockRetry()` inside `runCheckIn()` at the foot of this
+ * file (see the note there).
  * **Do not "fix" it by taking the booking lock first:** that serialises the
  * two taps and makes a check-then-insert correct, at which point nothing
  * can tell the two implementations apart. If it ever escapes the retry, the
@@ -116,12 +117,15 @@
  * `vans.status = 'on_trip'` together; completion writes the status and
  * returns the van to `available` together. Splitting either would ship a
  * window in which a started trip has an `available` van — which is a van
- * two bookings can be sold into. The caller owns the transaction (every
- * statement goes through `tx`), exactly as `assignVanAndDriver` does.
+ * two bookings can be sold into. The three mutations take a `tx` and every
+ * statement goes through it, exactly as `assignVanAndDriver` does;
+ * `runCheckIn()` at the foot of this file is the one place that opens it,
+ * retries it on a deadlock, and converts a post-write refusal back into a
+ * verdict after the rollback.
  */
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import type { BookingStatus, CheckInRefusal, CheckInResult } from '@rg/shared';
-import type { Transaction } from '../../db/client';
+import { getDb, type Transaction } from '../../db/client';
 import {
   VAN_STATUS_SELLABLE,
   bookings,
@@ -129,6 +133,7 @@ import {
   tripCheckpoints,
   vans,
 } from '../../db/schema';
+import { withDeadlockRetry } from '../../db/deadlock';
 import { isDuplicateKeyError } from '../../db/duplicate-key';
 import { writeAudit } from '../audit';
 import { tripProgress } from './progress';
@@ -163,6 +168,29 @@ const STARTABLE_STATUSES: readonly BookingStatus[] = [
 
 function refuse(reason: CheckInRefusal): CheckInResult {
   return { ok: false, reason };
+}
+
+/**
+ * A refusal discovered AFTER this transaction already wrote something, which
+ * therefore has to take the transaction down with it.
+ *
+ * Thrown, not returned, and that is the only reason it exists: returning a
+ * verdict lets the caller's transaction COMMIT, which would leave the
+ * checkpoint row behind on a trip that was refused. Throwing rolls back the
+ * INSERT with everything else, so there is nothing to compensate for and no
+ * orphan row for anyone to sweep. `runCheckIn()` converts it back into an
+ * ordinary verdict once the rollback has happened — the caller sees the same
+ * refusal it would have seen if the race had resolved the other way, so the
+ * contract is unchanged.
+ *
+ * Private on purpose: a refusal that needs a rollback is an implementation
+ * detail of this module, and `CheckInRefusal` gains no member for it.
+ */
+class CheckInRollback extends Error {
+  constructor(readonly reason: CheckInRefusal) {
+    super(`check-in refused after a write: ${reason}`);
+    this.name = 'CheckInRollback';
+  }
 }
 
 /** The booking fields every one of the three mutations needs. */
@@ -419,7 +447,47 @@ export async function startTrip(
     return refuse('already_checked_in');
   }
 
-  await tx.update(bookings).set({ status: 'in_progress' }).where(eq(bookings.id, bookingId));
+  /*
+   * The status write is conditional on the SAME allow-list the gate above
+   * used, and the mirror image of `finishTrip`'s (round-2 review).
+   *
+   * The gate above is a plain read, so it answers from this transaction's
+   * pinned snapshot — and an admin cancellation landing between it and this
+   * write would be silently overwritten, walking a CANCELLED booking
+   * backwards into `in_progress`. A driver's tap must not resurrect a
+   * cancelled trip. An `UPDATE` re-reads the row under its own X lock, so
+   * unlike that `SELECT` it sees the latest committed status; naming the
+   * allow-list in the `WHERE` is what turns "the booking moved under us"
+   * into zero matched rows.
+   *
+   * It stays an allow-list, so a status added to `BOOKING_STATUSES` later is
+   * refused by default rather than started by accident.
+   */
+  const [header] = await tx
+    .update(bookings)
+    .set({ status: 'in_progress' })
+    .where(and(eq(bookings.id, bookingId), inArray(bookings.status, [...STARTABLE_STATUSES])));
+
+  if (header.affectedRows === 0) {
+    /*
+     * Two causes, and they need telling apart: the booking moved out of the
+     * startable set (refuse), or it was ALREADY `in_progress` — which MySQL
+     * reports as zero CHANGED rows even though the row matched. A LOCKING
+     * read, because a plain one would answer from the same stale snapshot
+     * that sent us here.
+     */
+    const [current] = await tx
+      .select({ status: bookings.status })
+      .from(bookings)
+      .where(eq(bookings.id, bookingId))
+      .for('update')
+      .limit(1);
+    if (!current || !STARTABLE_STATUSES.includes(current.status)) {
+      // Thrown, so the checkpoint INSERT above goes back with it.
+      throw new CheckInRollback('trip_not_startable');
+    }
+  }
+
   await moveVanStatus(tx, trip.vanId, VAN_STATUS_SELLABLE, 'on_trip');
   await writeAudit(tx, {
     actorType: 'driver',
@@ -560,4 +628,64 @@ export async function completeTrip(
    * in `checkInStop`.
    */
   return { ok: true, progress: { ...(await tripProgress(tx, bookingId)), status } };
+}
+
+/* ------------------------------------------------------------------ *
+ * The transaction each of the three mutations runs in
+ * ------------------------------------------------------------------ */
+
+/**
+ * Runs ONE check-in as one transaction, retried if InnoDB kills it, and
+ * turns a post-write refusal back into an ordinary verdict.
+ *
+ * Here rather than in the router because all three mutations need exactly
+ * this shape and two of its three jobs are properties of this module's
+ * locking, not of tRPC:
+ *
+ * **1. One transaction.** Every statement of a check-in goes through one
+ * `tx` — the checkpoint, the booking status and the van together — because
+ * splitting them ships a window in which a started trip has an `available`
+ * van.
+ *
+ * **2. `withDeadlockRetry()`**, the same wrapper `createHold` and
+ * `assignVanAndDriver` use, and for the reason `deadlock.ts` documents: a
+ * deadlocked transaction is already rolled back, so only its owner can
+ * start another. It is needed here and the reason is measured: a checkpoint
+ * INSERT takes a SHARED foreign-key lock on its parent booking row, so the
+ * winner's `UPDATE bookings` is an S→X upgrade while the loser still holds
+ * S and waits on the duplicate key — a textbook cycle, one round trip wide.
+ * Without the retry the harmless second tap comes back as a 500 instead of
+ * `already_checked_in`; with it, the retried attempt hits the duplicate key
+ * cleanly and answers properly.
+ *
+ * It does NOT weaken the index-arbitrated proof: `isDeadlockError()` is
+ * deliberately narrow (1213 / `ER_LOCK_DEADLOCK` only — even a lock-wait
+ * timeout is excluded), while a check-then-insert implementation fails with
+ * an uncaught `ER_DUP_ENTRY`, which the predicate rejects and the wrapper
+ * re-throws on the first attempt. MEASURED, twice: the two concurrent tests
+ * still redden under that mutation with this wrapper in place.
+ *
+ * **3. `CheckInRollback` → a verdict.** A refusal discovered after a write
+ * has to roll the transaction back (see that class). By the time this
+ * `catch` runs the rollback has happened, so the caller gets the same
+ * `{ ok: false, reason }` it would have got had the race resolved the other
+ * way, and nothing is left on the trip.
+ */
+export async function runCheckIn(
+  attempt: (tx: Transaction) => Promise<CheckInResult>,
+): Promise<CheckInResult> {
+  try {
+    return await withDeadlockRetry(async () => await getDb().transaction(attempt));
+  } catch (error) {
+    if (error instanceof CheckInRollback) return refuse(error.reason);
+    /*
+     * A `CheckInRollback` Drizzle (or any future wrapper) re-threw with the
+     * original on `.cause` — the same hazard `isDuplicateKeyError` exists
+     * for. Checked rather than assumed: swallowing this would turn a
+     * refusal into a 500, and missing it would be invisible until a race.
+     */
+    const cause = (error as { cause?: unknown } | null)?.cause;
+    if (cause instanceof CheckInRollback) return refuse(cause.reason);
+    throw error;
+  }
 }

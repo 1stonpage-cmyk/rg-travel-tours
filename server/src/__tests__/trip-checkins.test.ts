@@ -42,9 +42,11 @@
  *
  * Fixtures are rebuilt per test and deleted in `afterEach`: the test
  * database keeps an EMPTY fleet (`capacity.test.ts` counts the whole
- * fleet), so every van and driver created here goes again. `trip_checkpoints`
- * is NOT in `global-setup.ts`'s leak table list, so this file deletes its
- * own rows by `booking_id` rather than relying on the teardown to notice.
+ * fleet), so every van and driver created here goes again. The `afterEach`
+ * deletes this file's `trip_checkpoints`, `payments` and `audit_log` rows by
+ * `booking_id` before the booking itself — `trip_checkpoints` is in
+ * `global-setup.ts`'s `LEAK_TABLES` as of this task, so a miss there now
+ * fails the run by name instead of quietly changing another suite's count.
  */
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
@@ -62,6 +64,7 @@ import {
   vans,
 } from '../db/schema';
 import { generateBookingRef } from '../services/booking-ref';
+import { runCheckIn, startTrip } from '../services/trips/checkins';
 import { driverCaller } from './helpers/ctx';
 import { describeWithDb } from './helpers/db';
 
@@ -449,6 +452,89 @@ describeWithDb('driver check-ins', () => {
     expect(result).toEqual({ ok: false, reason: 'trip_not_startable' });
     expect(await checkpointsOf(booking.id)).toEqual([]);
     expect(await bookingStatus(booking.id)).toBe('confirmed');
+  });
+
+  /**
+   * **The inbound status race, and the mirror image of the completion
+   * one** (round-2 review).
+   *
+   * `startTrip`'s status gate is a PLAIN read — deliberately, because a
+   * locking read there would serialise two taps and make a
+   * check-then-insert correct. So it answers from the transaction's pinned
+   * snapshot, and an admin cancellation landing between that read and the
+   * `UPDATE` used to be silently overwritten: a driver's tap resurrecting a
+   * cancelled trip as `in_progress`.
+   *
+   * The interleaving is **forced rather than raced**, on purpose. A
+   * `Promise.all` version (below) cannot pin which side lands first, and the
+   * ordering where the cancel commits LAST is a legitimately-started trip
+   * that was then cancelled — a different fact with a different end state.
+   * This test puts the cancel exactly in the window that used to be wrong:
+   * a plain read first (which is what `startTrip`'s own first statement
+   * does, so the snapshot is pinned the same way), then the cancel on
+   * ANOTHER connection, then the real `startTrip` against the stale
+   * snapshot.
+   *
+   * **The rollback is the half most likely to be wrong**, so it is asserted
+   * directly: a test that only checked the status would pass with an
+   * orphaned checkpoint sitting on a cancelled booking.
+   */
+  it('refuses, and leaves no checkpoint, when the booking is cancelled under a running start', async () => {
+    const booking = await makeBooking({ driverId: driverA });
+
+    const verdict = await runCheckIn(async (tx) => {
+      // Pins this transaction's REPEATABLE READ snapshot, exactly as
+      // `startTrip`'s own first statement does.
+      await tx.select({ id: bookings.id }).from(bookings).where(eq(bookings.id, booking.id));
+      // The admin, on another connection, committing immediately: nothing
+      // in this transaction holds a lock on the row yet.
+      await getPool().query("UPDATE bookings SET status = 'cancelled' WHERE id = ?", [booking.id]);
+      // The gate below now reads `assigned` from the stale snapshot.
+      return await startTrip(tx, { bookingId: booking.id, driverId: driverA, now: new Date() });
+    });
+
+    // The same refusal the gate would have given had the cancel landed
+    // first — no new member of `CheckInRefusal` for the race.
+    expect(verdict).toEqual({ ok: false, reason: 'trip_not_startable' });
+    // The cancel stands. A driver's tap does not resurrect a cancelled trip.
+    expect(await bookingStatus(booking.id)).toBe('cancelled');
+    // And the write that had already happened went back with it.
+    expect(await checkpointsOf(booking.id), 'an orphaned checkpoint survived').toEqual([]);
+    expect(await trailOf(booking.id), 'an orphaned trip.started row survived').toEqual([]);
+    expect(await vanStatus(vanId)).toBe('available');
+  });
+
+  /**
+   * The same pair, genuinely concurrent — which means the ordering is NOT
+   * ours to choose, so the assertion is the invariant that holds either way:
+   * **the checkpoint exists if and only if the start was accepted.** If the
+   * cancel lands first the start is refused and rolls back; if the start
+   * lands first it really did start and the cancel then closes a trip that
+   * was running. Both are coherent; what must never happen is a checkpoint
+   * with no accepted start, or an accepted start with nothing recorded.
+   *
+   * The forced-interleaving test above is the one that PROVES the fix (this
+   * one can resolve the harmless way); this one proves the pair stays
+   * coherent under a real race.
+   */
+  it('keeps the checkpoint and the verdict in step when a cancel races a start', async () => {
+    const booking = await makeBooking({ driverId: driverA });
+
+    const [verdict] = await Promise.all([
+      driverCaller(driverA)
+        .driver.startTrip({ bookingId: booking.id })
+        .then(
+          (value) => value,
+          (error: unknown) => error,
+        ),
+      getPool().query("UPDATE bookings SET status = 'cancelled' WHERE id = ?", [booking.id]),
+    ]);
+
+    expect(verdict, 'the start threw instead of answering a verdict').toHaveProperty('ok');
+    const accepted = (verdict as { ok?: boolean }).ok === true;
+    expect(await checkpointsOf(booking.id)).toHaveLength(accepted ? 1 : 0);
+    expect(await trailOf(booking.id)).toHaveLength(accepted ? 1 : 0);
+    if (!accepted) expect(verdict).toEqual({ ok: false, reason: 'trip_not_startable' });
   });
 
   it('refuses to start a cancelled trip, and writes nothing', async () => {
