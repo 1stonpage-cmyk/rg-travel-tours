@@ -9,6 +9,8 @@ import AdminCalendarPage from '@/pages/admin/AdminCalendarPage';
 import AdminDriversPage from '@/pages/admin/AdminDriversPage';
 import AdminLoginPage from '@/pages/admin/AdminLoginPage';
 import AdminVansPage from '@/pages/admin/AdminVansPage';
+import DriverLayout from '@/components/layout/DriverLayout';
+import DriverLoginPage from '@/pages/driver/DriverLoginPage';
 import ManualQrPage from '@/pages/portal/ManualQrPage';
 import PortalBookingPage from '@/pages/portal/PortalBookingPage';
 import PortalLoginPage from '@/pages/portal/PortalLoginPage';
@@ -97,6 +99,27 @@ export default function App() {
        * itself renders a sign-in prompt rather than details when there is
        * no session, so there is no flash of anything private.
        */}
+      {/*
+       * The driver portal (Week 6, Task 9). The sign-in sits OUTSIDE
+       * `DriverLayout` for the same reason `admin/login` sits outside
+       * `AdminLayout`: a screen that mints a session must not render
+       * chrome that assumes one. `/driver` already gets an `X-Robots-Tag`
+       * from the server middleware, so nothing here needs indexing work.
+       *
+       * The index route is a one-line stand-in for Task 10's trip list,
+       * which owns the Today / Upcoming / History tabs. Every procedure
+       * behind that screen is a `driverProcedure`, so the SERVER is the
+       * gate on all of this — an unauthenticated visitor reaching
+       * `/driver` sees the shell and no data, never a shortcut in.
+       */}
+      <Route path="driver/login" element={<DriverLoginPage />} />
+      <Route path="driver" element={<DriverLayout />}>
+        <Route
+          index
+          element={<p className="text-brand-blue-900 text-base">You are signed in.</p>}
+        />
+      </Route>
+
       <Route path="portal/login" element={<PortalLoginPage />} />
       <Route path="portal/pay" element={<ManualQrPage />} />
       <Route path="portal/booking" element={<PortalBookingPage />} />
