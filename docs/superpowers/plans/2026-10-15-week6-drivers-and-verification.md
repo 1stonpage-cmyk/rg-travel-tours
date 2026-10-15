@@ -460,6 +460,14 @@ export interface DriverTripRow {
 
 **A driver sees only their own trips, and the filter comes only from the session.** `ctx.driver.driverId`, never an input. Three tests: a driver sees their own, does not see another's, and a staff session is refused the procedure entirely.
 
+**This task owes `procedure-role-metadata.test.ts` a `driver` branch** (carried from Task 1, 2026-10-15). That guard requires every mounted procedure to declare a recognised access type; its `accessOf()` returns `undefined` for `driver`, so Task 1 could only mount the two **public** procedures (`driver.login`, `driver.logout`) and had to prove `driverProcedure`'s gate against a test-local router. **`driver.trips` is the first mounted `driverProcedure`, so it turns that guard red — and the guard is right to go red: it is asking for a declaration nobody has written yet.** Extend it, do not weaken it:
+
+- teach `accessOf()` the `driver` access type;
+- require every `driver.*` procedure that is not in the public login pair to be a `driverProcedure`;
+- and require each one to refuse **all three** of an anonymous caller, a staff session and a customer session — the guard's existing shape for admin procedures, applied to the third subject type.
+
+A branch that merely stops failing (an early `return`, a widened `undefined` case, an allow-list of names) is the defect this note exists to prevent: it would make every future driver procedure invisible to the only test that checks they are gated at all.
+
 **"Today" is the Manila civil date.** A driver in a van at 00:30 is on today's trips, not tomorrow's — `manilaCivilDate(new Date())` server-side, and `driverTripBucket` is pure so the client can re-bucket without a round trip.
 
 - [ ] **Step 1: Write the failing test**
@@ -650,7 +658,7 @@ export async function completeTrip(tx, { bookingId, driverId, now }): Promise<..
 3. **A `pending_verification` booking CAN be started** (owner-accepted 2026-10-15, Q2). The guests are standing there; the payment box already says not to collect. A `confirmed` booking has no van and no driver and so cannot be started by anyone — that is `trip_not_startable`.
 4. **Start sets the booking `in_progress` AND the van `on_trip`.** Complete sets `completed` **and puts the van back to `available`** — see Task 7, which owns the clearing and its test.
 5. **Timestamps are server time.** `checked_at` comes from the server, never from an input. There is no device-clock field to trust.
-6. **The audit action strings are fixed here, because Task 6 and Task 12 assert them.** `trip_started`, `trip_checked_in`, `trip_completed`; Task 6 adds `trip_checkin_undone` and `trip_completion_undone`. `actor_type` is `'driver'`, and **`entity` is the plural `'bookings'`** — Week 5 shipped a singular `'booking'` that made an audit row invisible in the detail trail, and the reviewer caught it by reading the query rather than the write.
+6. **The audit action strings are fixed here, because Task 6 and Task 12 assert them: `trip.started`, `trip.checked_in`, `trip.completed`**, with Task 6 adding `trip.checkin_undone` and `trip.completion_undone`. **Dotted, not snake_case** — ruling 2026-10-15, after Task 1 found that `evaluatePinAttempt()` already returns `driver.locked_out` and that the dotted form is what the core code uses (`auth.login`, `auth.login_failed`, `booking.held`, `booking.expired`, `payment.cash_collected`, `payment.verified`, `review.submitted`). Week 5's `driver_created` / `van_updated` are the outliers; do not copy them, and do not rename them either — that is a separate commit nobody has asked for. `actor_type` is `'driver'`, and **`entity` is the plural `'bookings'`**: Week 5 shipped a singular `'booking'` that made an audit row invisible in the detail trail, caught by reading the query rather than the write.
 
 - [ ] **Step 1: Write the failing test** — start from `assigned` succeeds; **start from `pending_verification` also succeeds** (Q2, and assert the payment box still says `unverified_do_not_collect`); start twice is `already_checked_in` (via the unique index, proven by two **concurrent** calls); start from `confirmed` (no van) is `trip_not_startable`; another driver's booking is `not_your_trip`; a stop from a different tour is `unknown_stop`; checking in before starting is `trip_not_started`; the last stop completes the trip; `checked_at` is server time (within seconds of `now`, never a value the caller passed).
 - [ ] **Step 2–4: fail, implement, pass.**
@@ -764,8 +772,8 @@ it('writes an audit row for the check-in, the undo AND the re-check-in', async (
   await checkInStop(..., { stopId: first });
 
   const actions = (await auditRowsFor('driver', driverId)).map((r) => r.action);
-  expect(actions.filter((a) => a === 'trip_checked_in')).toHaveLength(2);
-  expect(actions).toContain('trip_checkin_undone');
+  expect(actions.filter((a) => a === 'trip.checked_in')).toHaveLength(2);
+  expect(actions).toContain('trip.checkin_undone');
 });
 
 /* --- Q4: undoing a completion puts the van back out --- */
@@ -803,7 +811,7 @@ it('audits the undone completion with the actor and the reason', async () => {
   await completeTrip(...);
   await undoLastCheckIn(..., { reason: 'Completed by mistake.' });
   const row = (await auditRowsFor('driver', driverId)).find(
-    (r) => r.action === 'trip_completion_undone',
+    (r) => r.action === 'trip.completion_undone',
   );
   expect(row).toBeDefined();
   expect(row!.actorType).toBe('driver');
