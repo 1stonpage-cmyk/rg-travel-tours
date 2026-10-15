@@ -697,3 +697,163 @@ This placeholder will be replaced with reviewed terms before launch.`,
     updatedAt: '2026-10-09T00:00:00.000Z',
   },
 };
+
+// ---------------------------------------------------------------------------
+// The dispatcher's fleet (Week 5, Task 15)
+// ---------------------------------------------------------------------------
+
+/**
+ * Vans, drivers, leaves and two unstaffed trips, so every §9 dashboard alert
+ * has a REAL row behind it on a fresh clone.
+ *
+ * **APP DATABASE ONLY** (controller ruling, 2026-10-15). `seed()` applies
+ * this under `context === 'app'` and skips it for `'test'`, because
+ * `capacity.test.ts` asserts in its `beforeEach` that `vans` and `drivers`
+ * hold exactly zero rows — those tests count the WHOLE fleet, so one seeded
+ * van would change every number in the file and break the suite that guards
+ * the booking path's capacity arithmetic.
+ *
+ * Dates are expressed as OFFSETS from today, not fixed calendar days: a
+ * fixed `2026-11-20` stops being "within 14 days" the moment the month
+ * turns, and a demo whose alerts are empty teaches the owner that the
+ * dashboard does not work.
+ *
+ * **Franchise numbers are obviously fake** (`FR-SEED-…`). `CLAUDE.md`:
+ * never invent an accreditation number. A plausible-looking one could end up
+ * in a screenshot and be taken for R&G's real franchise.
+ */
+export interface SeedVan {
+  plate: string;
+  model: string;
+  capacity: number;
+  status: 'available' | 'parked' | 'for_repair';
+  odometer: number | null;
+  /** Days from today. Negative is in the past. */
+  nextServiceInDays: number | null;
+  orcrExpiryInDays: number | null;
+  franchiseNo: string | null;
+  franchiseExpiryInDays: number | null;
+  repairNotes: string | null;
+}
+
+export const SEED_VANS: SeedVan[] = [
+  {
+    plate: 'SEED-001',
+    model: 'Toyota HiAce Commuter',
+    capacity: 10,
+    status: 'available',
+    odometer: 84_300,
+    // Inside SERVICE_DUE_DAYS, so the "service due" card has a row.
+    nextServiceInDays: 9,
+    orcrExpiryInDays: 240,
+    franchiseNo: 'FR-SEED-0001',
+    franchiseExpiryInDays: 400,
+    repairNotes: null,
+  },
+  {
+    plate: 'SEED-002',
+    model: 'Nissan Urvan Premium',
+    capacity: 15,
+    status: 'available',
+    odometer: 142_900,
+    nextServiceInDays: 120,
+    orcrExpiryInDays: 310,
+    franchiseNo: 'FR-SEED-0002',
+    // Inside PAPERS_EXPIRING_DAYS, so the "papers expiring" card has a row.
+    franchiseExpiryInDays: 22,
+    repairNotes: null,
+  },
+  {
+    plate: 'SEED-003',
+    model: 'Toyota HiAce Super Grandia',
+    capacity: 6,
+    status: 'available',
+    odometer: 51_200,
+    nextServiceInDays: 200,
+    orcrExpiryInDays: 500,
+    franchiseNo: 'FR-SEED-0003',
+    franchiseExpiryInDays: 500,
+    repairNotes: null,
+  },
+  {
+    plate: 'SEED-004',
+    model: 'Nissan Urvan Shuttle',
+    capacity: 15,
+    status: 'for_repair',
+    odometer: 201_450,
+    // Already overdue — the alert must count it, which is the behaviour a
+    // BETWEEN-based window would silently drop.
+    nextServiceInDays: -6,
+    orcrExpiryInDays: 180,
+    franchiseNo: 'FR-SEED-0004',
+    franchiseExpiryInDays: 365,
+    repairNotes: 'Clutch slipping under load. With the shop since Monday.',
+  },
+];
+
+export interface SeedDriver {
+  name: string;
+  code: string;
+  phone: string;
+  licenseNo: string;
+  /** Days from today. */
+  licenseExpiryInDays: number;
+  languages: string[];
+  emergencyContact: string;
+  /** Optional leave, as day offsets, inclusive both ends. */
+  leave?: { startInDays: number; endInDays: number; reason: string };
+}
+
+export const SEED_DRIVERS: SeedDriver[] = [
+  {
+    name: 'Mario Dela Cruz',
+    code: 'D01',
+    phone: '+639170000001',
+    licenseNo: 'N01-SEED-0001',
+    licenseExpiryInDays: 700,
+    languages: ['Cebuano', 'Tagalog', 'English'],
+    emergencyContact: 'Liza Dela Cruz · +639170000011',
+  },
+  {
+    name: 'Jun Alcantara',
+    code: 'D02',
+    phone: '+639170000002',
+    licenseNo: 'N01-SEED-0002',
+    // Inside PAPERS_EXPIRING_DAYS: the licence half of that alert.
+    licenseExpiryInDays: 18,
+    languages: ['Cebuano', 'English'],
+    emergencyContact: 'Rosa Alcantara · +639170000012',
+  },
+  {
+    name: 'Ricky Monteverde',
+    code: 'D03',
+    phone: '+639170000003',
+    licenseNo: 'N01-SEED-0003',
+    licenseExpiryInDays: 540,
+    languages: ['Cebuano', 'Tagalog'],
+    emergencyContact: 'Ana Monteverde · +639170000013',
+    // A weekend off, so the drivers screen has a leave range to render and
+    // the dispatch dropdowns have someone to exclude.
+    leave: { startInDays: 5, endInDays: 6, reason: 'Family event in Bohol' },
+  },
+  {
+    name: 'Benjie Sarmiento',
+    code: 'D04',
+    phone: '+639170000004',
+    licenseNo: 'N01-SEED-0004',
+    licenseExpiryInDays: 900,
+    languages: ['Cebuano', 'Tagalog', 'English', 'Korean'],
+    emergencyContact: 'Mila Sarmiento · +639170000014',
+  },
+];
+
+/**
+ * Two confirmed trips inside the 48-hour window with nobody assigned, so the
+ * "unassigned trips" alert and the calendar's gold dot both have something
+ * true to show. Tomorrow and the day after — inside
+ * `UNASSIGNED_ALERT_HOURS` either way.
+ */
+export const SEED_UNASSIGNED_TRIPS = [
+  { tourSlug: 'kawasan-falls-canyoneering', inDays: 1, pax: 4, leadName: 'Demo Guest One' },
+  { tourSlug: 'oslob-whale-shark-tumalog-falls', inDays: 2, pax: 2, leadName: 'Demo Guest Two' },
+] as const;
