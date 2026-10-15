@@ -114,14 +114,33 @@ export default function AdminBookingDetailPage() {
     (payment) => payment.status === 'pending' && payment.receiptPath !== null,
   );
   /*
-   * The driver's claim (Week 6 Task 11). The same two-arm split the server
+   * The driver's claims (Week 6 Task 11). The same two-arm split the server
    * scopes itself to: a receipt is a file, cash is `method === 'cash'`. Kept
    * as its own panel rather than folded into the receipt one, because the
    * question is a different question — not "does this screenshot match the
    * amount" but "did this driver actually hand over this money".
+   *
+   * **All four conditions, matching the server's clause** (Task 11 review):
+   * `verifyPendingManualPayment()` scopes to `type='payment' AND
+   * provider='manual' AND method='cash'`, and this finder omitted the first
+   * two. Nothing writes a non-manual cash row today and the server fails
+   * closed either way, so this was no live risk — but two halves of one
+   * rule that disagree is how the screen comes to offer a button the server
+   * then refuses.
+   *
+   * **`filter`, not `find`** (Task 11 review): `recordPendingCash()`
+   * deliberately does NOT merge two taps of the driver's button — "two
+   * genuinely separate claims of cash, which finance must see as two rows
+   * and resolve". A `find` here showed one of them and silently hid the
+   * other, which is the money going missing from the screen rather than
+   * from the till.
    */
-  const pendingCash = booking.payments.find(
-    (payment) => payment.status === 'pending' && payment.method === 'cash',
+  const pendingCash = booking.payments.filter(
+    (payment) =>
+      payment.status === 'pending' &&
+      payment.type === 'payment' &&
+      payment.provider === 'manual' &&
+      payment.method === 'cash',
   );
   const mayVerify = me.data ? MAY_VERIFY.includes(me.data.role) : false;
   const decisionError = approve.error?.message ?? reject.error?.message ?? null;
@@ -352,46 +371,58 @@ export default function AdminBookingDetailPage() {
        * for the guest, which makes no sense for money a driver is holding),
        * and a button that cannot do its job is worse than its absence. The
        * copy sends the verifier to a person instead.
+       *
+       * ONE PANEL PER CLAIM. Two taps of the driver's button are two rows
+       * by design, each approved on its own — so each gets its own heading,
+       * its own amount and its own button. A single panel would make the
+       * second claim invisible and un-approvable.
        */}
-      {pendingCash && mayVerify ? (
-        <section
-          aria-labelledby="cash-heading"
-          className="border-brand-blue-200 bg-background mt-6 space-y-4 rounded-2xl border p-5"
-        >
-          <h2 id="cash-heading" className="text-brand-blue-900 text-base font-semibold">
-            Cash a driver says they collected
-          </h2>
-          <p className="text-muted-foreground text-sm">
-            {pendingCash.collectedByDriverName ?? 'A driver'} recorded{' '}
-            {formatPeso(pendingCash.amountCentavos)} on tour day. Approve it once the money is in
-            hand — that is what credits this booking.
-          </p>
-
-          {approveCash.error ? (
-            <p
-              role="alert"
-              className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-lg border p-3 text-sm font-medium"
+      {mayVerify
+        ? pendingCash.map((claim) => (
+            <section
+              key={claim.id}
+              aria-labelledby={`cash-heading-${claim.id}`}
+              data-testid={`cash-claim-${claim.id}`}
+              className="border-brand-blue-200 bg-background mt-6 space-y-4 rounded-2xl border p-5"
             >
-              {approveCash.error.message}
-            </p>
-          ) : null}
+              <h2
+                id={`cash-heading-${claim.id}`}
+                className="text-brand-blue-900 text-base font-semibold"
+              >
+                Cash a driver says they collected
+              </h2>
+              <p className="text-muted-foreground text-sm">
+                {claim.collectedByDriverName ?? 'A driver'} recorded{' '}
+                {formatPeso(claim.amountCentavos)} on tour day. Approve it once the money is in hand
+                — that is what credits this booking.
+              </p>
 
-          <Button
-            type="button"
-            className="tap-target w-full"
-            disabled={approveCash.isPending}
-            onClick={() => approveCash.mutate({ paymentId: pendingCash.id })}
-          >
-            {approveCash.isPending
-              ? 'Confirming…'
-              : `Confirm ${formatPeso(pendingCash.amountCentavos)} received`}
-          </Button>
-          <p className="text-muted-foreground text-sm">
-            If the money has not arrived, leave this and speak to the driver — nothing is credited
-            until someone confirms it here.
-          </p>
-        </section>
-      ) : null}
+              {approveCash.error && approveCash.variables?.paymentId === claim.id ? (
+                <p
+                  role="alert"
+                  className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-lg border p-3 text-sm font-medium"
+                >
+                  {approveCash.error.message}
+                </p>
+              ) : null}
+
+              <Button
+                type="button"
+                className="tap-target w-full"
+                disabled={approveCash.isPending}
+                onClick={() => approveCash.mutate({ paymentId: claim.id })}
+              >
+                {approveCash.isPending && approveCash.variables?.paymentId === claim.id
+                  ? 'Confirming…'
+                  : `Confirm ${formatPeso(claim.amountCentavos)} received`}
+              </Button>
+              <p className="text-muted-foreground text-sm">
+                If the money has not arrived, leave this and speak to the driver — nothing is
+                credited until someone confirms it here.
+              </p>
+            </section>
+          ))
+        : null}
 
       {booking.notes.length > 0 ? (
         <section

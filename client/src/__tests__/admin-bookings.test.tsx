@@ -515,4 +515,58 @@ describe('AdminBookingDetailPage — the cash a driver says they took', () => {
     const panel = screen.getByRole('region', { name: /cash a driver says they collected/i });
     expect(await within(panel).findByRole('alert')).toHaveTextContent(/already been handled/i);
   });
+
+  /**
+   * Task 11 review, fix 3. `recordPendingCash()` deliberately does NOT
+   * merge two taps of the driver's button — they are "two genuinely
+   * separate claims of cash, which finance must see as two rows and
+   * resolve". The screen used `find`, so the second claim was invisible
+   * and un-approvable: money missing from the screen rather than from the
+   * till.
+   */
+  it('shows one panel per claim when a driver recorded cash twice', async () => {
+    const [first] = CASH_DETAIL.payments;
+    mockTrpc({
+      'admin.bookings.detail': {
+        ...CASH_DETAIL,
+        payments: [first, { ...first, id: 78, amountCentavos: 120_000 }],
+      },
+      'staffAuth.me': { userId: 2, role: 'finance' },
+    });
+    renderDetail();
+
+    const panels = await screen.findAllByRole('region', {
+      name: /cash a driver says they collected/i,
+    });
+    expect(panels).toHaveLength(2);
+    // Each with its OWN amount and its own button, so each id can be
+    // approved separately.
+    expect(screen.getByRole('button', { name: /confirm ₱3,150 received/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /confirm ₱1,200 received/i })).toBeInTheDocument();
+  });
+
+  /**
+   * Task 11 review, fix 2. The server scopes its lookup to `type='payment'
+   * AND provider='manual' AND method='cash'`; this finder carried only two
+   * of the four. Nothing writes a pending manual cash REFUND today, so
+   * there was no live risk — but a screen offering a button the server
+   * then refuses is the shape of the defect, not the absence of one.
+   */
+  it('offers nothing for a pending row that is not a manual cash payment', async () => {
+    const [first] = CASH_DETAIL.payments;
+    mockTrpc({
+      'admin.bookings.detail': {
+        ...CASH_DETAIL,
+        payments: [{ ...first, type: 'refund' }],
+      },
+      'staffAuth.me': { userId: 2, role: 'finance' },
+    });
+    renderDetail();
+
+    expect(await screen.findByRole('heading', { name: 'RG-AAAAA1' })).toBeInTheDocument();
+    expect(
+      screen.queryByRole('region', { name: /cash a driver says they collected/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /confirm/i })).not.toBeInTheDocument();
+  });
 });

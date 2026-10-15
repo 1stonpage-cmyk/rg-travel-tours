@@ -8,6 +8,7 @@ import { newsletterRouter } from './public/newsletter';
 import { packagesRouter } from './public/packages';
 import { adminBookingsRouter } from './admin/bookings';
 import { adminDashboardRouter } from './admin/dashboard';
+import { adminDeparturesRouter } from './admin/departures';
 import { adminCalendarRouter } from './admin/calendar';
 import { adminDispatchRouter } from './admin/dispatch';
 import { adminDriversRouter } from './admin/drivers';
@@ -99,6 +100,14 @@ export const appRouter = router({
   admin: router({
     bookings: adminBookingsRouter,
     dashboard: adminDashboardRouter,
+    /*
+     * Its own namespace rather than a third procedure under `dashboard`
+     * (Week 6, Task 12): the alerts are counts computed in one
+     * transaction, this is a per-booking read polled every fifteen
+     * seconds, and the two have no reason to share a file. Same
+     * `'dashboard'` area, which is what §9 gates them both on.
+     */
+    departures: adminDeparturesRouter,
     calendar: adminCalendarRouter,
     dispatch: adminDispatchRouter,
     vans: adminVansRouter,

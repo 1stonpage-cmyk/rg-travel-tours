@@ -28,7 +28,15 @@ const ALL_FIVE_NONZERO: DashboardAlert[] = [
 ];
 
 function renderDashboard(alerts: DashboardAlert[]) {
-  mockTrpc({ 'admin.dashboard.alerts': alerts });
+  /*
+   * The departures board (Week 6, Task 12) owns its own query on this
+   * page, so every render here has to answer it too — an unmocked
+   * procedure would put the board into its error state and leave these
+   * assertions reading a page that is half broken. Empty is the quiet
+   * answer: the board then renders its "nothing departing" line and the
+   * alert cards are what is under test.
+   */
+  mockTrpc({ 'admin.dashboard.alerts': alerts, 'admin.departures.today': [] });
   return render(
     <TrpcProviders>
       <MemoryRouter>
@@ -144,8 +152,33 @@ describe('AdminDashboardPage', () => {
     expect(await screen.findByText(/ABC 123 — Clutch/)).toBeTruthy();
   });
 
-  it('says that live departures are Week 6 rather than leaving a blank space', async () => {
+  it("carries §9's departures board below the cards", async () => {
+    /*
+     * This test used to assert the line of apology that stood here while
+     * `trip_checkpoints` did not exist. Task 12 replaced that line with
+     * the real panel, so the assertion moved with it rather than being
+     * deleted: §9's dashboard LEADS with today's departures, and a page
+     * that silently stopped rendering them should fail something.
+     *
+     * The board's own behaviour — the progress wording, the poll, the
+     * busy state — is `departures-board.test.tsx`. This only pins that
+     * the dashboard mounts it.
+     */
     renderDashboard(ALL_FIVE_NONZERO);
-    expect(await screen.findByText(/departures .* arrive in week 6/i)).toBeTruthy();
+    expect(await screen.findByTestId('departures-board')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: /today's departures/i })).toBeTruthy();
+  });
+
+  it('still keeps ONE status region with the board mounted', async () => {
+    // The board deliberately adds none: `aria-busy` is an attribute, not
+    // an announcement, and a panel that announced itself every fifteen
+    // seconds would be worse than the five regions this page avoids.
+    renderDashboard(ALL_FIVE_NONZERO);
+    // The board renders synchronously, so its presence is NOT evidence the
+    // alerts have landed — wait for a card, or this counts the regions of a
+    // half-rendered page and passes for the wrong reason.
+    await screen.findByTestId('alert-payments_to_verify');
+    expect(screen.getByTestId('departures-board')).toBeTruthy();
+    expect(screen.getAllByRole('status')).toHaveLength(1);
   });
 });

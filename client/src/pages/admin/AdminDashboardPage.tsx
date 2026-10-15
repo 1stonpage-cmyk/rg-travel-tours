@@ -12,18 +12,21 @@
  * the `ui-ux-pro-max` live-badge guidance, and a screen reader reading five
  * numbers in sequence tells an operator less than one sentence does.
  *
- * ## What is NOT here, and why it says so
+ * ## §9's lead panel now exists
  *
- * §9's dashboard leads with "today's departures with stop-by-stop progress
- * bars". That needs `trip_checkpoints` writes, which arrive in Week 6 (6C
- * check-ins, 6D live departures). The panel is not silently omitted: a line
- * says where it went, because a blank space on a dashboard is a question the
- * owner has to ask, and an answer written down is cheaper than that
- * conversation.
+ * Until Week 6 this page carried a line of apology where §9's "today's
+ * departures with stop-by-stop progress bars" belongs — the panel needed
+ * `trip_checkpoints` writes, which arrived with 6C. Task 12 replaced that
+ * line with `DeparturesBoard`, which owns its own query, its own
+ * fifteen-second poll and its own busy state. The five alert cards above it
+ * are untouched: they answer "what needs a decision", the board answers
+ * "what is happening right now", and they are deliberately not merged into
+ * one query.
  */
 import { Loader2 } from 'lucide-react';
 import type { DashboardAlert } from '@rg/shared';
 import AlertCard from '@/components/admin/AlertCard';
+import DeparturesBoard from '@/components/admin/DeparturesBoard';
 import { trpc } from '@/lib/trpc';
 
 /** The order the cards read in: money first, then today's operations, then upkeep. */
@@ -84,10 +87,8 @@ export default function AdminDashboardPage() {
         </>
       ) : null}
 
-      {/* Declared, not silently missing — see the module note. */}
-      <p className="text-muted-foreground mt-6 text-xs">
-        Today's departures with stop-by-stop progress arrive in Week 6, with driver check-ins.
-      </p>
+      {/* §9's lead panel. Its own query, its own poll — see the module note. */}
+      <DeparturesBoard />
     </div>
   );
 }

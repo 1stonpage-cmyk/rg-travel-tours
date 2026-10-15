@@ -15,6 +15,7 @@
  */
 import { z } from 'zod';
 import type { BookingStatus } from './booking';
+import type { TripProgress } from './driver';
 import { civilDateSchema, phPhoneSchema } from './checkout';
 
 export const vanInputSchema = z
@@ -415,3 +416,44 @@ export const suggestInputSchema = z
   })
   .strict();
 export type SuggestInput = z.infer<typeof suggestInputSchema>;
+
+/* ------------------------------------------------------------------ *
+ * Today's departures (Week 6 plan, Task 12 — BUILD_SPEC §9 "Dashboard")
+ * ------------------------------------------------------------------ */
+
+/**
+ * One of today's departures, as the admin dashboard's live board receives
+ * it (`admin.departures.today`).
+ *
+ * ## `progress` is Task 3's `TripProgress`, unchanged
+ *
+ * Not a flattened `done`/`total` pair, and not a second shape computed for
+ * the dispatcher. §9's board and §8's driver itinerary are **the same
+ * question**, so they carry the same answer — two shapes would drift, and
+ * the drift shows up as a dispatcher ringing a driver who has already
+ * checked in. `progress.total` counts the trip-start pseudo-stop, so a
+ * three-stop tour reads `0 of 4` before departure and `1 of 4` once the van
+ * leaves: that is what makes the bar move at departure rather than sitting
+ * at zero through the first leg, and it is deliberately NOT adjusted on
+ * either surface.
+ *
+ * ## `driverName` and `vanPlate` are both nullable
+ *
+ * `bookings.driver_id` and `van_id` are. A trip on today's date with
+ * nobody assigned is precisely what a dispatcher opens this board to find,
+ * so it must appear with an empty slot rather than be filtered out by an
+ * inner join.
+ *
+ * The guest's name, phone and e-mail are deliberately absent: a board
+ * polled every fifteen seconds on an office screen is the wrong place for
+ * personal data (RA 10173), and the booking detail page is one click away.
+ */
+export interface TodayDeparture {
+  bookingId: number;
+  ref: string;
+  tourTitle: string;
+  driverName: string | null;
+  vanPlate: string | null;
+  status: BookingStatus;
+  progress: TripProgress;
+}

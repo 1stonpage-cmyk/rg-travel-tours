@@ -541,12 +541,18 @@ describeWithDb('admin.bookings — the cash a driver says they took', () => {
   });
 
   /**
-   * 7. A gateway charge is not a handful of cash, however pending its row
-   * looks — the cash path must not be a second door onto a PayMongo payment.
-   * `verifyCashPayment()` scopes its lookup to `method='cash'`, so the id is
-   * `NOT_FOUND` here rather than something this procedure could mark paid.
+   * 7. An id this procedure has never seen is a refusal, not a 500 — and
+   * it credits nothing on the way out.
+   *
+   * **Renamed to what the body proves** (Task 11 review). It used to be
+   * called "REFUSES an id that is not a driver-collected cash row" and to
+   * claim in this docblock that a gateway charge cannot be approved through
+   * the cash door — but the body only ever passed a nonexistent id, which
+   * proves nothing about SCOPING. The real gateway case is proven against a
+   * real `recordPayment()` row at `record-payment.test.ts:1233-1253`, and a
+   * name promising that proof here is an invitation to skip it there.
    */
-  it('REFUSES an id that is not a driver-collected cash row', async () => {
+  it('refuses a payment id that does not exist', async () => {
     const driver = await makeDriver('Ador Bacus');
     const booking = await makeBooking(driver.id);
 
