@@ -406,3 +406,113 @@ describe('AdminBookingDetailPage', () => {
     expect(screen.queryByText('maria@example.test')).not.toBeInTheDocument();
   });
 });
+
+/**
+ * Week 6 plan, Task 11 — the CASH half of the same screen (§8 item 5).
+ *
+ * A guest's receipt and a driver's cash both wait in this queue, and they ask
+ * different questions: "does this screenshot match the amount" versus "did
+ * this person actually hand the money over". So the panel is its own panel,
+ * and the driver is NAMED in it — an id nobody resolves is not an answer to
+ * the second question.
+ *
+ * `server/src/__tests__/admin-cash-verify.test.ts` proves the refusals and
+ * the credited-once guarantee. What is asserted here is only what the screen
+ * does: it names the claimant, it sends the right payment id, and it offers a
+ * dispatcher nothing.
+ */
+const CASH_DETAIL = {
+  ...DETAIL,
+  status: 'in_progress',
+  paidCentavos: 135_000,
+  payments: [
+    {
+      id: 77,
+      type: 'payment',
+      provider: 'manual',
+      method: 'cash',
+      amountCentavos: 315_000,
+      status: 'pending',
+      txnRef: null,
+      receiptPath: null,
+      rejectReason: null,
+      verifiedBy: null,
+      verifiedAt: null,
+      collectedByDriverId: 12,
+      collectedByDriverName: 'Noel Cuizon',
+      createdAt: new Date().toISOString(),
+    },
+  ],
+};
+
+describe('AdminBookingDetailPage — the cash a driver says they took', () => {
+  it('names the driver and offers finance the confirmation', async () => {
+    mockTrpc({
+      'admin.bookings.detail': CASH_DETAIL,
+      'staffAuth.me': { userId: 2, role: 'finance' },
+    });
+    renderDetail();
+
+    const panel = await screen.findByRole('region', { name: /cash a driver says they collected/i });
+    // The claimant, in the panel and on the payment line, so the name
+    // survives the approval.
+    expect(within(panel).getByText(/Noel Cuizon/)).toBeInTheDocument();
+    expect(screen.getByText(/collected by Noel Cuizon/i)).toBeInTheDocument();
+    expect(
+      within(panel).getByRole('button', { name: /confirm ₱3,150 received/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('sends the claim id it was shown', async () => {
+    const sent: unknown[] = [];
+    mockTrpc({
+      'admin.bookings.detail': CASH_DETAIL,
+      'staffAuth.me': { userId: 2, role: 'finance' },
+      'admin.bookings.approveCash': (input: unknown) => {
+        sent.push(input);
+        return { bookingStatus: 'in_progress', paymentReviewRequired: false };
+      },
+    });
+    renderDetail();
+
+    await userEvent.click(await screen.findByRole('button', { name: /confirm ₱3,150 received/i }));
+    expect(sent).toEqual([{ paymentId: 77 }]);
+  });
+
+  /** §9: a dispatcher runs the day and does not decide that money arrived. */
+  it('offers a dispatcher nothing to click', async () => {
+    mockTrpc({
+      'admin.bookings.detail': CASH_DETAIL,
+      'staffAuth.me': { userId: 3, role: 'dispatcher' },
+    });
+    renderDetail();
+
+    // The page still loads, and still SAYS a claim is outstanding — a
+    // dispatcher may need to know that; they may not act on it.
+    expect(await screen.findByRole('heading', { name: 'RG-AAAAA1' })).toBeInTheDocument();
+    expect(screen.getByText(/collected by Noel Cuizon/i)).toBeInTheDocument();
+    expect(
+      screen.queryByRole('region', { name: /cash a driver says they collected/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /confirm/i })).not.toBeInTheDocument();
+  });
+
+  it('shows a refused confirmation in amber rather than crashing', async () => {
+    mockTrpc({
+      'admin.bookings.detail': CASH_DETAIL,
+      'staffAuth.me': { userId: 2, role: 'finance' },
+    });
+    mockTrpcError(
+      'admin.bookings.approveCash',
+      'CONFLICT',
+      'This cash has already been handled (it is "paid"). Refresh the queue.',
+    );
+    renderDetail();
+
+    await userEvent.click(await screen.findByRole('button', { name: /confirm ₱3,150 received/i }));
+
+    // Scoped to the cash panel: `AssignPanel` raises its own alert here.
+    const panel = screen.getByRole('region', { name: /cash a driver says they collected/i });
+    expect(await within(panel).findByRole('alert')).toHaveTextContent(/already been handled/i);
+  });
+});

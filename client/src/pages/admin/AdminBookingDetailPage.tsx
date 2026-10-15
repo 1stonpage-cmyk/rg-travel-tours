@@ -26,6 +26,15 @@
  * link that opens the file in its own tab is the better tool. Either way
  * the route is what checks the session.
  *
+ * ## Two things wait in this queue, and they ask different questions
+ *
+ * A guest's uploaded receipt asks "does this screenshot match the amount".
+ * Cash a driver recorded on tour day (Week 6 Task 11) asks "did this person
+ * actually hand the money over" — so it gets its own panel, naming the
+ * driver, and `approveCash` rather than `approveReceipt`. Both are the same
+ * `verifyPayments` permission and both credit the booking inside
+ * `record-payment.ts`, which is the only module that may.
+ *
  * ## A rejection needs a reason, and the guest reads it
  *
  * The reason field is required here because §7 shows it to the guest and
@@ -71,6 +80,9 @@ export default function AdminBookingDetailPage() {
       void query.refetch();
     },
   });
+  const approveCash = trpc.admin.bookings.approveCash.useMutation({
+    onSuccess: () => void query.refetch(),
+  });
 
   if (query.isPending) {
     return (
@@ -100,6 +112,16 @@ export default function AdminBookingDetailPage() {
   const booking = query.data;
   const pendingReceipt = booking.payments.find(
     (payment) => payment.status === 'pending' && payment.receiptPath !== null,
+  );
+  /*
+   * The driver's claim (Week 6 Task 11). The same two-arm split the server
+   * scopes itself to: a receipt is a file, cash is `method === 'cash'`. Kept
+   * as its own panel rather than folded into the receipt one, because the
+   * question is a different question — not "does this screenshot match the
+   * amount" but "did this driver actually hand over this money".
+   */
+  const pendingCash = booking.payments.find(
+    (payment) => payment.status === 'pending' && payment.method === 'cash',
   );
   const mayVerify = me.data ? MAY_VERIFY.includes(me.data.role) : false;
   const decisionError = approve.error?.message ?? reject.error?.message ?? null;
@@ -225,8 +247,19 @@ export default function AdminBookingDetailPage() {
                 {payment.txnRef ? (
                   <p className="text-muted-foreground font-mono text-xs">Ref {payment.txnRef}</p>
                 ) : null}
+                {/*
+                  Who says they took this money. On the trail as well as in
+                  the panel below, because the name has to survive the
+                  approval — afterwards this line is the only record on the
+                  screen of whose collection was counted.
+                */}
                 {payment.rejectReason ? (
                   <p className="text-brand-gold-800">Rejected: {payment.rejectReason}</p>
+                ) : null}
+                {payment.collectedByDriverName ? (
+                  <p className="text-muted-foreground">
+                    Collected by {payment.collectedByDriverName}
+                  </p>
                 ) : null}
                 {payment.receiptPath ? (
                   <a
@@ -301,6 +334,62 @@ export default function AdminBookingDetailPage() {
               {reject.isPending ? 'Rejecting…' : 'Reject and ask for another receipt'}
             </Button>
           </div>
+        </section>
+      ) : null}
+
+      {/*
+       * The cash panel (Week 6 Task 11, §8 item 5).
+       *
+       * A driver's tap is a CLAIM; this button is the reconciliation. The
+       * two are deliberately different people — a driver who could verify
+       * their own collection could pocket the cash and leave the booking
+       * reading "paid in full" — so the heading says "says they collected"
+       * rather than "collected", and the driver is named in the button
+       * itself. That is the fact being confirmed.
+       *
+       * There is no reject button here. Nothing in the service can refuse a
+       * cash claim yet (the receipt path's rejection is a re-upload deadline
+       * for the guest, which makes no sense for money a driver is holding),
+       * and a button that cannot do its job is worse than its absence. The
+       * copy sends the verifier to a person instead.
+       */}
+      {pendingCash && mayVerify ? (
+        <section
+          aria-labelledby="cash-heading"
+          className="border-brand-blue-200 bg-background mt-6 space-y-4 rounded-2xl border p-5"
+        >
+          <h2 id="cash-heading" className="text-brand-blue-900 text-base font-semibold">
+            Cash a driver says they collected
+          </h2>
+          <p className="text-muted-foreground text-sm">
+            {pendingCash.collectedByDriverName ?? 'A driver'} recorded{' '}
+            {formatPeso(pendingCash.amountCentavos)} on tour day. Approve it once the money is in
+            hand — that is what credits this booking.
+          </p>
+
+          {approveCash.error ? (
+            <p
+              role="alert"
+              className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-lg border p-3 text-sm font-medium"
+            >
+              {approveCash.error.message}
+            </p>
+          ) : null}
+
+          <Button
+            type="button"
+            className="tap-target w-full"
+            disabled={approveCash.isPending}
+            onClick={() => approveCash.mutate({ paymentId: pendingCash.id })}
+          >
+            {approveCash.isPending
+              ? 'Confirming…'
+              : `Confirm ${formatPeso(pendingCash.amountCentavos)} received`}
+          </Button>
+          <p className="text-muted-foreground text-sm">
+            If the money has not arrived, leave this and speak to the driver — nothing is credited
+            until someone confirms it here.
+          </p>
         </section>
       ) : null}
 

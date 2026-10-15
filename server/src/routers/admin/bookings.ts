@@ -1,6 +1,13 @@
 /**
- * `admin.bookings.approveReceipt` / `.rejectReceipt` — the verification
- * queue's two buttons (Week 4 plan, Task 7; BUILD_SPEC §6 step 5).
+ * `admin.bookings.approveReceipt` / `.rejectReceipt` / `.approveCash` — the
+ * verification queue's buttons (Week 4 plan, Task 7; Week 6 plan, Task 11;
+ * BUILD_SPEC §6 step 5, §8 item 5, §13's 6E).
+ *
+ * **Two things wait in this queue.** A guest's uploaded receipt, and cash a
+ * driver recorded on tour day. Week 4 built the receipt half; Week 6 Task 11
+ * added the cash half, which until then had a service
+ * (`verifyCashPayment()`) nothing called and a claim the queue filter could
+ * not see.
  *
  * **The reject half did not exist anywhere in this codebase before.**
  * `verifyCashPayment()` only ever approved; `payments.reject_reason` was a
@@ -48,11 +55,16 @@ import {
 } from '../../db/schema';
 import { notify } from '../../services/notify';
 import {
+  CashPaymentNotFoundError,
+  CashPaymentNotPendingError,
+  PaymentOverpaysBookingError,
+  PaymentVerificationNotPermittedError,
   ReceiptAlreadyDecidedError,
   ReceiptPaymentNotFoundError,
   ReceiptRejectionNeedsReasonError,
 } from '../../services/payments/errors';
 import { decideManualReceipt } from '../../services/payments/manual-receipt';
+import { verifyCashPayment } from '../../services/payments/record-payment';
 import { adminProcedure, router } from '../../trpc';
 
 /**
@@ -98,6 +110,44 @@ function asTrpcError(error: unknown): TRPCError {
     return new TRPCError({
       code: 'BAD_REQUEST',
       message: 'Tell the guest what was wrong, in a sentence.',
+    });
+  }
+  /*
+   * The cash half (Week 6 Task 11). Same two shapes as the receipt pair and
+   * for the same reasons — a wrong id is `NOT_FOUND`, a row that moved on is
+   * `CONFLICT` — plus two the receipt path cannot produce.
+   */
+  if (error instanceof CashPaymentNotFoundError) {
+    return new TRPCError({
+      code: 'NOT_FOUND',
+      message: 'That cash collection is no longer waiting for a decision.',
+    });
+  }
+  if (error instanceof CashPaymentNotPendingError) {
+    return new TRPCError({
+      code: 'CONFLICT',
+      message: `This cash has already been handled (it is "${error.status}"). Refresh the queue.`,
+    });
+  }
+  /*
+   * `FORBIDDEN`, and it should be unreachable through tRPC: the
+   * `verifyPayments` gate has already refused anyone but an owner or a
+   * finance user before the resolver runs. It is mapped anyway because the
+   * service keeps its own gate (it is callable from a job or a script) and a
+   * fail-closed refusal must not surface as a 500 if the two ever disagree.
+   */
+  if (error instanceof PaymentVerificationNotPermittedError) {
+    return new TRPCError({ code: 'FORBIDDEN', message: 'Not permitted for this account.' });
+  }
+  /*
+   * The overpay cap. `BAD_REQUEST`: unlike the conflicts above, nothing has
+   * moved on — the figures genuinely do not add up, and crediting this would
+   * leave the booking reading as more than paid.
+   */
+  if (error instanceof PaymentOverpaysBookingError) {
+    return new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'That amount is more than this booking still owes. Check the figures first.',
     });
   }
   return error instanceof TRPCError
@@ -185,10 +235,18 @@ export const adminBookingsRouter = router({
         input.from ? gte(bookings.tourDate, new Date(`${input.from}T00:00:00Z`)) : undefined,
         input.to ? lte(bookings.tourDate, new Date(`${input.to}T00:00:00Z`)) : undefined,
         /*
-         * "Waiting on us": a booking under verification with a pending
-         * manual receipt. Expressed as an EXISTS rather than a join so the
-         * row count cannot change — a booking with two receipt rows must
-         * still be one row in this list.
+         * "Waiting on us": a booking holding a pending manual payment of
+         * EITHER kind — a guest's uploaded receipt, or cash a driver says
+         * they took (Week 6 Task 11). The two-arm disjunction is the same
+         * pair `verifyPendingManualPayment()` scopes itself to: a receipt
+         * is `receipt_path IS NOT NULL`, cash is `method = 'cash'`. Before
+         * this the clause required a receipt path, so every driver-collected
+         * peso was invisible to the one screen whose job is to reconcile it
+         * — the claim sat `pending` with nobody told to look at it.
+         *
+         * Expressed as an EXISTS rather than a join so the row count cannot
+         * change — a booking with a receipt AND a cash row must still be
+         * one row in this list.
          */
         input.awaitingVerification
           ? sql`EXISTS (
@@ -197,7 +255,7 @@ export const adminBookingsRouter = router({
                 AND p.provider = 'manual'
                 AND p.type = 'payment'
                 AND p.status = 'pending'
-                AND p.receipt_path IS NOT NULL
+                AND (p.receipt_path IS NOT NULL OR p.method = 'cash')
             )`
           : undefined,
       ].filter((clause) => clause !== undefined);
@@ -286,6 +344,19 @@ export const adminBookingsRouter = router({
         throw new TRPCError({ code: 'NOT_FOUND', message: 'No booking with that reference.' });
       }
 
+      /*
+       * The driver is LEFT-joined, not looked up afterwards: `drivers` is
+       * only reachable for a cash row (`collected_by_driver_id`), and a
+       * gateway charge or a guest receipt must still come back with the
+       * name `null` rather than be dropped from the trail.
+       *
+       * Why the name is on the payment at all: "who says they took this
+       * money" is the question finance is answering on a cash row, and an
+       * id is not an answer anybody can act on. The PHONE is deliberately
+       * not here — this screen reconciles a claim, and the dispatch block
+       * above already carries the assigned driver's number for the day
+       * somebody needs to ring them.
+       */
       const paymentRows = await getDb()
         .select({
           id: payments.id,
@@ -300,9 +371,13 @@ export const adminBookingsRouter = router({
           rejectReason: payments.rejectReason,
           verifiedBy: payments.verifiedBy,
           verifiedAt: payments.verifiedAt,
+          /** Set only on a driver's cash claim; `null` on every other row. */
+          collectedByDriverId: payments.collectedByDriverId,
+          collectedByDriverName: drivers.name,
           createdAt: payments.createdAt,
         })
         .from(payments)
+        .leftJoin(drivers, eq(drivers.id, payments.collectedByDriverId))
         .where(eq(payments.bookingId, booking.id))
         .orderBy(desc(payments.id));
 
@@ -456,5 +531,51 @@ export const adminBookingsRouter = router({
       if (payload) await notify('payment_rejected', { ...payload, reason: input.reason });
 
       return { bookingStatus: result.bookingStatus, reuploadBy: result.reuploadBy };
+    }),
+
+  /**
+   * Finance confirms that cash a driver claimed was actually handed over
+   * (BUILD_SPEC §8 item 5, §13's 6E).
+   *
+   * **A driver's tap is a claim; this is the reconciliation**, and the
+   * separation is the whole point: a driver who could verify their own
+   * collection could pocket the cash and leave the booking reading "paid in
+   * full". So `driver.recordCash` writes one `pending` row and touches
+   * nothing on `bookings`, and this converts THAT SAME ROW to `paid` and
+   * credits `amount_paid_centavos` once, under the booking lock, inside
+   * `verifyCashPayment()`. **Nothing here inserts a payment.** One handful
+   * of cash is one `payments` row for its whole life.
+   *
+   * `adminProcedure('verifyPayments')` — owner and finance, never a
+   * dispatcher, and a driver session is not an admin identity at all. The
+   * `verifier` is built from the gate's validated session, so the role
+   * cannot arrive in the payload.
+   *
+   * **No email.** The receipt pair above mails the guest because a receipt
+   * decision is news they are waiting on; cash is the balance handed over at
+   * the end of a trip that has already run, and a "booking confirmed" note
+   * hours after the fact would be a confusing one. §11's email set is the
+   * owner's to extend, not this task's.
+   */
+  approveCash: adminProcedure('verifyPayments')
+    .input(approveInput)
+    .mutation(async ({ input, ctx }) => {
+      try {
+        const result = await verifyCashPayment({
+          paymentId: input.paymentId,
+          verifier: {
+            type: 'user',
+            id: ctx.session.subjectId,
+            // The LIVE role from the session, as the receipt pair does.
+            role: ctx.session.role,
+          },
+        });
+        return {
+          bookingStatus: result.bookingStatus,
+          paymentReviewRequired: result.paymentReviewRequired,
+        };
+      } catch (error) {
+        throw asTrpcError(error);
+      }
     }),
 });
