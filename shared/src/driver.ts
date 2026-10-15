@@ -188,3 +188,111 @@ export interface TripProgress {
   done: number;
   total: number;
 }
+
+/* ------------------------------------------------------------------ *
+ * One trip's detail and §8's payment box (Week 6 plan, Task 4)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Which `bookings.id` the driver is asking about — and the ONLY input this
+ * procedure has.
+ *
+ * `.strict()`, as every other input schema in this package is: a request
+ * carrying a `driverId` is refused at the input stage rather than silently
+ * ignored. **There is deliberately no driver field of any kind** — the
+ * driver comes from the session (`ctx.driver.driverId`) and the booking id
+ * is only ever narrowed by it, never widened. A `driverId` quietly dropped
+ * from an input is a field somebody will one day decide to honour.
+ */
+export const driverTripInputSchema = z
+  .object({
+    bookingId: z.number().int().positive(),
+  })
+  .strict();
+export type DriverTripInput = z.infer<typeof driverTripInputSchema>;
+
+/**
+ * §8's payment box: **the single most consequential thing in the driver
+ * portal**, because it tells a driver whether to take money from a guest.
+ *
+ * Three states, and the middle one is the dangerous one:
+ *
+ *  - `fully_paid` — nothing is owed. Wave them aboard.
+ *  - `unverified_do_not_collect` — money is claimed but nobody has verified
+ *    it (a `pending` payment row), or the booking's money needs an admin's
+ *    eyes (`bookings.payment_review_required`). **Do not collect**; §8's
+ *    copy is "Not paid — don't collect, call office".
+ *  - `collect_cash` — take exactly `amountCentavos`, in centavos.
+ *
+ * **The state is computed on the server and the client only renders it.**
+ * Not a hint, not a convenience: a second derivation in the browser is a
+ * second chance to get it wrong, and getting it wrong either takes a
+ * guest's money twice or lets them ride for free. The client receives no
+ * totals to re-derive it from either — `amountCentavos` is the server's
+ * arithmetic, already done.
+ *
+ * A discriminated union rather than a flag plus a nullable amount, so
+ * `amountCentavos` cannot be read on a state that has no amount and a
+ * `switch` over the three is exhaustive at compile time (the same
+ * discipline Week 5's `AssignRefusal` copy map uses).
+ */
+export type PaymentBoxState =
+  | { kind: 'collect_cash'; amountCentavos: number }
+  | { kind: 'fully_paid' }
+  | { kind: 'unverified_do_not_collect' };
+
+/**
+ * One trip, as the driver who is driving it sees it (§8 "Trip detail").
+ *
+ * **`leadPhone` is here on purpose, and it is why this is a
+ * `driverProcedure` filtered on the session.** §8 gives the driver
+ * call/text/WhatsApp buttons, which need a number. That makes this the most
+ * sensitive payload in the portal under RA 10173, so the payload is exactly
+ * §8's list and stops there:
+ *
+ *  - the LEAD guest only — no other guests' details exist on a booking, and
+ *    none are invented here;
+ *  - no `leadEmail`: §8 gives the driver call, text and WhatsApp, all of
+ *    which are the phone. An address a driver never uses is an address that
+ *    leaks for nothing;
+ *  - no money except `payment`: not the total, not what has been paid, not
+ *    the deposit percent. The box is the answer, and the inputs to it are
+ *    not a driver's business — nor could a tampered client re-derive a
+ *    different answer from them;
+ *  - no payment instrument data of any kind. PayMongo holds that and this
+ *    system never stores it.
+ *
+ * `pickup`, `pickupMapsUrl` and `vanPlate` are nullable because their
+ * columns are: a trip can be confirmed before dispatch assigns a van, and a
+ * guest may be met at a pier with no map link. The screen must render the
+ * trip rather than hide it.
+ *
+ * `officeNotes` is §8's "Office notes" — `booking_notes`, oldest first,
+ * **text only**: no author and no timestamp, because the driver needs the
+ * instruction ("guest waiting at the second gate") and not an audit trail
+ * of who typed it. The admin surface has that.
+ *
+ * `progress` is `tripProgress()`'s answer UNCHANGED, which is what keeps
+ * the driver's itinerary and the dispatcher's progress bar from disagreeing.
+ * Note `total` counts the trip-start pseudo-stop, so a three-stop tour
+ * reads 0 / 4.
+ */
+export interface TripDetail {
+  bookingId: number;
+  ref: string;
+  tourTitle: string;
+  /** Manila civil date, `YYYY-MM-DD`. */
+  tourDate: string;
+  pax: number;
+  status: BookingStatus;
+  leadName: string;
+  /** §8: the driver calls or texts the lead guest. Their OWN trip only. */
+  leadPhone: string;
+  pickup: string | null;
+  pickupMapsUrl: string | null;
+  vanPlate: string | null;
+  /** `booking_notes.note`, oldest first. Text only. */
+  officeNotes: string[];
+  payment: PaymentBoxState;
+  progress: TripProgress;
+}

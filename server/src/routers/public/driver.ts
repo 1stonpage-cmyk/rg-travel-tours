@@ -42,10 +42,19 @@
  * UTC calendar day is still yesterday, answers correctly without anyone
  * having to remember it exists.
  */
-import { asc, eq } from 'drizzle-orm';
-import { driverTripBucket, manilaCivilDate, type DriverTripRow } from '@rg/shared';
+import { and, asc, eq } from 'drizzle-orm';
+import { TRPCError } from '@trpc/server';
+import {
+  driverTripBucket,
+  driverTripInputSchema,
+  manilaCivilDate,
+  type DriverTripRow,
+  type PaymentBoxState,
+  type TripDetail,
+} from '@rg/shared';
 import { getDb } from '../../db/client';
-import { bookings, tours, vans } from '../../db/schema';
+import { bookingNotes, bookings, payments, tours, vans } from '../../db/schema';
+import { tripProgress } from '../../services/trips/progress';
 import { driverProcedure, router } from '../../trpc';
 
 /**
@@ -99,6 +108,201 @@ export async function listDriverTrips(driverId: number, now: Date): Promise<Driv
   });
 }
 
+/* ------------------------------------------------------------------ *
+ * `driver.trip` — one trip, and §8's payment box (Week 6 plan, Task 4)
+ * ------------------------------------------------------------------ */
+
+/**
+ * §8's payment box, decided **here and only here**.
+ *
+ * Pure, and taking four plain values rather than a booking row, so the one
+ * decision that tells a human whether to take money from another human can
+ * be read in full in eight lines. The client receives the ANSWER
+ * (`PaymentBoxState`) and never these inputs: a second derivation in the
+ * browser is a second chance to get it wrong, and the browser is also the
+ * one place whose numbers cannot be trusted (CLAUDE.md — the server
+ * computes all money).
+ *
+ * ## The order of these three branches is the whole function
+ *
+ * **1. `fully_paid` first.** `amount_paid_centavos >= total_centavos` means
+ * nothing is owed, and nothing owed is the end of the question. It is also
+ * checked ahead of the review flag deliberately: §8's copy for the
+ * unverified state begins "Not paid", and saying that about a booking whose
+ * balance is zero is a phone call to the office whose answer is "they're
+ * paid, go" — made while a van waits. No money moves on this choice (the
+ * driver collects in neither state), so it is a choice about words, and the
+ * true words win. `driver-trip-detail.test.ts` pins it.
+ *
+ * **2. `unverified_do_not_collect` next, and BEFORE the arithmetic.** A
+ * `pending` payment is money a guest says they have sent that nobody has
+ * verified — a receipt awaiting an admin (§6) or cash a driver already
+ * recorded (§8 item 5). Neither moves `amount_paid_centavos`, so the
+ * subtraction in branch 3 would cheerfully send the driver to collect a
+ * balance that has already been handed over. That is the double charge, and
+ * it is the reason this branch exists. `payment_review_required` joins it
+ * for a different reason: that flag means money landed on a booking the
+ * system would not re-confirm by itself, so an admin — not a driver at a
+ * pickup — decides what happens next.
+ *
+ * **3. `collect_cash` last, for exactly the difference.** Integers in
+ * centavos, subtracted on the server. Reachable only when the booking is
+ * short AND nothing is pending AND nothing is flagged, so `amountCentavos`
+ * is always positive here.
+ *
+ * `hasPendingPayment` is deliberately NOT narrowed to `provider='manual'`,
+ * even though both writers of a `pending` row today are manual
+ * (`recordPendingCash`, the receipt upload — `recordPayment` writes `paid`
+ * or `refunded` and never `pending`). The safe direction for an unknown
+ * pending row is "do not collect, call office": a provider added later is
+ * held by this branch until someone decides otherwise, rather than falling
+ * through to a driver asking for money twice.
+ */
+function paymentBox(input: {
+  totalCentavos: number;
+  paidCentavos: number;
+  reviewRequired: boolean;
+  hasPendingPayment: boolean;
+}): PaymentBoxState {
+  if (input.paidCentavos >= input.totalCentavos) return { kind: 'fully_paid' };
+  if (input.hasPendingPayment || input.reviewRequired) {
+    return { kind: 'unverified_do_not_collect' };
+  }
+  return { kind: 'collect_cash', amountCentavos: input.totalCentavos - input.paidCentavos };
+}
+
+/**
+ * One trip, for the driver driving it — §8's "Trip detail" screen.
+ *
+ * ## `driverId` is half of the WHERE, not a check afterwards
+ *
+ * `WHERE id = ? AND driver_id = ?`. A booking that belongs to another
+ * driver and a booking id that does not exist return the same zero rows and
+ * therefore the same refusal, which is the point: a `FORBIDDEN` would
+ * confirm the booking exists, and over a numeric id that is a tool for
+ * walking every booking on the system — towards a payload that carries a
+ * guest's phone number (RA 10173). The message names neither the id nor the
+ * ref, and says nothing about drivers.
+ *
+ * ## Four statements, whatever the trip
+ *
+ * The trip row (tour joined for the title, van LEFT joined because
+ * `van_id` is nullable), the pending-payment probe, the office notes, and
+ * `tripProgress()`'s own two. Nothing loops over a query.
+ *
+ * ## No `now`
+ *
+ * Nothing here is bucketed, expired or compared against the clock —
+ * `tourDate` is read straight out of the row and `paymentBox` compares two
+ * integers. An unused `now` parameter would be a lie about what the answer
+ * depends on (the same ruling `tripProgress` carries).
+ *
+ * Exported for the test that drives it directly and for nothing else:
+ * nothing may call it with a driver id it did not get from a driver's own
+ * session.
+ */
+export async function driverTripDetail(driverId: number, bookingId: number): Promise<TripDetail> {
+  const db = getDb();
+
+  const [trip] = await db
+    .select({
+      bookingId: bookings.id,
+      ref: bookings.ref,
+      tourTitle: tours.title,
+      tourDate: bookings.tourDate,
+      pax: bookings.pax,
+      status: bookings.status,
+      leadName: bookings.leadName,
+      leadPhone: bookings.leadPhone,
+      pickup: bookings.pickup,
+      pickupMapsUrl: bookings.pickupMapUrl,
+      vanPlate: vans.plate,
+      /*
+       * The payment box's three inputs, read here and consumed by
+       * `paymentBox` below — none of them reaches the client.
+       *
+       * Aliased `paidCentavos`, never `amountPaidCentavos:`, exactly as
+       * `portal.ts` and `manual-receipt.ts` are: `schema-conventions.test.ts`
+       * reads any `amountPaidCentavos:` in the server tree as a WRITE of
+       * that column, and only the payments service may write it.
+       */
+      totalCentavos: bookings.totalCentavos,
+      paidCentavos: bookings.amountPaidCentavos,
+      reviewRequired: bookings.paymentReviewRequired,
+    })
+    .from(bookings)
+    .innerJoin(tours, eq(tours.id, bookings.tourId))
+    .leftJoin(vans, eq(vans.id, bookings.vanId))
+    .where(and(eq(bookings.id, bookingId), eq(bookings.driverId, driverId)))
+    .limit(1);
+
+  if (!trip) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'No trip with that id.' });
+  }
+
+  /*
+   * Does ONE unverified payment row exist? `limit(1)` and no aggregate: the
+   * question is existence, and a count would read every row to answer a
+   * yes/no. `type = 'payment'` because a refund is never `pending` and a
+   * refund is not money a driver would be asked to collect either way.
+   */
+  const [pending] = await db
+    .select({ id: payments.id })
+    .from(payments)
+    .where(
+      and(
+        eq(payments.bookingId, bookingId),
+        eq(payments.type, 'payment'),
+        eq(payments.status, 'pending'),
+      ),
+    )
+    .limit(1);
+
+  /*
+   * §8's "Office notes" — `booking_notes`, oldest first, the TEXT only. The
+   * driver needs the instruction ("guest waiting at the second gate"), not
+   * who typed it or when; the admin surface has that, and this payload is
+   * the most sensitive one in the portal.
+   *
+   * `created_at` then `id`, so two notes written in the same second have a
+   * stable order rather than whatever the engine returns.
+   */
+  const notes = await db
+    .select({ note: bookingNotes.note })
+    .from(bookingNotes)
+    .where(eq(bookingNotes.bookingId, bookingId))
+    .orderBy(asc(bookingNotes.createdAt), asc(bookingNotes.id));
+
+  return {
+    bookingId: trip.bookingId,
+    ref: trip.ref,
+    tourTitle: trip.tourTitle,
+    /*
+     * `bookings.tour_date` is a `date()` column, so Drizzle hands back a
+     * `Date` and every consumer wants the civil string — through the same
+     * helper `listDriverTrips` uses. A `toISOString().slice(0, 10)` here
+     * would be the UTC day.
+     */
+    tourDate: manilaCivilDate(trip.tourDate),
+    pax: trip.pax,
+    status: trip.status,
+    leadName: trip.leadName,
+    leadPhone: trip.leadPhone,
+    pickup: trip.pickup,
+    pickupMapsUrl: trip.pickupMapsUrl,
+    vanPlate: trip.vanPlate,
+    officeNotes: notes.map((row) => row.note),
+    payment: paymentBox({
+      totalCentavos: trip.totalCentavos,
+      paidCentavos: trip.paidCentavos,
+      reviewRequired: trip.reviewRequired,
+      hasPendingPayment: pending !== undefined,
+    }),
+    /** Task 3's answer, unchanged — `total` counts the trip-start stop. */
+    progress: await tripProgress(db, bookingId),
+  };
+}
+
 export const driverTripsRouter = router({
   /**
    * The signed-in driver's trips. **No input at all**, by design: the
@@ -109,4 +313,19 @@ export const driverTripsRouter = router({
     async ({ ctx }): Promise<DriverTripRow[]> =>
       await listDriverTrips(ctx.driver.driverId, new Date()),
   ),
+
+  /**
+   * One trip's detail, including §8's payment box.
+   *
+   * The input is a `bookingId` and **nothing else** — `.strict()`, so a
+   * request carrying a `driverId` is refused rather than silently ignored.
+   * The driver still comes from `ctx.driver.driverId`, which NARROWS the
+   * booking id; it is never widened by anything the caller sends.
+   */
+  trip: driverProcedure
+    .input(driverTripInputSchema)
+    .query(
+      async ({ ctx, input }): Promise<TripDetail> =>
+        await driverTripDetail(ctx.driver.driverId, input.bookingId),
+    ),
 });
