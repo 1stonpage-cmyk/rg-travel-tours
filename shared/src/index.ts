@@ -3,6 +3,7 @@ export * from './checkout';
 export * from './constants';
 export * from './coupon';
 export * from './dispatch';
+export * from './driver';
 export * from './money';
 export * from './portal';
 export * from './receipts';

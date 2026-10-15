@@ -15,6 +15,7 @@ import { createOriginCheck } from './middleware/origin-check';
 import {
   createBookingLookupLimiter,
   createCheckoutHoldLimiter,
+  createDriverLoginLimiter,
   createProcedureRateLimit,
   createStaffLoginLimiter,
 } from './middleware/rate-limit';
@@ -171,6 +172,24 @@ export function createApp(
   // Staff login, 10 failed attempts per IP per 15 minutes (Week 4, Task 5).
   // The per-email half is in `services/staff-auth.ts`.
   app.use('/trpc', createStaffLoginLimiter());
+
+  /*
+   * Driver login, §8's third limit: 10 attempts per IP per 15 minutes
+   * (Week 6, Task 1). Written in Week 4 and left UNMOUNTED on purpose —
+   * there was no `driver.login` then, and a procedure-scoped limiter aimed
+   * at a guessed name fails OPEN while looking mounted. This task ships
+   * the route, so the limiter is mounted with it, and
+   * `driver-lockout.test.ts`'s guard was watched going red before this line
+   * existed.
+   *
+   * EVERY attempt counts, not only the failures (no
+   * `skipSuccessfulRequests`, unlike the staff and booking-lookup
+   * limiters): a six-digit PIN is 1,000,000 combinations, and an attacker
+   * who happens to guess right must not get their budget back. The other
+   * two thirds of the policy are per driver and live in
+   * `services/driver-lockout.ts`.
+   */
+  app.use('/trpc', createDriverLoginLimiter());
 
   /*
    * Cookies, then the context factory that reads them (Week 4, Task 1).

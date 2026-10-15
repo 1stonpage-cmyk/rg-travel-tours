@@ -40,16 +40,34 @@ import { and, eq, gt } from 'drizzle-orm';
 import { getDb } from '../db/client';
 import { sessions, users } from '../db/schema';
 
-/**
- * A day. §7 logs a guest in with a booking ref and an email rather than a
- * password, so the session is the weaker credential of the two and should
- * not outlive the visit by much; a day covers "check it again this evening"
- * without leaving a usable cookie on a shared phone next week.
- */
-export const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
-
 /** The three things a session can belong to — `sessions.subject_type`. */
 export type SessionSubject = 'user' | 'customer' | 'driver';
+
+/**
+ * How long a session lives, by subject type (owner-decided 2026-10-15, Q1).
+ *
+ * §8: a DRIVER session lasts 12 hours — a driver's phone spends its day in
+ * a van that other people get into, so the window is the working day and
+ * not the calendar one. Staff and guests keep the 24 hours they have had
+ * since Week 4: §7 logs a guest in with a booking ref and an email rather
+ * than a password, so the session is the weaker credential of the two and
+ * should not outlive the visit by much; a day covers "check it again this
+ * evening" without leaving a usable cookie on a shared phone next week.
+ *
+ * The map is the single source of truth, and it REPLACED a single
+ * `SESSION_TTL_MS` that was 24 hours for all three (nothing outside this
+ * file ever imported it). `createSession` reads the map by subject; there
+ * is deliberately NO per-call override, because an override that is
+ * forgotten produces a session that looks fine and lives too long.
+ *
+ * `Record<SessionSubject, number>` so a fourth subject type cannot be added
+ * to the union without a TTL being decided for it here.
+ */
+export const SESSION_TTL_MS_BY_SUBJECT: Record<SessionSubject, number> = {
+  user: 24 * 60 * 60 * 1000,
+  customer: 24 * 60 * 60 * 1000,
+  driver: 12 * 60 * 60 * 1000,
+};
 
 export interface ResolvedSession {
   subjectType: string;
@@ -74,6 +92,9 @@ function hashToken(token: string): string {
  * `subjectId` is polymorphic and carries no foreign key: for `'customer'`
  * it is a `bookings.id` (§7 scopes a portal session to ONE booking), for
  * `'user'` a `users.id`, for `'driver'` a `drivers.id`.
+ *
+ * The lifetime comes from `SESSION_TTL_MS_BY_SUBJECT` and from nowhere
+ * else — there is no `ttlMs` parameter, on purpose. See that map's note.
  */
 export async function createSession(
   subjectType: SessionSubject,
@@ -81,7 +102,7 @@ export async function createSession(
   now: Date,
 ): Promise<{ token: string; expiresAt: Date }> {
   const token = randomBytes(32).toString('base64url');
-  const expiresAt = new Date(now.getTime() + SESSION_TTL_MS);
+  const expiresAt = new Date(now.getTime() + SESSION_TTL_MS_BY_SUBJECT[subjectType]);
 
   await getDb()
     .insert(sessions)

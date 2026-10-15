@@ -47,6 +47,7 @@ import type { Context } from './context';
 import { ZodError, z } from 'zod';
 import type { AdminRole } from '@rg/shared';
 import { requireCustomer } from './middleware/require-customer';
+import { requireDriver } from './middleware/require-driver';
 import {
   ROLE_MATRIX,
   requireRole,
@@ -103,6 +104,11 @@ export function scrubPaths(message: string): string {
  * third ACCESS KIND rather than a role, because a guest has no role — their
  * session names one booking and that is the whole of their authority.
  *
+ * `driver` arrived in Week 6 Task 1 with the driver portal, and is a FOURTH
+ * access kind for the same reason: a driver has no admin role either, and
+ * their session names one `drivers.id` which is the whole of their
+ * authority. See `driverProcedure` below.
+ *
  * `roles` is denormalised into the meta on purpose. The gate already spreads
  * `ROLE_MATRIX[area]`, so this copy is redundant at runtime — but it means the
  * enumeration guard can compare what a procedure CLAIMS against §9's matrix
@@ -111,6 +117,7 @@ export function scrubPaths(message: string): string {
 export type ProcedureAccess =
   | { readonly access: 'public' }
   | { readonly access: 'customer' }
+  | { readonly access: 'driver' }
   | {
       readonly access: 'admin';
       readonly area: AdminArea;
@@ -206,6 +213,39 @@ export const publicProcedure = t.procedure.meta({ access: 'public' });
 export const customerProcedure = t.procedure
   .meta({ access: 'customer' })
   .use(({ ctx, next }) => next({ ctx: { session: requireCustomer(ctx) } }));
+
+/**
+ * A procedure only a signed-in DRIVER may call (Week 6, Task 1 — §8).
+ *
+ * Built from `customerProcedure` above, which is the shape it copies. The
+ * gate is `requireDriver`, and it refuses **a staff session and a customer
+ * session as firmly as it refuses no session at all** — not merely "some
+ * session exists". That distinction is the whole control: a driver's day
+ * sheet carries other guests' names and phone numbers, and a signed-in
+ * guest reaching it would be an RA 10173 disclosure with a 200 status code.
+ *
+ * The validated driver arrives as `ctx.driver = { driverId }` rather than
+ * replacing `ctx.session`, so a resolver downstream says what it means:
+ * `ctx.driver.driverId` is the only driver it can ever reach, and there is
+ * no input field through which to ask for another. A resolver that reached
+ * for `ctx.driver` without this builder is `error TS2339`.
+ *
+ * No area and no roles: a driver has neither, exactly as a guest does not.
+ * The one thing the metadata needs to say is that this is not public.
+ *
+ * **`procedure-role-metadata.test.ts` does not yet know this access kind**
+ * — its local `accessOf()` recognises `public`, `customer` and `admin` only
+ * — so the first driver-gated procedure MOUNTED on `appRouter` (Week 6,
+ * Task 2) must come with a reviewed `driver` branch and an
+ * anonymous/cross-session refusal assertion added to that guard. Task 1
+ * mounts only the public `driver.login` / `driver.logout`, so the guard is
+ * honest as it stands; it is not a file to edit casually, and the gate is
+ * proven here by `driver-auth.test.ts` against a test-local router of the
+ * same shape the guard's own `weekFiveShaped` fixture uses.
+ */
+export const driverProcedure = t.procedure
+  .meta({ access: 'driver' })
+  .use(({ ctx, next }) => next({ ctx: { driver: requireDriver(ctx) } }));
 
 /**
  * The ONLY way to build an admin procedure (task A4).

@@ -1,6 +1,7 @@
 import { TIMEZONE } from '@rg/shared';
 import { checkoutRouter } from './public/checkout';
 import { destinationsRouter } from './public/destinations';
+import { driverAuthRouter } from './public/driver-auth';
 import { inquiriesRouter } from './public/inquiries';
 import { newsletterRouter } from './public/newsletter';
 import { packagesRouter } from './public/packages';
@@ -65,6 +66,21 @@ export const appRouter = router({
    * thing in this codebase to have ever run with a real staff session.
    */
   staffAuth: staffAuthRouter,
+
+  /*
+   * The driver portal (Week 6, Task 1). ONE namespace, so the login's
+   * tRPC path is `driver.login` — the exact string
+   * `DRIVER_LOGIN_PROCEDURES` has reserved since Week 4 and the per-IP
+   * limiter in `app.ts` is scoped to. Any other name leaves that limiter
+   * counting nothing while still looking mounted, and
+   * `driver-lockout.test.ts` fails the build for it on purpose.
+   *
+   * Task 1 mounts the two PUBLIC procedures only. Driver-gated procedures
+   * (`driverProcedure`, Task 2 onward) join this namespace, and the first
+   * of them must also teach `procedure-role-metadata.test.ts` the `driver`
+   * access kind — see `driverProcedure` in `../trpc.ts`.
+   */
+  driver: driverAuthRouter,
 
   /*
    * The admin surface (Week 4, Task 7). Everything under this namespace is
