@@ -890,6 +890,12 @@ it('does not touch a van that is for_repair', async () => {
 
 - [ ] **Step 2–4: fail, implement, pass.**
 - [ ] **Step 5: Prove it can fail.** Remove the clearing on complete → the future-date test goes red. That mutation is the whole point of this task; if it stays green, the test is not reading capacity.
+- [ ] **Step 5b: Declare the orphaned-`on_trip` gap, and say what happens about it** (carried from Task 5's review, 2026-10-15)
+
+While a trip runs, its van is excluded from capacity on **every future date** — correct, and the reason this task exists. But **nothing sweeps a van left `on_trip` by a trip nobody ever completed.** A driver whose phone dies at the last stop, or who simply forgets, leaves that van unsellable indefinitely, and the symptom arrives weeks later as "we're fully booked" with nothing in the logs.
+
+This task does not have to build the sweep — a `node-cron` job or a dispatcher-facing "force complete" are both plausible and both are new surface area. It **must** do two things: add a test pinning the current behaviour (a started trip never completed leaves its van unsellable, so the gap is a known quantity rather than a surprise), and write the gap into `CLAUDE.md`'s Dispatch section and the Week 7 carry-forwards with the two candidate fixes named. A declared gap is a decision; an undeclared one is a bug waiting to be rediscovered by a customer.
+
 - [ ] **Step 6: Update `CLAUDE.md`** — its Dispatch section says "whatever sets it must also clear it". Change that to say what now does, and name this task's test as the thing keeping it true.
 - [ ] **Step 7: Commit** · `fix(fleet): a van that finishes a trip is bookable again`
 
