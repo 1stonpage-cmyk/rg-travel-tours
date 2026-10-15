@@ -31,6 +31,36 @@ function resolveDatabaseUrl(): string {
   return env.DATABASE_URL;
 }
 
+/**
+ * **`affectedRows` from this pool is the MATCHED count, not the changed
+ * count.** mysql2 sets `CLIENT_FOUND_ROWS` in its default client flags, and
+ * nothing below turns it off — so an `UPDATE` that writes a column the value
+ * it already holds comes back as `affectedRows 1, changedRows 0`.
+ *
+ * MEASURED against `rg_travel_test` (Task 6 review, F4):
+ *
+ * ```
+ * same-value UPDATE   affectedRows = 1   changedRows = 0
+ * changing   UPDATE   affectedRows = 1   changedRows = 1
+ * clientFlags & FOUND_ROWS = true
+ * ```
+ *
+ * Two consequences, and the first has already been got wrong twice in this
+ * codebase (Task 5's re-review stated the opposite as fact, and Task 6's
+ * first pass believed it):
+ *
+ *  - **A conditional `UPDATE` CANNOT detect "the value was already what I
+ *    was setting."** `affectedRows === 0` means the `WHERE` matched no row
+ *    at all. If that distinction matters, read `changedRows` — or do not
+ *    build the decision on it.
+ *  - `affectedRows === 0` after `UPDATE … WHERE id = ? AND status = ?` is
+ *    therefore an exact, race-free "the row is gone or its status moved",
+ *    which is what makes the conditional status writes in
+ *    `services/trips/checkins.ts` and `jobs/expire-holds.ts` sound.
+ *
+ * Drizzle passes the header through untouched, so this holds for every
+ * `[header] = await tx.update(...)` in the tree.
+ */
 export function getPool(): Pool {
   if (!pool) {
     pool = mysql.createPool({

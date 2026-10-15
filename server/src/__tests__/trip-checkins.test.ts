@@ -171,6 +171,8 @@ async function makeBooking(opts: BookingOpts) {
 async function checkpointsOf(bookingId: number) {
   return await getDb()
     .select({
+      /** Insertion order, which "most recent by `checked_at`" must NOT be. */
+      id: tripCheckpoints.id,
       stopId: tripCheckpoints.stopId,
       stopKey: tripCheckpoints.stopKey,
       checkedAt: tripCheckpoints.checkedAt,
@@ -1401,14 +1403,21 @@ describeWithDb('driver check-ins', () => {
   });
 
   /**
-   * The `startTrip` arm that was **unreachable until this task** (Task 5
-   * re-review, item 2): a zero-rows `UPDATE` whose cause is that the booking
-   * is ALREADY `in_progress`. A second Start tap used to be refused by the
-   * UNIQUE index long before that `UPDATE`, so the branch read as covered
-   * and was dead. Undo makes it live — retract the trip-start checkpoint and
-   * the booking stays `in_progress`, so the next Start reactivates the row,
-   * reaches the `UPDATE`, matches a row already carrying the status being
-   * written, and lands in that disambiguation.
+   * Q5's reactivation applied to the **trip-start** row, which is the one
+   * checkpoint whose `stop_id` is NULL — so this is also the test that the
+   * reactivation's `stop_key` lookup finds that row at all (an `eq(stopId,
+   * …)` would never match it).
+   *
+   * Undo the start and the booking stays `in_progress`: the undo retracts
+   * the tap, not the trip. Tapping Start again therefore reactivates the one
+   * row rather than inserting a second, and the booking and van do not move.
+   *
+   * **It does NOT cover `startTrip`'s zero-rows disambiguation.** An earlier
+   * version of this docblock claimed it did; measured, the restart's
+   * `affectedRows` is 1 and that block is never entered, because mysql2's
+   * default `CLIENT_FOUND_ROWS` makes `affectedRows` the matched count (Task
+   * 6 review, F1 — see the note beside `getPool()` in `db/client.ts`). That
+   * arm is unreachable while the flag is on and has no test.
    */
   it('starts again after the trip-start check-in was undone, reusing the one row', async () => {
     const booking = await makeBooking({ driverId: driverA });
@@ -1433,6 +1442,86 @@ describeWithDb('driver check-ins', () => {
     // The booking did not move and the van is still out.
     expect(await bookingStatus(booking.id)).toBe('in_progress');
     expect(await vanStatus(vanId)).toBe('on_trip');
+  });
+
+  /**
+   * **"Most recent" means by `checked_at`, and this is the only test that
+   * can tell that from "by `id`"** (Task 6 review, F2). Dropping
+   * `desc(checkedAt)` from the undo's `ORDER BY` and keeping `desc(id)` left
+   * all forty-three other tests green: their check-ins all land inside one
+   * second, and `checked_at` is `datetime(0)`, so the `id` tie-break alone
+   * answers every one of them.
+   *
+   * The two orders diverge in a state **Q5's reactivation makes reachable**,
+   * and that is what this builds: a row with the NEWEST `checked_at` and the
+   * LOWEST `id`.
+   *
+   *  - T1 — Start. The trip-start row is inserted, so it has the lowest id.
+   *  - T1 — undo it. It stops standing.
+   *  - T2 — check in a stop. A later row, so a HIGHER id.
+   *  - T3 — Start again. The trip-start row is REACTIVATED, so its
+   *    `checked_at` becomes T3 while its id stays the lowest.
+   *
+   * The most recent claim is now the trip start. Ordering by id alone would
+   * retract the stop instead — the wrong tap, and silently.
+   *
+   * Through the service with explicit `now`s, because the router reads its
+   * own clock and three router calls inside one second would collapse the
+   * three timestamps into one.
+   */
+  it('retracts the newest by checked_at, not the highest id, after a reactivation', async () => {
+    const booking = await makeBooking({ driverId: driverA });
+    const stopId = stopIds[0] as number;
+    const T3 = new Date(Math.floor(Date.now() / 1000) * 1000);
+    const T2 = new Date(T3.getTime() - 60_000);
+    const T1 = new Date(T3.getTime() - 120_000);
+
+    await runCheckIn((tx) => startTrip(tx, { bookingId: booking.id, driverId: driverA, now: T1 }));
+    await runCheckIn((tx) =>
+      undoLastCheckIn(tx, {
+        bookingId: booking.id,
+        driverId: driverA,
+        reason: 'Started at the wrong pickup.',
+        now: T1,
+      }),
+    );
+    await runCheckIn((tx) =>
+      checkInStop(tx, { bookingId: booking.id, driverId: driverA, stopId, now: T2 }),
+    );
+    await runCheckIn((tx) => startTrip(tx, { bookingId: booking.id, driverId: driverA, now: T3 }));
+
+    // The premise, proven rather than assumed: newest time, lowest id.
+    const before = await checkpointsOf(booking.id);
+    const tripStart = before.find((row) => row.stopId === null);
+    const stopRow = before.find((row) => row.stopId === stopId);
+    expect(tripStart?.checkedAt.getTime()).toBe(T3.getTime());
+    expect(stopRow?.checkedAt.getTime()).toBe(T2.getTime());
+    expect(tripStart?.id).toBeLessThan(stopRow?.id ?? 0);
+
+    const verdict = await runCheckIn((tx) =>
+      undoLastCheckIn(tx, {
+        bookingId: booking.id,
+        driverId: driverA,
+        reason: 'That restart was the mis-tap.',
+        now: T3,
+      }),
+    );
+    // Trip start, whose `stop_id` is null — NOT the stop, whose id is higher.
+    expect(verdict).toEqual({ ok: true, stopId: null });
+
+    const after = await checkpointsOf(booking.id);
+    expect(after).toHaveLength(2);
+    expect(after.find((row) => row.stopId === null)?.undone).toBe(true);
+    expect(
+      after.find((row) => row.stopId === stopId)?.undone,
+      'the undo retracted the stop instead of the newer trip-start claim',
+    ).toBe(false);
+
+    const undone = (await trailOf(booking.id)).filter(
+      (row) => row.action === 'trip.checkin_undone',
+    );
+    expect(undone).toHaveLength(2);
+    expect(undone.at(-1)?.data).toMatchObject({ stopId: null });
   });
 
   /* ---------------------------------------------------------------- *

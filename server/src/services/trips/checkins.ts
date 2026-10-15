@@ -566,20 +566,34 @@ export async function startTrip(
 
   if (header.affectedRows === 0) {
     /*
-     * Two causes, and they need telling apart: the booking moved out of the
-     * startable set (refuse), or it was ALREADY `in_progress` — which MySQL
-     * reports as zero CHANGED rows even though the row matched. A LOCKING
+     * The booking moved out of the startable set between this
+     * transaction's snapshot and the write above, so refuse. A LOCKING
      * read, because a plain one would answer from the same stale snapshot
      * that sent us here.
      *
-     * **The already-`in_progress` arm was unreachable until Task 6 and is
-     * reachable now** (Task 5 re-review, item 2). It used to be dead code
-     * that read as covered: a second Start tap was refused by the UNIQUE
-     * index before it ever got here. Undo changed that — retract the
-     * trip-start checkpoint and the booking stays `in_progress`, so the next
-     * Start tap REACTIVATES the row (Q5), reaches this `UPDATE`, matches a
-     * row whose status is already the one being written, and lands here.
-     * `trip-checkins.test.ts` drives exactly that sequence.
+     * **The `in_progress` arm below is UNREACHABLE while mysql2's default
+     * `CLIENT_FOUND_ROWS` flag is on, and the comment that used to claim
+     * otherwise was wrong twice over** (Task 6 review, F1 — measured three
+     * ways). With that flag set, `affectedRows` is the **matched** count and
+     * not the changed count: an `UPDATE` to the value a row already holds
+     * reports `affectedRows 1, changedRows 0`. So reaching this block means
+     * the `WHERE` matched NOTHING — the row is gone, or its status is
+     * outside the allow-list — and both of those are the refusing arm. An
+     * already-`in_progress` booking never gets here; it is matched, written
+     * as a no-op, and sails past.
+     *
+     * Task 5's re-review asserted the opposite ("mysql2 does not set
+     * `CLIENT_FOUND_ROWS`") and Task 6's first pass believed it; see the
+     * note beside `getPool()` in `db/client.ts` for the probe. That item is
+     * still OPEN, not closed.
+     *
+     * The arm stays, deliberately, and is not dead weight: the locking
+     * re-read and the membership test are correct in both directions and
+     * are exactly what this code needs if the flag is ever turned off. It
+     * fails safe — the only way through is a status still in the allow-list.
+     * **Do not cite a test as covering it**, and do not use a conditional
+     * `UPDATE` anywhere in this project to detect "the value was already
+     * what I was setting": `affectedRows` cannot answer that question.
      */
     const [current] = await tx
       .select({ status: bookings.status })
