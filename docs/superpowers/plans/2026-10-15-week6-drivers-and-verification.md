@@ -560,7 +560,16 @@ export interface TripProgress {
   status: BookingStatus;
   /** Trip start first, then `tour_itinerary_stops` by `sort_order`. */
   stops: TripProgressStop[];
-  /** Stops checked in and not undone, over total. For the admin's bar. */
+  /**
+   * Stops checked in and not undone, over total. For the admin's bar.
+   *
+   * **`total` COUNTS THE TRIP-START PSEUDO-STOP** (built 2026-10-15, Task 3):
+   * a three-stop tour reads `0 / 4` before departure and `1 / 4` once the
+   * van leaves. That is deliberate — it is what makes the dispatcher's bar
+   * move when a trip actually starts, instead of sitting at zero through
+   * the first leg. Tasks 4 and 12 render these numbers as text and must not
+   * subtract one to make them prettier.
+   */
   done: number;
   total: number;
 }
