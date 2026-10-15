@@ -119,3 +119,72 @@ export interface DriverTripRow {
   vanPlate: string | null;
   bucket: DriverTripBucket;
 }
+
+/* ------------------------------------------------------------------ *
+ * Trip progress (Week 6 plan, Task 3 — BUILD_SPEC §8 "Itinerary check-ins")
+ * ------------------------------------------------------------------ */
+
+/**
+ * The label the trip-start pseudo-stop carries, from §8's own wording
+ * ("**Start trip** → booking `in_progress`"). Shared so the driver's button
+ * and the dispatcher's progress bar name the same event the same way.
+ */
+export const TRIP_START_STOP_NAME = 'Start trip';
+
+/**
+ * One row of a trip's itinerary, with its check-in state.
+ *
+ * `stopId` is `null` for the trip-start pseudo-stop — the event that
+ * happens before any itinerary stop is reached, stored as a
+ * `trip_checkpoints` row with a null `stop_id`.
+ *
+ * **`checkedAt` and `undone` are both kept, deliberately.** An undone
+ * check-in counts as NOT done (that is the entire purpose of the column),
+ * but it is not erased either: §8 says "marked `undone`, not deleted", and
+ * a driver who retracted a tap at 10:16 and a dispatcher asking why the
+ * van is still at Kawasan both need to see that something happened there.
+ * Consumers decide what to render; they must not treat a non-null
+ * `checkedAt` as "done" on its own.
+ *
+ * `checkedAt` is an ISO instant in UTC — SERVER time, never the driver's
+ * device clock. Formatting it for Manila is the view's job, not this
+ * layer's.
+ *
+ * `sortOrder` is the tour's own `tour_itinerary_stops.sort_order`, echoed
+ * for real stops and `0` for trip start. **Render `stops` in array order**
+ * — the array is already correct, and trip start precedes every itinerary
+ * stop regardless of what number that stop carries, so sorting by this
+ * field is not the same question.
+ */
+export interface TripProgressStop {
+  /** `null` for the trip-start pseudo-stop. */
+  stopId: number | null;
+  name: string;
+  sortOrder: number;
+  checkedAt: string | null; // ISO instant, server time
+  undone: boolean;
+}
+
+/**
+ * A whole trip's itinerary and how far along it is — **one answer, two
+ * surfaces**: the driver's trip screen (Task 4) and the admin's live
+ * departures board (Task 12) both read exactly this.
+ *
+ * Two implementations of this question would drift, and the drift shows up
+ * as a dispatcher ringing a driver who has already checked in. Hence the
+ * types living in `shared/` rather than in a driver-only module: Task 12 is
+ * an admin surface and imports the same shape.
+ *
+ * `done` counts stops checked in and NOT undone; `total` is `stops.length`,
+ * trip start included — so the dispatcher's bar moves when the van leaves,
+ * which is the first thing the board is watched for.
+ */
+export interface TripProgress {
+  bookingId: number;
+  status: BookingStatus;
+  /** Trip start first, then `tour_itinerary_stops` by `sort_order`. */
+  stops: TripProgressStop[];
+  /** Stops checked in and not undone, over total. For the admin's bar. */
+  done: number;
+  total: number;
+}

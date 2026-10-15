@@ -32,7 +32,7 @@
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
 import { sql } from 'drizzle-orm';
-import { driverTripBucket, manilaCivilDate, type PriceSnapshot } from '@rg/shared';
+import { manilaCivilDate, type PriceSnapshot } from '@rg/shared';
 import { appRouter } from '../routers/_app';
 import { listDriverTrips } from '../routers/public/driver';
 import { getDb, getPool } from '../db/client';
@@ -41,13 +41,6 @@ import { generateBookingRef } from '../services/booking-ref';
 import { customerContext, driverCaller, staffContext } from './helpers/ctx';
 import { describeWithDb } from './helpers/db';
 
-/**
- * The real Manila today, because that is the bucket under test. Every other
- * date in this file is computed from it, so the fixtures stay in the right
- * buckets whenever the suite is run.
- */
-const TODAY = manilaCivilDate(new Date());
-
 /** Civil-date arithmetic on a civil-date string: UTC-anchored, no zone shift. */
 function plusDays(date: string, days: number): string {
   const at = new Date(`${date}T00:00:00Z`);
@@ -55,12 +48,25 @@ function plusDays(date: string, days: number): string {
   return at.toISOString().slice(0, 10);
 }
 
-const UPCOMING = plusDays(TODAY, 5);
-const PAST = plusDays(TODAY, -5);
+/**
+ * The real Manila today, because that is the bucket under test, and every
+ * other date in this file is computed from it so the fixtures stay in the
+ * right buckets whenever the suite is run.
+ *
+ * **Read in `beforeEach`, not at module load** (review finding, Task 2). The
+ * resolver reads the clock per call, so a run that straddles Manila midnight
+ * would compare fixtures built against yesterday's `TODAY` with a resolver
+ * answering for today's — a flake in the one suite whose whole subject is
+ * dates. Re-reading it per test keeps the two on the same day, and the
+ * fixtures are rebuilt per test anyway.
+ */
+let TODAY = '';
+let UPCOMING = '';
+let PAST = '';
 /** Driver B's own trip, on a date NOBODY else in this file uses — so B is
  *  free on `TODAY` when the reassignment test moves a trip to them. */
-const THEIRS = plusDays(TODAY, 9);
-const ALL_DATES = [TODAY, UPCOMING, PAST, THEIRS];
+let THEIRS = '';
+let ALL_DATES: string[] = [];
 
 /** Random first, timestamp second — same discipline as capacity.test.ts. */
 const unique = () => `${Math.floor(Math.random() * 1e9)}_${Date.now()}`;
@@ -181,28 +187,13 @@ async function makeBooking(opts: {
   return { id: booking.insertId, ref };
 }
 
-/* ------------------------------------------------------------------ *
- * `driverTripBucket` — pure, no database, the whole reason it is shared.
- * ------------------------------------------------------------------ */
-
-it('buckets by the MANILA civil date, not the UTC one', () => {
-  // 2026-11-10 23:30 Manila is 15:30 UTC the same day; 00:30 Manila on the
-  // 11th is 16:30 UTC on the 10th, and a UTC-based bucket would put that
-  // driver on yesterday's trips while they are standing next to the van.
-  expect(driverTripBucket('2026-11-11', '2026-11-11')).toBe('today');
-  expect(driverTripBucket('2026-11-12', '2026-11-11')).toBe('upcoming');
-  expect(driverTripBucket('2026-11-10', '2026-11-11')).toBe('history');
-  // The boundary the civil date exists for: 16:30 UTC on the 10th IS the
-  // 11th in Manila, so a trip on the 11th is TODAY at that instant.
-  expect(driverTripBucket('2026-11-11', manilaCivilDate(new Date('2026-11-10T16:30:00Z')))).toBe(
-    'today',
-  );
-  // And one minute earlier it is still the 10th there, so the same trip is
-  // upcoming. A `toISOString().slice(0, 10)` bucket gets both of these wrong.
-  expect(driverTripBucket('2026-11-11', manilaCivilDate(new Date('2026-11-10T15:59:00Z')))).toBe(
-    'upcoming',
-  );
-});
+/*
+ * `driverTripBucket` itself — pure, no database — is tested in the package
+ * that owns it: `shared/src/driver.test.ts` (review finding, Task 2). A
+ * pure `/shared` function whose only test lived here was not covered by
+ * `pnpm --filter @rg/shared test` at all. What stays below is the SERVER's
+ * half: which Manila civil date this server picks to bucket against.
+ */
 
 /* ------------------------------------------------------------------ *
  * `driver.trips` — the mounted procedure, through the real router.
@@ -239,6 +230,15 @@ describeWithDb('driver.trips', () => {
   });
 
   beforeEach(async () => {
+    // Per test, for the reason the declarations give: the resolver reads
+    // the clock per call, and these fixtures must be built against the same
+    // Manila day it will answer for.
+    TODAY = manilaCivilDate(new Date());
+    UPCOMING = plusDays(TODAY, 5);
+    PAST = plusDays(TODAY, -5);
+    THEIRS = plusDays(TODAY, 9);
+    ALL_DATES = [TODAY, UPCOMING, PAST, THEIRS];
+
     // Same sanity check `dispatch-assign.test.ts` opens with: a van or
     // driver left behind by another suite would change what this file's
     // availability re-check (the reassignment test) sees.
