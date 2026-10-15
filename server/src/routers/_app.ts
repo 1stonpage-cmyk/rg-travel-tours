@@ -5,6 +5,7 @@ import { inquiriesRouter } from './public/inquiries';
 import { newsletterRouter } from './public/newsletter';
 import { packagesRouter } from './public/packages';
 import { adminBookingsRouter } from './admin/bookings';
+import { adminDashboardRouter } from './admin/dashboard';
 import { adminCalendarRouter } from './admin/calendar';
 import { adminDispatchRouter } from './admin/dispatch';
 import { adminDriversRouter } from './admin/drivers';
@@ -74,6 +75,7 @@ export const appRouter = router({
    */
   admin: router({
     bookings: adminBookingsRouter,
+    dashboard: adminDashboardRouter,
     calendar: adminCalendarRouter,
     dispatch: adminDispatchRouter,
     vans: adminVansRouter,

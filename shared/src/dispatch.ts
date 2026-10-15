@@ -276,6 +276,53 @@ export interface CalendarDay {
  * whitespace-only reason fails Zod before the service ever runs.
  */
 /**
+ * BUILD_SPEC §9's dashboard alert thresholds, each written ONCE.
+ *
+ * In `/shared` rather than in the query, because the screen states the same
+ * numbers back to the operator ("within 14 days") and two copies is how the
+ * card comes to promise a window the query does not use.
+ */
+
+/**
+ * §9 "Unassigned trips within 48 hours", counted **BACK from the tour date**
+ * (owner-decided 2026-10-14, Q7, which also settles BUILD_SPEC §15's open
+ * question 1). Flags `confirmed` bookings whose tour date falls inside the
+ * window and which still lack a van **OR** a driver — `OR`, because a trip
+ * with a van and no driver is exactly as stranded as one with neither.
+ */
+export const UNASSIGNED_ALERT_HOURS = 48;
+
+/** §9 "Van service due within 14 days". Overdue counts too — see `serviceDue`. */
+export const SERVICE_DUE_DAYS = 14;
+
+/** §9 "Driver license, OR/CR, and LTFRB franchise expiring within 30 days". */
+export const PAPERS_EXPIRING_DAYS = 30;
+
+/** The five §9 dashboard alerts. Always all five, zeroes included. */
+export const DASHBOARD_ALERT_KINDS = [
+  'payments_to_verify',
+  'unassigned_soon',
+  'vans_in_repair',
+  'service_due',
+  'papers_expiring',
+] as const;
+
+export type DashboardAlertKind = (typeof DASHBOARD_ALERT_KINDS)[number];
+
+/**
+ * One alert as the dashboard receives it.
+ *
+ * `examples` is capped at five on the server: the card shows a secondary
+ * line, not a list, and a dashboard that ships every overdue van to the
+ * browser gets slower exactly as the fleet gets more neglected.
+ */
+export interface DashboardAlert {
+  kind: DashboardAlertKind;
+  count: number;
+  examples: Array<{ id: number; label: string; date: string | null }>;
+}
+
+/**
  * Why an assignment was refused (`admin.dispatch.assign`).
  *
  * Declared HERE, not in the server service that produces it (controller
