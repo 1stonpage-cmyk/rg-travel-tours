@@ -270,7 +270,15 @@ describeWithDb('driver check-ins', () => {
       // these rows are removed by hand rather than reported by the teardown.
       await pool.query('DELETE FROM trip_checkpoints WHERE booking_id = ?', [id]);
       await pool.query('DELETE FROM payments WHERE booking_id = ?', [id]);
-      await pool.query("DELETE FROM audit_log WHERE entity = 'bookings' AND entity_id = ?", [id]);
+      /*
+       * Keyed on `entity_id` + the action prefix, NEVER on `entity =
+       * 'bookings'` (round-1 review, F3): `entity` is the very value these
+       * tests assert, so a regression to Week 5's singular `'booking'`
+       * would make this delete miss — leaking rows into a table
+       * `global-setup.ts`'s `LEAK_TABLES` cannot see, while the test that
+       * should have caught the regression fails for an unrelated reason.
+       */
+      await pool.query("DELETE FROM audit_log WHERE entity_id = ? AND action LIKE 'trip.%'", [id]);
       await pool.query('DELETE FROM bookings WHERE id = ?', [id]);
     }
     for (const id of created.tourIds) {
@@ -650,6 +658,95 @@ describeWithDb('driver check-ins', () => {
     expect(trail.at(-1)?.data).toMatchObject({ lastStopId: stopIds.at(-1) as number });
   });
 
+  /**
+   * **The snapshot trap, raced on purpose** (round-1 review, F1 — the
+   * blocking defect this test exists for).
+   *
+   * Two check-ins on the FINAL TWO stops, overlapping. Each transaction's
+   * first statement is a plain read, which pins the REPEATABLE READ
+   * snapshot — so a completion decision made from a non-locking count sees
+   * its own new row plus everything committed before its snapshot, and
+   * never the sibling's. Both therefore count `total - 1` and **neither
+   * completes the trip**: all four checkpoints written, the booking left
+   * `in_progress`, and the van left `on_trip`, which `VAN_STATUS_SELLABLE`
+   * makes unsellable and undispatchable on EVERY future date.
+   *
+   * It is not exotic. A driver's queued taps flushing when signal returns
+   * is two check-ins arriving together, which is exactly the offline story
+   * the portal is built for.
+   *
+   * The assertions are the four facts that failure produced, inverted —
+   * and the audit count, because the same stale read can close one trip
+   * twice when a `completeTrip` overlaps instead.
+   */
+  it('completes the trip exactly once when the final two stops are tapped concurrently', async () => {
+    const booking = await makeBooking({ driverId: driverA });
+    const caller = driverCaller(driverA);
+    await caller.driver.startTrip({ bookingId: booking.id });
+    // Everything but the last two, sequentially, so the race is over the
+    // pair that decides completion.
+    await caller.driver.checkIn({ bookingId: booking.id, stopId: stopIds[0] as number });
+
+    const settled = await Promise.allSettled([
+      caller.driver.checkIn({ bookingId: booking.id, stopId: stopIds[1] as number }),
+      caller.driver.checkIn({ bookingId: booking.id, stopId: stopIds[2] as number }),
+    ]);
+    expect(
+      settled
+        .filter((outcome) => outcome.status === 'rejected')
+        .map((outcome) => String((outcome as PromiseRejectedResult).reason)),
+      'a concurrent pair of stop check-ins threw instead of answering a verdict',
+    ).toEqual([]);
+    // Different stops, so BOTH are recorded — unlike the double-tap race.
+    expect(
+      settled.filter((outcome) => outcome.status === 'fulfilled' && outcome.value.ok),
+    ).toHaveLength(2);
+
+    expect(await checkpointsOf(booking.id)).toHaveLength(4);
+    expect(await bookingStatus(booking.id), 'the trip never finished').toBe('completed');
+    // The one that costs real money: a van stranded on `on_trip` is
+    // unsellable on every future date.
+    expect(await vanStatus(vanId), 'the van was left on_trip').toBe('available');
+    // Exactly one, whichever tap got there — not two, and not none.
+    expect(
+      (await trailOf(booking.id)).filter((row) => row.action === 'trip.completed'),
+    ).toHaveLength(1);
+  });
+
+  /**
+   * The other half of the same stale read: a `completeTrip` landing while a
+   * last-stop `checkIn` waits behind its booking-row lock. The check-in's
+   * own snapshot still says `in_progress`, so without a conditional status
+   * write it closes the trip a second time and the §9 trail shows two
+   * `trip.completed` rows for one trip.
+   */
+  it('closes a trip once even when Complete and the last stop arrive together', async () => {
+    const booking = await makeBooking({ driverId: driverA });
+    const caller = driverCaller(driverA);
+    await caller.driver.startTrip({ bookingId: booking.id });
+    for (const stopId of stopIds.slice(0, -1)) {
+      await caller.driver.checkIn({ bookingId: booking.id, stopId });
+    }
+
+    const settled = await Promise.allSettled([
+      caller.driver.completeTrip({ bookingId: booking.id }),
+      caller.driver.checkIn({ bookingId: booking.id, stopId: stopIds.at(-1) as number }),
+    ]);
+    expect(
+      settled
+        .filter((outcome) => outcome.status === 'rejected')
+        .map((outcome) => String((outcome as PromiseRejectedResult).reason)),
+      'Complete racing the last stop threw instead of answering a verdict',
+    ).toEqual([]);
+
+    expect(await bookingStatus(booking.id)).toBe('completed');
+    expect(await vanStatus(vanId)).toBe('available');
+    expect(
+      (await trailOf(booking.id)).filter((row) => row.action === 'trip.completed'),
+      'one trip was closed twice',
+    ).toHaveLength(1);
+  });
+
   it('completes on the last stop even when the stops were tapped out of order', async () => {
     // A convoy that reversed the route. "Last stop" means every stop
     // checked in, not the highest sort_order — a trip left one tap short
@@ -743,6 +840,36 @@ describeWithDb('driver check-ins', () => {
     expect(await vanStatus(vanId)).toBe('for_repair');
   });
 
+  /**
+   * `moveVanStatus`'s `vanId === null` branch (round-1 review, F4). A
+   * booking with a driver and no van cannot be produced by
+   * `assignVanAndDriver` — it writes both or neither — so this is a
+   * hand-made row, and the rule is that it must not BLOCK the driver: a
+   * guest standing at a pickup is not the moment to refuse over a column
+   * nobody filled in. The `confirmed` test also sets `vanId: null` but is
+   * refused by the status gate before it ever reaches this branch.
+   */
+  it('starts and completes a trip with no van at all, skipping the fleet write', async () => {
+    const booking = await makeBooking({ driverId: driverA, vanId: null });
+    const caller = driverCaller(driverA);
+
+    const started = await caller.driver.startTrip({ bookingId: booking.id });
+    expect(started.ok, JSON.stringify(started)).toBe(true);
+    expect(await bookingStatus(booking.id)).toBe('in_progress');
+    // The fixture van belongs to no booking here — nothing moved it.
+    expect(await vanStatus(vanId)).toBe('available');
+
+    const finished = await caller.driver.completeTrip({ bookingId: booking.id });
+    expect(finished.ok, JSON.stringify(finished)).toBe(true);
+    expect(await bookingStatus(booking.id)).toBe('completed');
+    expect(await vanStatus(vanId)).toBe('available');
+    // The audit rows still record the trip, with a null van.
+    const trail = await trailOf(booking.id);
+    expect(trail.map((row) => row.action)).toEqual(['trip.started', 'trip.completed']);
+    expect(trail[0]?.data).toMatchObject({ vanId: null });
+    expect(trail.at(-1)?.data).toMatchObject({ vanId: null });
+  });
+
   it('starts a trip whose van is parked without moving the van onto the road', async () => {
     const parked = await makeVan('parked');
     const booking = await makeBooking({ driverId: driverA, vanId: parked });
@@ -760,7 +887,7 @@ describeWithDb('driver check-ins', () => {
 
   /**
    * The column is SERVER time (schema: "never the driver's device clock").
-   * Asserted as "within a minute of real now" rather than against a value
+   * Asserted as "within a second of real now" rather than against a value
    * this test supplied — the latter would pass against an implementation
    * that trusted an input, which is the thing being refused.
    */

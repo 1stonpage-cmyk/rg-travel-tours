@@ -23,7 +23,7 @@
  */
 import { fileURLToPath } from 'node:url';
 import { sql } from 'drizzle-orm';
-import { bookings, drivers, payments, users, vans } from '../db/schema';
+import { bookings, drivers, payments, tripCheckpoints, users, vans } from '../db/schema';
 import { migrate } from 'drizzle-orm/mysql2/migrator';
 import { assertConnectedDatabase, assertDatabaseName, databaseNameFromUrl } from '../db/guard';
 import { closeDb, getDb } from '../db/client';
@@ -54,6 +54,17 @@ const LEAK_TABLES = [
   ['vans', vans],
   ['payments', payments],
   ['users', users],
+  /*
+   * Added in Week 6 Task 5, the task whose code first WRITES this table
+   * (round-1 review). It belongs here on the same test as the others: a
+   * leaked row changes another file's answer rather than merely sitting
+   * there — `tripProgress` counts a booking's checkpoints to decide how far
+   * along a trip is, and the check-in service counts them to decide whether
+   * a trip is finished and a van should be freed. The rows are also
+   * invisible to the per-suite cleanups that key on a booking id they no
+   * longer have.
+   */
+  ['trip_checkpoints', tripCheckpoints],
 ] as const;
 
 /**

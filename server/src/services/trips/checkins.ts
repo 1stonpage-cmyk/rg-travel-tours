@@ -73,15 +73,20 @@
  * cannot arise here.
  *
  * MEASURED, and worth knowing before reordering anything here: inserting
- * the checkpoint and only then UPDATING the booking row has a theoretical
- * deadlock in it — the child INSERT takes a shared FK lock on the parent
- * booking row, so the winner's `UPDATE` is an S→X upgrade while the loser
- * still holds S and waits on the duplicate key. It did not occur across
- * repeated runs of the two concurrent tests, and if it ever does the
- * concurrency tests fail loudly on it (they assert that NEITHER call
- * threw) rather than passing quietly. Do not "fix" it by taking the booking
- * lock first: that serialises the two taps and makes a check-then-insert
- * correct, at which point nothing can tell the two implementations apart.
+ * the checkpoint and only then UPDATING the booking row has a real deadlock
+ * in it — the child INSERT takes a shared FK lock on the parent booking
+ * row, so the winner's `UPDATE` is an S→X upgrade while the loser still
+ * holds S and waits on the duplicate key. The window is one round trip
+ * wide, which is why it does not show up against a loopback socket and
+ * widens with latency and pool contention.
+ *
+ * It is handled where a deadlock has to be handled — at the transaction
+ * owner, by `withDeadlockRetry()` in the router (see the note there).
+ * **Do not "fix" it by taking the booking lock first:** that serialises the
+ * two taps and makes a check-then-insert correct, at which point nothing
+ * can tell the two implementations apart. If it ever escapes the retry, the
+ * concurrency tests fail loudly on it — they assert that NEITHER call threw
+ * — rather than passing quietly.
  *
  * What is locked: `completeTrip` reads the booking `FOR UPDATE`, because it
  * is a read-then-write of `bookings.status` with no index behind it — two
@@ -89,6 +94,21 @@
  * `in_progress` gate. `startTrip` and `checkInStop` need no such lock: the
  * UNIQUE index already admits exactly one of any set of racing taps, and
  * only the winner writes.
+ *
+ * ## The one read here that is a DECISION is locking
+ *
+ * `countStandingCheckpoints()` — "is this the last stop?" — takes
+ * `.for('update')`, and `finishTrip`'s status write is conditional in SQL.
+ * Round 1 shipped that decision as a plain read and it was wrong in exactly
+ * the way CLAUDE.md warns about: `checkInStop`'s first statement is a
+ * non-locking read, so it pins the REPEATABLE READ snapshot and every later
+ * plain read — `tripProgress` included — cannot see a sibling check-in that
+ * committed in between. Two taps on the final two stops therefore each
+ * counted `total - 1` and NEITHER completed the trip, stranding the van on
+ * `on_trip` forever. See `countStandingCheckpoints` and `finishTrip` for
+ * the mechanics; the rule is that a read whose answer decides a write must
+ * be locking, and only `progress.total` (the tour's itinerary, which is not
+ * the racing table) is read from the snapshot.
  *
  * ## Both halves in one transaction
  *
@@ -264,22 +284,95 @@ async function insertCheckpoint(
 }
 
 /**
+ * How many of this trip's check-ins STAND, read under a lock.
+ *
+ * **This read must be locking, and that is the whole point of the
+ * function** (round-1 review, F1). `checkInStop`'s first statement is a
+ * plain read, which pins the REPEATABLE READ snapshot; every later
+ * non-locking read in that transaction — `tripProgress`'s two queries
+ * included — answers from that snapshot plus this transaction's own writes,
+ * and therefore cannot see a sibling check-in that committed in between. So
+ * two taps on the FINAL TWO stops each counted `total - 1` and **neither
+ * completed the trip**, leaving the booking `in_progress` and the van
+ * `on_trip` — unsellable on every future date, because `available` is the
+ * only sellable status. Reproduced, not theorised.
+ *
+ * `.for('update')` fixes it twice over: a locking read sees the latest
+ * COMMITTED rows rather than the snapshot, and its next-key lock over
+ * `(booking_id, …)` serialises the two taps, so exactly one of them can be
+ * the transaction that sees a complete set.
+ *
+ * It is the exact trap CLAUDE.md spells out — "a non-locking read taken
+ * first returns the pre-lock snapshot even after the lock is granted" — and
+ * the fix has to be on the read that makes the DECISION. Adding
+ * `FOR UPDATE` to the booking row instead does nothing, because a locking
+ * read does not advance the snapshot for the plain reads that follow it.
+ *
+ * Rows rather than `COUNT(*)`: there is at most one per stop (the UNIQUE
+ * index guarantees it), so this is a handful of ints, and a locking read
+ * whose shape nobody has to reason about is worth more here than the
+ * aggregate.
+ */
+async function countStandingCheckpoints(tx: Transaction, bookingId: number): Promise<number> {
+  const rows = await tx
+    .select({ id: tripCheckpoints.id })
+    .from(tripCheckpoints)
+    .where(and(eq(tripCheckpoints.bookingId, bookingId), eq(tripCheckpoints.undone, false)))
+    .for('update');
+  return rows.length;
+}
+
+/**
  * Completion: `bookings.status = 'completed'`, the van back to `available`,
- * and one `trip.completed` audit row — in the caller's transaction.
+ * and one `trip.completed` audit row — in the caller's transaction. Answers
+ * the booking's status afterwards.
  *
  * Shared by `completeTrip` (the driver pressed Complete) and `checkInStop`
  * (the last stop was tapped, §8 item 3). `lastStopId` records which of the
  * two happened, because "the trip was closed by the Kawasan check-in" and
  * "the driver closed it by hand" are different facts in an operations
  * review.
+ *
+ * **The status write is conditional in SQL — `WHERE status = 'in_progress'`
+ * — and the audit row and the van write hang off whether it matched**
+ * (round-1 review, F1's second symptom). An `UPDATE` re-reads the row under
+ * its own X lock, so unlike a plain `SELECT` it sees the latest committed
+ * status: a `completeTrip` that landed first while this check-in's FK lock
+ * waited behind it closes the trip, and this transaction then affects zero
+ * rows and adds nothing. Without the condition, the same trip gets closed
+ * twice and the §9 trail shows two `trip.completed` rows for one trip.
+ *
+ * The same condition is what keeps an admin's mid-trip cancellation from
+ * being silently overwritten with `completed`: the trip is simply not
+ * closed, and the caller is told the real status rather than the one it
+ * wanted.
  */
 async function finishTrip(
   tx: Transaction,
   trip: TripRow,
   driverId: number,
   lastStopId: number | null,
-): Promise<void> {
-  await tx.update(bookings).set({ status: 'completed' }).where(eq(bookings.id, trip.id));
+): Promise<BookingStatus> {
+  const [header] = await tx
+    .update(bookings)
+    .set({ status: 'completed' })
+    .where(and(eq(bookings.id, trip.id), eq(bookings.status, 'in_progress')));
+
+  if (header.affectedRows === 0) {
+    /*
+     * Somebody else moved this booking out of `in_progress` between our
+     * snapshot and this write. A LOCKING read, because a plain one would
+     * answer from the same stale snapshot that sent us here.
+     */
+    const [current] = await tx
+      .select({ status: bookings.status })
+      .from(bookings)
+      .where(eq(bookings.id, trip.id))
+      .for('update')
+      .limit(1);
+    return current?.status ?? trip.status;
+  }
+
   // §9's requirement, and the reason this task could not ship without Task
   // 7's test: `available` is the ONLY sellable status, so a van left
   // `on_trip` is a van no date can be booked into.
@@ -295,6 +388,7 @@ async function finishTrip(
     entityId: trip.id,
     data: { vanId: trip.vanId, lastStopId },
   });
+  return 'completed';
 }
 
 /**
@@ -401,11 +495,28 @@ export async function checkInStop(
   });
 
   const progress = await tripProgress(tx, bookingId);
-  if (progress.done < progress.total) return { ok: true, progress };
+  /*
+   * The completion decision is made from a LOCKING count, never from
+   * `progress.done` (round-1 review, F1). `progress` was read non-locking,
+   * so its `done` is the pinned snapshot's answer and misses a sibling tap
+   * that committed after this transaction's first read — which is how two
+   * taps on the final two stops both decided the trip was unfinished.
+   * `progress.total` is safe to use: it comes from the tour's itinerary,
+   * not from the racing table.
+   */
+  const standing = await countStandingCheckpoints(tx, bookingId);
+  if (standing < progress.total) return { ok: true, progress: { ...progress, done: standing } };
 
   // §8 item 3 — the last stop frees the van.
-  await finishTrip(tx, trip, driverId, stopId);
-  return { ok: true, progress: await tripProgress(tx, bookingId) };
+  const status = await finishTrip(tx, trip, driverId, stopId);
+  /*
+   * `done` and `status` come from the authoritative sources (the locking
+   * count, and the write we just made or the locking re-read behind it).
+   * `progress.stops` can still lag by one sibling tap's `checkedAt` in a
+   * genuine race, because it was read from the snapshot — the next read of
+   * the trip corrects it, and no decision is made from it.
+   */
+  return { ok: true, progress: { ...progress, done: standing, status } };
 }
 
 /**
@@ -440,6 +551,13 @@ export async function completeTrip(
   if (trip.status === 'completed') return refuse('already_checked_in');
   if (trip.status !== 'in_progress') return refuse('trip_not_started');
 
-  await finishTrip(tx, trip, driverId, null);
-  return { ok: true, progress: await tripProgress(tx, bookingId) };
+  const status = await finishTrip(tx, trip, driverId, null);
+  /*
+   * `readTrip`'s `FOR UPDATE` is a LOCKING read, which does not pin the
+   * REPEATABLE READ snapshot — so `tripProgress` below is this
+   * transaction's first consistent read and sees everything committed up to
+   * now, this write included. No snapshot correction is needed here, unlike
+   * in `checkInStop`.
+   */
+  return { ok: true, progress: { ...(await tripProgress(tx, bookingId)), status } };
 }
