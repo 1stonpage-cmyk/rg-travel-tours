@@ -4,6 +4,7 @@ import AdminLayout from '@/components/layout/AdminLayout';
 import PublicLayout from '@/components/layout/PublicLayout';
 import AdminBookingDetailPage from '@/pages/admin/AdminBookingDetailPage';
 import AdminBookingsPage from '@/pages/admin/AdminBookingsPage';
+import AdminDashboardPage from '@/pages/admin/AdminDashboardPage';
 import AdminCalendarPage from '@/pages/admin/AdminCalendarPage';
 import AdminDriversPage from '@/pages/admin/AdminDriversPage';
 import AdminLoginPage from '@/pages/admin/AdminLoginPage';
@@ -77,10 +78,7 @@ export default function App() {
        * (Task 7) and `/admin/calendar` (Task 9) are routed below.
        */}
       <Route path="admin" element={<AdminLayout />}>
-        <Route
-          index
-          element={<p className="px-4 py-8 text-sm">The dashboard arrives later this week.</p>}
-        />
+        <Route index element={<AdminDashboardPage />} />
         <Route path="bookings" element={<AdminBookingsPage />} />
         <Route path="bookings/:ref" element={<AdminBookingDetailPage />} />
         <Route path="calendar" element={<AdminCalendarPage />} />
