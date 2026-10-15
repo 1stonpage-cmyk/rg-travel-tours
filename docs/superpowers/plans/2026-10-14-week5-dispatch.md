@@ -3102,6 +3102,37 @@ Not a code task. Drive every 5A–5E flow against the running app and record wha
 
 ---
 
+---
+
+## ✅ WEEK 5 COMPLETE
+
+All sixteen tasks done and verified, 2026-10-15. Five checks green, each run separately:
+`pnpm lint` 0 · `pnpm typecheck` 0 · `pnpm test` 0 · `pnpm format:check` 0 ·
+`ALLOW_PLACEHOLDER_BUILD=1 pnpm build` 0. **1,858 tests** — 78 shared, 436 client, 1,344 server —
+**0 skipped**, plus the `check:coming-soon` and `check:contact` guards and the new test-database
+leak detector.
+
+Evidence: `docs/superpowers/plans/2026-10-15-week5-walkthrough.md` — 24 of 24 steps, over real HTTP
+against the running server with a real session cookie.
+
+**Owner decisions logged:** Q1 (the van-status allow-list), Q2 (`pending_verification` shown,
+labelled, uncounted, pre-assignable), Q3 (`in_progress` re-assignment with a required reason), Q5
+(who may reset a PIN), Q5b (the login-limiter guard skips `admin.*`), Q7 (the 48-hour window counts
+back from the tour date) — all 2026-10-14/15.
+
+**What is mocked or unproven, named rather than implied:** the browser. Every walkthrough step went
+through HTTP and the database; jsdom does no layout, so 360px, tablet, the 44px tap targets and the
+gold dot's real visibility are checked by class string and not by looking at a screen. Two
+dispatchers racing through two browser tabs is proven by four concurrency tests and not by two tabs.
+
+**Migrations:** `0010_vans_parked_status` and `0011_bookings_van_date_index` are applied to
+`rg_travel` and `rg_travel_test`, which are schema-identical. **The server database does not exist
+yet; both must be applied there when it is created** (`docs/LAUNCH_CHECKLIST.md`).
+
+**Still open, carried into Week 6:** clearing `on_trip` when a trip completes; the driver portal
+reflecting a mid-trip re-assignment; the end-to-end "signs in after a PIN reset" test; a driver's
+average rating (needs an owner decision, deliberately unfaked) and upcoming trips.
+
 ## Which test proves which constraint
 
 | Constraint                                                 | Proven by                                                                                        |

@@ -224,6 +224,34 @@ Every page reads tours, destinations, packages, reviews, FAQs and settings from 
   `viewport-fit=cover` meta must stay: without it the mobile bottom bar's safe-area padding is
   inert (BUG-079).
 
+## Dispatch (current state)
+
+- **One module answers "which van and which driver are free on this date"** —
+  `server/src/services/dispatch/availability.ts`. The §9 exclusion rules live there and nowhere
+  else: the calendar dropdowns, the auto-suggest and the assignment mutation's re-check all read it.
+  Three copies of that question is how a van gets sent to two trips on one morning.
+- **Only `status = 'available'` is sellable or dispatchable fleet** (`VAN_STATUS_SELLABLE`, owner
+  decision 2026-10-14). An allow-list, not a deny-list: a status added later is unsellable until
+  someone decides otherwise. `on_trip` is included in "not sellable" — it is meant to be a
+  today-only derived status, so **whatever sets it must also clear it**.
+- **Lock order for anything that touches a day's capacity is absolute:** `fleet_date_slots(date)`
+  → `tour_date_slots(tour_id, date)` → the booking row. `createHold()`, the expiry sweep and
+  `assignVanAndDriver()` all take it in that order. Two paths taking the same pair in opposite
+  orders deadlock, and that failure never appears in a test and always appears on a holiday weekend.
+- **Take the lock BEFORE reading availability.** Under REPEATABLE READ a non-locking read taken
+  first returns the pre-lock snapshot even after the lock is granted — this project has shipped that
+  bug once already. The assignment tests fail if the lock merely moves after the read, which is the
+  only way to keep that honest.
+- **A civil date is a string; a `date()` column is a `Date`.** Convert with `civilDateFromDate()`
+  and compare with the raw-`sql` helpers (`on()`, `onDate()`, `betweenDates()`), never `eq()`
+  against a string. `takeSlotLocks()` asserts its date is civil and throws otherwise.
+- **Time-dependent queries take an explicit `now`.** A clock read inside a query cannot be tested at
+  a boundary without faking timers globally, which is how a timezone bug survives its own suite. The
+  procedure takes no time from the client.
+- **The test database keeps an EMPTY fleet.** `capacity.test.ts` counts the whole fleet, so
+  `db:seed` puts vans, drivers and demo bookings in `rg_travel` only (`seed(context)` gates on
+  `'app'`). Do not loosen that assertion to fit a seed.
+
 ## Security
 
 - HTTPS only; HSTS; secure, httpOnly, sameSite=lax cookies.

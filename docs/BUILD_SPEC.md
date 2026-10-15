@@ -958,19 +958,66 @@ still _proposed by developer — pending R&G confirmation_.
 
 → **Client demo / Phase 1 approval.**
 
-### Week 5 — Dispatch
+### Week 5 — Dispatch — ✅ WEEK 5 COMPLETE (2026-10-15)
 
-Nothing in this week is built.
+> **Preamble rewritten 2026-10-15.** It said "Nothing in this week is built." All of 5A–5E now is.
+> §13's markers were audited once before for exactly this staleness, so it is corrected as the week
+> closes rather than left to be discovered.
 
-- **5A** Vans CRUD + status + expiry fields.
-- **5B** Drivers CRUD + leaves + PIN reset.
-- **5C** Calendar month view with gold dots.
-- **5D** Assignment with exclusion rules + auto-suggest.
-- **5E** Dashboard alerts (verification, unassigned, repair, service, expiries).
+Plan: `docs/superpowers/plans/2026-10-14-week5-dispatch.md` (16 tasks). Evidence:
+`docs/superpowers/plans/2026-10-15-week5-walkthrough.md` (24/24 steps over real HTTP).
+
+- **5A** ✅ Vans CRUD + status + expiry fields. §9's fourth status `parked` added, and
+  `assessCapacity()`'s Gate 2 became an **allow-list** — only `available` is sellable fleet
+  (owner-decided 2026-10-14, Q1), so a status nobody has thought of yet is excluded by default.
+- **5B** ✅ Drivers CRUD + leaves + PIN reset. A reset **is** the admin unlock: it clears all five
+  lockout columns in the same transaction as the new hash (owner instruction 2026-10-14). The PIN is
+  server-generated, shown once, and appears in no log and no audit row. Leaves cannot overlap each
+  other or a day the driver is already assigned.
+- **5C** ✅ Calendar month view. §9's **gold dot** stays and stops being the only signal: the day
+  cell carries the count as a numeral and its accessible name is built from text
+  (`10 November, 3 trips, 2 need assignment`), because colour alone is a WCAG 1.4.1 failure. One tab
+  stop for the whole grid.
+- **5D** ✅ Assignment with exclusion rules + auto-suggest. One availability module is the single
+  source of truth for "which van and driver are free", read by the dropdowns, the suggest and the
+  mutation's re-check. **Double-assignment is prevented by the `fleet_date_slots` lock taken BEFORE
+  availability is read** — proven by four concurrency tests that fail when the lock is removed and
+  when it merely moves after the read.
+- **5E** ✅ Dashboard alerts. All five, every load, **zeroes included** — a hidden empty card is
+  indistinguishable from a broken query. The 48-hour window counts back from the tour date in
+  Asia/Manila (owner-decided 2026-10-14, Q7).
+
+**Deliberately not built, declared rather than discovered:** a driver's average rating and upcoming
+trips (§9 "Drivers" — the rating needs an owner decision, since no rating column exists and
+inventing one is fabricated social proof); §9's "today's departures with stop-by-stop progress",
+which needs the `trip_checkpoints` writes that arrive in 6C/6D and which the dashboard says so about
+on screen; and assignment notifications (§11), which §13 does not list for this week.
+
+**The browser is the gap.** Every walkthrough step went through HTTP and the database. 436 client
+tests cover the screens, including the accessibility ones, but jsdom does no layout — so 360px,
+tablet, the 44px tap targets and the gold dot's real visibility are checked by class string, not by
+looking at a screen.
 
 ### Week 6 — Drivers & verification
 
 Nothing in this week is built. There is no `client/src/pages/driver`.
+
+> **Three things Week 5 hands this week, which are not visible from 6A–6F alone.**
+>
+> 1. **`on_trip` must be CLEARED when a trip completes.** 6C's check-ins are the first code to set
+>    it, and Week 5 made `available` the only sellable status (Q1's allow-list) — so a van left
+>    `on_trip` stops being bookable on **every future date**, not just today. The requirement is in
+>    the comment beside `VAN_STATUSES` in `schema.ts`.
+> 2. **The driver portal must reflect a mid-trip re-assignment** (owner-decided 2026-10-14, Q3).
+>    Week 5 built the swap — owner/dispatcher only, reason required, audited old → new. A driver
+>    whose trip was taken off them must stop seeing it, and the one who received it must start.
+>    6A/6B owe the end-to-end version of Week 5's "can sign in immediately after a PIN reset" test
+>    too: there was no login endpoint to exercise, so it was proven against the lockout policy
+>    function and the credential instead.
+> 3. **A driver's average rating** (§9) is unbuilt and deliberately unfaked: no rating column
+>    exists, `reviews` scores a _tour_, and rendering a number would be the fabricated social proof
+>    `CLAUDE.md` forbids. It needs an owner decision — derive it from `reviews.guide` on assigned
+>    trips, or store it.
 
 - **6A** Driver portal login + lockout.
 - **6B** Today/Upcoming/History + trip detail + payment box.
