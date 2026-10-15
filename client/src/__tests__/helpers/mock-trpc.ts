@@ -52,6 +52,49 @@ type Handlers = Record<string, unknown | HandlerFn>;
  */
 const RATE_LIMITED = Symbol('mock-trpc rate limited');
 
+/**
+ * tRPC's own code → HTTP status mapping, for the codes this project uses.
+ *
+ * Kept here so a simulated refusal lands with the status the real server
+ * would send. The client's `fetchWithNormalizedErrors` branches on the HTTP
+ * status before tRPC ever parses the body, so a 500 standing in for a 409
+ * is not a cosmetic difference.
+ */
+const CODE_STATUS: Record<string, number> = {
+  BAD_REQUEST: 400,
+  UNAUTHORIZED: 401,
+  FORBIDDEN: 403,
+  NOT_FOUND: 404,
+  TIMEOUT: 408,
+  CONFLICT: 409,
+  PRECONDITION_FAILED: 412,
+  PAYLOAD_TOO_LARGE: 413,
+  UNPROCESSABLE_CONTENT: 422,
+  TOO_MANY_REQUESTS: 429,
+  CLIENT_CLOSED_REQUEST: 499,
+  INTERNAL_SERVER_ERROR: 500,
+};
+
+/**
+ * A refusal that carries its tRPC code, so the mock can emit the one the
+ * caller asked for.
+ *
+ * Before this existed, `mockTrpcError`'s `_code` argument was accepted and
+ * IGNORED — every simulated failure arrived as `INTERNAL_SERVER_ERROR` /
+ * 500 whatever the call site said. Any component branching on
+ * `error.data.code` was therefore untestable through this helper, and Task
+ * 5 had to stub `globalThis.fetch` by hand to test a `CONFLICT`. The
+ * argument now means what it says.
+ */
+class MockTrpcError extends Error {
+  readonly trpcCode: string;
+  constructor(message: string, trpcCode: string) {
+    super(message);
+    this.name = 'MockTrpcError';
+    this.trpcCode = trpcCode;
+  }
+}
+
 let handlers: Handlers = {};
 let originalFetch: typeof globalThis.fetch | undefined;
 
@@ -124,43 +167,70 @@ export function mockTrpc(next: Handlers) {
           return { result: { data } };
         } catch (err) {
           const message = err instanceof Error ? err.message : 'mock failure';
+          // A `MockTrpcError` names its own code; a plain `throw` in a
+          // handler still means "something broke", which is a 500.
+          const trpcCode = err instanceof MockTrpcError ? err.trpcCode : 'INTERNAL_SERVER_ERROR';
+          const httpStatus = CODE_STATUS[trpcCode] ?? 500;
           return {
             error: {
               message,
               code: -32600,
-              data: { code: 'INTERNAL_SERVER_ERROR', httpStatus: 500 },
+              data: { code: trpcCode, httpStatus },
             },
           };
         }
       }),
     );
+    /*
+     * The OUTER status, which `fetchWithNormalizedErrors` reads before tRPC
+     * parses anything.
+     *
+     * One procedure that refused gets that refusal's status; a mixed batch
+     * gets 207, which is what the real server sends and what this project
+     * already learned about the hard way — a Week 3 bug turned on
+     * `express-rate-limit` treating a 207 as a success.
+     */
+    const statuses = body
+      .map((item) =>
+        'error' in item && item.error ? ((item.error.data?.httpStatus as number) ?? 500) : 200,
+      )
+      .filter((status) => status !== 200);
+    const status =
+      statuses.length === 0 ? 200 : statuses.every((s2) => s2 === statuses[0]) ? statuses[0]! : 207;
+
     return new Response(JSON.stringify(body), {
-      status: 200,
+      status,
       headers: { 'content-type': 'application/json' },
     });
   }) as typeof globalThis.fetch;
 }
 
 /** Makes one named procedure reject, so error states can be exercised. */
-export function mockTrpcError(procedure: string, _code?: string, message?: string) {
+export function mockTrpcError(procedure: string, code?: string, message?: string) {
   /*
    * `message` was added in Week 4 Task 8: the portal sign-in shows the
    * SERVER's own sentence for a refused login (one generic message for a
    * wrong reference and a wrong email alike, per §7), so a test that asserts
    * the guest sees that sentence needs the mock to carry it. Omitted, it
-   * stays `'mock failure'` and every existing caller behaves exactly as
-   * before.
+   * stays `'mock failure'`.
    *
-   * `_code` is accepted and unused on purpose: callers name the tRPC code
-   * at the call site because it documents WHICH refusal is being simulated,
-   * and the client code under test reads the message rather than the code.
-   * Threading it into the thrown error would mean minting a real TRPCError
-   * here, which this mock deliberately does not do — it fakes the socket,
-   * not the server.
+   * `code` now DOES something (fixed 2026-10-15, owner request). It used to
+   * be accepted and ignored — every simulated failure arrived as
+   * `INTERNAL_SERVER_ERROR` / 500 however the call site named it, with a
+   * comment claiming that was deliberate because "the client code under
+   * test reads the message rather than the code". That stopped being true
+   * the moment a screen branched on `error.data.code`: Task 5's
+   * duplicate-plate test had to hand-stub `globalThis.fetch` to simulate a
+   * `CONFLICT`, which is a lot of machinery to work around a helper that
+   * was quietly lying about its own signature.
+   *
+   * It still fakes the socket rather than minting a real `TRPCError` — the
+   * difference is that the body it writes now carries the code and the
+   * matching HTTP status, which is what the client actually reads.
    */
   mockTrpc({
     [procedure]: () => {
-      throw new Error(message ?? 'mock failure');
+      throw new MockTrpcError(message ?? 'mock failure', code ?? 'INTERNAL_SERVER_ERROR');
     },
   });
 }

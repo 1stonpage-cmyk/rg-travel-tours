@@ -35,13 +35,15 @@ import {
   driverLeaveInputSchema,
   civilDateFromDate,
   type DriverInput,
+  DRIVER_RATING_MIN_RATINGS,
   type DriverLeaveRow,
+  type DriverRating,
   type DriverRow,
 } from '@rg/shared';
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { getDb } from '../../db/client';
 import { isDuplicateKeyError } from '../../db/duplicate-key';
-import { bookings, driverLeaves, drivers } from '../../db/schema';
+import { bookings, driverLeaves, drivers, reviews } from '../../db/schema';
 import { hashPassword } from '../../services/password';
 import { writeAudit } from '../../services/audit';
 import { adminProcedure, router } from '../../trpc';
@@ -67,7 +69,11 @@ function toDbDate(value: string | null): Date | null {
   return value === null ? null : new Date(`${value}T00:00:00Z`);
 }
 
-function toDriverRow(row: DriverSelect, leaves: DriverLeaveRow[] = []): DriverRow {
+function toDriverRow(
+  row: DriverSelect,
+  leaves: DriverLeaveRow[] = [],
+  rating: DriverRating | null = null,
+): DriverRow {
   return {
     id: row.id,
     name: row.name,
@@ -79,6 +85,7 @@ function toDriverRow(row: DriverSelect, leaves: DriverLeaveRow[] = []): DriverRo
     emergencyContact: row.emergencyContact,
     status: row.status,
     isActive: row.isActive,
+    rating,
     leaves,
   };
 }
@@ -210,7 +217,56 @@ export const adminDriversRouter = router({
       byDriver.set(row.driverId, list);
     }
 
-    return rows.map((row) => toDriverRow(row, byDriver.get(row.id) ?? []));
+    /*
+     * The derived guide rating (owner-decided 2026-10-15): averaged from
+     * `reviews.guide` on PUBLISHED, NON-SAMPLE reviews of bookings this
+     * driver actually drove.
+     *
+     * One grouped query for the whole roster, like the leaves above — not a
+     * per-driver query in a loop.
+     *
+     * `is_sample = 0` matters as much as `status = 'published'`: seeded
+     * reviews are flagged as samples and `CLAUDE.md` keeps them out of every
+     * rating, the same rule the public `realAggregate()` follows. A rating
+     * built from fixtures is a fabricated number wearing a decimal point.
+     *
+     * `guide IS NOT NULL` because the sub-score is optional — a guest who
+     * rated the trip but not the guide has said nothing about the driver.
+     */
+    const ratingRows = await getDb()
+      .select({
+        driverId: bookings.driverId,
+        total: sql<number>`SUM(${reviews.guide})`,
+        count: sql<number>`COUNT(${reviews.guide})`,
+      })
+      .from(reviews)
+      .innerJoin(bookings, eq(bookings.id, reviews.bookingId))
+      .where(
+        and(
+          eq(reviews.status, 'published'),
+          eq(reviews.isSample, false),
+          isNotNull(reviews.guide),
+          isNotNull(bookings.driverId),
+        ),
+      )
+      .groupBy(bookings.driverId);
+
+    const ratingByDriver = new Map<number, DriverRating>();
+    for (const row of ratingRows) {
+      const count = Number(row.count);
+      // BELOW the threshold is `null`, not a number with a caveat: a single
+      // five from a guest's good mood is not a rating, and anything on
+      // screen reads as a measurement.
+      if (row.driverId === null || count < DRIVER_RATING_MIN_RATINGS) continue;
+      ratingByDriver.set(row.driverId, {
+        average: Math.round((Number(row.total) / count) * 10) / 10,
+        count,
+      });
+    }
+
+    return rows.map((row) =>
+      toDriverRow(row, byDriver.get(row.id) ?? [], ratingByDriver.get(row.id) ?? null),
+    );
   }),
 
   create: adminProcedure('vansDrivers')

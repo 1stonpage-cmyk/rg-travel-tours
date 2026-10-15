@@ -103,6 +103,13 @@ export interface DriverRow {
   status: string;
   isActive: boolean;
   /**
+   * The derived guide rating, or `null` when the driver has fewer than
+   * {@link DRIVER_RATING_MIN_RATINGS} real ratings (owner-decided
+   * 2026-10-15). Never a fabricated or defaulted number — see
+   * {@link DriverRating}.
+   */
+  rating: DriverRating | null;
+  /**
    * This driver's leave rows, soonest first (controller fix, 2026-10-14).
    *
    * The plan shipped `addLeave` and `removeLeave` without any way to READ a
@@ -275,6 +282,43 @@ export interface CalendarDay {
  * refusal is `reason_required`. `.trim().min(3)` still means a
  * whitespace-only reason fails Zod before the service ever runs.
  */
+/**
+ * How many real guide ratings a driver needs before an average is shown at
+ * all (owner-decided 2026-10-15).
+ *
+ * Below this the screen says "New driver — no ratings yet" and shows NO
+ * number. Not a zero, not a dash, not an average of one review: a single
+ * five from a guest's good mood is not a rating, and a number on screen is
+ * read as a measurement whatever caveat sits beside it.
+ */
+export const DRIVER_RATING_MIN_RATINGS = 3;
+
+/**
+ * A driver's guide rating, DERIVED and never stored (owner-decided
+ * 2026-10-15).
+ *
+ * Averaged from `reviews.guide` on **published, non-sample** reviews of
+ * bookings that driver actually drove (`bookings.driver_id`). Three
+ * exclusions, each deliberate:
+ *
+ *  - **not stored** — a stored average drifts from the reviews it came from
+ *    the first time one is hidden, and then nobody knows which is true;
+ *  - **non-sample** — seeded reviews are flagged `is_sample`, and
+ *    `CLAUDE.md` keeps them out of any rating for the same reason the public
+ *    `realAggregate()` does: a sample is fabricated content;
+ *  - **`guide IS NOT NULL`** — a review that rated the trip but not the
+ *    guide has nothing to say about the driver.
+ *
+ * `null` means "fewer than {@link DRIVER_RATING_MIN_RATINGS} ratings", which
+ * the UI must render as words rather than as a number.
+ */
+export interface DriverRating {
+  /** Mean of `reviews.guide`, 1–5, rounded to one decimal place. */
+  average: number;
+  /** How many ratings it came from. Always >= DRIVER_RATING_MIN_RATINGS. */
+  count: number;
+}
+
 /**
  * BUILD_SPEC §9's dashboard alert thresholds, each written ONCE.
  *

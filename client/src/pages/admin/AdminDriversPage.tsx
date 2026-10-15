@@ -290,6 +290,30 @@ function DriverPersonalData({ driver }: { driver: DriverRow }) {
  * Text in every case, never colour alone. Amber for on-leave, neutral grey
  * for inactive, and no red anywhere.
  */
+/**
+ * §9's "average rating", DERIVED and shown only when it means something
+ * (owner-decided 2026-10-15).
+ *
+ * The server sends `rating: null` below `DRIVER_RATING_MIN_RATINGS`, and
+ * this renders WORDS for that case rather than a number. No zero, no dash,
+ * no "4.0 (1 review)": anything numeric on screen is read as a measurement,
+ * and one five from a guest's good mood is not one.
+ *
+ * The count travels with the average on purpose — "4.3 from 7 ratings" is a
+ * claim a dispatcher can weigh, and "4.3" alone is not.
+ */
+function RatingBadge({ driver }: { driver: DriverRow }) {
+  if (driver.rating === null) {
+    return <Badge className="bg-muted text-foreground border-0">New driver — no ratings yet</Badge>;
+  }
+  return (
+    <Badge className="bg-brand-blue-50 text-brand-blue-900 border-0">
+      {driver.rating.average.toFixed(1)}★ guide · from {driver.rating.count}{' '}
+      {driver.rating.count === 1 ? 'rating' : 'ratings'}
+    </Badge>
+  );
+}
+
 function AvailabilityBadge({ driver }: { driver: DriverRow }) {
   const availability = driverAvailability(driver, manilaCivilDate(new Date()));
 
@@ -670,6 +694,7 @@ export default function AdminDriversPage() {
                         <p className="text-muted-foreground font-mono text-sm">{driver.code}</p>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
+                        <RatingBadge driver={driver} />
                         <AvailabilityBadge driver={driver} />
                         <Badge
                           className={

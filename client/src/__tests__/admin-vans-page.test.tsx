@@ -39,7 +39,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 import AdminVansPage from '@/pages/admin/AdminVansPage';
 import { TrpcProviders } from '@/lib/trpc';
-import { mockTrpc, resetTrpcMock } from './helpers/mock-trpc';
+import { mockTrpc, mockTrpcError, resetTrpcMock } from './helpers/mock-trpc';
 
 afterEach(() => {
   resetTrpcMock();
@@ -233,38 +233,27 @@ describe('AdminVansPage', () => {
    * screen" — a duplicate plate must land on the plate field, not as a bare
    * toast disconnected from the control that caused it.
    *
-   * This cannot use `mockTrpcError`: that helper's own doc comment admits
-   * `_code` is "accepted and unused on purpose" — every thrown error comes
-   * back as `data: { code: 'INTERNAL_SERVER_ERROR', httpStatus: 500 }`
-   * regardless of what is passed, because it "fakes the socket, not the
-   * server". `review-form.test.tsx`'s identical-looking
-   * `mockTrpcError('portal.submitReview', 'CONFLICT', ...)` call gets away
-   * with this because `ReviewForm` never reads `error.data.code` — it shows
-   * `error.message` unconditionally. This page DOES branch on the code (to
-   * decide "beside the plate field" vs. "generic banner"), so proving that
-   * branch needs a response shaped the way the real server really sends a
-   * `TRPCError({ code: 'CONFLICT' })`: tRPC's own HTTP mapping is 409, not
-   * 500. Built by hand here, scoped to this one test, rather than changing
-   * the shared `mock-trpc.ts` helper for every other suite that relies on
-   * its current behaviour.
+   * This page BRANCHES on `error.data.code` — a `CONFLICT` lands beside the
+   * plate field, anything else becomes a generic banner — so the simulated
+   * refusal has to carry the real code and the real status (tRPC maps
+   * `CONFLICT` to 409, not 500).
+   *
+   * It used to need a hand-built `globalThis.fetch` stub, because
+   * `mockTrpcError` accepted a code argument and ignored it: every
+   * simulated failure arrived as `INTERNAL_SERVER_ERROR` / 500 however the
+   * call site named it. That was logged as a bug at the end of Week 5 and
+   * fixed on 2026-10-15, so this test now uses the shared helper like
+   * everything else.
    */
   it('surfaces a duplicate-plate CONFLICT on the plate field, not a bare toast', async () => {
     renderPage();
     await screen.findAllByText(VAN.plate);
 
-    globalThis.fetch = (async () =>
-      new Response(
-        JSON.stringify([
-          {
-            error: {
-              message: 'A van with that plate number already exists.',
-              code: -32009,
-              data: { code: 'CONFLICT', httpStatus: 409 },
-            },
-          },
-        ]),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      )) as typeof fetch;
+    // The shared helper, now that it honours its code argument (fixed
+    // 2026-10-15). This used to hand-stub `globalThis.fetch` because
+    // `mockTrpcError` ignored `_code` and emitted 500 for everything —
+    // which meant this test could not tell a CONFLICT from a crash.
+    mockTrpcError('admin.vans.create', 'CONFLICT', 'A van with that plate number already exists.');
 
     await user.clear(screen.getByLabelText(/^plate/i));
     await user.type(screen.getByLabelText(/^plate/i), 'XYZ999');

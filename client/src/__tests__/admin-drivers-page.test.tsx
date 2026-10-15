@@ -56,6 +56,7 @@ const DRIVER = {
   emergencyContact: 'Juan Santos 09179876543',
   status: 'available',
   isActive: true,
+  rating: null as { average: number; count: number } | null,
   // The real shape `admin.drivers.list` now sends (fix round 1,
   // 2026-10-14) — a driver with no leaves gets `[]`, never `undefined`.
   leaves: [] as Array<{ id: number; startDate: string; endDate: string; reason: string | null }>,
@@ -64,6 +65,8 @@ const DRIVER = {
 interface RenderOverrides {
   /** Soft-delete flag — an inactive driver must look different. */
   isActive?: boolean;
+  /** The derived guide rating, or null below the threshold. */
+  rating?: { average: number; count: number } | null;
   onResetPin?: (input: unknown) => void;
   onRemoveLeave?: (input: unknown) => void;
   leaves?: Array<{ id: number; startDate: string; endDate: string; reason: string | null }>;
@@ -86,6 +89,7 @@ function renderPage(overrides: RenderOverrides = {}) {
     ...DRIVER,
     ...(overrides.leaves ? { leaves: overrides.leaves } : {}),
     ...(overrides.isActive === undefined ? {} : { isActive: overrides.isActive }),
+    ...(overrides.rating === undefined ? {} : { rating: overrides.rating }),
   };
   mockTrpc({
     'admin.drivers.list': [driver],
@@ -117,6 +121,32 @@ function renderPage(overrides: RenderOverrides = {}) {
 }
 
 describe('AdminDriversPage', () => {
+  /*
+   * §9's "average rating", derived and shown only above the threshold
+   * (owner-decided 2026-10-15).
+   */
+
+  it('says a new driver has no ratings yet, in words, with no number', async () => {
+    renderPage({ rating: null });
+    expect(await screen.findByText(/new driver — no ratings yet/i)).toBeTruthy();
+    // And NO numeral anywhere near it: a zero or a dash would be read as a
+    // measurement of a driver nobody has rated.
+    expect(screen.queryByText(/★/)).toBeNull();
+  });
+
+  it('shows the average WITH its count once there are enough ratings', async () => {
+    renderPage({ rating: { average: 4.3, count: 7 } });
+    const badge = await screen.findByText(/4\.3★ guide · from 7 ratings/i);
+    expect(badge).toBeTruthy();
+    expect(screen.queryByText(/new driver/i)).toBeNull();
+  });
+
+  it('keeps one decimal place on a whole average', async () => {
+    // "4" reads as rounded-from-anything; "4.0" reads as measured.
+    renderPage({ rating: { average: 4, count: 3 } });
+    expect(await screen.findByText(/4\.0★ guide · from 3 ratings/i)).toBeTruthy();
+  });
+
   /**
    * `isActive` was fetched from the server and never rendered, so a
    * soft-deleted driver looked identical to a working one — and soft-delete

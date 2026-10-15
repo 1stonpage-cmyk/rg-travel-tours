@@ -44,6 +44,7 @@ import {
   destinations,
   driverLeaves,
   drivers,
+  reviews,
   tours,
   users,
 } from '../db/schema';
@@ -58,6 +59,7 @@ const TOUR_DATE = '2026-12-01';
 
 /** Every id this file committed, so teardown removes exactly those rows. */
 const created = {
+  reviewIds: [] as number[],
   userIds: [] as number[],
   driverIds: [] as number[],
   bookingIds: [] as number[],
@@ -219,6 +221,14 @@ afterAll(async () => {
    * is cleanup in `rg_travel_test`, not the production hard-delete the guard
    * exists to catch.
    */
+  /*
+   * Reviews BEFORE bookings: `reviews.booking_id` is a foreign key, so the
+   * booking delete below fails while a review still points at it. Found by
+   * running the suite, not by reading the schema.
+   */
+  if (created.reviewIds.length > 0) {
+    await db.delete(reviews).where(inArray(reviews.id, created.reviewIds));
+  }
   for (const id of created.bookingIds) {
     await pool.query('DELETE FROM bookings WHERE id = ?', [id]);
   }
@@ -423,6 +433,143 @@ describeWithDb('drivers', () => {
     const freshDriverId = await makeDriver();
     const listed = await api.admin.drivers.list();
     expect(listed.find((d) => d.id === freshDriverId)!.leaves).toEqual([]);
+  });
+
+  /*
+   * ---------------------------------------------------------------------
+   * The derived guide rating (owner-decided 2026-10-15)
+   * ---------------------------------------------------------------------
+   *
+   * DERIVED, never stored. Averaged from `reviews.guide` on published,
+   * non-sample reviews of bookings this driver actually drove, and shown
+   * only at or above `DRIVER_RATING_MIN_RATINGS`.
+   *
+   * The 2 → 3 boundary is the owner's named test, and it is the one that
+   * matters: below the threshold the answer is `null`, not a number with a
+   * caveat beside it.
+   */
+
+  /** A published, non-sample review of `bookingId` with a guide sub-score. */
+  async function reviewFor(
+    bookingId: number,
+    guide: number,
+    opts: { status?: 'published' | 'pending' | 'hidden'; isSample?: boolean } = {},
+  ) {
+    const [row] = await getDb()
+      .insert(reviews)
+      .values({
+        tourId,
+        bookingId,
+        name: 'Rating Fixture Guest',
+        rating: 5,
+        guide,
+        body: 'Fixture review for the derived driver rating.',
+        status: opts.status ?? 'published',
+        isSample: opts.isSample ?? false,
+      });
+    created.reviewIds.push(row.insertId);
+    return row.insertId;
+  }
+
+  /** A booking this driver drove, so a review of it counts toward them. */
+  async function drivenBooking(driverId: number) {
+    const id = await makeBooking(tourId, TOUR_DATE);
+    await getDb()
+      .update(bookings)
+      .set({ driverId, status: 'completed' })
+      .where(eq(bookings.id, id));
+    return id;
+  }
+
+  async function ratingOf(driverId: number) {
+    const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
+    const listed = await api.admin.drivers.list();
+    const row = listed.find((d) => d.id === driverId);
+    if (!row) throw new Error('driver not listed');
+    return row.rating;
+  }
+
+  it('shows NO rating with two ratings, and a rating with three', async () => {
+    const driverId = await makeDriver();
+    await reviewFor(await drivenBooking(driverId), 5);
+    await reviewFor(await drivenBooking(driverId), 4);
+
+    // TWO: below the threshold, so null — the owner's boundary, lower side.
+    expect(await ratingOf(driverId)).toBeNull();
+
+    await reviewFor(await drivenBooking(driverId), 3);
+
+    // THREE: at the threshold, so an average appears. (5+4+3)/3 = 4.
+    expect(await ratingOf(driverId)).toEqual({ average: 4, count: 3 });
+  });
+
+  it('rounds the average to one decimal place', async () => {
+    const driverId = await makeDriver();
+    for (const guide of [5, 4, 4]) {
+      await reviewFor(await drivenBooking(driverId), guide);
+    }
+    // 13 / 3 = 4.333… → 4.3, not 4.33 and not 4.
+    expect(await ratingOf(driverId)).toEqual({ average: 4.3, count: 3 });
+  });
+
+  it('EXCLUDES sample reviews, however many there are', async () => {
+    // Seeded reviews are flagged `is_sample`, and CLAUDE.md keeps them out
+    // of every rating — a rating built from fixtures is a fabricated number
+    // wearing a decimal point.
+    const driverId = await makeDriver();
+    for (const guide of [5, 5, 5, 5]) {
+      await reviewFor(await drivenBooking(driverId), guide, { isSample: true });
+    }
+    expect(await ratingOf(driverId)).toBeNull();
+  });
+
+  it('EXCLUDES unpublished reviews', async () => {
+    const driverId = await makeDriver();
+    await reviewFor(await drivenBooking(driverId), 5, { status: 'pending' });
+    await reviewFor(await drivenBooking(driverId), 5, { status: 'hidden' });
+    await reviewFor(await drivenBooking(driverId), 5);
+    // Only one of the three counts, so still below the threshold.
+    expect(await ratingOf(driverId)).toBeNull();
+  });
+
+  it('counts only reviews of trips THIS driver drove', async () => {
+    const mine = await makeDriver();
+    const theirs = await makeDriver();
+    for (const guide of [5, 5, 5]) {
+      await reviewFor(await drivenBooking(theirs), guide);
+    }
+    // Three ratings exist, none of them on a trip `mine` drove.
+    expect(await ratingOf(mine)).toBeNull();
+    expect(await ratingOf(theirs)).toEqual({ average: 5, count: 3 });
+  });
+
+  it('ignores a review that rated the trip but not the guide', async () => {
+    const driverId = await makeDriver();
+    const bookingId = await drivenBooking(driverId);
+    const [row] = await getDb().insert(reviews).values({
+      tourId,
+      bookingId,
+      name: 'No Guide Score',
+      rating: 5,
+      guide: null,
+      body: 'Rated the trip, said nothing about the guide.',
+      status: 'published',
+      isSample: false,
+    });
+    created.reviewIds.push(row.insertId);
+    for (const guide of [4, 4]) {
+      await reviewFor(await drivenBooking(driverId), guide);
+    }
+    // Three published reviews, but only two said anything about the guide.
+    expect(await ratingOf(driverId)).toBeNull();
+  });
+
+  it('never stores the rating on the driver row', async () => {
+    // Derived, so there is nothing to drift. If a column ever appears, this
+    // fails and the decision gets revisited deliberately.
+    const schema = await import('../db/schema');
+    const columns = Object.keys(schema.drivers);
+    expect(columns.filter((c) => /rating/i.test(c))).toEqual([]);
   });
 
   it('refuses a leave that overlaps one the driver already has', async () => {
