@@ -158,10 +158,21 @@ async function makeBooking(opts: BookingOpts) {
   return { id: booking.insertId, ref };
 }
 
-/** A `payments` row in whatever state the test needs it in. */
+/**
+ * A `payments` row in whatever state the test needs it in.
+ *
+ * `type` is a PARAMETER and not a hard-coded `'payment'` (Task 5, acting on
+ * Task 4's review). Hard-coded, it made `eq(payments.type, 'payment')` in
+ * the pending-payment probe a clause no test could fail: every fixture in
+ * the file was a `payment`, so deleting the clause changed nothing here —
+ * while that clause is the only thing keeping a future PENDING REFUND row
+ * out of "do not collect", which would stop a driver ever taking the
+ * balance from that guest.
+ */
 async function makePayment(opts: {
   bookingId: number;
   status: 'pending' | 'paid' | 'rejected' | 'superseded' | 'failed';
+  type?: 'payment' | 'refund';
   method?: 'cash' | 'bank_transfer' | 'gcash';
   amountCentavos?: number;
   collectedByDriverId?: number;
@@ -170,7 +181,7 @@ async function makePayment(opts: {
     .insert(payments)
     .values({
       bookingId: opts.bookingId,
-      type: 'payment',
+      type: opts.type ?? 'payment',
       provider: 'manual',
       method: opts.method ?? 'bank_transfer',
       amountCentavos: opts.amountCentavos ?? TOTAL,
@@ -393,6 +404,32 @@ describeWithDb('driver.trip', () => {
     });
   });
 
+  /**
+   * **A pending REFUND is not a pending payment** — and this test is why
+   * `eq(payments.type, 'payment')` is in the probe at all (Task 5, acting
+   * on Task 4's review finding that no test could fail if it were deleted).
+   *
+   * A refund in flight is money going the other way: the guest cancelled a
+   * leg, finance has keyed the refund and it has not settled. It says
+   * nothing about whether the balance on this trip has been handed over, so
+   * it must not hold the box in "do not collect" — which, since nothing
+   * ever clears a settled refund row back out of existence, would mean no
+   * driver could take that balance from that guest again.
+   *
+   * MEASURED: deleting the `type` clause from the probe in
+   * `routers/public/driver.ts` turns this test red (`unverified_do_not_collect`
+   * instead of the figure) and leaves every other test in the file green.
+   */
+  it('is not held by a PENDING REFUND — the balance is still collectable, to the centavo', async () => {
+    const booking = await makeBooking({ driverId: driverA, paidCentavos: DEPOSIT });
+    await makePayment({ bookingId: booking.id, type: 'refund', status: 'pending' });
+    const detail = await driverCaller(driverA).driver.trip({ bookingId: booking.id });
+    expect(detail.payment).toEqual<PaymentBoxState>({
+      kind: 'collect_cash',
+      amountCentavos: TOTAL - DEPOSIT,
+    });
+  });
+
   it('is not held by a rejected row when a pending one also exists', async () => {
     // Both at once is the real receipt flow: the first upload was rejected,
     // the guest sent another. The live row is what counts.
@@ -493,6 +530,18 @@ describeWithDb('driver.trip', () => {
     // The guest's own free-text requests are an admin field, not one §8
     // lists on this screen.
     expect(serialised).not.toContain('requests');
+    /*
+     * The three fields CLAUDE.md singles out as never belonging in a
+     * response (Task 5, acting on Task 4's review). `receipt_path` points
+     * at a file under /uploads that is served only through an authenticated
+     * route — a path on the wire is a path somebody will try unauthenticated
+     * — and `txn_ref` / `provider_ref` are the gateway's own handles on a
+     * payment, which a driver's screen has no use for and which identify a
+     * transaction to anyone who sees them.
+     */
+    expect(serialised).not.toContain('receiptPath');
+    expect(serialised).not.toContain('txnRef');
+    expect(serialised).not.toContain('providerRef');
   });
 
   /* ---------------------------------------------------------------- *

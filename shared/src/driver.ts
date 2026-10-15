@@ -296,3 +296,82 @@ export interface TripDetail {
   payment: PaymentBoxState;
   progress: TripProgress;
 }
+
+/* ------------------------------------------------------------------ *
+ * Check-ins: start, stop, complete (Week 6 plan, Task 5 — BUILD_SPEC §8
+ * "Itinerary check-ins")
+ * ------------------------------------------------------------------ */
+
+/**
+ * Every way a check-in can be refused, and nothing else.
+ *
+ * In `shared/` for the same reason `DriverLoginRefusal` is (pre-flight
+ * ruling, 2026-10-15): Task 10 builds an exhaustive
+ * `Record<CheckInRefusal, string>` of the copy a driver reads in a van, so
+ * the day a seventh refusal is added the build fails on the screen that has
+ * no words for it rather than falling through to generic copy. The client
+ * cannot import from `server/`, so the union has to live here for that to
+ * work.
+ *
+ * Why each is separate — the driver's next action differs for every one:
+ *
+ *  - `not_your_trip` — the booking is not theirs, or does not exist. ONE
+ *    answer for both, deliberately: `driver.trip` already refuses the two
+ *    indistinguishably so a numeric id cannot be walked towards a guest's
+ *    phone number (RA 10173), and a mutation that distinguished them would
+ *    hand back the oracle the query withholds.
+ *  - `trip_not_startable` — the booking is not in a state that has a trip
+ *    to start. A `confirmed` booking has no van and no driver, so nobody
+ *    can start it; dispatch has to assign one first.
+ *  - `already_checked_in` — that exact event is already recorded. The
+ *    double tap on a bumpy road, and the answer is "nothing to do", not an
+ *    error.
+ *  - `unknown_stop` — the stop is not on this trip's tour.
+ *  - `trip_not_started` — a stop was tapped before "Start trip", or after
+ *    the trip was completed. Tap Start first.
+ *  - `nothing_to_undo` — Task 6's undo, with no most-recent check-in to
+ *    retract.
+ */
+export type CheckInRefusal =
+  | 'not_your_trip'
+  | 'trip_not_startable'
+  | 'already_checked_in'
+  | 'unknown_stop'
+  | 'trip_not_started'
+  | 'nothing_to_undo';
+
+/**
+ * What a check-in mutation answers: the trip's new progress, or a reason.
+ *
+ * A refusal is a VERDICT and not a thrown error, the same contract
+ * `assessCapacity` and `assignVanAndDriver` carry — the six reasons above
+ * are all ordinary outcomes of a driver tapping a button in a van with one
+ * bar of signal, and a `TRPCError` for "you already tapped that" would
+ * reach the screen as a failure instead of as a shrug.
+ *
+ * `progress` on success is `tripProgress()`'s own answer, read inside the
+ * same transaction that wrote the checkpoint — so the screen redraws from
+ * the committed truth without a second round trip. That is not a nicety at
+ * a pier with no signal: a mutation whose result the client has to re-fetch
+ * is two chances to fail instead of one.
+ */
+export type CheckInResult =
+  { ok: true; progress: TripProgress } | { ok: false; reason: CheckInRefusal };
+
+/**
+ * Which stop on which booking — and NOTHING else, `.strict()`.
+ *
+ * **There is deliberately no timestamp field.** `trip_checkpoints.checked_at`
+ * is server time (schema: "never the driver's device clock"), so there is no
+ * input through which a handset whose clock is three hours out — or a driver
+ * who would rather the record said 06:00 — can say when it happened. There
+ * is no driver field either: the driver comes from the session and only ever
+ * narrows the booking id.
+ */
+export const driverStopCheckInSchema = z
+  .object({
+    bookingId: z.number().int().positive(),
+    stopId: z.number().int().positive(),
+  })
+  .strict();
+export type DriverStopCheckInInput = z.infer<typeof driverStopCheckInSchema>;

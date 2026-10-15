@@ -45,15 +45,18 @@
 import { and, asc, eq } from 'drizzle-orm';
 import { TRPCError } from '@trpc/server';
 import {
+  driverStopCheckInSchema,
   driverTripBucket,
   driverTripInputSchema,
   manilaCivilDate,
+  type CheckInResult,
   type DriverTripRow,
   type PaymentBoxState,
   type TripDetail,
 } from '@rg/shared';
 import { getDb } from '../../db/client';
 import { bookingNotes, bookings, payments, tours, vans } from '../../db/schema';
+import { checkInStop, completeTrip, startTrip } from '../../services/trips/checkins';
 import { tripProgress } from '../../services/trips/progress';
 import { driverProcedure, router } from '../../trpc';
 
@@ -328,4 +331,63 @@ export const driverTripsRouter = router({
       async ({ ctx, input }): Promise<TripDetail> =>
         await driverTripDetail(ctx.driver.driverId, input.bookingId),
     ),
+
+  /* ---------------------------------------------------------------- *
+   * §8's check-ins (Week 6 plan, Task 5)
+   *
+   * Three mutations, one transaction each, and the SAME two rules on all
+   * three: the driver comes from `ctx.driver.driverId` and the clock from
+   * this server. The inputs are `.strict()` and carry neither a driver nor
+   * a timestamp — `trip_checkpoints.checked_at` is server time, so there is
+   * no field through which a handset three hours out of sync, or a driver
+   * who would rather the record said 06:00, can say when a stop happened.
+   *
+   * `new Date()` is read HERE, once, at the request boundary — the same
+   * place `driver.trips` and `driver.login` read it — and passed down as an
+   * argument (CLAUDE.md: time-dependent code takes an explicit `now`).
+   *
+   * A refusal comes back as `{ ok: false, reason }` rather than a thrown
+   * error, the contract `assignVanAndDriver` carries: "you already tapped
+   * that" is an ordinary outcome of a van with one bar of signal, and a
+   * `TRPCError` would reach the screen as a failure instead of as a shrug.
+   * ---------------------------------------------------------------- */
+
+  /** §8 item 1 — Start trip: booking `in_progress`, van `on_trip`. */
+  startTrip: driverProcedure.input(driverTripInputSchema).mutation(
+    async ({ ctx, input }): Promise<CheckInResult> =>
+      await getDb().transaction(
+        async (tx) =>
+          await startTrip(tx, {
+            bookingId: input.bookingId,
+            driverId: ctx.driver.driverId,
+            now: new Date(),
+          }),
+      ),
+  ),
+
+  /** §8 item 2 — one stop, on arrival. The last one completes the trip. */
+  checkIn: driverProcedure.input(driverStopCheckInSchema).mutation(
+    async ({ ctx, input }): Promise<CheckInResult> =>
+      await getDb().transaction(
+        async (tx) =>
+          await checkInStop(tx, {
+            bookingId: input.bookingId,
+            stopId: input.stopId,
+            driverId: ctx.driver.driverId,
+            now: new Date(),
+          }),
+      ),
+  ),
+
+  /** §8 item 3 — Complete trip: booking `completed`, van freed. */
+  completeTrip: driverProcedure.input(driverTripInputSchema).mutation(
+    async ({ ctx, input }): Promise<CheckInResult> =>
+      await getDb().transaction(
+        async (tx) =>
+          await completeTrip(tx, {
+            bookingId: input.bookingId,
+            driverId: ctx.driver.driverId,
+          }),
+      ),
+  ),
 });
