@@ -206,20 +206,20 @@ export function createProcedureRateLimit(
  * file order. Every other limiter in this codebase is likewise built inside
  * `createApp`.
  *
- * **Not mounted yet, deliberately.** There is no driver login route — that is
- * Week 6 — and `'driver.login'` below is this task's *proposal* for its name,
- * not an observed fact. Mounting a procedure-scoped limiter against a guessed
- * procedure name would fail OPEN the moment the real name differs, while
- * looking mounted. `driver-lockout.test.ts` carries a guard that fails the
- * build if a driver-login procedure is added to the router without this
- * limiter being mounted in `app.ts`, so the choice is "mount it with the
- * route" rather than "hope someone remembers". Until then the generous
- * unscoped `/trpc` backstop in `app.ts` still applies, so the failure mode is
- * limited-generously, never unlimited.
+ * **Mounted, in `app.ts` (Week 6, `df3bb41`).** `createDriverLoginLimiter()` is
+ * built and mounted there, above `cookieParser` and the tRPC mount, so a
+ * limited request never reaches a procedure. `'driver.login'` below is no
+ * longer a proposal — `_app.ts` mounts `driverAuthRouter` under the `driver`
+ * namespace, so the login mutation's tRPC path is observed to be exactly
+ * `driver.login`, matching this list. `driver-lockout.test.ts` carries a
+ * guard that fails the build if a driver-login procedure is ever added to the
+ * router without this limiter being mounted in `app.ts`, so the choice was
+ * "mount it with the route" rather than "hope someone remembers" — and that
+ * guard, plus `app.ts:192`, is what keeps this comment honest going forward.
  */
 export const DRIVER_LOGIN_IP_WINDOW_MS = 15 * 60_000;
 export const DRIVER_LOGIN_IP_MAX = 10;
-/** The procedure name this limiter is scoped to. Confirm it in Week 6. */
+/** The procedure name this limiter is scoped to — confirmed by `_app.ts`'s mount. */
 export const DRIVER_LOGIN_PROCEDURES = ['driver.login'] as const;
 
 export function createDriverLoginLimiter(): RequestHandler {

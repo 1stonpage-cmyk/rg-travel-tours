@@ -31,12 +31,13 @@
  * name anywhere in this file; `'never puts a PIN in an audit row'` asserts
  * the same of `audit_log`.
  */
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { DRIVER_SESSION_HOURS } from '@rg/shared';
 import { appRouter } from '../routers/_app';
 import { getDb, getPool } from '../db/client';
 import { auditLog, drivers, sessions, users } from '../db/schema';
+import * as driverAuthService from '../services/driver-auth';
 import { attemptDriverLogin } from '../services/driver-auth';
 import {
   LOCKOUT_MINUTES,
@@ -45,8 +46,9 @@ import {
 } from '../services/driver-lockout';
 import { hashPassword } from '../services/password';
 import { SESSION_TTL_MS_BY_SUBJECT, createSession, readSession } from '../services/sessions';
+import { SESSION_COOKIE } from '../middleware/session-cookie';
 import { driverProcedure, router } from '../trpc';
-import { customerContext, staffContext, testContext } from './helpers/ctx';
+import { captureResponse, customerContext, staffContext, testContext } from './helpers/ctx';
 import { describeWithDb } from './helpers/db';
 
 /** Every decision in this file is made against this instant, never the clock. */
@@ -299,7 +301,7 @@ describeWithDb('attemptDriverLogin', () => {
       .update(drivers)
       .set({
         failedAttempts: MAX_FAILED_ATTEMPTS,
-        lockedUntil: new Date(NOW.getTime() + 9e5),
+        lockedUntil: new Date(NOW.getTime() + LOCKOUT_MINUTES * 60_000),
         lockoutCount: MAX_LOCKOUTS_PER_WINDOW,
         requiresAdminUnlock: true,
       })
@@ -318,10 +320,16 @@ describeWithDb('attemptDriverLogin', () => {
     // Without FOR UPDATE both read 0, both write 1, and the fifth and sixth
     // failures count as one — so the lockout never fires.
     const { code, driverId } = await makeDriverWithPin();
-    await Promise.allSettled([
+    const settled = await Promise.allSettled([
       attemptDriverLogin({ code, pin: '000000', now: NOW }),
       attemptDriverLogin({ code, pin: '111111', now: NOW }),
     ]);
+    // Both calls must have actually resolved to an answer — a lock-wait
+    // timeout on either one would otherwise look identical to a missing
+    // lock: the counter would read something other than 2 either way, and
+    // the failure would point at the counter instead of at the wait.
+    expect(settled[0]!.status, 'the first concurrent attempt did not settle').toBe('fulfilled');
+    expect(settled[1]!.status, 'the second concurrent attempt did not settle').toBe('fulfilled');
     expect((await driverRow(driverId)).failedAttempts).toBe(2);
   }, 60_000);
 
@@ -369,6 +377,83 @@ describeWithDb('attemptDriverLogin', () => {
     expect(json).not.toContain(attempted);
     expect(json).not.toContain(pin);
   }, 60_000);
+});
+
+/* ------------------------------------------------------------------ *
+ * `driver.login` / `driver.logout` — the resolvers, not the service
+ * (follow-up to Task 1's review, finding 1). `attemptDriverLogin` above is
+ * proven on its own; what is missing is proof that the resolver DOES
+ * something sane with the answer — mirrors `admin-auth.test.ts`'s
+ * `staffAuth.login` / `staffAuth.logout` tests, same helpers.
+ * ------------------------------------------------------------------ */
+
+describeWithDb('driver.login / driver.logout (resolvers)', () => {
+  it('sets the session cookie on success, expiring at the exact instant the service minted', async () => {
+    const { code, pin, driverId } = await makeDriverWithPin();
+    const { res, set } = captureResponse();
+    const api = appRouter.createCaller({ req: { cookies: {} }, res, session: null } as never);
+
+    /*
+     * A spy, not a mock — `attemptDriverLogin` runs for real, and this just
+     * observes its return value so the comparison is against the actual
+     * in-memory `expiresAt` the resolver had in hand, not a value re-read
+     * from `sessions.expires_at`. That column is `datetime` with no
+     * fractional seconds, so MySQL rounds a stored value to the nearest
+     * whole second on write — fine for the TTL itself, but it would make a
+     * same-MILLISECOND assertion pass or fail on rounding noise rather than
+     * on what the resolver actually did with the value.
+     */
+    const spy = vi.spyOn(driverAuthService, 'attemptDriverLogin');
+
+    await expect(api.driver.login({ code, pin })).resolves.toMatchObject({
+      driver: { id: driverId, code },
+    });
+
+    expect(set).toHaveLength(1);
+    expect(set[0]!.name).toBe(SESSION_COOKIE);
+    expect(set[0]!.options.httpOnly).toBe(true);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    const serviceResult = await spy.mock.results[0]!.value;
+    expect(serviceResult.ok).toBe(true);
+
+    // THE regression this guards: the cookie's expiry must be the EXACT
+    // `expiresAt` the service minted, not a second instant separately
+    // computed by the resolver (e.g. `new Date(Date.now() + 12h)`) —
+    // same millisecond, not merely "close".
+    const cookieExpires = set[0]!.options.expires as Date;
+    expect(cookieExpires.getTime()).toBe(
+      (serviceResult as { expiresAt: Date }).expiresAt.getTime(),
+    );
+
+    spy.mockRestore();
+  }, 30_000);
+
+  it('sets no cookie when the login is refused', async () => {
+    const { code } = await makeDriverWithPin();
+    const { res, set } = captureResponse();
+    const api = appRouter.createCaller({ req: { cookies: {} }, res, session: null } as never);
+
+    await expect(api.driver.login({ code, pin: '000000' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+
+    expect(set, 'a refused driver login handed out a cookie').toHaveLength(0);
+  }, 30_000);
+
+  it('logout revokes the session ROW, so a later readSession on that token is null', async () => {
+    const { driverId } = await makeDriverWithPin();
+    const { token } = await createSession('driver', driverId, NOW);
+    const { res } = captureResponse();
+    const api = appRouter.createCaller({
+      req: { cookies: { [SESSION_COOKIE]: token } },
+      res,
+      session: { subjectType: 'driver', subjectId: driverId },
+    } as never);
+
+    await expect(api.driver.logout()).resolves.toEqual({ ok: true });
+    expect(await readSession(token, NOW)).toBeNull();
+  }, 30_000);
 });
 
 /* ------------------------------------------------------------------ *

@@ -18,6 +18,19 @@
  *   6. `writeAudit` for a lockout or an escalation, same transaction
  *   7. on `'ok'`, mint a session; otherwise map the outcome to a refusal
  *
+ * ## The unknown-code dummy hash runs AFTER the commit
+ *
+ * `FOR UPDATE` against `drivers.code` (a UNIQUE index) with no matching row
+ * takes a gap lock for the duration of the statement that found nothing to
+ * lock — and if the dummy scrypt hash ran inside that transaction, the gap
+ * lock would sit for the ~230ms the hash takes, blocking a concurrent driver
+ * insert for a window that buys nothing: there is no row to serialise
+ * against. So the transaction returns an `'unknown_code'` sentinel and
+ * commits (releasing the gap lock) BEFORE `dummyVerify` runs; the sentinel is
+ * mapped to the same `wrong_credentials` refusal afterward. The timing
+ * property this exists for is unchanged — the hash is still paid in full,
+ * before the caller gets an answer, same as the known-code paths.
+ *
  * ## `FOR UPDATE` is not optional (step 1)
  *
  * Two requests with the same wrong PIN read `failed_attempts = 4`, both
@@ -112,6 +125,7 @@ function stateFrom(row: {
  */
 type Verdict =
   | { kind: 'refused'; reason: DriverLoginRefusal }
+  | { kind: 'unknown_code' }
   | { kind: 'ok'; driver: { id: number; name: string; code: string } };
 
 /**
@@ -154,13 +168,14 @@ export async function attemptDriverLogin(input: {
 
     if (!row) {
       /*
-       * No row to lock, no counter to move, and nothing to persist — but
-       * the same work has to happen or the timing answers the question the
-       * message refuses to. `dummyVerify` runs the identical scrypt cost
-       * against a throwaway hash (`services/password.ts`).
+       * No row to lock, no counter to move, and nothing to persist. The
+       * dummy scrypt hash still has to happen or the timing answers the
+       * question the message refuses to — but it does NOT happen in here:
+       * see the module note. Returning this sentinel lets the transaction
+       * commit (releasing the `FOR UPDATE` gap lock on `drivers.code`)
+       * before `dummyVerify` pays its ~230ms, after the `tx` call below.
        */
-      await dummyVerify(input.pin);
-      return { kind: 'refused', reason: 'wrong_credentials' };
+      return { kind: 'unknown_code' };
     }
 
     // 2. A soft-deleted driver is refused before the policy is consulted.
@@ -230,6 +245,13 @@ export async function attemptDriverLogin(input: {
     }
   });
 
+  if (verdict.kind === 'unknown_code') {
+    // Paid AFTER the commit, outside the transaction and its gap lock —
+    // see the module note. The cost is still paid in full before the
+    // caller gets an answer, so the timing property is unchanged.
+    await dummyVerify(input.pin);
+    return refuse('wrong_credentials');
+  }
   if (verdict.kind === 'refused') return refuse(verdict.reason);
 
   // 7. After the commit, never inside it. A NEW session every time, like
