@@ -13,7 +13,7 @@
  * server side). What is asserted here is that the UI does not offer an
  * action it knows will be refused.
  */
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -375,7 +375,25 @@ describe('AdminBookingDetailPage', () => {
     renderDetail();
 
     await userEvent.click(await screen.findByRole('button', { name: /approve ₱4,500/i }));
-    expect(await screen.findByRole('alert')).toHaveTextContent(/already been handled/i);
+
+    /*
+     * SCOPED to the verification section, not `screen`-wide.
+     *
+     * Task 12 mounted `AssignPanel` on this page (§9 lists "Assign van +
+     * driver" under Bookings detail), and that panel raises its own
+     * `role="alert"` when its van/driver options fail to load — which they
+     * do here, because this test's mock does not define
+     * `admin.calendar.dayOptions`. So the page now legitimately has two
+     * alert regions and a bare `findByRole('alert')` is ambiguous.
+     *
+     * Scoping is the right fix rather than loosening to `findAllByRole`:
+     * this test is about the APPROVAL refusal specifically, and it should
+     * say which alert it means.
+     */
+    const verification = screen.getByRole('region', { name: /verify this receipt/i });
+    expect(await within(verification).findByRole('alert')).toHaveTextContent(
+      /already been handled/i,
+    );
   });
 
   it('says so plainly when the booking cannot be loaded', async () => {

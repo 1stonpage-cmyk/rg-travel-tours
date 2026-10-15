@@ -39,6 +39,7 @@ import { formatPeso } from '@rg/shared';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { trpc } from '@/lib/trpc';
+import AssignPanel from '@/components/admin/AssignPanel';
 
 const STATUS_LABELS: Record<string, string> = {
   pending_payment: 'Awaiting payment',
@@ -138,6 +139,29 @@ export default function AdminBookingDetailPage() {
             <dd className="text-brand-blue-900">{booking.leadPhone}</dd>
           </div>
         </dl>
+      </section>
+
+      {/*
+        Task 12: §9 lists "Assign van + driver" under Bookings detail as well
+        as on the calendar, so the SAME component mounts here. It renders
+        nothing for finance, who can read this page (`bookingsView`) but
+        cannot assign (`assignVanDriver`).
+      */}
+      <section
+        aria-labelledby="assign-heading"
+        className="border-border mt-6 rounded-2xl border p-5"
+      >
+        <h2 id="assign-heading" className="text-brand-blue-900 text-base font-semibold">
+          Dispatch
+        </h2>
+        <AssignPanel
+          bookingId={booking.id}
+          pax={booking.pax}
+          status={booking.status}
+          currentVanId={booking.vanId}
+          currentDriverId={booking.driverId}
+          onAssigned={() => void query.refetch()}
+        />
       </section>
 
       <section

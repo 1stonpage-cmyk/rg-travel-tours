@@ -27,6 +27,7 @@ import { manilaParts } from '@rg/shared';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import MonthGrid from '@/components/admin/MonthGrid';
+import AssignPanel from '@/components/admin/AssignPanel';
 import { trpc } from '@/lib/trpc';
 
 /** Mirrors `AdminBookingsPage`'s own small label map — a dictionary this short isn't worth sharing. */
@@ -189,6 +190,27 @@ export default function AdminCalendarPage() {
                       </span>
                     )}
                   </div>
+
+                  {/*
+                   * Task 12: the assign panel, mounted per trip. The SAME
+                   * component also mounts on the booking detail page, because
+                   * §9 lists "Assign van + driver" in both places and two
+                   * copies would drift.
+                   *
+                   * It renders nothing for finance and issues no `dayOptions`
+                   * query for them — finance can read this calendar
+                   * (`bookingsView`) but cannot assign (`assignVanDriver`),
+                   * so showing the panel would hand them a FORBIDDEN for an
+                   * action never offered.
+                   */}
+                  <AssignPanel
+                    bookingId={trip.bookingId}
+                    pax={trip.pax}
+                    status={trip.status}
+                    currentVanId={trip.vanId}
+                    currentDriverId={trip.driverId}
+                    onAssigned={() => void query.refetch()}
+                  />
                 </li>
               ))}
             </ul>
