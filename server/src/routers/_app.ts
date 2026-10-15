@@ -2,6 +2,7 @@ import { TIMEZONE } from '@rg/shared';
 import { checkoutRouter } from './public/checkout';
 import { destinationsRouter } from './public/destinations';
 import { driverAuthRouter } from './public/driver-auth';
+import { driverTripsRouter } from './public/driver';
 import { inquiriesRouter } from './public/inquiries';
 import { newsletterRouter } from './public/newsletter';
 import { packagesRouter } from './public/packages';
@@ -16,7 +17,7 @@ import { portalRouter } from './public/portal';
 import { reviewsRouter } from './public/reviews';
 import { settingsRouter } from './public/settings';
 import { toursRouter } from './public/tours';
-import { publicProcedure, router } from '../trpc';
+import { mergeRouters, publicProcedure, router } from '../trpc';
 
 export const appRouter = router({
   /**
@@ -75,12 +76,18 @@ export const appRouter = router({
    * counting nothing while still looking mounted, and
    * `driver-lockout.test.ts` fails the build for it on purpose.
    *
-   * Task 1 mounts the two PUBLIC procedures only. Driver-gated procedures
-   * (`driverProcedure`, Task 2 onward) join this namespace, and the first
-   * of them must also teach `procedure-role-metadata.test.ts` the `driver`
-   * access kind — see `driverProcedure` in `../trpc.ts`.
+   * Task 1 mounted the two PUBLIC procedures. Task 2 added the first
+   * driver-GATED one (`driver.trips`) and, with it, the `driver` branch
+   * `procedure-role-metadata.test.ts` needed in order to enumerate it —
+   * so every driver procedure from here on is held to an anonymous, a
+   * staff and a customer refusal by that guard.
+   *
+   * Merged rather than nested: the public pair and the gated procedures
+   * sit side by side under `driver.*`, which is what keeps `driver.login`
+   * the exact string the limiter is scoped to. `mergeRouters` is tRPC's
+   * own and preserves each procedure's access metadata.
    */
-  driver: driverAuthRouter,
+  driver: mergeRouters(driverAuthRouter, driverTripsRouter),
 
   /*
    * The admin surface (Week 4, Task 7). Everything under this namespace is

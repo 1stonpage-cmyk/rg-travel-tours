@@ -12,6 +12,7 @@
  * `shared/src/dispatch.ts` is the pattern this follows.
  */
 import { z } from 'zod';
+import type { BookingStatus } from './booking';
 
 /**
  * What the driver types on the portal: their short code and a six-digit PIN.
@@ -62,3 +63,59 @@ export const DRIVER_SESSION_HOURS = 12;
  */
 export type DriverLoginRefusal =
   'wrong_credentials' | 'locked' | 'needs_admin_unlock' | 'driver_inactive';
+
+/* ------------------------------------------------------------------ *
+ * The driver's trip list (Week 6 plan, Task 2 — BUILD_SPEC §8)
+ * ------------------------------------------------------------------ */
+
+/** The three tabs the driver portal's trip list is divided into. */
+export type DriverTripBucket = 'today' | 'upcoming' | 'history';
+
+/**
+ * Which tab a trip belongs in. PURE, and shared, so the tabs and the server
+ * cannot disagree about what "today" means.
+ *
+ * **Both arguments are Manila CIVIL DATES (`YYYY-MM-DD`), and `todayManila`
+ * comes from `manilaCivilDate(now)` on the server — never from the device.**
+ * The comparison is then a plain string compare, which is exact for
+ * zero-padded ISO civil dates and has no instant, zone or DST in it at all.
+ *
+ * Why that matters rather than being pedantry: Manila is UTC+8 with no DST,
+ * so for the whole 00:00-07:59 Manila window the UTC calendar day is still
+ * YESTERDAY. A driver opening the portal at 00:30 to check the morning's
+ * pickup would be shown it under "Upcoming" and their finished trip under
+ * "Today" — the one moment of the day when being wrong costs a departure.
+ *
+ * The client may re-bucket without a round trip (the server sends `bucket`
+ * already resolved), but it must re-bucket against a Manila date it was
+ * GIVEN, not one it computed from the handset's clock.
+ */
+export function driverTripBucket(tourDate: string, todayManila: string): DriverTripBucket {
+  if (tourDate === todayManila) return 'today';
+  return tourDate > todayManila ? 'upcoming' : 'history';
+}
+
+/**
+ * One row of `driver.trips()` — everything the list needs and nothing a
+ * driver has no business holding.
+ *
+ * `vanPlate` is nullable because `bookings.van_id` is: a trip can be
+ * confirmed before dispatch has assigned a van, and the list must still
+ * render rather than hide the trip. The guest's name, phone and e-mail are
+ * deliberately NOT here: the list is a list, and the manifest (Task 3) is
+ * where a driver is shown contact details for one trip at a time.
+ *
+ * `bucket` is resolved server-side from the Manila civil date and sent
+ * with the row, so the first render needs no client clock.
+ */
+export interface DriverTripRow {
+  bookingId: number;
+  ref: string;
+  tourTitle: string;
+  /** Manila civil date, `YYYY-MM-DD`. */
+  tourDate: string;
+  pax: number;
+  status: BookingStatus;
+  vanPlate: string | null;
+  bucket: DriverTripBucket;
+}

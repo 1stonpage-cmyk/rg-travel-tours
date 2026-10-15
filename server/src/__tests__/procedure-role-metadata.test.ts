@@ -76,6 +76,26 @@ function accessOf(procedure: ProcedureLike): ProcedureAccess | undefined {
   // to compare — a guest has neither — so the assertions that bite on it
   // are "it is declared" and "it refuses an anonymous caller".
   if (access === 'customer') return { access: 'customer' };
+  /*
+   * Week 6 Task 2: the driver portal's own access kind, and the FOURTH of
+   * them. Added the moment the first `driverProcedure` was mounted
+   * (`driver.trips`) — before that this function returned `undefined` for
+   * it and the enumeration below was right to fail, because nothing had
+   * declared what a driver procedure is.
+   *
+   * Recognising it is only half the extension: on its own, a `driver`
+   * branch here would turn the red to green and leave driver procedures
+   * enumerated but unproven. The other half is
+   * `refuses an anonymous caller, a staff session and a customer session on
+   * every driver procedure` plus the driver-namespace rule below — all
+   * three subject types, because a driver's day sheet carries other
+   * guests' names and phone numbers and a signed-in dispatcher or guest
+   * reaching it would be an RA 10173 disclosure with a 200 status code.
+   *
+   * No area and no roles to compare: a driver has neither, exactly as a
+   * guest does not.
+   */
+  if (access === 'driver') return { access: 'driver' };
   if (access === 'admin') {
     const { area, roles } = meta as { area?: unknown; roles?: unknown };
     if (typeof area !== 'string' || !Array.isArray(roles)) return undefined;
@@ -132,10 +152,42 @@ const TARGETS = [
    * router was public and the admin assertions below had nothing to bite on
    * here — which is what this flag exists to state rather than leave as an
    * accident. Everything else on `appRouter` is still public.
+   *
+   * `driverExpected` is the same statement for the driver portal, and
+   * flipped to TRUE in Week 6, Task 2 with `driver.trips` — the first
+   * mounted `driverProcedure`. It exists so the driver assertions below
+   * cannot go quietly vacuous: if the driver surface were ever unmounted,
+   * renamed out of its access kind, or built with the wrong builder, the
+   * loops would find nothing to check and `reads a non-empty procedure
+   * map` fails rather than passing on an empty list.
    */
-  { name: 'appRouter', router: appRouter, adminExpected: true },
-  { name: 'a Week-5-shaped router', router: weekFiveShaped, adminExpected: true },
+  { name: 'appRouter', router: appRouter, adminExpected: true, driverExpected: true },
+  {
+    name: 'a Week-5-shaped router',
+    router: weekFiveShaped,
+    adminExpected: true,
+    driverExpected: false,
+  },
 ] as const;
+
+/**
+ * The ONLY two procedures allowed to be public under `driver.*`, and the
+ * reason the list is two names rather than a pattern.
+ *
+ * A login cannot require a session and a logout must succeed for a driver
+ * whose twelve hours lapsed mid-trip (see `driverAuthRouter`), so those two
+ * are necessarily `publicProcedure`. Everything else under that namespace
+ * reads a driver's own trips, manifests and check-ins and must be
+ * `driverProcedure`.
+ *
+ * It is an allow-list of exactly the two, not a prefix or a substring rule:
+ * a future `driver.loginWithLink` would NOT be excused by it, which is the
+ * point. And the test below refuses to trust the list blindly — while any
+ * driver procedure is mounted, both of these names must exist and both must
+ * really be public, so the list cannot sit here excusing a name nothing
+ * answers to.
+ */
+const DRIVER_PUBLIC_PROCEDURES: readonly string[] = ['driver.login', 'driver.logout'];
 
 for (const target of TARGETS) {
   describe(`every procedure on ${target.name} declares who may call it`, () => {
@@ -143,6 +195,7 @@ for (const target of TARGETS) {
     const paths = Object.keys(mounted).sort();
     const access = (path: string) => accessOf(mounted[path] as ProcedureLike);
     const adminPaths = paths.filter((path) => access(path)?.access === 'admin');
+    const driverPaths = paths.filter((path) => access(path)?.access === 'driver');
 
     it('reads a non-empty procedure map', () => {
       // Guards the guard: a vacuous enumeration would pass everything below.
@@ -152,6 +205,11 @@ for (const target of TARGETS) {
       // are supposed to. `appRouter` gained its first admin procedure in
       // Week 4 (`staffAuth.me`); before that it was all-public.
       expect(adminPaths.length > 0).toBe(target.adminExpected);
+      // And the same for the driver assertions, which gained something to
+      // bite on in Week 6 (`driver.trips`). A driver surface that stopped
+      // being enumerated here would otherwise pass every loop below by
+      // being absent from all of them.
+      expect(driverPaths.length > 0).toBe(target.driverExpected);
     });
 
     it('leaves no procedure without role metadata', () => {
@@ -212,6 +270,87 @@ for (const target of TARGETS) {
           })(),
           `${path} let a STAFF session through the guest-portal gate`,
         ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+      }
+    });
+
+    /**
+     * The same proof for the driver portal (Week 6, Task 2), against **all
+     * three** subject types rather than two.
+     *
+     * A driver procedure answers from `ctx.driver.driverId` and has no
+     * input field naming a driver, so there is no identity a staff or guest
+     * session could be. Letting either through would not be "an admin
+     * seeing what the driver sees" — it would be a 200 response carrying
+     * another driver's trips, whose guests' names and phone numbers are
+     * personal data under RA 10173. `requireDriver` refuses all three; this
+     * is what holds every FUTURE driver procedure to the same, because it
+     * enumerates the router rather than naming the procedures it knows.
+     */
+    it('refuses an anonymous caller, a staff session and a customer session on every driver procedure', async () => {
+      const refused = [
+        ['a caller with no session', {}],
+        ['a caller with an explicitly null session', { session: null }],
+        ['a STAFF session', { session: { subjectType: 'user', subjectId: 1, role: 'owner' } }],
+        [
+          'a DISPATCHER session',
+          { session: { subjectType: 'user', subjectId: 2, role: 'dispatcher' } },
+        ],
+        ['a CUSTOMER session', { session: { subjectType: 'customer', subjectId: 1 } }],
+      ] as const;
+
+      for (const path of driverPaths) {
+        for (const [who, ctx] of refused) {
+          await expect(
+            callerFor(target.router, path, ctx)(),
+            `${path} is labelled driver but answered ${who}`,
+          ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+        }
+      }
+    });
+
+    /**
+     * Everything under `driver.*` is driver-gated except the login pair.
+     *
+     * The driver namespace's counterpart to the admin-namespace rule below,
+     * and the reason it is needed: `driverProcedure` makes the gate
+     * unforgettable for anyone who reaches for `ctx.driver`, but a
+     * procedure that reads a driver id from its own INPUT and never touches
+     * `ctx` would type-check perfectly on `publicProcedure`. That is the
+     * substance this catches — "it is in the driver portal, so it is gated
+     * or it is one of the two logins".
+     */
+    it('lets no procedure under the driver namespace be public outside the login pair', () => {
+      const mislabelled = paths.filter(
+        (path) =>
+          // `\b` after `driver` keeps `admin.drivers.*` out of this rule:
+          // those are `adminProcedure('vansDrivers')` and the admin rules
+          // below already hold them. `driver.trips` matches; `drivers`
+          // does not.
+          /(^|\.)driver\b/i.test(path) &&
+          !DRIVER_PUBLIC_PROCEDURES.includes(path) &&
+          access(path)?.access !== 'driver',
+      );
+      expect(
+        mislabelled,
+        `${mislabelled.join(', ')} sits in the driver namespace but was not built with ` +
+          'driverProcedure from server/src/trpc.ts. Only driver.login and driver.logout may be ' +
+          'public there — a login cannot require a session; reading a driver trip can.',
+      ).toEqual([]);
+
+      // The allow-list is only safe while it names what it claims to name.
+      // Whenever a driver procedure is mounted at all, both excused names
+      // must exist and both must really be public.
+      if (driverPaths.length > 0) {
+        for (const path of DRIVER_PUBLIC_PROCEDURES) {
+          expect(
+            paths,
+            `${path} is excused as a public driver login but is not mounted — the allow-list is ` +
+              'excusing a name nothing answers to',
+          ).toContain(path);
+          expect(access(path), `${path} is excused as public but does not declare public`).toEqual({
+            access: 'public',
+          });
+        }
       }
     });
 

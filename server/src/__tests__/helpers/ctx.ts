@@ -19,6 +19,7 @@
  */
 import type { Request, Response } from 'express';
 import type { AdminRole } from '@rg/shared';
+import { appRouter } from '../../routers/_app';
 import type { ResolvedSession } from '../../services/sessions';
 
 export interface CapturedCookie {
@@ -64,6 +65,38 @@ export function testContext(
 /** A context for a logged-in portal guest, scoped to one booking. */
 export function customerContext(bookingId: number) {
   return testContext({ subjectType: 'customer', subjectId: bookingId });
+}
+
+/**
+ * A context for a logged-in DRIVER, scoped to one `drivers.id` (Week 6,
+ * Task 2).
+ *
+ * The shape `readSession` returns for a `subject_type = 'driver'` row — no
+ * `role`, because a driver has none, and nothing else either: the session
+ * IS the driver. `requireDriver` turns exactly this into
+ * `ctx.driver.driverId`, which is the only filter a driver procedure may
+ * use.
+ *
+ * Here rather than inline in a test file, and `driverCaller` with it,
+ * because Task 1 built its callers inline and Task 2 would otherwise build
+ * a second copy — two places to update the day the session shape changes,
+ * which is how one of them quietly stops exercising the real context.
+ */
+export function driverContext(driverId: number) {
+  return testContext({ subjectType: 'driver', subjectId: driverId });
+}
+
+/**
+ * A caller on the REAL `appRouter` signed in as `driverId`.
+ *
+ * `appRouter`, never a test-local router of the same shape: Task 1 had to
+ * prove `driverProcedure`'s gate against a fixture because no driver-gated
+ * procedure was mounted yet, and a fixture cannot tell you whether the
+ * thing you actually serve is gated. From Task 2 on there is a mounted
+ * procedure, so tests go through the mount.
+ */
+export function driverCaller(driverId: number) {
+  return appRouter.createCaller(driverContext(driverId) as never);
 }
 
 /**

@@ -182,6 +182,23 @@ function flatten(error: ZodError): {
 export const router = t.router;
 
 /**
+ * Composes two routers into ONE namespace (Week 6, Task 2).
+ *
+ * Needed because `driver.login` is public and `driver.trips` is
+ * driver-gated, while both must sit directly under `driver.*`: the login's
+ * tRPC path is a contract with the per-IP limiter in `app.ts`
+ * (`DRIVER_LOGIN_PROCEDURES`), and the gated procedures cannot be nested a
+ * level deeper without that namespace meaning two different things.
+ *
+ * It is `t.mergeRouters`, not a spread of `_def`: the merge is tRPC's own,
+ * so every procedure keeps the metadata its builder stamped on it and
+ * `procedure-role-metadata.test.ts` still reads a complete, accurate map.
+ * Nothing about the gates changes — a merged router is the same procedures
+ * under one record.
+ */
+export const mergeRouters = t.mergeRouters;
+
+/**
  * An unauthenticated procedure, open to the internet.
  *
  * Carries `{ access: 'public' }` so that "this is public" is something the

@@ -341,16 +341,22 @@ describe('driver login per-IP limiter', () => {
   });
 
   /**
-   * The guard the plan cannot write yet, and the reason the limiter is not
-   * mounted in `app.ts` today: there is no driver login route (Week 6), and
-   * `'driver.login'` is this task's proposed name for it rather than an
-   * observed one. A procedure-scoped limiter mounted against a guessed name
-   * fails OPEN while looking mounted.
+   * **Both halves of this are now live** (Week 6, Task 1 — comment
+   * corrected in Task 2, as `middleware/rate-limit.ts` already was).
+   * `'driver.login'` is no longer a proposed name: `_app.ts` mounts
+   * `driverAuthRouter` under the `driver` namespace, so the login's tRPC
+   * path IS `driver.login`, and the limiter is mounted against that string
+   * in `app.ts`. What was written here when the route did not exist — "the
+   * limiter is not mounted today", "a proposed name" — is simply false now,
+   * and a false comment on a security guard is worse than none: the next
+   * reader would conclude the per-IP limit is still hypothetical.
    *
-   * So instead of guessing, this fails the build the moment a driver-login
-   * procedure appears without the limiter being mounted. Proven able to fail
-   * by adding `driver: router({ login: publicProcedure... })` to
-   * `routers/_app.ts`.
+   * The guard itself is unchanged and still earns its place: it fails the
+   * build the moment ANOTHER driver-login procedure appears that
+   * `DRIVER_LOGIN_PROCEDURES` does not name, because a procedure-scoped
+   * limiter aimed at a name that does not exist fails OPEN while looking
+   * mounted. Proven able to fail by adding a second public
+   * `login`-shaped procedure to the driver namespace.
    */
   it('requires the limiter to be mounted as soon as a driver login procedure exists', () => {
     const procedures = Object.keys(
