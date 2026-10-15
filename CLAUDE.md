@@ -240,10 +240,12 @@ Every page reads tours, destinations, packages, reviews, FAQs and settings from 
   transaction as its checkpoint write, so there is no window in which a running trip has an
   `available` van. `moveVanStatus` is conditional in SQL in both directions — the `from` status is
   in the `WHERE` — which is what stops a completion from putting a van a dispatcher marked
-  `for_repair` back on sale. The proof is `server/src/__tests__/trip-van-status.test.ts`, and it reads
-  **capacity** — `assessCapacity` / `vansFreeOn`, on a date thirty days out — rather than the
-  `vans.status` column: the column only proves the write landed, availability proves dispatch
-  honours it. A van-status test that reads the column alone is not a test of this rule.
+  `for_repair` back on sale. The proof is `server/src/__tests__/trip-van-status.test.ts`, whose
+  **load-bearing test reads capacity** — `assessCapacity` / `vansFreeOn`, on a date thirty days
+  out — rather than the `vans.status` column. Three of its five tests do assert the column, and
+  deliberately: the write has to be pinned before anything is built on it. But the column only
+  proves the write landed, and availability proves dispatch honours it, so a van-status test that
+  reads the column ALONE is not a test of this rule.
 - **KNOWN GAP: nothing sweeps a van left `on_trip` by a trip nobody ever completed.** A driver
   whose phone dies at the last stop, or who simply forgets, leaves that van unsellable
   indefinitely — and the symptom arrives weeks later as "we're fully booked" on a day with idle
