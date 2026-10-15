@@ -968,6 +968,7 @@ Binding decisions:
 - **The payment box is the loudest thing on the trip screen**, and `unverified_do_not_collect` is **amber with words**: "Do not collect — call the office." Never a colour alone, never red. A driver glancing at a phone must not read "don't collect" as "collect".
 - **"Collect ₱X cash" states the amount in words and figures**, and the cash button **confirms inline** before submitting — a mis-tap claims money was taken. Confirmation is two-step in place, not a modal (no `dialog` is vendored).
 - **The stop list is a checklist, not a form.** One large button per stop, in itinerary order, each showing its check-in time once tapped. The **undo** control appears only against the most recent un-undone check-in, because that is the only one the server will accept.
+- **The undo control is LABELLED for what it will actually do** (ruling 2026-10-15, from Task 6's review). An undo reverses **one event**, and a trip closed by a last-stop check-in took two — so one tap reopens the trip and a second un-checks the stop. That cannot be collapsed into one: completion is **not** a function of the checkpoints, because a hand-completed trip closes with stops still unchecked, so there is nothing to re-derive. (I proposed re-deriving it and was wrong — it would silently un-tap the trip start of every early Complete, which is the most common mistake there is.) An unlabelled button makes the driver work that out mid-trip, so: when the booking is `completed` the control reads **"Reopen trip"**; when it is `in_progress` it reads **"Undo last check-in"** and names the stop. Test both labels against both booking states. The behaviour errs in the right direction — a mistaken Complete costs one tap and loses no stop tap — and the label is what makes that legible.
 - **Optimistic UI is forbidden here.** A tap must show pending and then the server's answer. A stop that appears checked-in and later is not is worse than a half-second wait, because the driver has already driven away.
 - Tailwind transitions only; respect `prefers-reduced-motion`.
 
@@ -1016,6 +1017,13 @@ Binding decisions:
 **Files:** Create `server/src/routers/admin/refunds.ts`, `client/src/components/admin/CancelRefundPanel.tsx` · Modify `server/src/routers/_app.ts`, `client/src/pages/admin/AdminBookingDetailPage.tsx` · Test: `server/src/__tests__/admin-refunds.test.ts`
 
 **Everything dangerous here already exists and is tested.** `recordPayment({ type: 'refund', … })` enforces the always-positive amount, the sum never exceeding `amount_paid_centavos`, the booking row lock, admin-only, and the audit row. `provider.refund()` exists on the PayMongo provider. **This task composes them; it does not reimplement any of it.**
+
+**Two cancellation-mid-trip questions arrive here from Tasks 5 and 6**, because "what a cancel does to a trip already under way" is this task's subject and not the check-in service's:
+
+1. **`checkInStop`'s `in_progress` gate is a plain read**, so a cancellation landing in that window lets one checkpoint and one `trip.checked_in` row land on a booking no longer running. It cannot complete the trip or move the van (`finishTrip`'s conditional write refuses that), and the residue is arguably _true_ — the van did reach the stop. Decide whether the cancel refuses, or stands and leaves the record.
+2. **`undoLastCheckIn` has no status gate on its non-`completed` path**, so a check-in can be retracted on a `cancelled` or `expired` booking. It writes no money and moves no van.
+
+Neither is a defect in the check-in service; both are consequences of cancelling a trip that is already moving, which is what 6F is for. Whatever this task decides, **the decision belongs in `CLAUDE.md`'s Dispatch section** — the next person reading `checkins.ts` will wonder.
 
 Four rules from §6:
 
