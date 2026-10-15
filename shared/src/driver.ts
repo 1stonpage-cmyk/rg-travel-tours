@@ -425,3 +425,30 @@ export type DriverUndoCheckInInput = z.infer<typeof driverUndoCheckInSchema>;
  */
 export type CheckInUndoResult =
   { ok: true; stopId: number | null } | { ok: false; reason: CheckInRefusal };
+
+/* ------------------------------------------------------------------ *
+ * Cash collected (Week 6 plan, Task 8 — BUILD_SPEC §8 item 5)
+ * ------------------------------------------------------------------ */
+
+/**
+ * What a driver's cash claim answers — **a claim, not a reconciliation.**
+ *
+ * The driver's tap writes one `pending` `payments` row and moves nothing on
+ * the booking. Finance (or the owner) converts that same row to `paid` and
+ * credits the booking, which is a different person on a different screen:
+ * a driver who could verify their own collection could pocket the cash and
+ * leave the booking reading "paid in full".
+ *
+ * There is no input type here — the procedure takes `driverTripInputSchema`,
+ * a `bookingId` and nothing else. **Deliberately no amount**: the browser
+ * does not say how much cash was handed over. The server derives it from
+ * the booking (`total_centavos - amount_paid_centavos`, through the same
+ * `PaymentBoxState` the trip screen is given), so the figure the driver was
+ * shown and the figure the claim records cannot differ.
+ */
+export interface CashClaimResult {
+  /** The `pending` row. Finance verifies this id and no other (Task 11). */
+  paymentId: number;
+  /** Centavos, as derived on the server. What the claim says was taken. */
+  amountCentavos: number;
+}

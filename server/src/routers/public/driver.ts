@@ -50,6 +50,7 @@ import {
   driverTripInputSchema,
   driverUndoCheckInSchema,
   manilaCivilDate,
+  type CashClaimResult,
   type CheckInResult,
   type CheckInUndoResult,
   type DriverTripRow,
@@ -58,6 +59,7 @@ import {
 } from '@rg/shared';
 import { getDb } from '../../db/client';
 import { bookingNotes, bookings, payments, tours, vans } from '../../db/schema';
+import { recordPendingCash } from '../../services/payments/record-payment';
 import {
   checkInStop,
   completeTrip,
@@ -183,7 +185,15 @@ function paymentBox(input: {
 }
 
 /**
- * One trip, for the driver driving it — §8's "Trip detail" screen.
+ * The trip row and §8's payment box — the two things BOTH driver-facing
+ * money surfaces need, read once, here.
+ *
+ * Extracted in Task 8 so that `driver.recordCash` derives what is owed from
+ * the SAME two statements and the SAME `paymentBox` as `driver.trip`. A
+ * second `total_centavos - amount_paid_centavos` in the mutation would be a
+ * second chance for the figure on the screen and the figure in the claim to
+ * disagree, and a cash claim that disagrees with what the driver was shown
+ * is an argument at a pier that the audit trail cannot settle.
  *
  * ## `driverId` is half of the WHERE, not a check afterwards
  *
@@ -195,24 +205,14 @@ function paymentBox(input: {
  * guest's phone number (RA 10173). The message names neither the id nor the
  * ref, and says nothing about drivers.
  *
- * ## Four statements, whatever the trip
- *
- * The trip row (tour joined for the title, van LEFT joined because
- * `van_id` is nullable), the pending-payment probe, the office notes, and
- * `tripProgress()`'s own two. Nothing loops over a query.
- *
  * ## No `now`
  *
  * Nothing here is bucketed, expired or compared against the clock —
  * `tourDate` is read straight out of the row and `paymentBox` compares two
- * integers. An unused `now` parameter would be a lie about what the answer
- * depends on (the same ruling `tripProgress` carries).
- *
- * Exported for the test that drives it directly and for nothing else:
- * nothing may call it with a driver id it did not get from a driver's own
- * session.
+ * integers. Callers that DO need the clock (the cash claim's today-only
+ * rule) take their own explicit `now`, so this stays a pure read.
  */
-export async function driverTripDetail(driverId: number, bookingId: number): Promise<TripDetail> {
+async function loadDriverTrip(driverId: number, bookingId: number) {
   const db = getDb();
 
   const [trip] = await db
@@ -269,6 +269,33 @@ export async function driverTripDetail(driverId: number, bookingId: number): Pro
     )
     .limit(1);
 
+  return {
+    trip,
+    payment: paymentBox({
+      totalCentavos: trip.totalCentavos,
+      paidCentavos: trip.paidCentavos,
+      reviewRequired: trip.reviewRequired,
+      hasPendingPayment: pending !== undefined,
+    }),
+  };
+}
+
+/**
+ * One trip, for the driver driving it — §8's "Trip detail" screen.
+ *
+ * ## Four statements, whatever the trip
+ *
+ * `loadDriverTrip`'s two (the trip row, the pending-payment probe), the
+ * office notes, and `tripProgress()`'s own two. Nothing loops over a query.
+ *
+ * Exported for the test that drives it directly and for nothing else:
+ * nothing may call it with a driver id it did not get from a driver's own
+ * session.
+ */
+export async function driverTripDetail(driverId: number, bookingId: number): Promise<TripDetail> {
+  const db = getDb();
+  const { trip, payment } = await loadDriverTrip(driverId, bookingId);
+
   /*
    * §8's "Office notes" — `booking_notes`, oldest first, the TEXT only. The
    * driver needs the instruction ("guest waiting at the second gate"), not
@@ -303,15 +330,104 @@ export async function driverTripDetail(driverId: number, bookingId: number): Pro
     pickupMapsUrl: trip.pickupMapsUrl,
     vanPlate: trip.vanPlate,
     officeNotes: notes.map((row) => row.note),
-    payment: paymentBox({
-      totalCentavos: trip.totalCentavos,
-      paidCentavos: trip.paidCentavos,
-      reviewRequired: trip.reviewRequired,
-      hasPendingPayment: pending !== undefined,
-    }),
+    payment,
     /** Task 3's answer, unchanged — `total` counts the trip-start stop. */
     progress: await tripProgress(db, bookingId),
   };
+}
+
+/* ------------------------------------------------------------------ *
+ * §8 item 5 — cash collected (Week 6 plan, Task 8)
+ * ------------------------------------------------------------------ */
+
+/**
+ * A driver records that a guest handed them cash — **a claim, not a
+ * reconciliation** (BUILD_SPEC §8 item 5).
+ *
+ * ## This function writes nothing itself
+ *
+ * `recordPendingCash()` does, and it is the only thing in the system that
+ * may: one `payments` row (`provider='manual'`, `method='cash'`,
+ * `status='pending'`, `collected_by_driver_id` set) plus its
+ * `payment.cash_collected` audit row, and **nothing on `bookings`**. Not
+ * `amount_paid_centavos`, not `status`, not `payment_review_required`.
+ * Everything here is the decision of WHETHER to let that happen.
+ *
+ * The reason the split exists is a fraud path: a driver who could verify
+ * their own collection could pocket the cash and leave the booking reading
+ * "paid in full". So finance or the owner converts that same row from
+ * `pending` to `paid` and credits the booking under its lock
+ * (`verifyCashPayment()`, which refuses a `driver` actor outright). One row
+ * for its whole life, two people.
+ *
+ * ## The amount is derived, never received
+ *
+ * There is no amount on the input. `loadDriverTrip` hands back the very
+ * `PaymentBoxState` the trip screen was given, and `collect_cash` carries
+ * the balance in centavos — computed on the server from
+ * `total_centavos - amount_paid_centavos`. The browser cannot name a figure
+ * (CLAUDE.md: the server computes all money), and the figure claimed is by
+ * construction the figure the driver was shown.
+ *
+ * Any other box state is a refusal rather than a claim of zero:
+ * `fully_paid` means nothing is owed, and `unverified_do_not_collect` means
+ * money is already claimed and unverified — which is also what a second tap
+ * of this button looks like, because the first tap's `pending` row puts the
+ * box there. `recordPendingCash()` is right not to merge two claims
+ * silently; refusing the second one loudly is not merging it.
+ *
+ * ## Today only, and decided on the server
+ *
+ * Owner-accepted 2026-10-15 (Q9). A trip whose tour date is not today in
+ * **Manila** is refused here, not merely hidden by Task 10's screen —
+ * hiding a button is not access control. A driver tapping "collect cash" on
+ * next week's trip is almost certainly a mis-tap, and the refusal is what
+ * makes it harmless.
+ *
+ * `now` is an explicit argument, read once at the request boundary like
+ * every other clock read in this file: a `new Date()` inside this function
+ * could not be tested at 00:30 Manila — inside the 00:00-07:59 window where
+ * the UTC calendar day is still yesterday — without faking timers globally,
+ * which is how a timezone bug survives its own suite.
+ *
+ * Exported for the test that stands on that boundary and for nothing else:
+ * nothing may call it with a driver id it did not get from a driver's own
+ * session.
+ */
+export async function recordDriverCash(
+  driverId: number,
+  bookingId: number,
+  now: Date,
+): Promise<CashClaimResult> {
+  const { trip, payment } = await loadDriverTrip(driverId, bookingId);
+
+  /*
+   * Both sides through `manilaCivilDate`: `bookings.tour_date` is a `date()`
+   * column, so Drizzle hands back a `Date`, and a civil date is a string
+   * (CLAUDE.md). Comparing either side's UTC day would accept the wrong
+   * trip for the first eight hours of every Manila day.
+   */
+  if (manilaCivilDate(trip.tourDate) !== manilaCivilDate(now)) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'Cash can only be recorded on the day of the trip.',
+    });
+  }
+
+  if (payment.kind !== 'collect_cash') {
+    throw new TRPCError({
+      code: 'CONFLICT',
+      message: 'There is nothing to collect on this trip right now. Please call the office.',
+    });
+  }
+
+  const { paymentId } = await recordPendingCash({
+    bookingId,
+    amountCentavos: payment.amountCentavos,
+    collectedByDriverId: driverId,
+  });
+
+  return { paymentId, amountCentavos: payment.amountCentavos };
 }
 
 export const driverTripsRouter = router({
@@ -421,6 +537,27 @@ export const driverTripsRouter = router({
    * `undone_by` is `ctx.driver.driverId` — a DRIVER, which is what that
    * column means.
    */
+  /**
+   * §8 item 5 — the guest paid cash. **A claim, never a settlement.**
+   *
+   * `driverTripInputSchema`, the same `.strict()` `{ bookingId }` the other
+   * four take: **no amount and no driver**. The amount is derived on the
+   * server from the booking, and the driver is `ctx.driver.driverId` —
+   * which also NARROWS the booking id, so another driver's booking is a
+   * `NOT_FOUND` rather than a claim against someone else's trip.
+   *
+   * `new Date()` is read HERE, at the request boundary, and passed down: the
+   * today-only rule is decided against this server's clock and never
+   * against a handset's, so a driver cannot claim next week's trip by
+   * winding their phone forward.
+   */
+  recordCash: driverProcedure
+    .input(driverTripInputSchema)
+    .mutation(
+      async ({ ctx, input }): Promise<CashClaimResult> =>
+        await recordDriverCash(ctx.driver.driverId, input.bookingId, new Date()),
+    ),
+
   undoCheckIn: driverProcedure.input(driverUndoCheckInSchema).mutation(
     async ({ ctx, input }): Promise<CheckInUndoResult> =>
       await runCheckIn(
