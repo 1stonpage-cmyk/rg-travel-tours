@@ -274,6 +274,14 @@ Every page reads tours, destinations, packages, reviews, FAQs and settings from 
 - **The test database keeps an EMPTY fleet.** `capacity.test.ts` counts the whole fleet, so
   `db:seed` puts vans, drivers and demo bookings in `rg_travel` only (`seed(context)` gates on
   `'app'`). Do not loosen that assertion to fit a seed.
+- **Cancelling a trip does not retract the check-ins already recorded** (owner ruling 2026-10-16,
+  Task 13). `admin.refunds.cancelBooking` sets `cancelled` and leaves every checkpoint standing —
+  the van really did reach those stops, and erasing that would be the worse record. Because
+  `checkInStop`'s `in_progress` gate is a plain read, a check-in already in flight can also land
+  moments **after** a cancel, and `undoLastCheckIn` will still retract a tap on a cancelled
+  booking; neither moves money nor the van. What the cancel does do is put an `on_trip` van back to
+  `available` (`releaseVanFromTrip`), because the completion that would have cleared it is never
+  going to happen now.
 
 ## Security
 

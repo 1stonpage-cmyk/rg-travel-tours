@@ -25,7 +25,10 @@
  *    Colour alone is a WCAG 1.4.1 failure, and this is the state where a
  *    misread costs real money. (Amber, never red — CLAUDE.md.)
  * 3. **The amount is stated in figures AND in words**, so a mis-read digit
- *    is caught by a driver glancing at a phone through a windscreen.
+ *    is caught by a driver glancing at a phone through a windscreen. The
+ *    words come from `@/lib/peso-words`, where Task 13 moved them so the
+ *    admin's irreversible refund confirmation spells an amount the same way
+ *    this screen does.
  * 4. **The cash button is today-only and confirms in place.** The server
  *    refuses a non-today trip (`FORBIDDEN`) and a second claim (`CONFLICT`)
  *    — `isToday` here only stops the UI offering an action it knows will be
@@ -42,6 +45,7 @@ import { BanknoteArrowDown, CircleCheckBig, Loader2, TriangleAlert } from 'lucid
 import { TRPCClientError } from '@trpc/client';
 import { formatPeso, type BookingStatus, type PaymentBoxState } from '@rg/shared';
 import { Button } from '@/components/ui/button';
+import { pesosInWords } from '@/lib/peso-words';
 import { trpc } from '@/lib/trpc';
 
 /* ------------------------------------------------------------------ *
@@ -98,82 +102,6 @@ const NOT_LIVE_COPY: Record<
     body: 'This booking expired before it was confirmed. Do not collect anything — ring the office.',
   },
 };
-
-/* ------------------------------------------------------------------ *
- * Rule 3: the amount, in words
- * ------------------------------------------------------------------ */
-
-const ONES = [
-  'zero',
-  'one',
-  'two',
-  'three',
-  'four',
-  'five',
-  'six',
-  'seven',
-  'eight',
-  'nine',
-  'ten',
-  'eleven',
-  'twelve',
-  'thirteen',
-  'fourteen',
-  'fifteen',
-  'sixteen',
-  'seventeen',
-  'eighteen',
-  'nineteen',
-];
-
-const TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
-
-const SCALES = [
-  { value: 1_000_000_000, name: 'billion' },
-  { value: 1_000_000, name: 'million' },
-  { value: 1_000, name: 'thousand' },
-] as const;
-
-function underHundred(n: number): string {
-  if (n < 20) return ONES[n]!;
-  const tens = TENS[Math.floor(n / 10)]!;
-  const rest = n % 10;
-  return rest === 0 ? tens : `${tens}-${ONES[rest]}`;
-}
-
-function underThousand(n: number): string {
-  if (n < 100) return underHundred(n);
-  const hundreds = `${ONES[Math.floor(n / 100)]} hundred`;
-  const rest = n % 100;
-  return rest === 0 ? hundreds : `${hundreds} ${underHundred(rest)}`;
-}
-
-function wholeNumberInWords(n: number): string {
-  if (n < 1000) return underThousand(n);
-  for (const scale of SCALES) {
-    if (n < scale.value) continue;
-    const head = `${wholeNumberInWords(Math.floor(n / scale.value))} ${scale.name}`;
-    const rest = n % scale.value;
-    return rest === 0 ? head : `${head} ${wholeNumberInWords(rest)}`;
-  }
-  // Unreachable: anything >= 1000 matched a scale above.
-  return underThousand(n);
-}
-
-/**
- * `450_000` centavos -> `'Four thousand five hundred pesos'`.
- *
- * **Rounded exactly the way `formatPeso` rounds**, deliberately: the words
- * exist to catch a mis-read digit in the figures beside them, so a pairing
- * that disagreed would be worse than no words at all. Every price in this
- * system is whole pesos, so the rounding never actually bites — but if it
- * ever did, both halves would move together.
- */
-function pesosInWords(centavos: number): string {
-  const pesos = Math.round(centavos / 100);
-  const words = wholeNumberInWords(pesos);
-  return `${words.charAt(0).toUpperCase()}${words.slice(1)} ${pesos === 1 ? 'peso' : 'pesos'}`;
-}
 
 /* ------------------------------------------------------------------ *
  * The box

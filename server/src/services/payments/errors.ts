@@ -426,3 +426,134 @@ export class ReceiptRejectionNeedsReasonError extends Error {
     this.name = 'ReceiptRejectionNeedsReasonError';
   }
 }
+
+/* ======================================================================
+ * 6F — cancel and refund (Week 6 plan, Task 13; BUILD_SPEC §6 "Refunds &
+ * cancellations").
+ *
+ * None of these is a money rule. The money rules — the always-positive
+ * amount, the sum that may never exceed `amount_paid_centavos`, the booking
+ * row lock, admin-only, the audit row — all belong to `recordPayment()` and
+ * are thrown as `RefundExceedsPaidError` and `RefundNotAdminInitiatedError`
+ * above. These four say "this is not a thing you can refund", "this booking
+ * is not a thing you can cancel", and — the one that matters most — "the
+ * gateway has already paid this out and we could not write it down".
+ * ====================================================================== */
+
+/**
+ * The booking is in a status an admin may not cancel from.
+ *
+ * An ALLOW-list refusal, not a deny-list one (`CANCELLABLE_STATUSES` in
+ * `cancel-refund.ts`): `cancelled` and `expired` are already over, and
+ * `completed` is a trip that RAN — cancelling it would walk a finished tour
+ * backwards through its own lifecycle, which is the same mistake
+ * `statusAfterManualVerified()` exists to prevent on the money side. A
+ * status added to `BOOKING_STATUSES` later is uncancellable until somebody
+ * decides otherwise.
+ *
+ * A refund does NOT need a cancellation, so this refusal never blocks
+ * giving money back: a completed trip that went badly is refunded on its
+ * own, which is exactly what "a refund is never a booking status" means.
+ */
+export class BookingNotCancellableError extends Error {
+  readonly bookingId: number;
+  readonly status: string;
+
+  constructor(bookingId: number, status: unknown) {
+    const current = safeName(status);
+    super(`Booking ${bookingId} is "${current}", which an admin may not cancel from`);
+    this.name = 'BookingNotCancellableError';
+    this.bookingId = bookingId;
+    this.status = current;
+  }
+}
+
+/**
+ * The id is not a payment that money actually arrived through.
+ *
+ * The lookup is scoped to `type='payment' AND status='paid'`, so a pending
+ * receipt, a rejected transfer, a driver's unreconciled cash claim and an
+ * existing `refund` row are all "not found" here rather than something this
+ * path could pay out against. Refunding a `pending` row would send real
+ * money back for money that never came in.
+ */
+export class RefundSourcePaymentNotFoundError extends Error {
+  readonly paymentId: number;
+
+  constructor(paymentId: number) {
+    super(`No paid payment with id ${paymentId} to refund`);
+    this.name = 'RefundSourcePaymentNotFoundError';
+    this.paymentId = paymentId;
+  }
+}
+
+/**
+ * Why this payment cannot be refunded the way the caller asked.
+ *
+ * One class with a `reason`, in the shape `ReceiptNotAcceptedError`
+ * established, because all three are the same sentence to the admin — "that
+ * is the wrong form for this row" — and three classes would spread one
+ * screen's copy across a type hierarchy.
+ *
+ *  - `manual_needs_offline_record` — §6: "Manual payments: admin records
+ *    the refund as done offline (method + reference)." There is no gateway
+ *    to call for a `manual` row, so without the method and the reference
+ *    the refund row would say money went back and not how or where.
+ *  - `gateway_takes_no_offline_record` — the mirror of it. An offline method
+ *    and reference supplied against a gateway charge means the admin is on
+ *    the wrong form, and silently ignoring half a submission on a refund
+ *    screen is worse than refusing it.
+ *  - `gateway_payment_has_no_reference` — `provider_ref` is what
+ *    `provider.refund()` refunds AGAINST. Without it there is nothing to
+ *    name to the gateway, so this fails closed instead of sending a refund
+ *    with no charge attached.
+ */
+export type RefundRefusalReason =
+  | 'manual_needs_offline_record'
+  | 'gateway_takes_no_offline_record'
+  | 'gateway_payment_has_no_reference';
+
+export class RefundNotPossibleError extends Error {
+  readonly paymentId: number;
+  readonly reason: RefundRefusalReason;
+
+  constructor(paymentId: number, reason: RefundRefusalReason) {
+    super(`Payment ${paymentId} cannot be refunded like that: ${reason}`);
+    this.name = 'RefundNotPossibleError';
+    this.paymentId = paymentId;
+    this.reason = reason;
+  }
+}
+
+/**
+ * **The gateway paid the money out and the `payments` row could not be
+ * written.** The worst outcome this task can produce, so it has its own
+ * name, its own message and a `console.error` beside it.
+ *
+ * §6 fixes the order — "call `provider.refund()` … Then record a `refund`
+ * row" — and that order is right: recording first and then failing at the
+ * gateway would leave a booking that believes it refunded money which never
+ * left. The cost of the correct order is this window, and the only honest
+ * thing to do inside it is to say so loudly and name the gateway reference,
+ * so a human can reconcile it by hand.
+ *
+ * It is NOT reachable by an admin typing too large an amount: the pre-flight
+ * check in `refundPayment()` refuses that before the gateway is called. It
+ * takes a genuine race — two admins refunding one booking in the same
+ * instant for amounts that only together exceed the cap — for the
+ * authoritative check under the lock to refuse a payout that has happened.
+ */
+export class RefundNotRecordedError extends Error {
+  readonly provider: string;
+  readonly providerRef: string;
+
+  constructor(provider: unknown, providerRef: string) {
+    super(
+      `The ${safeName(provider)} refund ${safeName(providerRef)} was accepted by the gateway ` +
+        'but could not be recorded. Reconcile it by hand before refunding again.',
+    );
+    this.name = 'RefundNotRecordedError';
+    this.provider = safeName(provider);
+    this.providerRef = safeName(providerRef);
+  }
+}

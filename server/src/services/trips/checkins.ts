@@ -278,6 +278,12 @@ async function readTrip(
  * Symmetric by construction, which is what keeps the §9 requirement
  * ("whatever sets `on_trip` must also clear it") true: the only way in is
  * from `available` and the only way out is back to it.
+ *
+ * There is a second door OUT, added by Week 6 Task 13 and in the same
+ * direction: `releaseVanFromTrip()` below, which a mid-trip cancellation
+ * uses. It is a wrapper on this function rather than a second UPDATE
+ * somewhere else, because `on_trip → available` is a dispatch rule and a
+ * second copy of it is how a van ends up on sale while it is out.
  */
 async function moveVanStatus(
   tx: Transaction,
@@ -297,6 +303,26 @@ async function moveVanStatus(
     .update(vans)
     .set({ status: to })
     .where(and(eq(vans.id, vanId), eq(vans.status, from)));
+}
+
+/**
+ * Puts a van back on sale because the trip it was out on has been CANCELLED
+ * (Week 6 Task 13, §6's cancel/refund).
+ *
+ * `startTrip` sets `on_trip` and completion clears it, and CLAUDE.md's rule
+ * is that whatever sets that status must also clear it. An admin cancelling
+ * a trip mid-journey removes the completion that would have cleared it, so
+ * the cancel has to — and it does it through here, conditional on the van
+ * still being `on_trip`, so a dispatcher who parked it in `for_repair`
+ * meanwhile keeps their decision.
+ *
+ * Exported rather than copied into the cancel service: this is the only
+ * module that writes `vans.status` for a trip, and it stays that way.
+ * Cancelling a booking that never started (no van, or a van still
+ * `available`) matches nothing and writes nothing.
+ */
+export async function releaseVanFromTrip(tx: Transaction, vanId: number | null): Promise<void> {
+  await moveVanStatus(tx, vanId, 'on_trip', 'available');
 }
 
 /**

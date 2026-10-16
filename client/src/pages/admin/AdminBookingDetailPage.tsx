@@ -49,6 +49,7 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { trpc } from '@/lib/trpc';
 import AssignPanel from '@/components/admin/AssignPanel';
+import CancelRefundPanel from '@/components/admin/CancelRefundPanel';
 
 const STATUS_LABELS: Record<string, string> = {
   pending_payment: 'Awaiting payment',
@@ -423,6 +424,25 @@ export default function AdminBookingDetailPage() {
             </section>
           ))
         : null}
+
+      {/*
+       * Cancel and refund (Week 6 Task 13, §13's 6F). Its own component with
+       * its own role gate — §9 gives this to owner and finance
+       * (`cancelRefund`), which is a different row from the `bookingsView`
+       * that lets a dispatcher read this page, so it renders nothing for
+       * them. The server refuses them either way.
+       *
+       * Below the payments list on purpose: an admin should have read the
+       * money trail before being offered a button that moves it.
+       */}
+      <CancelRefundPanel
+        bookingId={booking.id}
+        bookingRef={booking.ref}
+        status={booking.status}
+        paidCentavos={booking.paidCentavos}
+        payments={booking.payments}
+        onChanged={() => void query.refetch()}
+      />
 
       {booking.notes.length > 0 ? (
         <section

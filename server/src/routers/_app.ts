@@ -12,6 +12,7 @@ import { adminDeparturesRouter } from './admin/departures';
 import { adminCalendarRouter } from './admin/calendar';
 import { adminDispatchRouter } from './admin/dispatch';
 import { adminDriversRouter } from './admin/drivers';
+import { adminRefundsRouter } from './admin/refunds';
 import { adminVansRouter } from './admin/vans';
 import { staffAuthRouter } from './admin/auth';
 import { portalRouter } from './public/portal';
@@ -110,6 +111,15 @@ export const appRouter = router({
     departures: adminDeparturesRouter,
     calendar: adminCalendarRouter,
     dispatch: adminDispatchRouter,
+    /*
+     * Cancel and refund (Week 6, Task 13; §13's 6F). Its own namespace
+     * because §9 gates it on `cancelRefund` — owner and finance, never a
+     * dispatcher — which is a different row from the `bookingsView` the
+     * booking screens use and from the `verifyPayments` the queue uses.
+     * Nesting it under `bookings` would have put three different
+     * permissions in one file.
+     */
+    refunds: adminRefundsRouter,
     vans: adminVansRouter,
     drivers: adminDriversRouter,
   }),
