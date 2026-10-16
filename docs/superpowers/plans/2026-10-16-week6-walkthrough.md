@@ -310,7 +310,7 @@ session was revoked in the same script.
 | Thing                 | Identity                                                                                                                      |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | driver                | `drivers.code = 'WT1'`, "Walkthrough Driver One", id 9                                                                        |
-| staff                 | `users.email = 'wt-owner@walkthrough.invalid'`, role `owner`, id 8                                                            |
+| staff                 | `users.email = 'wt-owner@walkthrough.invalid'`, role `owner`, id 12                                                           |
 | today's trip          | `bookings.ref = 'RG-WT0001'` — `assigned`, 4 pax, van SEED-003, tour 7, 6000.00 total / 1500.00 paid → `collect_cash` 4500.00 |
 | upcoming              | `bookings.ref = 'RG-WT0002'` — `assigned`, tomorrow, van SEED-001, fully paid                                                 |
 | history               | `bookings.ref = 'RG-WT0003'` — `completed`, six days ago, van SEED-001                                                        |
