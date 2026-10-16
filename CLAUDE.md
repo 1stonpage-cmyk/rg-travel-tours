@@ -314,7 +314,20 @@ Every page reads tours, destinations, packages, reviews, FAQs and settings from 
   the limiter firing first** (measured 2026-10-16: HTTP 429 on the 11th attempt, with the driver
   still at `lockout_count = 1`). Correct for an attacker, and the reason any walkthrough of the
   escalation has to stage the counters and say so. It also means several drivers behind one office
-  NAT share that budget.
+  NAT share that budget. **Do NOT conclude the escalation code is unreachable and delete it** — it
+  is reachable across IPs (one driver's code tried from several phones or networks, which is the
+  case the three-lockout rule exists for) and across windows. Both halves are tested independently,
+  and neither test proves the other.
+- **Every app-surface route is served HTTP 404 with the "Page not found" title.** `resolvePage`
+  (`server/src/seo/resolvers.ts`) has no case for `/driver`, `/admin` or `/portal`, so they get the
+  not-found shell: `/driver/login` and `/driver/trip/:id` answer `404` with
+  `<title>Page not found | TravelSugbo</title>`, indistinguishable from a junk URL (measured
+  2026-10-16 in dev; `html.ts` shares the resolver, so production matches). **The SPA boots and
+  renders correctly anyway** — a browser renders a 404 body — so this is cosmetic and operational
+  rather than broken: nothing client-side sets `document.title`, so a driver's tab reads "Page not
+  found" for their whole shift, and an uptime monitor pointed at `/driver` reports the portal down.
+  These routes should be `noindex` (they already carry an `X-Robots-Tag`); `noindex` and `404` are
+  not the same statement.
 - **The payment box is computed on the server and the client only renders it.** Three states, and
   the payload carries no totals to re-derive them from. **It is NOT suppressed for a `completed`
   trip:** `driver.trip` still answers `collect_cash` there and `driver.recordCash` still accepts

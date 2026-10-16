@@ -1112,7 +1112,7 @@ exists (it is part of 2B), but no submission, moderation, admin or export side o
 > known quantity with a name. Building either fix turns that test red — that is the intended
 > signal. Replace it with the new behaviour's own proof rather than loosening it.
 
-> **The rest of what Week 6 hands this week** (walkthrough, 2026-10-16). Six items, none of them
+> **The rest of what Week 6 hands this week** (walkthrough, 2026-10-16). Nine items, none of them
 > blocking, all of them cheap to lose track of.
 >
 > 1. **`TripProgressStop` carries no checkpoint id.** `shared/src/driver.ts` defines it as
@@ -1137,7 +1137,32 @@ exists (it is part of 2B), but no submission, moderation, admin or export side o
 > 5. **The gateway wire check** remains blocked on the PayMongo account. `provider.refund()` has
 >    only ever run against the mock, and **no real payment and no real refund has ever been
 >    issued.** The same blocking pre-launch item `LAUNCH_CHECKLIST.md` carries.
-> 6. **Seven owner decisions are open**, listed in one place with each one's safe current behaviour
+> 6. **`db:seed` ships ZERO `tour_itinerary_stops` — across all six tours.** So on a fresh clone 6C's
+>    check-ins cannot be demonstrated at all: the driver's itinerary screen is "Start trip" and
+>    nothing else, and the departures board reads `0/1` for every trip. The next person hits this in
+>    their first ten minutes and has no way to tell a missing feature from missing content.
+>    Deliberately **not** fixed as Week 6 closed: changing shared seed content touches
+>    `seed-parity.test.ts` and anything that assumes an empty `tour_itinerary_stops`, and it is
+>    outside 6A–6F. Whoever does it should add stops to at least one tour and check what the fleet
+>    and capacity suites assume first.
+> 7. **A single IP can never drive one driver to `requires_admin_unlock`** — and the escalation code
+>    is still live, so do not read it as dead and delete it. The per-IP limiter is 10 `driver.login`
+>    attempts per 15 minutes and the third lockout needs fifteen failures, so the 429 always arrives
+>    first (measured at the 11th attempt, 2026-10-16, with the driver still at `lockout_count = 1`).
+>    The policy is reachable **across** IPs — a driver's code tried from several phones or networks,
+>    which is exactly the case the three-lockout rule exists for — and across windows. Both halves
+>    are tested independently; neither test proves the other.
+> 8. **Every app-surface route is served HTTP 404 with the "Page not found" title.** `resolvePage`
+>    has no case for `/driver`, `/admin` or `/portal`, so the shell they get is the not-found one:
+>    `/driver/login`, `/driver/trip/:id`, `/admin` and `/portal` all answer `404` with
+>    `<title>Page not found | TravelSugbo</title>`, indistinguishable from `/nonsense-xyz`
+>    (measured 2026-10-16 on the dev middleware; `server/src/html.ts` shares the resolver, so
+>    production answers the same). The SPA still boots and renders correctly, and nothing client-side
+>    sets `document.title`, so a driver's browser tab reads "Page not found" for their whole shift.
+>    It also means an uptime monitor pointed at `/driver` reports the portal down. These routes
+>    SHOULD be `noindex` — they already get an `X-Robots-Tag` — but `noindex` and `404` are not the
+>    same statement.
+> 9. **Seven owner decisions are open**, listed in one place with each one's safe current behaviour
 >    in `docs/superpowers/plans/2026-10-16-week6-walkthrough.md`. Three of them are driver-portal
 >    behaviour an owner can answer in a sentence (the payment box on a `completed` trip; whether a
 >    cash claim can be refused; whether `booking_notes` needs a visibility column); two are security

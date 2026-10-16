@@ -26,6 +26,10 @@ something to leave lying in a checkout.
 output.** The admin PIN reset was exercised and its new PIN used to sign in; the value was never
 logged.
 
+(A **second, smaller fixture was restaged afterwards** so the 360px browser pass of step 9 had
+something to sign into. It is listed in full under step 9, including its teardown, and is the one
+thing in `rg_travel` that this pass deliberately left behind.)
+
 ### One thing the harness had to work around, and it is a finding in its own right
 
 §8's third login limit is **10 `driver.login` attempts per IP per 15 minutes**
@@ -293,7 +297,42 @@ claims. **Nobody can sign in as a seeded driver.** `db:seed` gives each of `D01`
 call `admin.drivers.resetPin` either. And **no seeded tour has any itinerary stops** (finding 5), so
 even a signed-in driver would see "Start trip" and nothing else. A 360px pass therefore needs a
 driver with a known PIN, a staff account, and a trip for today assigned to that driver on a tour that
-has stops — which is exactly the fixture this walkthrough built and then deleted.
+has stops.
+
+### The fixture left in place for that pass
+
+Restaged on request after the pass's own cleanup, and **it must be removed when the browser pass is
+done.** Its PIN was obtained the proper way — one `admin.drivers.resetPin` call over HTTP, which
+returns it once — so **no `driver.login` attempt was spent** and the per-IP budget was left intact.
+The owner account exists only so that call was possible; its password was never printed and its
+session was revoked in the same script.
+
+| Thing                 | Identity                                                                                                                      |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| driver                | `drivers.code = 'WT1'`, "Walkthrough Driver One", id 9                                                                        |
+| staff                 | `users.email = 'wt-owner@walkthrough.invalid'`, role `owner`, id 8                                                            |
+| today's trip          | `bookings.ref = 'RG-WT0001'` — `assigned`, 4 pax, van SEED-003, tour 7, 6000.00 total / 1500.00 paid → `collect_cash` 4500.00 |
+| upcoming              | `bookings.ref = 'RG-WT0002'` — `assigned`, tomorrow, van SEED-001, fully paid                                                 |
+| history               | `bookings.ref = 'RG-WT0003'` — `completed`, six days ago, van SEED-001                                                        |
+| three itinerary stops | `tour_itinerary_stops.tour_id = 7`, sort 1–3, ids 5/6/7                                                                       |
+| one office note       | `booking_notes` on `RG-WT0001`                                                                                                |
+
+**Teardown**, in this order (FK-safe): `payments` → `trip_checkpoints` → `booking_notes` →
+`booking_addons` → `coupon_redemptions` → `bookings` where `ref LIKE 'RG-WT%'`; then
+`tour_itinerary_stops` where `tour_id = 7`; then `sessions` and `drivers` where `code LIKE 'WT%'`;
+then `sessions` and `users` where `email LIKE 'wt-%@walkthrough.invalid'`; plus `audit_log` rows whose
+`actor_id`/`entity_id` point at any of them. Finally reset `RG-VVBQ5T` and `RG-FNFQ7G` to `confirmed`
+with no van and no driver, and `vans` to `available`×3 + `for_repair` for SEED-004.
+
+### One thing the browser probe did establish, and it is not a layout claim
+
+**`/driver`, `/driver/login`, `/driver/trip/:id`, `/admin` and `/portal` are all served HTTP `404`
+with `<title>Page not found | TravelSugbo</title>`** — byte-for-byte the same shell `/nonsense-xyz`
+gets. Measured against the dev middleware on 5180; `server/src/html.ts` shares the same
+`resolvePage`, so production answers the same. The SPA boots and renders correctly regardless — a
+browser renders a 404 body — and nothing client-side sets `document.title`, so a driver's tab reads
+"Page not found" for their whole shift and an uptime monitor pointed at `/driver` reports the portal
+down. See finding 8.
 
 ## Step 10 — housekeeping done after the pass
 
@@ -407,6 +446,15 @@ nothing to collect on this trip right now. Please call the office."` — correct
 7. **The duplicate-key walk has three implementations.** The shared
    `server/src/db/duplicate-key.ts` plus private copies in `server/src/routers/public/newsletter.ts`
    and `server/src/services/booking-ref.ts`. Carried forward.
+8. **Every app-surface route answers HTTP 404 with the not-found title.** `resolvePage` has no case
+   for `/driver`, `/admin` or `/portal`, so all three — and `/driver/login` and
+   `/driver/trip/:id` — are served `404` with `<title>Page not found | TravelSugbo</title>`,
+   indistinguishable from `/nonsense-xyz`. Found while confirming the client port was serving for
+   step 9, which is the kind of thing only opening a URL turns up. **Not broken** — the SPA boots
+   and renders — but a driver's browser tab says "Page not found" all shift (nothing sets
+   `document.title` client-side), and an uptime check on `/driver` reports the portal down. These
+   routes should be `noindex`, which they already are via `X-Robots-Tag`; `noindex` and `404` are
+   different statements and only one of them was intended.
 
 ## The seven owner decisions still open, each with its safe current behaviour
 
@@ -454,3 +502,9 @@ unsafe today**; each is a question about whether the safe behaviour is the one t
 5. **`isDuplicateKeyError` has two private copies** besides the shared helper (finding 7).
 6. **The gateway wire check** remains blocked on the PayMongo account. No real payment and no real
    refund has ever been issued.
+7. **`db:seed` ships zero `tour_itinerary_stops`** (finding 5), so 6C is undemonstrable on a fresh
+   clone. Deliberately not fixed as this week closed: changing shared seed content touches
+   `seed-parity.test.ts` and anything assuming that table is empty, and it is outside 6A–6F.
+8. **A single IP can never drive one driver to `requires_admin_unlock`** — but the escalation is
+   reachable across IPs and across windows, so the code is live and must not be deleted as dead.
+9. **Every app-surface route answers HTTP 404 with the not-found title** (finding 8).
