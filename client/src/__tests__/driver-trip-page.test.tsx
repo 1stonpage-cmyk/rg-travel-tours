@@ -8,12 +8,22 @@
  * proves the SCREEN, and the four things it proves hardest are the four
  * rulings that came out of those tasks' reviews:
  *
- *  1. **A trip that is not live shows no collection instruction.**
- *     `PaymentBoxState` is computed from the money alone and ignores
- *     `bookings.status`, so a `cancelled` booking with an outstanding
- *     balance still arrives here as `collect_cash` with a real amount on
- *     it. The test below hands the screen exactly that and requires the
- *     amount never to appear as something to collect.
+ *  1. **A booking that should not have been driven shows no collection
+ *     instruction.** `PaymentBoxState` is computed from the money alone and
+ *     ignores `bookings.status`, so a `cancelled` booking with an
+ *     outstanding balance still arrives here as `collect_cash` with a real
+ *     amount on it. The tests below hand the screen exactly that, for
+ *     `cancelled` and `expired`, and require the amount never to appear as
+ *     something to collect.
+ *
+ *     **That is `cancelled` and `expired` only — not every status that is
+ *     not live** (owner decision 2026-10-16, D1). A `completed` trip DOES
+ *     show the box, because cash is the balance and it is handed over at
+ *     the END of a trip: suppressing it there printed "There is nothing to
+ *     collect here" over ₱4,500 that was owed, which was not merely
+ *     unhelpful but false. `COLLECTABLE_STATUSES` in `PaymentBox.tsx` is
+ *     the allow-list, and the test immediately below pins the completed
+ *     case.
  *  2. **The undo control is labelled for what it will actually do** —
  *     "Reopen trip" on a `completed` booking, "Undo last check-in" naming
  *     the stop on an `in_progress` one. Both labels are asserted against
