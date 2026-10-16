@@ -285,27 +285,98 @@ status" extends to "a refund is never a subtraction from what was paid".
 
 ## Step 9 — the browser, at 360px
 
-> **PLACEHOLDER — driven separately by the coordinator.** Opening the driver portal in a 360px window
-> and using it one-handed was explicitly outside this agent's scope: no dev server was started for it,
-> no screen was rendered, and **no layout finding of any kind is claimed here.** The coordinator will
-> fill this section in.
+Driven by the coordinator on **2026-10-16**, in Chrome, against the fixture staged for it
+(`WT1` / `RG-WT0001`, Kawasan Falls Canyoneering with three itinerary stops). **This is the gap Week
+5's walkthrough named and left open, and that jsdom could not close all week.**
 
-Two prerequisites the pass can state as fact, because they are database observations and not layout
-claims. **Nobody can sign in as a seeded driver.** `db:seed` gives each of `D01`–`D04` a
-`randomInt(0, 1_000_000)` PIN that it hashes and never prints (`server/src/db/seed.ts:353`), and
-`users` is empty — it was empty before this pass began — so there is no staff account with which to
-call `admin.drivers.resetPin` either. And **no seeded tour has any itinerary stops** (finding 5), so
-even a signed-in driver would see "Start trip" and nothing else. A 360px pass therefore needs a
-driver with a known PIN, a staff account, and a trip for today assigned to that driver on a tour that
-has stops.
+### How, and the one honest caveat about it
 
-### The fixture left in place for that pass
+Chrome's window could not be narrowed: `resize_window` reported success and `window.innerWidth`
+stayed **1920**, because the window was maximised and Chrome ignores bounds changes until it is
+restored. So the pass was driven inside a **same-origin 360×780 iframe** of the real dev server at
+`http://localhost:5180/driver/login`. An iframe is a genuine viewport for CSS — media queries, layout
+and `getBoundingClientRect()` all resolve against its 360px width — so every number below is measured
+at 360 CSS px rather than inferred from a class string.
 
-Restaged on request after the pass's own cleanup, and **it must be removed when the browser pass is
-done.** Its PIN was obtained the proper way — one `admin.drivers.resetPin` call over HTTP, which
-returns it once — so **no `driver.login` attempt was spent** and the per-IP budget was left intact.
-The owner account exists only so that call was possible; its password was never printed and its
-session was revoked in the same script.
+**What that technique does NOT give**, stated so nobody reads more into this than it proves: no real
+device, no touch input, no on-screen keyboard shoving the viewport, no sunlight, and
+`env(safe-area-inset-bottom)` resolves to **0** on a desktop, so the notch padding is still unproven.
+A phone in a hand remains the only way to close those.
+
+### Measured at 360 CSS px
+
+| Thing                   | Measured                                                                                | Wanted                                                 |
+| ----------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Horizontal overflow     | **none** — `scrollWidth` 360 = viewport 360, on both the sign-in and the trip screen    | none                                                   |
+| PIN keys                | **104 × 56 px**, ten of them                                                            | ≥44, designed ~56                                      |
+| Gap between keys        | **8 px**                                                                                | ≥8                                                     |
+| Sign-in button          | **328 × 56 px**, fully visible without scrolling                                        | reachable, ≥44                                         |
+| Driver-code field       | **328 × 56 px**                                                                         | ≥44                                                    |
+| Pad position            | starts at **50%** of viewport height                                                    | lower two-thirds, thumb-reachable                      |
+| Bottom tab bar          | `position: fixed`, bottom edge at **780 = viewport height**, three tabs **115 × 56 px** | anchored, ≥44                                          |
+| Tap targets under 44 px | **one** — the visually-hidden "Skip to main content" link (32 px wide)                  | a standard a11y skip link, not a driver-facing control |
+| Contrast failures       | **none across every text node on the sign-in screen**                                   | AA                                                     |
+| Operator eyebrow        | `#6b4708` at 12 px, **7.64:1**                                                          | `brand-gold-700` or darker; `-600` would have failed   |
+
+That last row is the rule `CLAUDE.md` writes down after measuring `brand-gold-600` at 3.25:1, and the
+screen follows it — the eyebrow is the darker token, not the one that fails.
+
+### The flows, on screen
+
+**Signed in** with code and PIN using the pad's own buttons. Landed on `/driver` with
+**Today (1) · Upcoming (1) · History (1)** — all three tabs populated, no overflow.
+
+**The trip screen** rendered, in this order: tour title, date and guest count, `RG-WT0001 · Assigned
+to you · SEED-003`, the lead guest with **Call / Text / WhatsApp**, the pickup with **Open in Maps**,
+then the payment box, then the itinerary, then office notes.
+
+**The payment box read "Collect ₱4,500 cash" with "Four thousand five hundred pesos" beneath it** —
+figures and words together, which is the rule that exists so a mis-read digit is caught by a driver
+glancing at a phone.
+
+**The check-in sequence**, each tap confirmed against the server before the row changed:
+
+| After               | Progress         | The undo control said                                      |
+| ------------------- | ---------------- | ---------------------------------------------------------- |
+| Start trip          | **1 of 4 stops** | "Undo last check-in — Start trip"                          |
+| Badian jump-off     | **2 of 4 stops** | "Undo last check-in — Badian jump-off — gear and briefing" |
+| Canyon mid-section  | **3 of 4 stops** | "Undo last check-in — Canyon mid-section — cliff jumps"    |
+| Kawasan Falls basin | **4 of 4 stops** | **"Reopen trip"**                                          |
+
+Three things that were previously only class-string assertions are now observed facts: the
+trip-start pseudo-stop **counts** (`1 of 4` after Start, exactly as `TripProgress.total` intends),
+progress is stated **in words** rather than as a bare bar, and **exactly one** undo control exists at
+a time, naming the stop the server would actually retract. The relabel to **"Reopen trip"** on
+completion — the ruling that came out of Task 6's review — works on screen, under the heading
+"Tapped the wrong thing?".
+
+Check-in times appeared beside each stop (14:01, 14:01, 14:01, 14:02 Manila), which is the
+acknowledgement the design chose instead of a toast.
+
+### What the browser showed that nothing else had
+
+**Open decision 1 is worse on screen than it reads in a report.** After the last stop, the trip is
+`completed`, the payment box is gone, and in its place the screen says:
+
+> **Trip completed** — This trip is finished. **There is nothing to collect here.**
+
+₱4,500 was still owed. The sentence is not merely unhelpful, it is **false**, and a driver reading it
+has been told not to ask for money the company is owed. The server would still accept the claim
+(step 5's finding 1 proved that over HTTP); only this screen refuses. That is the strongest argument
+yet for showing the box on `completed` and keeping `cancelled`/`expired` excluded.
+
+**The tab title says "Page not found" for the entire session** (finding 8), because `resolvePage` has
+no case for `/driver` and nothing sets `document.title` client-side. Confirmed in the browser: the
+tab read `Page not found | TravelSugbo` from sign-in through to trip completion, while every screen
+rendered correctly.
+
+### The fixture staged for that pass — **removed, and verified removed**
+
+Restaged on request after the pass's own cleanup, then **torn down and verified once the browser pass
+was done** (see the confirmation below the table). Its PIN was obtained the proper way — one
+`admin.drivers.resetPin` call over HTTP, which returns it once — so **no `driver.login` attempt was
+spent** and the per-IP budget was left intact. The owner account existed only so that call was
+possible; its password was never printed and its session was revoked in the same script.
 
 | Thing                 | Identity                                                                                                                      |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
@@ -323,6 +394,24 @@ session was revoked in the same script.
 then `sessions` and `users` where `email LIKE 'wt-%@walkthrough.invalid'`; plus `audit_log` rows whose
 `actor_id`/`entity_id` point at any of them. Finally reset `RG-VVBQ5T` and `RG-FNFQ7G` to `confirmed`
 with no van and no driver, and `vans` to `available`×3 + `for_repair` for SEED-004.
+
+**Run and verified 2026-10-16**, after the browser pass: 3 bookings, 4 `trip_checkpoints`, 1
+`booking_notes`, 3 `tour_itinerary_stops`, 1 driver, 1 user, 1 driver session and 7 `audit_log` rows
+deleted; the two demo trips reset. `rg_travel` now reads exactly as a fresh clone finds it — two
+`confirmed` demo trips with no van and no driver, vans `available`×3 + `for_repair` on SEED-004, the
+four seed drivers' lockout columns all zero, and **0 rows** in `users`, `payments`,
+`trip_checkpoints`, `booking_notes`, `tour_itinerary_stops` and `sessions`. `rg_travel_test` still has
+an empty fleet.
+
+**The van's round trip was confirmed from evidence rather than assumed**, which matters because it is
+the thing Task 7 exists to protect. Read before the teardown deleted it: `trip.started` at 06:01:47
+with `{vanId: 3}`, `trip.completed` at 06:02:06 with `{vanId: 3, lastStopId: 7}`, and
+**`vans.updated_at` for SEED-003 standing at exactly the completion instant** while the three
+untouched vans still carried the seed's `2026-10-14 21:41:59`. That last column is the proof, not the
+status: `updated_at` only advances when an `UPDATE` **matches**, and completion's write matches only
+`status = 'on_trip'` (`moveVanStatus` puts the `from` status in the `WHERE`). So the clear ran against
+a row that really was `on_trip`, and the van is `available` now. Reading `vans.status` alone could not
+have told "went out and came back" from "never went out".
 
 ### One thing the browser probe did establish, and it is not a layout claim
 
@@ -376,12 +465,14 @@ existing schema and there is nothing new to apply to a server database.
 
 Named rather than glossed over.
 
-- **The browser — still, and now it matters more.** Step 9 was the coordinator's and is unfilled
-  above at the time of writing. Everything in steps 1–8 went through HTTP and the database. jsdom does
-  no layout, so **360px, one-handed reach, the 44px tap targets, the payment box's actual visibility
-  in sunlight and the undo button's position are verified by class string, not by looking at a
-  screen.** For a dashboard that was an acceptable gap for a week; for a screen a driver uses standing
-  beside a van it is not.
+- **The browser is now PARTLY closed, and the remainder is named.** Step 9 above measured the
+  portal at a genuine 360 CSS px and drove sign-in through to trip completion, so layout, tap sizes,
+  overflow, contrast and the undo labelling are observed rather than asserted. What that pass still
+  does **not** prove: a real device, touch input, an on-screen keyboard shrinking the viewport,
+  `env(safe-area-inset-bottom)` (it resolves to 0 on a desktop, so the notch padding is untested),
+  `prefers-reduced-motion` actually suppressing the press animation, and the payment box's visibility
+  **in sunlight**, which is the condition the whole design was reasoned from. A phone in a hand beside
+  a van is the only way to finish this.
 - **The gateway.** `provider.refund()` has only ever run against the mock. `calledGateway: false` on
   both refunds in step 8 is the honest reading: the money moved by hand and the system recorded it.
   **No real payment and no real refund has ever been issued** — blocked on the PayMongo account, the
@@ -455,6 +546,19 @@ nothing to collect on this trip right now. Please call the office."` — correct
    `document.title` client-side), and an uptime check on `/driver` reports the portal down. These
    routes should be `noindex`, which they already are via `X-Robots-Tag`; `noindex` and `404` are
    different statements and only one of them was intended.
+9. **Four declared `bookings` columns are never written by anything.** After a full start → three
+   stops → complete cycle driven through the browser, `RG-WT0001` was `completed` with
+   **`started_at` null and `completed_at` null**. Grepping confirms why: `startTrip` sets only
+   `status`, `finishTrip` sets only `status`, and `cancelBooking` sets only `status` — so
+   `started_at`, `completed_at`, `cancelled_at` and `cancel_reason` appear in `schema.ts` and in no
+   write anywhere in `server/src`. **No information is lost**: the start time is the `stop_key = 0`
+   checkpoint, the completion time is the `trip.completed` audit row, and the cancel time and reason
+   are the cancel audit row. But they are dead columns, and the surprising one is `cancel_reason` —
+   `cancelInput` validates it as required and non-empty ("Say why this booking is being cancelled."),
+   and then it reaches only the audit payload. §8 item 1's "Start trip → booking `in_progress`,
+   timestamp saved" is satisfied by the checkpoint rather than the column, and that is written down
+   nowhere. Anyone who later writes a report over `completed_at`, or a cancellations screen reading
+   `cancel_reason`, gets nulls.
 
 ## The seven owner decisions still open, each with its safe current behaviour
 
@@ -508,3 +612,6 @@ unsafe today**; each is a question about whether the safe behaviour is the one t
 8. **A single IP can never drive one driver to `requires_admin_unlock`** — but the escalation is
    reachable across IPs and across windows, so the code is live and must not be deleted as dead.
 9. **Every app-surface route answers HTTP 404 with the not-found title** (finding 8).
+10. **`bookings.started_at`, `completed_at`, `cancelled_at` and `cancel_reason` are declared and
+    never written** (finding 9). Decide whether to write them or drop them; `cancel_reason` is
+    collected and validated at the boundary today and then only reaches the audit row.

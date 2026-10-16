@@ -1112,7 +1112,7 @@ exists (it is part of 2B), but no submission, moderation, admin or export side o
 > known quantity with a name. Building either fix turns that test red — that is the intended
 > signal. Replace it with the new behaviour's own proof rather than loosening it.
 
-> **The rest of what Week 6 hands this week** (walkthrough, 2026-10-16). Nine items, none of them
+> **The rest of what Week 6 hands this week** (walkthrough, 2026-10-16). Ten items, none of them
 > blocking, all of them cheap to lose track of.
 >
 > 1. **`TripProgressStop` carries no checkpoint id.** `shared/src/driver.ts` defines it as
@@ -1162,14 +1162,24 @@ exists (it is part of 2B), but no submission, moderation, admin or export side o
 >    It also means an uptime monitor pointed at `/driver` reports the portal down. These routes
 >    SHOULD be `noindex` — they already get an `X-Robots-Tag` — but `noindex` and `404` are not the
 >    same statement.
-> 9. **Seven owner decisions are open**, listed in one place with each one's safe current behaviour
->    in `docs/superpowers/plans/2026-10-16-week6-walkthrough.md`. Three of them are driver-portal
->    behaviour an owner can answer in a sentence (the payment box on a `completed` trip; whether a
->    cash claim can be refused; whether `booking_notes` needs a visibility column); two are security
->    postures (`driver_inactive` being distinguishable; a driver deactivated mid-shift keeping up to
->    12 hours of access, where staff deactivation is immediate); one is the `on_trip` sweep above;
->    and one is whether an admin cancellation returns the booking's coupon use — hold expiry does, a
->    cancel is a different event, and nothing says.
+> 9. **Four declared `bookings` columns are never written by anything.** `started_at`,
+>    `completed_at`, `cancelled_at` and `cancel_reason` exist in `schema.ts` and in no write in
+>    `server/src`: `startTrip`, `finishTrip` and `cancelBooking` each set `status` and nothing else
+>    (measured 2026-10-16 — a booking driven start → three stops → complete through the browser came
+>    out `completed` with `started_at` and `completed_at` both null). **Nothing is lost** — the start
+>    time is the `stop_key = 0` checkpoint, the completion time is the `trip.completed` audit row, and
+>    the cancel time and reason are the cancel audit row — so this is dead weight rather than a bug.
+>    The surprising one is `cancel_reason`: `cancelInput` requires it and rejects an empty string, and
+>    it then reaches only the audit payload. Either write the four or drop them; leaving them is how
+>    the first report over `completed_at` comes back empty.
+> 10. **Seven owner decisions are open**, listed in one place with each one's safe current behaviour
+>     in `docs/superpowers/plans/2026-10-16-week6-walkthrough.md`. Three of them are driver-portal
+>     behaviour an owner can answer in a sentence (the payment box on a `completed` trip; whether a
+>     cash claim can be refused; whether `booking_notes` needs a visibility column); two are security
+>     postures (`driver_inactive` being distinguishable; a driver deactivated mid-shift keeping up to
+>     12 hours of access, where staff deactivation is immediate); one is the `on_trip` sweep above;
+>     and one is whether an admin cancellation returns the booking's coupon use — hold expiry does, a
+>     cancel is a different event, and nothing says.
 
 - **7A** Reviews: submit (portal + public), moderation, replies, helpful votes, verified badge.
 - **7B** Coupons admin + redemption log.

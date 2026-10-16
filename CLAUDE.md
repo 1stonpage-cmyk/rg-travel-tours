@@ -90,6 +90,14 @@ There is no `tailwind.config.js`.
   extends to "a refund is never a subtraction from what was paid".
 - **Time:** store **UTC**; display and compute business dates in **Asia/Manila**.
 - **IDs:** auto-increment internally. Public booking refs are random and non-sequential (`RG-7KQ4M9`).
+- **A booking's lifecycle instants live in `trip_checkpoints` and `audit_log`, not on the booking.**
+  `bookings.started_at`, `completed_at`, `cancelled_at` and `cancel_reason` are declared in
+  `schema.ts` and **written by nothing** — `startTrip`, `finishTrip` and `cancelBooking` each set
+  `status` and nothing else. The start time is the `stop_key = 0` checkpoint, the completion time is
+  the `trip.completed` audit row, and the cancel time and reason are the cancel audit row (the reason
+  is required and validated at the input boundary, then reaches only that payload). Nothing is lost,
+  but do not read those four columns expecting a value, and do not add a report over `completed_at`
+  without filling it first.
 - **Soft deletes:** use `is_active` / status fields for tours, vans, drivers, users.
   **Never hard-delete bookings or payments.**
 - **Audit:** every payment, refund, status change, and assignment writes to `audit_log`.
