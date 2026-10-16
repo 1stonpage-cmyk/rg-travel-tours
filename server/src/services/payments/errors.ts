@@ -427,6 +427,24 @@ export class ReceiptRejectionNeedsReasonError extends Error {
   }
 }
 
+/**
+ * A cash claim may only be refused WITH a reason (owner decision
+ * 2026-10-16, D2).
+ *
+ * Its own class rather than reusing `ReceiptRejectionNeedsReasonError`,
+ * because the two carry different consequences: a rejected receipt sends a
+ * guest an email asking for another one, and a rejected cash claim is an
+ * internal finding about a driver — "the money never arrived". Nobody
+ * outside the office ever reads this reason, and the sentence a caller
+ * shows differs, so the types do.
+ */
+export class CashRejectionNeedsReasonError extends Error {
+  constructor() {
+    super('A cash claim can only be refused with a reason.');
+    this.name = 'CashRejectionNeedsReasonError';
+  }
+}
+
 /* ======================================================================
  * 6F — cancel and refund (Week 6 plan, Task 13; BUILD_SPEC §6 "Refunds &
  * cancellations").

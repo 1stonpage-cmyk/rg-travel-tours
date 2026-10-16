@@ -59,6 +59,7 @@ import {
   BookingNotFoundError,
   CashPaymentNotFoundError,
   CashPaymentNotPendingError,
+  CashRejectionNeedsReasonError,
   ReceiptAlreadyDecidedError,
   ReceiptPaymentNotFoundError,
   PaymentAmountMismatchError,
@@ -685,6 +686,33 @@ function statusAfterManualVerified(current: BookingStatus): BookingStatus {
     : current;
 }
 
+/** Which pending manual row an id may name. */
+type PendingKind = 'cash' | 'receipt';
+
+/**
+ * WHICH ROW an id is allowed to name — the one definition of "this is a
+ * driver's cash row" / "this is a guest's receipt row" in the system.
+ *
+ * Extracted from `verifyPendingManualPayment()` unchanged (D2), so that the
+ * REFUSAL path below narrows to exactly the rows the APPROVAL path would
+ * have accepted. Two answers to "is this a cash row" is how a rejection
+ * lands on a receipt — or, worse, how one of the pair quietly widens to a
+ * gateway charge while the other does not.
+ *
+ * Deliberately NOT narrowed to `collected_by_driver_id IS NOT NULL`, even
+ * though every cash row written today has one: adding that term here would
+ * narrow the approval too, and a manual cash row with no driver named would
+ * silently stop being approvable. The `status = 'pending'` check is not here
+ * either — it belongs under the lock, where it is re-read.
+ */
+const manualPendingRow = (paymentId: number, kind: PendingKind) =>
+  and(
+    eq(payments.id, paymentId),
+    eq(payments.type, 'payment'),
+    eq(payments.provider, 'manual'),
+    kind === 'cash' ? eq(payments.method, 'cash') : isNotNull(payments.receiptPath),
+  );
+
 /**
  * Finance confirms that driver-collected cash was actually handed over.
  *
@@ -722,12 +750,7 @@ async function verifyPendingManualPayment(
      * receipt row, never both, and never a gateway charge, whose id is
      * "not found" here rather than something this path could mark paid.
      */
-    const pendingRow = and(
-      eq(payments.id, parsed.paymentId),
-      eq(payments.type, 'payment'),
-      eq(payments.provider, 'manual'),
-      kind === 'cash' ? eq(payments.method, 'cash') : isNotNull(payments.receiptPath),
-    );
+    const pendingRow = manualPendingRow(parsed.paymentId, kind);
     const [unlocked] = await tx
       .select({ bookingId: payments.bookingId })
       .from(payments)
@@ -897,9 +920,6 @@ async function verifyPendingManualPayment(
  * called, which is what `kind` selects.
  * ====================================================================== */
 
-/** Which pending manual row an id may name. */
-type PendingKind = 'cash' | 'receipt';
-
 const notFound = (kind: PendingKind, paymentId: number): Error =>
   kind === 'cash'
     ? new CashPaymentNotFoundError(paymentId)
@@ -962,4 +982,158 @@ export async function approveManualReceipt(
   const parsed = verifyCashPaymentInputSchema.parse(input);
   const verifiedBy = assertMayVerifyPayments(parsed.verifier);
   return verifyPendingManualPayment(parsed.paymentId, 'receipt', verifiedBy);
+}
+
+/* ======================================================================
+ * D2 — refusing a cash claim: "the money never arrived"
+ * (owner decision 2026-10-16).
+ *
+ * The third door onto a pending manual row, and the only one that moves no
+ * money at all. It is here rather than beside `verifyCashPayment()` purely
+ * so that the "two doors" section above reads as the pair it describes; it
+ * shares that pair's row predicate (`manualPendingRow`) and its gate
+ * (`assertMayVerifyPayments`), which is what matters.
+ * ====================================================================== */
+
+const rejectCashPaymentInputSchema = z.object({
+  /** The `pending` row `recordPendingCash()` created. */
+  paymentId: z.number().int().positive(),
+  /** Bounded by its column (`varchar(400)`). Emptiness is the guard's, below. */
+  reason: z.string().max(400),
+  verifier: cashVerifierSchema,
+});
+
+export type RejectCashPaymentInput = z.input<typeof rejectCashPaymentInputSchema>;
+
+export interface RejectCashPaymentResult {
+  paymentId: number;
+  bookingId: number;
+  /** The booking's ref, for the admin's confirmation line. */
+  ref: string;
+}
+
+/**
+ * Finance or the owner refuses a cash claim: the money never arrived
+ * (owner decision 2026-10-16, D2).
+ *
+ * Converts the driver's `pending` row to `rejected` with the reason, **in
+ * place**, and touches NOTHING on the booking. Not `amount_paid_centavos`,
+ * not `status`, not `payment_review_required` — there is nothing to undo,
+ * because a claim never credited anything in the first place. That is the
+ * whole asymmetry with a rejected RECEIPT, which sends the guest back to
+ * `pending_payment` with a re-upload deadline: a receipt is money the guest
+ * says they sent before the trip, and cash is the balance on a trip that
+ * has already run.
+ *
+ * ## What this unblocks, and why that is a consequence rather than a goal
+ *
+ * `driver.trip`'s payment box reads `status = 'pending'` only, so refusing
+ * the row returns that box to `collect_cash` and lets the driver record the
+ * cash again — which is the right outcome when the first tap was a mistake
+ * or the guest paid later. Before this existed, one mistaken tap blocked a
+ * booking's cash collection permanently: `recordDriverCash` answered
+ * `CONFLICT` on every later attempt and nothing could close the row. It is
+ * NOT an invitation to re-record: every claim is its own row for its whole
+ * life, and the rejected one stays exactly where it is as the record of
+ * what was claimed and refused.
+ *
+ * ## `verified_by` stays NULL
+ *
+ * Deliberately, unlike nothing else here: `verified_by` means "this person
+ * confirmed money arrived", and writing a refuser's id there would make a
+ * refusal indistinguishable from an approval in every query that reads that
+ * column. The refuser is in the audit row, which is where "who decided
+ * what, and why" belongs.
+ *
+ * Rejects, writing nothing, when the verifier is not an owner or finance
+ * user, when the reason is empty or whitespace, when the id is not a
+ * driver-cash row, or when that row is no longer `pending`.
+ */
+export async function rejectCashPayment(
+  input: RejectCashPaymentInput,
+): Promise<RejectCashPaymentResult> {
+  const parsed = rejectCashPaymentInputSchema.parse(input);
+  // Both before the transaction opens — neither needs the database, and a
+  // refusal that has already written something is not a refusal.
+  const verifiedBy = assertMayVerifyPayments(parsed.verifier);
+  const reason = parsed.reason.trim();
+  if (reason.length === 0) throw new CashRejectionNeedsReasonError();
+
+  return getDb().transaction(async (tx: Transaction) => {
+    const cashRow = manualPendingRow(parsed.paymentId, 'cash');
+
+    // Unlocked, and used ONLY to find which booking to lock. Its status is
+    // deliberately not trusted — the locking re-read below is.
+    const [unlocked] = await tx
+      .select({ bookingId: payments.bookingId })
+      .from(payments)
+      .where(cashRow)
+      .limit(1);
+    if (!unlocked) throw new CashPaymentNotFoundError(parsed.paymentId);
+
+    /*
+     * The booking lock FIRST, then the payment row — the same order
+     * `verifyPendingManualPayment` and `decideManualReceipt` take, so none
+     * of the three can deadlock against another. Nothing is written to the
+     * booking; the lock is taken so that an approval racing this rejection
+     * is serialised rather than both landing.
+     */
+    const [booking] = await tx
+      .select({ ref: bookings.ref, status: bookings.status })
+      .from(bookings)
+      .where(eq(bookings.id, unlocked.bookingId))
+      .for('update')
+      .limit(1);
+    if (!booking) throw new BookingNotFoundError(unlocked.bookingId);
+
+    /*
+     * The authoritative read: after the booking lock, and `FOR UPDATE`.
+     * Under REPEATABLE READ a plain re-read would hand back the snapshot
+     * taken by the unlocked lookup above, so an approval that committed
+     * while this caller waited for the lock would still read as `pending`
+     * — and the row would be both paid and refused.
+     */
+    const [payment] = await tx
+      .select({
+        status: payments.status,
+        amountCentavos: payments.amountCentavos,
+        collectedByDriverId: payments.collectedByDriverId,
+      })
+      .from(payments)
+      .where(cashRow)
+      .for('update')
+      .limit(1);
+    if (!payment) throw new CashPaymentNotFoundError(parsed.paymentId);
+    if (payment.status !== 'pending') {
+      throw new CashPaymentNotPendingError(parsed.paymentId, payment.status);
+    }
+
+    await tx
+      .update(payments)
+      .set({ status: 'rejected', rejectReason: reason })
+      .where(eq(payments.id, parsed.paymentId));
+
+    await writeAudit(tx, {
+      // The finance user or owner, by `users.id` — §6's precedent for an
+      // admin decision. Never the driver, who is the subject of it.
+      actorType: 'user',
+      actorId: verifiedBy,
+      action: 'payment.cash_rejected',
+      entity: 'payments',
+      entityId: parsed.paymentId,
+      data: {
+        bookingRef: booking.ref,
+        amountCentavos: payment.amountCentavos,
+        collectedByDriverId: payment.collectedByDriverId,
+        reason,
+        priorPaymentStatus: 'pending',
+        paymentStatus: 'rejected',
+        // Spelled out so nobody has to infer that the booking is untouched.
+        bookingStatus: booking.status,
+        amountPaidChanged: false,
+      },
+    });
+
+    return { paymentId: parsed.paymentId, bookingId: unlocked.bookingId, ref: booking.ref };
+  });
 }

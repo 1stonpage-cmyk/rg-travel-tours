@@ -350,7 +350,17 @@ Every page reads tours, destinations, packages, reviews, FAQs and settings from 
   one `payments` row for its whole life** — a test asserts the absence of a second `payments`
   insert. A driver can never verify their own collection, and a dispatcher cannot verify payments
   at all. Cash is **today-only in Manila, refused by the procedure** and not merely by hiding a
-  button. There is no reject path for a cash claim yet.
+  button. **A claim can also be REFUSED — "the money never arrived"** (owner decision 2026-10-16,
+  D2): `admin.bookings.rejectCash` under `verifyPayments`, so owner and finance only, never a
+  dispatcher and never the driver who made it. A refusal needs a reason, moves no money and touches
+  **no column on `bookings`** — there is nothing to take back, because a claim credited nothing —
+  and the row is kept, not deleted: `status = 'rejected'` with its `reject_reason`, `verified_by`
+  still NULL (a refuser is not a verifier; they are in the audit row instead). It is not the receipt
+  rejection's shape: no guest email, no re-upload deadline. The consequence to know is that the
+  driver's payment box reads `status = 'pending'` only, so refusing the row returns it to
+  `collect_cash` and **the driver can claim again** — which is the point when the first tap was a
+  mistake, and the reason one mistaken tap no longer blocks a booking's cash collection for good.
+  The refused row stays exactly where it is as the record of what was claimed and refused.
 - **One `trip_checkpoints` row per stop, arbitrated by the unique index on
   `(booking_id, stop_key)`.** A double tap is `already_checked_in` — a shrug, not an error and not
   a second row. An undo **marks** (`undone`, `undone_at`, `undone_by = the driver`) and never

@@ -38,11 +38,12 @@
  *     is not an admin identity at all. Asserted on the error `code`, never
  *     the wording.
  *
- * Nothing in this file writes `payments` or `bookings.amount_paid_centavos`
- * through anything but the services that own them — the claim comes from
- * `recordPendingCash()` and the credit from the mounted procedure. The
- * fixture sets `amount_paid_centavos` once, at INSERT, to describe a booking
- * that already took its deposit.
+ * Nothing in this file MOVES money through anything but the services that own
+ * it — the claim comes from `recordPendingCash()` and the credit from the
+ * mounted procedure. The fixture sets `amount_paid_centavos` once, at INSERT,
+ * to describe a booking that already took its deposit, and
+ * `insertReceiptPayment()` writes one `pending` row that credits nothing, to
+ * describe a row shape the cash path must refuse (see its own note).
  *
  * `recordPendingCash()` rather than `driver.recordCash` for the claim: that
  * procedure is Manila-today-only (Task 8, owner Q9) and tested there, and a
@@ -55,14 +56,21 @@
  * `audit_log` is deliberately not cleaned: it is append-only and nothing here
  * counts it to make a decision.
  */
-import { afterEach, beforeEach, expect, it } from 'vitest';
-import { sql } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import type { AdminRole, PriceSnapshot } from '@rg/shared';
 import { getDb, getPool } from '../db/client';
-import { bookings, destinations, drivers, tours, users } from '../db/schema';
+import { auditLog, bookings, destinations, drivers, payments, tours, users } from '../db/schema';
 import { ROLE_MATRIX } from '../middleware/require-role';
 import { generateBookingRef } from '../services/booking-ref';
-import { recordPendingCash } from '../services/payments/record-payment';
+import {
+  CashPaymentNotFoundError,
+  CashPaymentNotPendingError,
+  CashRejectionNeedsReasonError,
+  PaymentVerificationNotPermittedError,
+} from '../services/payments/errors';
+import { recordPendingCash, rejectCashPayment } from '../services/payments/record-payment';
+import { driverTripDetail, recordDriverCash } from '../routers/public/driver';
 import { appRouter } from '../routers/_app';
 import { driverCaller, staffContext } from './helpers/ctx';
 import { describeWithDb } from './helpers/db';
@@ -135,6 +143,51 @@ async function bookingMoney(bookingId: number) {
     status: String(row.status),
     paymentReviewRequired: Number(row.payment_review_required),
   };
+}
+
+/**
+ * The audit rows about one entity, oldest first.
+ *
+ * `audit_log` is append-only and nothing cleans it (see the file note), so
+ * these are scoped to a payment id this test created and nothing wider.
+ */
+async function auditRowsFor(entity: string, entityId: number) {
+  return getDb()
+    .select({
+      action: auditLog.action,
+      actorType: auditLog.actorType,
+      actorId: auditLog.actorId,
+      data: auditLog.data,
+    })
+    .from(auditLog)
+    .where(and(eq(auditLog.entity, entity), eq(auditLog.entityId, entityId)))
+    .orderBy(asc(auditLog.id));
+}
+
+/**
+ * A guest's RECEIPT row — the shape the cash path must refuse (D2).
+ *
+ * Inserted directly, which is the one exception to this file's "only the
+ * services that own them write `payments`" rule, and deliberately so: there
+ * is no money in this row to get wrong (`status='pending'` credits nothing)
+ * and `recordManualReceipt()` cannot write it against this fixture anyway,
+ * because that service refuses an `in_progress` booking as `already_paid`.
+ * What the test needs is a row SHAPE — manual, not cash, no driver — and a
+ * second booking in two more statuses to obtain it legitimately would prove
+ * less, not more.
+ */
+async function insertReceiptPayment(bookingId: number): Promise<number> {
+  const [row] = await getDb().insert(payments).values({
+    bookingId,
+    type: 'payment',
+    provider: 'manual',
+    method: 'bank_transfer',
+    amountCentavos: 100,
+    status: 'pending',
+    receiptPath: 'ffffffffffffffffffffffffffffffff.jpg',
+    collectedByDriverId: null,
+  });
+  return row.insertId;
 }
 
 async function makeDriver(name: string): Promise<{ id: number; name: string }> {
@@ -236,6 +289,18 @@ it('declares §9’s verifyPayments gate on the mounted procedure', () => {
   )._def.procedures;
   expect(mounted['admin.bookings.approveCash'], 'approveCash is not mounted').toBeDefined();
   expect(mounted['admin.bookings.approveCash']?._def?.meta).toMatchObject({
+    access: 'admin',
+    area: 'verifyPayments',
+    roles: ROLE_MATRIX.verifyPayments,
+  });
+  /*
+   * And its refusal half (D2). The same gate for the same reason: refusing a
+   * claim is `verifyPayments` being exercised just as much as approving one,
+   * so a dispatcher is refused at the transport and not only by the
+   * service's own check.
+   */
+  expect(mounted['admin.bookings.rejectCash'], 'rejectCash is not mounted').toBeDefined();
+  expect(mounted['admin.bookings.rejectCash']?._def?.meta).toMatchObject({
     access: 'admin',
     area: 'verifyPayments',
     roles: ROLE_MATRIX.verifyPayments,
@@ -561,5 +626,316 @@ describeWithDb('admin.bookings — the cash a driver says they took', () => {
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
 
     expect(await bookingMoney(booking.id)).toMatchObject({ amountPaidCentavos: DEPOSIT });
+  });
+
+  /* ==================================================================
+   * D2 — finance or the owner REFUSES a claim: the money never arrived
+   * (owner decision 2026-10-16).
+   *
+   * The approval half above has existed since A5b. Its counterpart did
+   * not, and the gap was not cosmetic: one mistaken tap in a van wrote a
+   * `pending` row nothing could close, which sat in this queue as a claim
+   * nobody could refuse AND put the driver's payment box into
+   * `unverified_do_not_collect` — so `driver.recordCash` answered
+   * `CONFLICT` on that booking for good.
+   *
+   * **A refusal moves no money because no money ever moved.** The three
+   * booking columns an approval may touch are read before and after every
+   * test here, and the unblock is proved through `driverTripDetail` and
+   * `recordDriverCash` rather than by reading `payments.status`: the column
+   * only proves the write landed, and the driver's screen is what the owner
+   * actually asked for.
+   * ================================================================== */
+  describe('refusing a claim', () => {
+    /** The verifier a finance user is, built per test — `finance` is per-test. */
+    const financeVerifier = () => ({ type: 'user' as const, id: finance, role: 'finance' });
+
+    /**
+     * Noon in Manila on the fixture's tour date.
+     *
+     * `recordDriverCash` is Manila-today-only (owner Q9) and this file's
+     * `TOUR_DATE` is deliberately far future, so the clock is passed in
+     * rather than the fixture being moved onto today — `now` is an explicit
+     * argument for exactly this reason, and a fixture that moved with the
+     * calendar would make every other date assertion in this file drift.
+     * 04:00Z is 12:00 Manila, nowhere near a day boundary in either zone.
+     */
+    const TOUR_DAY_NOON = new Date(`${TOUR_DATE}T04:00:00Z`);
+
+    it('moves no money and leaves the booking exactly as it was', async () => {
+      const driver = await makeDriver('Ramil Oczon');
+      const booking = await makeBooking(driver.id);
+      const before = await bookingMoney(booking.id);
+      const { paymentId } = await recordPendingCash({
+        bookingId: booking.id,
+        amountCentavos: BALANCE,
+        collectedByDriverId: driver.id,
+      });
+
+      await rejectCashPayment({
+        paymentId,
+        reason: 'The driver never handed this in.',
+        verifier: financeVerifier(),
+      });
+
+      const payment = await paymentRow(paymentId);
+      expect(payment.status).toBe('rejected');
+      expect(payment.reject_reason).toBe('The driver never handed this in.');
+      // The row is KEPT, never deleted — CLAUDE.md: never hard-delete a
+      // payment. It is the record of what was claimed and refused.
+      expect(await paymentCount(booking.id)).toBe(1);
+      expect(Number(payment.amount_centavos)).toBe(BALANCE);
+      // `verified_by` stays NULL: nobody verified anything, they refused it.
+      // Writing the refuser there would make a refusal indistinguishable
+      // from an approval in every query that reads that column.
+      expect(payment.verified_by).toBeNull();
+      expect(payment.verified_at).toBeNull();
+      // And the claimant is still on the row.
+      expect(Number(payment.collected_by_driver_id)).toBe(driver.id);
+
+      expect(await bookingMoney(booking.id)).toEqual(before);
+    });
+
+    it('writes one audit row carrying the reason and the actor', async () => {
+      const driver = await makeDriver('Dodong Enriquez');
+      const booking = await makeBooking(driver.id);
+      const { paymentId } = await recordPendingCash({
+        bookingId: booking.id,
+        amountCentavos: 100,
+        collectedByDriverId: driver.id,
+      });
+      await rejectCashPayment({
+        paymentId,
+        reason: 'Short by 500.',
+        verifier: { type: 'user' as const, id: owner, role: 'owner' },
+      });
+
+      const rows = await auditRowsFor('payments', paymentId);
+      const rejected = rows.filter((row) => row.action === 'payment.cash_rejected');
+      expect(rejected).toHaveLength(1);
+      expect(rejected[0]!.actorType).toBe('user');
+      expect(rejected[0]!.actorId).toBe(owner);
+      expect(rejected[0]!.data).toMatchObject({
+        reason: 'Short by 500.',
+        priorPaymentStatus: 'pending',
+        paymentStatus: 'rejected',
+        collectedByDriverId: driver.id,
+        // Spelled out rather than inferred from the absence of a field.
+        amountPaidChanged: false,
+      });
+      // No guest name, email or phone in an audit payload (RA 10173).
+      expect(JSON.stringify(rejected[0]!.data)).not.toMatch(/@|\+63/);
+    });
+
+    /**
+     * **The test the owner asked for**, and it goes through the driver's
+     * own two surfaces rather than reading a column.
+     *
+     * The chain being proved: `recordPendingCash` writes `status='pending'`
+     * -> `loadDriverTrip`'s pending probe flips the box to
+     * `unverified_do_not_collect` -> `recordDriverCash` answers `CONFLICT`.
+     * Refusing the row makes that probe miss it, so the box returns to
+     * `collect_cash` and the driver can claim again — which is the right
+     * outcome when the first tap was a mistake, or when the guest paid later.
+     *
+     * The second claim is a NEW row, asserted by id: re-recording is not
+     * reviving the refused claim, which stays exactly where it is.
+     */
+    it('unblocks the driver: the box returns to collect_cash and a new claim succeeds', async () => {
+      const driver = await makeDriver('Jessie Maglasang');
+      const booking = await makeBooking(driver.id);
+      const { paymentId } = await recordPendingCash({
+        bookingId: booking.id,
+        amountCentavos: BALANCE,
+        collectedByDriverId: driver.id,
+      });
+
+      // While it is pending, the driver is refused — the block this closes.
+      expect((await driverTripDetail(driver.id, booking.id)).payment).toEqual({
+        kind: 'unverified_do_not_collect',
+      });
+      await expect(recordDriverCash(driver.id, booking.id, TOUR_DAY_NOON)).rejects.toMatchObject({
+        code: 'CONFLICT',
+      });
+
+      await rejectCashPayment({
+        paymentId,
+        reason: 'Not received.',
+        verifier: financeVerifier(),
+      });
+
+      const detail = await driverTripDetail(driver.id, booking.id);
+      expect(detail.payment).toEqual({ kind: 'collect_cash', amountCentavos: BALANCE });
+
+      const second = await recordDriverCash(driver.id, booking.id, TOUR_DAY_NOON);
+      expect(second.paymentId).not.toBe(paymentId);
+      expect(second.amountCentavos).toBe(BALANCE);
+      // Two rows now: the refused claim and the new one. The first was not
+      // reused and not deleted.
+      expect(await paymentCount(booking.id)).toBe(2);
+      expect((await paymentRow(paymentId)).status).toBe('rejected');
+      // And still no money moved by either of them.
+      expect(await bookingMoney(booking.id)).toMatchObject({ amountPaidCentavos: DEPOSIT });
+    });
+
+    it('refuses a second rejection, and refuses one on an approved row', async () => {
+      const driver = await makeDriver('Lito Baring');
+      const booking = await makeBooking(driver.id);
+      const { paymentId } = await recordPendingCash({
+        bookingId: booking.id,
+        amountCentavos: 100,
+        collectedByDriverId: driver.id,
+      });
+      await rejectCashPayment({ paymentId, reason: 'One.', verifier: financeVerifier() });
+      await expect(
+        rejectCashPayment({ paymentId, reason: 'Two.', verifier: financeVerifier() }),
+      ).rejects.toBeInstanceOf(CashPaymentNotPendingError);
+      // The first reason stands: a second refusal cannot overwrite it.
+      expect((await paymentRow(paymentId)).reject_reason).toBe('One.');
+
+      // And the other direction: a row finance has already counted is not
+      // refusable either. `pending` is the only decidable state.
+      const second = await recordPendingCash({
+        bookingId: booking.id,
+        amountCentavos: 100,
+        collectedByDriverId: driver.id,
+      });
+      await apiFor(finance, 'finance').admin.bookings.approveCash({
+        paymentId: second.paymentId,
+      });
+      await expect(
+        rejectCashPayment({
+          paymentId: second.paymentId,
+          reason: 'Changed my mind.',
+          verifier: financeVerifier(),
+        }),
+      ).rejects.toBeInstanceOf(CashPaymentNotPendingError);
+      expect((await paymentRow(second.paymentId)).status).toBe('paid');
+    });
+
+    /**
+     * A refusal is a finding about a person, so it may not be anonymous.
+     * Whitespace counts as empty — the service trims before it checks, so a
+     * tab is not a reason.
+     */
+    it('requires a reason, and refuses whitespace', async () => {
+      const driver = await makeDriver('Nene Cabahug');
+      const booking = await makeBooking(driver.id);
+      const { paymentId } = await recordPendingCash({
+        bookingId: booking.id,
+        amountCentavos: 100,
+        collectedByDriverId: driver.id,
+      });
+      for (const reason of ['', '   ', '\t\n']) {
+        await expect(
+          rejectCashPayment({ paymentId, reason, verifier: financeVerifier() }),
+        ).rejects.toBeInstanceOf(CashRejectionNeedsReasonError);
+      }
+      // And it wrote nothing while refusing.
+      const row = await paymentRow(paymentId);
+      expect(row.status).toBe('pending');
+      expect(row.reject_reason).toBeNull();
+      expect(await bookingMoney(booking.id)).toMatchObject({ amountPaidCentavos: DEPOSIT });
+    });
+
+    /**
+     * §9's `verifyPayments` row, at the SERVICE level — fail-closed, and an
+     * allow-list rather than a deny-list, so an unrecognised role string
+     * and a missing one are refused like a dispatcher is.
+     *
+     * The driver case is the one that matters: a driver who could refuse
+     * their own claim could tap, pocket the cash and then erase the claim.
+     */
+    it('refuses a driver, a dispatcher, an unknown role and a non-user actor', async () => {
+      const driver = await makeDriver('Boying Alcoseba');
+      const booking = await makeBooking(driver.id);
+      const { paymentId } = await recordPendingCash({
+        bookingId: booking.id,
+        amountCentavos: 100,
+        collectedByDriverId: driver.id,
+      });
+      const refused = [
+        { type: 'driver' as const, id: driver.id, role: 'driver' },
+        { type: 'user' as const, id: dispatcher, role: 'dispatcher' },
+        { type: 'user' as const, id: finance, role: '__proto__' },
+        { type: 'user' as const, id: finance, role: undefined },
+        { type: 'system' as const, id: null, role: 'owner' },
+      ];
+      for (const verifier of refused) {
+        await expect(
+          rejectCashPayment({ paymentId, reason: 'No.', verifier }),
+        ).rejects.toBeInstanceOf(PaymentVerificationNotPermittedError);
+      }
+      expect((await paymentRow(paymentId)).status).toBe('pending');
+    });
+
+    /**
+     * The row predicate, which is shared with the approval path
+     * (`manualPendingRow`) precisely so a refusal can never land on a row
+     * an approval would not have accepted. A guest's receipt is a manual
+     * `pending` row too, and it is NOT a cash claim.
+     */
+    it('refuses a payment id that is not a driver-cash row', async () => {
+      const driver = await makeDriver('Tonio Yap');
+      const booking = await makeBooking(driver.id);
+      const receiptId = await insertReceiptPayment(booking.id);
+      await expect(
+        rejectCashPayment({ paymentId: receiptId, reason: 'No.', verifier: financeVerifier() }),
+      ).rejects.toBeInstanceOf(CashPaymentNotFoundError);
+      // Untouched: still pending, still without a reason.
+      const row = await paymentRow(receiptId);
+      expect(row.status).toBe('pending');
+      expect(row.reject_reason).toBeNull();
+    });
+
+    /**
+     * And the same refusals at the TRANSPORT, because hiding a button is
+     * not access control and neither is a service-level check nobody
+     * reaches. A dispatcher is `FORBIDDEN` by the gate; a driver session is
+     * not an admin identity at all, so it is `UNAUTHORIZED`.
+     */
+    it('refuses a dispatcher and a driver through the procedure, and lets finance through', async () => {
+      const driver = await makeDriver('Nards Pacana');
+      const booking = await makeBooking(driver.id);
+      const { paymentId } = await recordPendingCash({
+        bookingId: booking.id,
+        amountCentavos: BALANCE,
+        collectedByDriverId: driver.id,
+      });
+
+      await expect(
+        apiFor(dispatcher, 'dispatcher').admin.bookings.rejectCash({
+          paymentId,
+          reason: 'Not received.',
+        }),
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      await expect(
+        driverCaller(driver.id).admin.bookings.rejectCash({
+          paymentId,
+          reason: 'Not received.',
+        }),
+      ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+      expect((await paymentRow(paymentId)).status).toBe('pending');
+
+      // The input refuses a blank reason before the service is reached.
+      await expect(
+        apiFor(finance, 'finance').admin.bookings.rejectCash({ paymentId, reason: '   ' }),
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+      await expect(
+        apiFor(finance, 'finance').admin.bookings.rejectCash({
+          paymentId,
+          reason: 'The money never arrived.',
+        }),
+      ).resolves.toEqual({ ref: booking.ref });
+      expect((await paymentRow(paymentId)).status).toBe('rejected');
+      // And the claim leaves the queue, because that is what "handled" means.
+      const queue = await apiFor(finance, 'finance').admin.bookings.list({
+        awaitingVerification: true,
+        limit: 100,
+      });
+      expect(queue.items.map((item) => item.ref)).not.toContain(booking.ref);
+      expect(await bookingMoney(booking.id)).toMatchObject({ amountPaidCentavos: DEPOSIT });
+    });
   });
 });

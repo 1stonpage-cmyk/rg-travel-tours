@@ -1,7 +1,8 @@
 /**
- * `admin.bookings.approveReceipt` / `.rejectReceipt` / `.approveCash` — the
- * verification queue's buttons (Week 4 plan, Task 7; Week 6 plan, Task 11;
- * BUILD_SPEC §6 step 5, §8 item 5, §13's 6E).
+ * `admin.bookings.approveReceipt` / `.rejectReceipt` / `.approveCash` /
+ * `.rejectCash` — the verification queue's buttons (Week 4 plan, Task 7;
+ * Week 6 plan, Task 11; Week 6.5 D2; BUILD_SPEC §6 step 5, §8 item 5,
+ * §13's 6E).
  *
  * **Two things wait in this queue.** A guest's uploaded receipt, and cash a
  * driver recorded on tour day. Week 4 built the receipt half; Week 6 Task 11
@@ -57,6 +58,7 @@ import { notify } from '../../services/notify';
 import {
   CashPaymentNotFoundError,
   CashPaymentNotPendingError,
+  CashRejectionNeedsReasonError,
   PaymentOverpaysBookingError,
   PaymentVerificationNotPermittedError,
   ReceiptAlreadyDecidedError,
@@ -64,7 +66,7 @@ import {
   ReceiptRejectionNeedsReasonError,
 } from '../../services/payments/errors';
 import { decideManualReceipt } from '../../services/payments/manual-receipt';
-import { verifyCashPayment } from '../../services/payments/record-payment';
+import { rejectCashPayment, verifyCashPayment } from '../../services/payments/record-payment';
 import { adminProcedure, router } from '../../trpc';
 
 /**
@@ -79,6 +81,23 @@ const rejectInput = z
   .object({
     paymentId: z.number().int().positive(),
     reason: z.string().trim().min(1, 'Tell the guest what was wrong, in a sentence.').max(400),
+  })
+  .strict();
+
+/**
+ * The cash-refusal reason, bounded by the same column — and its own schema
+ * rather than `rejectInput` above (D2).
+ *
+ * The shape is identical; the MESSAGE is not, and the message is the point.
+ * `rejectInput`'s says "Tell the guest what was wrong" because §6 mails a
+ * receipt rejection to the guest. A cash refusal is told to nobody outside
+ * the office: it is an internal finding about a driver, so the sentence an
+ * admin sees when they leave the box empty has to ask for that instead.
+ */
+const rejectCashInput = z
+  .object({
+    paymentId: z.number().int().positive(),
+    reason: z.string().trim().min(1, 'Say why the cash was not received.').max(400),
   })
   .strict();
 
@@ -127,6 +146,19 @@ function asTrpcError(error: unknown): TRPCError {
     return new TRPCError({
       code: 'CONFLICT',
       message: `This cash has already been handled (it is "${error.status}"). Refresh the queue.`,
+    });
+  }
+  /*
+   * The cash refusal's own needs-a-reason (D2). `BAD_REQUEST`, like the
+   * receipt one, and with the same sentence `rejectCashInput` carries — the
+   * schema is the friendly refusal and the service is the guarantee, and an
+   * admin who somehow reaches the second should not be told something
+   * different from the first.
+   */
+  if (error instanceof CashRejectionNeedsReasonError) {
+    return new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'Say why the cash was not received.',
     });
   }
   /*
@@ -574,6 +606,48 @@ export const adminBookingsRouter = router({
           bookingStatus: result.bookingStatus,
           paymentReviewRequired: result.paymentReviewRequired,
         };
+      } catch (error) {
+        throw asTrpcError(error);
+      }
+    }),
+
+  /**
+   * Finance or the owner records that cash a driver claimed never arrived
+   * (owner decision 2026-10-16, D2).
+   *
+   * **The counterpart `approveCash` had no counterpart to.** Before this,
+   * one mistaken tap in a van left a `pending` row nothing could close: it
+   * sat in the verification queue as a claim nobody could refuse, and it
+   * put the driver's payment box into `unverified_do_not_collect` — so
+   * `driver.recordCash` answered `CONFLICT` on that booking forever.
+   * Refusing the row closes the claim AND unblocks the driver, in that
+   * order of importance.
+   *
+   * **It moves no money**, because none ever moved: a driver's tap credits
+   * nothing, so a refusal has nothing to take back. `rejectCashPayment()`
+   * writes `payments.status` and `payments.reject_reason` and touches no
+   * column on `bookings` at all.
+   *
+   * `adminProcedure('verifyPayments')` — the same gate as `approveCash` and
+   * the receipt pair, because refusing a claim is that permission being
+   * exercised just as much as approving one. Never a dispatcher, and a
+   * driver session is not an admin identity at all.
+   *
+   * **No email.** Nothing is owed to the guest here: the money either never
+   * existed or is a conversation with the driver. §11's email set is the
+   * owner's to extend, not this task's.
+   */
+  rejectCash: adminProcedure('verifyPayments')
+    .input(rejectCashInput)
+    .mutation(async ({ input, ctx }) => {
+      try {
+        const result = await rejectCashPayment({
+          paymentId: input.paymentId,
+          reason: input.reason,
+          // The LIVE role from the session, as every other decision here.
+          verifier: { type: 'user', id: ctx.session.subjectId, role: ctx.session.role },
+        });
+        return { ref: result.ref };
       } catch (error) {
         throw asTrpcError(error);
       }
