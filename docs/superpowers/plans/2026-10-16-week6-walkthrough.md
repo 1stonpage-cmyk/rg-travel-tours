@@ -286,6 +286,15 @@ status" extends to "a refund is never a subtraction from what was paid".
 > no screen was rendered, and **no layout finding of any kind is claimed here.** The coordinator will
 > fill this section in.
 
+Two prerequisites the pass can state as fact, because they are database observations and not layout
+claims. **Nobody can sign in as a seeded driver.** `db:seed` gives each of `D01`–`D04` a
+`randomInt(0, 1_000_000)` PIN that it hashes and never prints (`server/src/db/seed.ts:353`), and
+`users` is empty — it was empty before this pass began — so there is no staff account with which to
+call `admin.drivers.resetPin` either. And **no seeded tour has any itinerary stops** (finding 5), so
+even a signed-in driver would see "Start trip" and nothing else. A 360px pass therefore needs a
+driver with a known PIN, a staff account, and a trip for today assigned to that driver on a tour that
+has stops — which is exactly the fixture this walkthrough built and then deleted.
+
 ## Step 10 — housekeeping done after the pass
 
 - The three walkthrough staff accounts, the two walkthrough drivers, and **every session row
