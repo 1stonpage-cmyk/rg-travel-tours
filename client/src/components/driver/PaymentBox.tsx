@@ -11,15 +11,20 @@
  *
  * ## Five rules, and each one is a test
  *
- * 1. **A trip that is not live shows NO collection instruction** (ruling
- *    2026-10-15, from Task 4's review). `PaymentBoxState` is computed from
- *    the money alone and deliberately ignores `bookings.status`, so a
- *    `cancelled` booking with an outstanding balance still resolves to
- *    `collect_cash` with a real amount on it. The server is right to report
- *    the money truth — but this screen must not turn that truth into an
- *    instruction. When the status is not one of the four live ones, the
- *    booking's STATE is rendered in words and the amount is not rendered at
- *    all.
+ * 1. **Only `COLLECTABLE_STATUSES` may show a collection instruction**
+ *    (ruling 2026-10-15, from Task 4's review; corrected 2026-10-16, D1).
+ *    `PaymentBoxState` is computed from the money alone and deliberately
+ *    ignores `bookings.status`, so a `cancelled` booking with an
+ *    outstanding balance still resolves to `collect_cash` with a real
+ *    amount on it. The server is right to report the money truth — but this
+ *    screen must not turn that truth into an instruction for `cancelled` or
+ *    `expired`, where the booking should not have been driven at all.
+ *    `completed` moved INTO the allow-list on 2026-10-16 (D1): cash is the
+ *    BALANCE, handed over at the end of a trip, so a finished trip that
+ *    still owes money must still say so — the box used to claim "nothing to
+ *    collect here" over a real balance, which was false. When the status is
+ *    not on the allow-list, the booking's STATE is rendered in words and the
+ *    amount is not rendered at all.
  * 2. **Text first, in all three states.** `unverified_do_not_collect` is
  *    amber *and* carries the words "Do not collect — call the office."
  *    Colour alone is a WCAG 1.4.1 failure, and this is the state where a
@@ -53,43 +58,68 @@ import { trpc } from '@/lib/trpc';
  * ------------------------------------------------------------------ */
 
 /**
- * The four statuses a trip can be in and still be something a driver is
- * standing in front of a guest for. An ALLOW-LIST, in the spirit of
- * `VAN_STATUS_SELLABLE`: a status added later shows no instruction until
- * somebody decides it should.
+ * The statuses on which this box may show a collection instruction at all.
+ *
+ * An ALLOW-LIST, in the spirit of `VAN_STATUS_SELLABLE`: a status added
+ * later shows no instruction until somebody decides it should.
+ *
+ * **`completed` is here, and that is a correction** (owner-decided
+ * 2026-10-16, D1). It was excluded while the list was called
+ * `LIVE_STATUSES`, on the reasoning that a finished trip is not a trip a
+ * driver is standing in front of a guest for. That reasoning was wrong in
+ * the one case that matters: cash is the BALANCE, handed over at the END of
+ * a trip, and a driver who taps Complete before the guest has paid — or
+ * whose last check-in completed the trip automatically — then read "There
+ * is nothing to collect here" over PHP 4,500 that was owed. The sentence
+ * was not merely unhelpful; it was false, and it told a driver not to ask
+ * for money the company is owed.
+ *
+ * The server never suppressed any of this: `driver.trip` answers
+ * `collect_cash` on a completed trip and `driver.recordCash` accepts the
+ * claim (both measured over HTTP, 2026-10-16). This file was the only
+ * refusal, which is exactly the asymmetry the decision closes.
+ *
+ * `cancelled` and `expired` stay out, and for a different reason than
+ * "the trip is over": those two mean the booking should not have been
+ * driven at all, so money against them is an office matter.
  */
-const LIVE_STATUSES = ['confirmed', 'pending_verification', 'assigned', 'in_progress'] as const;
-type LiveStatus = (typeof LIVE_STATUSES)[number];
+const COLLECTABLE_STATUSES = [
+  'confirmed',
+  'pending_verification',
+  'assigned',
+  'in_progress',
+  'completed',
+] as const;
+type CollectableStatus = (typeof COLLECTABLE_STATUSES)[number];
 
-function isLive(status: BookingStatus): status is LiveStatus {
-  return (LIVE_STATUSES as readonly BookingStatus[]).includes(status);
+function showsBox(status: BookingStatus): status is CollectableStatus {
+  return (COLLECTABLE_STATUSES as readonly BookingStatus[]).includes(status);
 }
 
 /**
- * What a driver reads instead of the box when the trip is not live.
+ * What a driver reads instead of the box when the booking is not
+ * collectable at all.
  *
- * `Record<Exclude<BookingStatus, LiveStatus>, …>` so the COMPILER refuses a
- * build where a new booking status has no words here — the same discipline
- * `AssignPanel`'s `REFUSAL_COPY` established. Falling through to a generic
- * sentence on this box is exactly the failure that would turn a cancelled
- * booking back into "collect ₱1,500".
+ * `Record<Exclude<BookingStatus, CollectableStatus>, …>` so the COMPILER
+ * refuses a build where a new booking status has no words here — the same
+ * discipline `AssignPanel`'s `REFUSAL_COPY` established. Falling through to
+ * a generic sentence on this box is exactly the failure that would turn a
+ * cancelled booking back into "collect ₱1,500".
  *
- * `tone` is `warn` wherever a driver might otherwise be tempted to take
- * money, and `neutral` for a trip that simply finished.
+ * `tone` is `'warn' | 'neutral'`, not narrowed to `'warn'`, even though
+ * every entry below is `warn` now that `completed` (the one `neutral`
+ * entry) moved to `COLLECTABLE_STATUSES` (D1, 2026-10-16): the neutral
+ * rendering branch stays in the component for whichever status needs it
+ * next, rather than being deleted and rebuilt.
  */
-const NOT_LIVE_COPY: Record<
-  Exclude<BookingStatus, LiveStatus>,
+const NOT_COLLECTABLE_COPY: Record<
+  Exclude<BookingStatus, CollectableStatus>,
   { tone: 'warn' | 'neutral'; heading: string; body: string }
 > = {
   pending_payment: {
     tone: 'warn',
     heading: 'Not paid — this booking is not confirmed',
     body: 'Nobody has paid for this booking yet. Do not collect anything — ring the office.',
-  },
-  completed: {
-    tone: 'neutral',
-    heading: 'Trip completed',
-    body: 'This trip is finished. There is nothing to collect here.',
   },
   cancelled: {
     tone: 'warn',
@@ -261,8 +291,8 @@ export default function PaymentBox({
     ) : null;
 
   /* Ruling 1. The amount is not rendered at all — not greyed, not struck. */
-  if (!isLive(status)) {
-    const copy = NOT_LIVE_COPY[status];
+  if (!showsBox(status)) {
+    const copy = NOT_COLLECTABLE_COPY[status];
     return (
       <section
         aria-labelledby="payment-box-heading"

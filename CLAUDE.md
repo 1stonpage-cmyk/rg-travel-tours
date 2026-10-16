@@ -337,10 +337,13 @@ Every page reads tours, destinations, packages, reviews, FAQs and settings from 
   These routes should be `noindex` (they already carry an `X-Robots-Tag`); `noindex` and `404` are
   not the same statement.
 - **The payment box is computed on the server and the client only renders it.** Three states, and
-  the payload carries no totals to re-derive them from. **It is NOT suppressed for a `completed`
-  trip:** `driver.trip` still answers `collect_cash` there and `driver.recordCash` still accepts
-  it — the box is hidden for `completed` by the client alone (measured 2026-10-16). That asymmetry
-  is an open owner decision, not a settled design; do not "fix" either side without the answer.
+  the payload carries no totals to re-derive them from. **Server and client now agree on
+  `completed`** (owner-decided 2026-10-16, D1): `driver.trip` answers `collect_cash` there,
+  `driver.recordCash` accepts the claim, and the client shows the box too — cash is the balance,
+  handed over at the end of a trip, so a finished trip that still owes money still says so.
+  `cancelled` and `expired` do not show it; those mean the booking should not have been driven at
+  all, so money against them is an office matter. The allow-list is `COLLECTABLE_STATUSES` in
+  `client/src/components/driver/PaymentBox.tsx`.
 - **A driver's cash tap is a CLAIM and moves nothing.** One `pending` `payments` row with
   `collected_by_driver_id`; `bookings.amount_paid_centavos` does not change until owner or finance
   approves that same row, which credits it once under the booking lock. **One handful of cash is

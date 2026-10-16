@@ -249,6 +249,66 @@ describe('PaymentBox — a trip that is not live gives no instruction', () => {
   });
 });
 
+describe('PaymentBox — a completed trip still shows what is owed', () => {
+  /**
+   * D1, owner-decided 2026-10-16. Cash is the BALANCE, handed over at the
+   * END of a trip — a driver who taps Complete (or whose last check-in
+   * completes the trip automatically) before the guest has paid must still
+   * read an instruction to collect it. Before this decision the box
+   * suppressed itself on `completed` and printed "There is nothing to
+   * collect here", which was false whenever money was still owed.
+   */
+  it('shows the collect box on a completed trip that still owes money', async () => {
+    mockTrpc({
+      'driver.trip': trip({
+        status: 'completed',
+        payment: { kind: 'collect_cash', amountCentavos: 450_000 },
+      }),
+      'driver.trips': tripsRow(),
+    });
+    renderTrip();
+
+    // The figure AND the words — rule 3 is not suspended because the trip ended.
+    expect(await screen.findByRole('heading', { name: /Collect ₱4,500 cash/ })).toBeInTheDocument();
+    expect(screen.getByText(/Four thousand five hundred pesos/)).toBeInTheDocument();
+    // The button is offered, because the server accepts the claim.
+    expect(screen.getByRole('button', { name: /Record cash collected/ })).toBeInTheDocument();
+    // And the false sentence is gone.
+    expect(screen.queryByText(/nothing to collect/i)).not.toBeInTheDocument();
+  });
+
+  it('still hides the amount on a cancelled and on an expired booking', async () => {
+    for (const status of ['cancelled', 'expired'] as const) {
+      mockTrpc({
+        'driver.trip': trip({
+          status,
+          payment: { kind: 'collect_cash', amountCentavos: 450_000 },
+        }),
+        'driver.trips': tripsRow(),
+      });
+      const { unmount } = renderTrip();
+
+      expect(await screen.findByText(/do not collect/i)).toBeInTheDocument();
+      expect(screen.queryByText(/4,500/)).not.toBeInTheDocument();
+      unmount();
+    }
+  });
+
+  it('a completed trip that is fully paid says so, and offers no cash button', async () => {
+    mockTrpc({
+      'driver.trip': trip({ status: 'completed', payment: { kind: 'fully_paid' } }),
+      'driver.trips': tripsRow(),
+    });
+    renderTrip();
+
+    const heading = await screen.findByRole('heading', { name: /Paid in full/ });
+    // Scoped to the payment box itself: the page's separate undo control
+    // ("Reopen trip" on a completed booking) is a different box entirely.
+    const box = heading.closest('section')!;
+    expect(within(box).queryByRole('button')).not.toBeInTheDocument();
+  });
+});
+
 describe('PaymentBox — the cash claim', () => {
   it('submits nothing on the first tap and nothing at all if it is cancelled', async () => {
     const calls: unknown[] = [];
