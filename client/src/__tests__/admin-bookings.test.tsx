@@ -678,7 +678,15 @@ describe('AdminBookingDetailPage — the cash a driver says they took', () => {
     expect(sent).toEqual([{ paymentId: 78, reason: 'Only ₱800 came in.' }]);
   });
 
-  it('shows a refused refusal in amber, and only under the claim it belongs to', async () => {
+  /*
+   * The title says what the body checks and no more (review finding 3,
+   * 2026-10-16): an `alert` carrying the server's sentence, under the claim
+   * whose mutation failed and not the other one. The COLOUR is not asserted
+   * here and does not need to be — `no-red.test.ts` and `contrast.test.ts`
+   * read the real source for every class string in the tree, so a red or
+   * AA-failing pairing fails the build whatever this file says.
+   */
+  it('shows a failed refusal as an alert, only under the claim it belongs to', async () => {
     const [first] = CASH_DETAIL.payments;
     mockTrpc({
       'admin.bookings.detail': {
