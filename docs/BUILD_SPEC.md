@@ -998,26 +998,84 @@ tests cover the screens, including the accessibility ones, but jsdom does no lay
 tablet, the 44px tap targets and the gold dot's real visibility are checked by class string, not by
 looking at a screen.
 
-### Week 6 — Drivers & verification
+### Week 6 — Drivers & verification — ✅ WEEK 6 COMPLETE (2026-10-16)
 
-Nothing in this week is built. There is no `client/src/pages/driver`.
+> **Preamble rewritten 2026-10-16.** It said "Nothing in this week is built. There is no
+> `client/src/pages/driver`." All of 6A–6F now is, and that directory exists. §13's markers have been
+> audited for exactly this staleness twice before, so it is corrected as the week closes rather than
+> left to be discovered a third time.
 
-> **Three things Week 5 hands this week, which are not visible from 6A–6F alone.**
->
-> 1. **`on_trip` must be CLEARED when a trip completes.** 6C's check-ins are the first code to set
->    it, and Week 5 made `available` the only sellable status (Q1's allow-list) — so a van left
->    `on_trip` stops being bookable on **every future date**, not just today. The requirement is in
->    the comment beside `VAN_STATUSES` in `schema.ts`.
-> 2. **The driver portal must reflect a mid-trip re-assignment** (owner-decided 2026-10-14, Q3).
->    Week 5 built the swap — owner/dispatcher only, reason required, audited old → new. A driver
->    whose trip was taken off them must stop seeing it, and the one who received it must start.
->    6A/6B owe the end-to-end version of Week 5's "can sign in immediately after a PIN reset" test
->    too: there was no login endpoint to exercise, so it was proven against the lockout policy
->    function and the credential instead.
-> 3. **A driver's average rating** (§9) is unbuilt and deliberately unfaked: no rating column
->    exists, `reviews` scores a _tour_, and rendering a number would be the fabricated social proof
->    `CLAUDE.md` forbids. It needs an owner decision — derive it from `reviews.guide` on assigned
->    trips, or store it.
+Plan: `docs/superpowers/plans/2026-10-15-week6-drivers-and-verification.md` (14 tasks). Evidence:
+`docs/superpowers/plans/2026-10-16-week6-walkthrough.md` — ten of eleven in-scope steps driven over
+real HTTP with real session cookies, the eleventh (the 360px browser) driven separately.
+
+- **6A** ✅ Driver portal login + lockout. Code + six-digit PIN, **a 12-hour session**
+  (owner-decided Q1): `SESSION_TTL_MS_BY_SUBJECT` replaced the single shared 24-hour constant, so
+  `driver` is 12 and `user`/`customer` stay 24, with no per-call override to forget. §8's three
+  stacked limits are all live — five failures lock for fifteen minutes, three lockouts in 24 hours
+  need an admin, and ten `driver.login` attempts per IP per fifteen minutes. **An admin PIN reset is
+  the unlock**, and a driver signs in immediately afterwards — Week 5's carry-forward, now proven on
+  the wire. A wrong code and a wrong PIN are one indistinguishable refusal; the scrypt verify is paid
+  even for an unknown code and even during a lockout, so the timing answers nothing the message
+  refuses to.
+- **6B** ✅ Today/Upcoming/History + trip detail + payment box. Buckets are resolved **server-side
+  from the Manila civil date**, never the handset clock. A driver sees only their own trips, and
+  another driver's booking id answers **`NOT_FOUND`, never `FORBIDDEN`** — a 403 would confirm the
+  booking exists, and over a numeric id that walks the whole table towards a guest's phone number.
+  The trip list carries no guest contact details at all; the one-trip manifest carries the lead's
+  phone and nothing else. **The payment box's three states are computed on the server** and the
+  client receives no totals to re-derive them from.
+- **6C** ✅ Check-ins: start, stops, complete, undo, cash collected. One row per stop, arbitrated by
+  a unique index on `(booking_id, stop_key)` — a double tap is a shrug, not a second row. An undo
+  **marks, never deletes** (`undone`, `undone_at`, `undone_by`, with a required reason in the audit
+  row), only the most recent standing check-in can be undone, and re-recording a stop **reactivates
+  that row** rather than inserting a second (owner-decided Q5). Undoing a completion restores the
+  previous state exactly — booking back to `in_progress`, van back to `on_trip` (owner-decided Q4).
+  **A driver's cash tap moves no money**: one `pending` `payments` row with
+  `collected_by_driver_id`, today-only and refused server-side on any other date, and a driver can
+  never verify their own collection.
+- **6D** ✅ Live departures on the dashboard. §9's board, every trip departing today in Manila with
+  stop-by-stop progress, polled at fifteen seconds. **It reads `tripProgress()` — the same function
+  the driver's own itinerary screen reads**, so the dispatcher's bar and the driver's checklist
+  cannot disagree. One statement for the day plus two per departure, with a test that measures the
+  count.
+- **6E** ✅ Payment verification queue. Mostly already built in Week 4; this week added the **cash**
+  half and nothing else — `verifyCashPayment` converts the driver's own `pending` row in place and
+  credits the booking exactly once under its row lock. **One handful of cash is one `payments` row
+  for its whole life.** A test asserts the ABSENCE of a second `payments` insert, so "no second path"
+  is enforced by the suite rather than by anyone's say-so.
+- **6F** ✅ Cancel/refund. §9 gates it on `cancelRefund` — owner and finance, never a dispatcher.
+  A cancellation moves no money by construction and puts an `on_trip` van back on sale, because the
+  completion that would have done it is never going to happen. Refunds go back through **the provider
+  that took the money**, partials are allowed, and their sum can never exceed what was paid — capped
+  inside the transaction under the booking row lock, never at the input boundary.
+
+**Deliberately not built, declared rather than discovered:**
+
+- **A driver's average rating and their upcoming trips on the ADMIN drivers screen** (§9). Week 5
+  declared both; this week adds neither. The rating still needs an owner decision — there is no
+  rating column, `reviews` scores a _tour_, and inventing a number is the fabricated social proof
+  `CLAUDE.md` forbids. The upcoming-trips list is an admin-surface read and 6A–6F is the driver's
+  side.
+- **No notification fires on assignment, completion, a cash claim or a verification.** §11 lists the
+  events; §13 does not list any of them for this week, and the dashboard polls anyway.
+- **The live gateway check.** `provider.refund()` has only ever run against the mock. **No real
+  payment and no real refund has ever been issued** — blocked on the PayMongo account, the same item
+  `LAUNCH_CHECKLIST.md` carries.
+- **No sweep for a van left `on_trip` by a trip nobody completed.** Declared in full in Week 7's
+  preamble below, and pinned by the last test in `trip-van-status.test.ts`.
+- **No reject path for a driver's cash claim.** A `pending` cash row can be approved; it cannot be
+  refused. A claim for money that never arrives sits `pending` and blocks that driver from
+  re-recording. Owner decision 2 in the walkthrough.
+- **The seed ships no `tour_itinerary_stops`.** All six seeded tours have zero, so on a fresh clone
+  the driver's itinerary screen is "Start trip" and nothing else and the departures board reads
+  `0/1`. 6C is complete; it is simply undemonstrable against seed content, and 7F's editing screens
+  do not cover itinerary stops either.
+
+**The browser is the gap, as it was in Week 5, and for a driver portal that matters more.** Every
+walkthrough step but one went through HTTP and the database. jsdom does no layout, so 360px,
+one-handed reach and the 44px tap targets are checked by class string. Step 9 of the walkthrough was
+driven separately for exactly that reason.
 
 - **6A** Driver portal login + lockout.
 - **6B** Today/Upcoming/History + trip detail + payment box.
@@ -1053,6 +1111,40 @@ exists (it is part of 2B), but no submission, moderation, admin or export side o
 > The current behaviour is pinned by the last test in `trip-van-status.test.ts`, so the gap is a
 > known quantity with a name. Building either fix turns that test red — that is the intended
 > signal. Replace it with the new behaviour's own proof rather than loosening it.
+
+> **The rest of what Week 6 hands this week** (walkthrough, 2026-10-16). Six items, none of them
+> blocking, all of them cheap to lose track of.
+>
+> 1. **`TripProgressStop` carries no checkpoint id.** `shared/src/driver.ts` defines it as
+>    `{ stopId, name, sortOrder, checkedAt, undone }`. The server's undo breaks a same-second
+>    `checked_at` tie by `trip_checkpoints.id`; the client's **undo label** has no id to break it
+>    with and falls back to array index. Label only — the refetch after the mutation corrects the
+>    record — but the two orders can disagree for one render, and adding the id to the shape is the
+>    whole fix.
+> 2. **`fleet_date_slots` is not in the test harness's `LEAK_TABLES`, and neither is
+>    `tour_date_slots` or `sessions`.** `server/src/__tests__/global-setup.ts` lists `bookings`,
+>    `drivers`, `vans`, `payments`, `users` and `trip_checkpoints`. `tour_date_slots.tour_id`
+>    references `tours.id` with no `ON DELETE`, so several suites carry a hand-written cleanup line
+>    to work around it. Either the list grows or the FK gets a cascade; doing neither is how the
+>    next suite inherits the same line.
+> 3. **`sessions` rows accumulate unbounded in `rg_travel_test`** — 675 as of 2026-10-16. Nothing
+>    truncates them between runs and nothing expires them. Harmless until it is not.
+> 4. **The duplicate-key walk has three implementations**: the shared
+>    `server/src/db/duplicate-key.ts`, plus private copies in
+>    `server/src/routers/public/newsletter.ts` and `server/src/services/booking-ref.ts`. The shared
+>    one is the complete one (it walks `.cause`, which is what Drizzle's wrapping requires); the
+>    other two should become imports.
+> 5. **The gateway wire check** remains blocked on the PayMongo account. `provider.refund()` has
+>    only ever run against the mock, and **no real payment and no real refund has ever been
+>    issued.** The same blocking pre-launch item `LAUNCH_CHECKLIST.md` carries.
+> 6. **Seven owner decisions are open**, listed in one place with each one's safe current behaviour
+>    in `docs/superpowers/plans/2026-10-16-week6-walkthrough.md`. Three of them are driver-portal
+>    behaviour an owner can answer in a sentence (the payment box on a `completed` trip; whether a
+>    cash claim can be refused; whether `booking_notes` needs a visibility column); two are security
+>    postures (`driver_inactive` being distinguishable; a driver deactivated mid-shift keeping up to
+>    12 hours of access, where staff deactivation is immediate); one is the `on_trip` sweep above;
+>    and one is whether an admin cancellation returns the booking's coupon use — hold expiry does, a
+>    cancel is a different event, and nothing says.
 
 - **7A** Reviews: submit (portal + public), moderation, replies, helpful votes, verified badge.
 - **7B** Coupons admin + redemption log.

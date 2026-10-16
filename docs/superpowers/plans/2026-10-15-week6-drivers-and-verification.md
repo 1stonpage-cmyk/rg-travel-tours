@@ -1216,3 +1216,70 @@ Nothing stops it technically. A driver tapping "collect cash" on next week's tri
 **3. Type consistency.** Checked across tasks: `TripProgress` / `TripProgressStop` are defined in Task 3 and consumed unchanged by Task 4 (`TripDetail.progress`) and Task 12 (the departures board). `DriverTripBucket` and `driverTripBucket(tourDate, todayManila)` are defined in Task 2 and reused by Task 10's tabs. `PaymentBoxState`'s three variants are the only states Task 10 renders. `CheckInRefusal`'s six members are the only refusals Tasks 5, 6 and 10 map to copy — and, like Week 5's `AssignRefusal`, the union lives in a place the client can import so the copy map is exhaustive by the compiler. `DriverLoginRefusal`'s four members are the only ones Task 9's login screen handles. `driverProcedure` is produced by Task 1 and consumed by Tasks 2, 4, 5, 6 and 8.
 
 **4. One thing I want to flag rather than bury.** Three of this week's six spec lines are **mostly already built** — 6E's receipt queue shipped in Week 4, and both halves of 6F's dangerous money logic shipped with the core schema. The risk in those tasks is not writing them; it is **writing them again**. Task 11 opens by requiring the implementer to read what exists and report it before touching code, and Task 13 says in its first line that it composes rather than implements. If either task's diff contains a new `payments` insert or a second refund path, that is a defect however well-tested it is.
+
+---
+
+## ✅ WEEK 6 COMPLETE
+
+All fourteen tasks done and verified, 2026-10-16. Five checks green, **each run separately**:
+`pnpm lint` 0 · `pnpm typecheck` 0 · `pnpm test` 0 · `pnpm format:check` 0 ·
+`ALLOW_PLACEHOLDER_BUILD=1 pnpm build` 0. **2,127 tests** — 79 shared, 534 client, 1,514 server —
+across 136 test files, **0 skipped**, plus the `check:coming-soon` and `check:contact` guards.
+
+Evidence: `docs/superpowers/plans/2026-10-16-week6-walkthrough.md` — **ten of the eleven steps in the
+walkthrough agent's scope, over real HTTP against the running server on 3100 with real session
+cookies.** Step 9, the 360px browser, was driven separately by the coordinator and is marked as such
+in that document.
+
+**Owner decisions logged** (all 2026-10-15): Q1 the per-subject session TTL map — driver 12 hours,
+staff and guest 24, no per-call override; Q2 a `pending_verification` trip may be started; Q3 all
+future assigned trips in "Upcoming", soonest first; Q4 undoing a completion restores the previous
+state exactly, van included; Q5 re-recording a stop reactivates its row and the unique index stays;
+Q6 the PIN is visible by default with a show/hide toggle; Q7 the WhatsApp/Viber brand-colour
+exception as on the public site; Q8 no notification on completion; Q9 cash is today-only, enforced
+server-side; Q10 `cancelRefund` is owner and finance, never a dispatcher. Plus the owner ruling of
+2026-10-16 that cancelling a trip does not retract the check-ins already recorded.
+
+**Migrations: none.** 6A–6F were built entirely on the existing schema; the latest migration is still
+Week 5's `0011_colossal_tomorrow_man`. There is nothing new to apply to a server database.
+
+**What is mocked or unproven, named rather than implied:**
+
+- **The gateway is a mock.** `provider.refund()` has only ever run against it. Both walkthrough
+  refunds answered `calledGateway: false` on a `provider = 'manual'` row — the money moved by hand
+  and the system recorded it. **No real payment and no real refund has ever been issued.** Blocked on
+  the PayMongo account; the same item `docs/LAUNCH_CHECKLIST.md` carries.
+- **The browser.** Every walkthrough step but step 9 went through HTTP and the database. 534 client
+  tests cover the screens including the accessibility ones, but jsdom does no layout — so 360px,
+  one-handed reach, the 44px tap targets and the payment box's real prominence are checked by class
+  string. Step 9 exists precisely because that was not good enough for a driver portal, and it was
+  run outside this agent.
+- **The dashboard's fifteen seconds.** The endpoint was proven to reflect a driver's tap on the very
+  next read. `DEPARTURES_POLL_MS = 15_000` was **read from the client source, not watched ticking in a
+  browser.**
+- **Concurrency through the UI.** The walkthrough's double-taps were sequential requests. The real
+  races — two taps arbitrated by the unique index, two approvals of one cash row, two refunds against
+  one payment, two wrong PINs against one counter — are proven by the suite's concurrent tests with
+  the index and the locks removed as the mutation, and by nothing in a browser.
+- **The full three-lockout escalation from one IP.** Unreachable: the per-IP limiter fires at 10
+  attempts and the escalation needs 15 failures (HTTP 429 observed at the 11th). The lockout counters
+  were staged in the database to the boundary; every transition across it was driven over HTTP.
+- **A mid-trip re-assignment reaching the driver portal** (owner Q3, Week 5). Covered by Task 2's
+  isolation tests in both directions; **no re-assignment was performed during the walkthrough.**
+- **An expired driver session.** The 12 hours were measured on the cookie and on the row; no session
+  was held until it lapsed. The boundary itself is Task 1's TTL tests.
+- **Email and SMS.** Nothing notifies anyone on assignment, completion, a cash claim or a
+  verification. §13 does not list it for this week.
+
+**Seven owner decisions are open**, each with its safe current behaviour, listed in one place in the
+walkthrough document. Three are driver-portal behaviour (the payment box on a `completed` trip —
+where the server accepts cash and only the client hides the box; whether a cash claim can be refused;
+whether `booking_notes` needs a visibility column), two are security postures (`driver_inactive`
+being distinguishable from `wrong_credentials`; a driver deactivated mid-shift keeping up to 12 hours
+of access, where staff deactivation is immediate), one is which of the two orphaned-`on_trip` sweeps
+to build, and one is whether an admin cancellation returns the booking's coupon use.
+
+**Carried into Week 7**, written into §13's Week 7 preamble: the orphaned-`on_trip` sweep;
+`TripProgressStop` carrying no checkpoint id; `fleet_date_slots`/`tour_date_slots`/`sessions` missing
+from `LEAK_TABLES`; unbounded `sessions` growth in `rg_travel_test`; the two private copies of the
+duplicate-key walk; and the gateway wire check.
