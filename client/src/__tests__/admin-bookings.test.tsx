@@ -454,9 +454,17 @@ describe('AdminBookingDetailPage — the cash a driver says they took', () => {
     renderDetail();
 
     const panel = await screen.findByRole('region', { name: /cash a driver says they collected/i });
-    // The claimant, in the panel and on the payment line, so the name
-    // survives the approval.
-    expect(within(panel).getByText(/Noel Cuizon/)).toBeInTheDocument();
+    /*
+     * The claimant, in the panel and on the payment line, so the name
+     * survives the approval.
+     *
+     * Matched on the whole sentence rather than the bare name (D2): the
+     * refusal button added below names the driver too, so `/Noel Cuizon/`
+     * inside this panel is now two matches. Narrowing is the right fix —
+     * `getAllByText` would have kept passing if the panel's own line lost
+     * the name altogether, which is the thing this asserts.
+     */
+    expect(within(panel).getByText(/Noel Cuizon recorded ₱3,150 on tour day/)).toBeInTheDocument();
     expect(screen.getByText(/collected by Noel Cuizon/i)).toBeInTheDocument();
     expect(
       within(panel).getByRole('button', { name: /confirm ₱3,150 received/i }),
@@ -552,6 +560,153 @@ describe('AdminBookingDetailPage — the cash a driver says they took', () => {
    * there was no live risk — but a screen offering a button the server
    * then refuses is the shape of the defect, not the absence of one.
    */
+  /* ==================================================================
+   * D2 — refusing a claim whose money never arrived.
+   *
+   * The screen half of the server-side guarantee: a refusal needs a typed
+   * reason, it names the driver and the amount so the wrong claim is not
+   * refused by accident, and each claim is refused on its own.
+   *
+   * `server/src/__tests__/admin-cash-verify.test.ts` proves the money and
+   * the roles. What is asserted here is only what the screen does.
+   * ================================================================== */
+  const REJECT_BUTTON = /record that noel cuizon.s ₱3,150 never arrived/i;
+
+  it('offers the refusal to finance, naming the driver and the amount', async () => {
+    mockTrpc({
+      'admin.bookings.detail': CASH_DETAIL,
+      'staffAuth.me': { userId: 2, role: 'finance' },
+    });
+    renderDetail();
+
+    const panel = await screen.findByRole('region', { name: /cash a driver says they collected/i });
+    expect(within(panel).getByRole('button', { name: REJECT_BUTTON })).toBeInTheDocument();
+    // A visible label, not a placeholder standing in for one.
+    expect(within(panel).getByLabelText(/why the cash was not received/i)).toBeInTheDocument();
+  });
+
+  /** §9 again: a dispatcher may read the claim and may not decide about it. */
+  it('offers a dispatcher no way to refuse it either', async () => {
+    mockTrpc({
+      'admin.bookings.detail': CASH_DETAIL,
+      'staffAuth.me': { userId: 3, role: 'dispatcher' },
+    });
+    renderDetail();
+
+    expect(await screen.findByRole('heading', { name: 'RG-AAAAA1' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /never arrived/i })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/why the cash was not received/i)).not.toBeInTheDocument();
+  });
+
+  /** A refusal is a finding about a person, so it may not be anonymous. */
+  it('will not send a refusal with no reason', async () => {
+    let calls = 0;
+    mockTrpc({
+      'admin.bookings.detail': CASH_DETAIL,
+      'staffAuth.me': { userId: 2, role: 'finance' },
+      'admin.bookings.rejectCash': () => {
+        calls += 1;
+        return { ref: 'RG-AAAAA1' };
+      },
+    });
+    renderDetail();
+
+    const button = await screen.findByRole('button', { name: REJECT_BUTTON });
+    expect(button).toBeDisabled();
+
+    // Whitespace is not a reason either — the server trims before it checks.
+    await userEvent.type(screen.getByLabelText(/why the cash was not received/i), '   ');
+    expect(screen.getByRole('button', { name: REJECT_BUTTON })).toBeDisabled();
+    expect(calls).toBe(0);
+  });
+
+  it('sends the claim id and the reason it was given, trimmed', async () => {
+    const sent: unknown[] = [];
+    mockTrpc({
+      'admin.bookings.detail': CASH_DETAIL,
+      'staffAuth.me': { userId: 2, role: 'finance' },
+      'admin.bookings.rejectCash': (input: unknown) => {
+        sent.push(input);
+        return { ref: 'RG-AAAAA1' };
+      },
+    });
+    renderDetail();
+
+    await userEvent.type(
+      await screen.findByLabelText(/why the cash was not received/i),
+      '  The driver never handed this in.  ',
+    );
+    await userEvent.click(screen.getByRole('button', { name: REJECT_BUTTON }));
+
+    expect(sent).toEqual([{ paymentId: 77, reason: 'The driver never handed this in.' }]);
+  });
+
+  /**
+   * Two claims, refused independently — the same reason the panels are one
+   * per claim. A shared reason box or an unscoped error would attach one
+   * claim's evidence to the other's refusal.
+   */
+  it('keeps two claims’ reasons and errors apart', async () => {
+    const [first] = CASH_DETAIL.payments;
+    const sent: unknown[] = [];
+    mockTrpc({
+      'admin.bookings.detail': {
+        ...CASH_DETAIL,
+        payments: [first, { ...first, id: 78, amountCentavos: 120_000 }],
+      },
+      'staffAuth.me': { userId: 2, role: 'finance' },
+      'admin.bookings.rejectCash': (input: unknown) => {
+        sent.push(input);
+        return { ref: 'RG-AAAAA1' };
+      },
+    });
+    renderDetail();
+
+    const panels = await screen.findAllByRole('region', {
+      name: /cash a driver says they collected/i,
+    });
+    expect(panels).toHaveLength(2);
+
+    // Typing in the second claim's box must not arm the first claim's button.
+    await userEvent.type(
+      within(panels[1]!).getByLabelText(/why the cash was not received/i),
+      'Only ₱800 came in.',
+    );
+    expect(within(panels[0]!).getByRole('button', { name: /never arrived/i })).toBeDisabled();
+
+    await userEvent.click(within(panels[1]!).getByRole('button', { name: /never arrived/i }));
+    expect(sent).toEqual([{ paymentId: 78, reason: 'Only ₱800 came in.' }]);
+  });
+
+  it('shows a refused refusal in amber, and only under the claim it belongs to', async () => {
+    const [first] = CASH_DETAIL.payments;
+    mockTrpc({
+      'admin.bookings.detail': {
+        ...CASH_DETAIL,
+        payments: [first, { ...first, id: 78, amountCentavos: 120_000 }],
+      },
+      'staffAuth.me': { userId: 2, role: 'finance' },
+    });
+    mockTrpcError(
+      'admin.bookings.rejectCash',
+      'CONFLICT',
+      'This cash has already been handled (it is "paid"). Refresh the queue.',
+    );
+    renderDetail();
+
+    const panels = await screen.findAllByRole('region', {
+      name: /cash a driver says they collected/i,
+    });
+    await userEvent.type(
+      within(panels[0]!).getByLabelText(/why the cash was not received/i),
+      'Never arrived.',
+    );
+    await userEvent.click(within(panels[0]!).getByRole('button', { name: /never arrived/i }));
+
+    expect(await within(panels[0]!).findByRole('alert')).toHaveTextContent(/already been handled/i);
+    expect(within(panels[1]!).queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it('offers nothing for a pending row that is not a manual cash payment', async () => {
     const [first] = CASH_DETAIL.payments;
     mockTrpc({
