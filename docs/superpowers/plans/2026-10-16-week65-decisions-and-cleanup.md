@@ -61,7 +61,9 @@ Made before dispatch, each against the plan text that prompted it. An implemente
 3. **D3 REMOVES `driver_inactive` from `DriverLoginRefusal`** (`shared/src/driver.ts`) rather than leaving it in the union unreachable. The client builds a compiler-exhaustive `Record<DriverLoginRefusal, string>`; a member the server can never send is a sentence no driver can ever read, and its presence would tell the next reader the state is reachable. Removing it makes the compiler prove the wire cannot carry it. The real reason lives in `audit_log` under its own action. **Cost if wrong:** restoring the member is a two-line revert.
 4. **D5 does NOT redden `trip-van-status.test.ts`'s last test.** `CLAUDE.md` warns that building the orphaned-`on_trip` sweep breaks that test and that whoever builds it must replace it with the sweep's own proof. D5 is explicitly **not** a sweep — "Never auto-change status" — so the pinned fact (nothing frees a van left `on_trip`) stays true, and that test stays green and stays in place. What changes is `CLAUDE.md`'s claim that the gap arrives "with nothing in the logs": after D5 there is a daily log line and a dashboard alert. **Cost if wrong:** the test goes red and reveals that the alert changed a status, which is the failure it exists to catch.
 5. **D6 must also build the note WRITER.** Nothing in the system writes `booking_notes` today — the table is read by `admin.bookings.detail` and `driver.trip`, and written by no mutation, no admin form and no seed (verified 2026-10-16). A "Show to driver" checkbox needs a form to live in, and a visibility flag with no writer is undemonstrable on a fresh clone — the same C4-shaped gap this week exists to close. So D6 includes `admin.bookings.addNote` and the admin form. **Cost if wrong:** more surface than the decision's wording implies; stated here so the owner can cut it.
-6. **C5's hand-written cleanups are LOAD-BEARING, not redundant.** `LEAK_TABLES` **detects** leaks; it does not clean. Twelve suites hand-delete `fleet_date_slots` rows in `afterAll`, and those deletes are what will keep the detector silent once the table is listed. Removing them would make the detector fire on every run — the opposite of the standing instruction that it stay silent. **So C5 adds the table and removes nothing**, then reports what the detector found. Any file the detector *does* catch is a suite missing a cleanup, and gets one. **Cost if wrong:** the owner wanted twelve lines deleted and gets a reason instead; the twelve call sites are named in the report so the call stays theirs.
+6. **D4 must also build the DEACTIVATION, because nothing can deactivate a driver today.** `drivers.is_active` is declared, read by `attemptDriverLogin` and by dispatch availability — and written by **no mutation at all** (verified 2026-10-16). `driverInputSchema` deliberately excludes it, `toUpdateValues` does not map it, and there is no `admin.drivers.setActive` to match vans' `admin.vans.setStatus`; `shared/src/dispatch.ts` says so in as many words ("`status` has no admin-facing setter in this task"). Week 6's measurement of the twelve-hour window was taken with a hand-written `UPDATE drivers`, which is consistent. So "deactivating a driver deletes their sessions" cannot be implemented without the act of deactivating existing first: D4 adds `admin.drivers.setActive`, modelled on `admin.vans.setStatus`, and hangs the revocation off it. **Cost if wrong:** a mutation the owner did not ask for, in a week about closing gaps — stated here so the call stays theirs. The alternative, a re-read of `is_active` on every driver request, was rejected: it costs a second query on the portal's hottest path and still leaves the twelve-hour window if the join is ever dropped.
+7. **D4's "future trips show as needs-assignment" goes through `unassignedSoon`, and needs its status filter widened too.** That alert is `status = 'confirmed'` only (owner-decided 2026-10-14, Q7), and assignment moves a booking `confirmed` to `assigned` (`dispatch/assign.ts:213`) — so a booking whose assigned driver is deactivated is `assigned` and the alert would never see it. Adding only the `is_active` term would ship **dead code that reads as a fix**. So the status set becomes `['confirmed', 'assigned']` and the predicate gains the inactive-driver term. The property that makes this safe is testable and must be tested: an `assigned` booking has both ids by construction, so the only way it can match is the inactive-driver term — **adding `assigned` changes no count on a healthy fleet**. **Cost if wrong:** the alert's §9 semantics widen by one status; the residue is that the alert's window is 48 hours, so a deactivated driver's trip further out surfaces as its date approaches rather than immediately. State that in `CLAUDE.md`.
+8. **C5's hand-written cleanups are LOAD-BEARING, not redundant.** `LEAK_TABLES` **detects** leaks; it does not clean. Twelve suites hand-delete `fleet_date_slots` rows in `afterAll`, and those deletes are what will keep the detector silent once the table is listed. Removing them would make the detector fire on every run — the opposite of the standing instruction that it stay silent. **So C5 adds the table and removes nothing**, then reports what the detector found. Any file the detector *does* catch is a suite missing a cleanup, and gets one. **Cost if wrong:** the owner wanted twelve lines deleted and gets a reason instead; the twelve call sites are named in the report so the call stays theirs.
 
 ### Interface conflicts found by the pre-flight scan
 
@@ -78,6 +80,8 @@ One row per pair of tasks that share a file or an interface, plus one per task o
 | D1, D6 | the driver trip screen | D1 edits `PaymentBox.tsx`, D6 edits the notes read. Both are rendered by `DriverTripPage.tsx` and neither touches it. |
 | C2, D5 | nothing | Disjoint. |
 | C6 | `server/src/db/duplicate-key.ts` | Used by five files already; C6 adds two importers and deletes two local copies. No signature change. |
+| C3, C5 | `server/src/__tests__/global-setup.ts` | C3 edits the teardown (prune `sessions`); C5 edits `LEAK_TABLES`. **C3 runs first**, so C5 must not revert C3's prune, and C5 must not add `sessions` to `LEAK_TABLES` — C3's brief explains why. |
+| D4, C1 | `bookings.driver_id` | D4 deliberately does NOT clear `driver_id` on deactivation (the id is the record of who was assigned). C1 adds no driver column. No collision. |
 | C7 | `driver-lockout.test.ts` | Test-only, plus a `CLAUDE.md` edit and a `LAUNCH_CHECKLIST.md` cross-reference. Touches no production code. |
 | Each task, internally | — | Checked: every task's tests name files that the same task creates or that exist today; no task specifies a test over code another task writes. |
 
@@ -833,9 +837,13 @@ The bullet beginning "**Every login refusal's `message` IS the reason string**" 
 
 **The chosen fix is revocation at the write, not a re-read on every request.** A live `is_active` join on every driver request would cost a second query on the hottest path in the portal, and would still be a window if the join were ever dropped. Deleting the rows closes it at the one moment the state changes.
 
+**And the act of deactivating has to be built first** — pre-flight ruling 6. `drivers.is_active` is written by no mutation today: `driverInputSchema` excludes it, `toUpdateValues` does not map it, and there is no `admin.drivers.setActive` to match vans' `admin.vans.setStatus`. So this task adds that mutation and hangs the revocation off it.
+
 **Files:**
+- Modify: `shared/src/dispatch.ts` (the `setActive` input schema, beside `vanStatusInput`'s equivalent)
 - Modify: `server/src/services/sessions.ts` (add `revokeSessionsForSubject`)
-- Modify: `server/src/routers/admin/drivers.ts` (`update` revokes in the same transaction; audit gains the count)
+- Create in: `server/src/routers/admin/drivers.ts` (`setActive`, modelled on `admin.vans.setStatus` at `routers/admin/vans.ts:126`+, revoking in the same transaction)
+- Modify: `client/src/pages/admin/AdminDriversPage.tsx` (a control for it, with the consequence stated in words)
 - Modify: `server/src/services/dispatch/alerts.ts` (the unassigned-trips alert also counts a trip whose assigned driver is now inactive)
 - Test: `server/src/__tests__/driver-deactivation.test.ts` (new)
 - Test: `server/src/__tests__/dispatch-alerts.test.ts` (the existing alerts suite)
@@ -1011,7 +1019,31 @@ and add `sessionsRevoked` to the audit `data` beside `input.patch`.
 
 - [ ] **Step 5: Make their future trips read as needs-assignment**
 
-In `alerts.ts`'s unassigned-trips query, widen the condition from "no van or no driver" to "no van, or no driver, or a driver who is no longer active". A `LEFT JOIN drivers` and `OR drivers.is_active = 0`, with the date window the alert already applies unchanged — a finished trip needs no new driver.
+`unassignedSoon` (`alerts.ts:119`) needs **two** changes, not one — pre-flight ruling 7. Its status filter is `eq(bookings.status, 'confirmed')`, and assignment moves a booking to `assigned`, so a booking whose driver was just deactivated is `assigned` and the inactive-driver term alone would never fire. Widen the status set as well, and `LEFT JOIN drivers`:
+
+```ts
+        inArray(bookings.status, ['confirmed', 'assigned']),
+        sql`${bookings.tourDate} >= ${today}`,
+        onOrBefore(bookings.tourDate, windowEnd),
+        /*
+         * A trip whose driver has been DEACTIVATED needs assigning, even
+         * though `driver_id` is set (owner decision 2026-10-16, D4).
+         * Deactivation does not clear `bookings.driver_id` — deliberately,
+         * because that id is the record of who was assigned and an audit
+         * trail that forgets is not one — so the alert asks about the
+         * driver's state rather than the column's nullity.
+         *
+         * `assigned` joins `confirmed` in the status filter for the same
+         * decision, and it changes no count on a healthy fleet: an
+         * `assigned` booking has BOTH ids by construction, so the only term
+         * it can match is this one. The test below pins exactly that.
+         */
+        or(isNull(bookings.vanId), isNull(bookings.driverId), eq(drivers.isActive, false)),
+```
+
+The `LEFT JOIN drivers` matters: an `innerJoin` would drop every booking with a null `driver_id`, which is the alert's original and most important case.
+
+Add the safety test: **on a healthy fleet, adding `assigned` to the status set changes no count.** Create an `assigned` booking with a live van and a live driver and assert the alert does not list it.
 
 ```ts
       /*
