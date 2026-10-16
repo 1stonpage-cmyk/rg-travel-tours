@@ -877,8 +877,8 @@ describeWithDb('admin.refunds — cancelling a booking and sending money back', 
   });
 
   /**
-   * 7c. **The gateway never answered** (fix round 1, finding 1) — a timeout,
-   * a dropped socket, a 5xx, or a 2xx whose body could not be read.
+   * 7c. **The gateway did not confirm** (fix round 1, finding 1; the cases
+   * extended in fix round 2, finding 1) — four shapes, one rule.
    *
    * This is the sibling of 7b and the more dangerous one, because the payout
    * is a MAYBE: PayMongo's `/refunds` takes no idempotency key, so an admin
@@ -886,65 +886,99 @@ describeWithDb('admin.refunds — cancelling a booking and sending money back', 
    * booking's cap cannot see the first payout because no row exists. So the
    * copy must never invite a retry, and the attempt must survive in the
    * database rather than only in a log file.
+   *
+   * **Four cases rather than one, because the predicate that decides this had
+   * no test at either bound.** The re-review widened
+   * `refusedWithoutPayingOut()` to "any numeric status is definitive" and all
+   * 18 tests stayed green — so a one-token edit could reclassify a 5xx, or a
+   * 2xx whose body could not be read, as "nothing was refunded" with nothing
+   * going red. These are the cases that close that: the dropped socket (no
+   * status at all), the 5xx, the unreadable 2xx that `post()` reports as
+   * `PaymongoApiError(200, …)` — where the refund may well exist — and a 429,
+   * which is a 4xx deliberately NOT on `DEFINITIVE_4XX` because rate limiting
+   * applied downstream of the origin can arrive after the work was done.
+   *
+   * Each asserts all three halves of the response to a possible payout: the
+   * "Do NOT refund again" copy, the log line, and the durable audit row.
    */
-  it('warns and records the attempt when the gateway does not confirm a refund', async () => {
-    const booking = await makePaidBooking('paymongo');
-    const logged: string[] = [];
-    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
-      logged.push(args.map((arg) => String(arg)).join(' '));
-    });
-    // A dropped connection: what `fetch` throws when it never got an answer.
-    gateway.failWith = new TypeError('fetch failed');
+  const UNCONFIRMED_FAILURES: ReadonlyArray<readonly [string, () => unknown]> = [
+    ['the connection drops before any answer', () => new TypeError('fetch failed')],
+    ['the gateway answers 503', () => new PaymongoApiError(503, 'service unavailable')],
+    [
+      'the gateway answers 200 with a body we cannot read',
+      () => new PaymongoApiError(200, 'refund response had no id or status'),
+    ],
+    [
+      'the gateway answers 429, which is not proof the work was not done',
+      () => new PaymongoApiError(429, 'too many requests'),
+    ],
+  ];
 
-    try {
-      await expect(
-        apiFor(finance, 'finance').admin.refunds.refundPayment({
-          paymentId: booking.paymentId,
-          amountCentavos: 50_000,
-          reason: 'Gateway fell over mid-refund.',
-        }),
-      ).rejects.toMatchObject({
-        code: 'INTERNAL_SERVER_ERROR',
-        // The two things this copy must do: forbid the retry, and send the
-        // admin to the gateway to find out what really happened.
-        message: expect.stringContaining('Do NOT refund again'),
+  for (const [label, failure] of UNCONFIRMED_FAILURES) {
+    it(`warns and records the attempt when ${label}`, async () => {
+      const booking = await makePaidBooking('paymongo');
+      const logged: string[] = [];
+      const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+        logged.push(args.map((arg) => String(arg)).join(' '));
       });
-    } finally {
-      spy.mockRestore();
-    }
+      gateway.failWith = failure();
 
-    const shouted = logged.join(' | ');
-    expect(shouted, 'an unconfirmed payout was not logged at all').toMatch(/DID NOT CONFIRM/);
-    expect(shouted).toContain('paymongo');
-    expect(shouted).toContain(String(booking.id));
-    expect(shouted).toContain(String(booking.paymentId));
-    expect(shouted).toContain('50000');
-    // No key, no secret, no guest PII in that line.
-    expect(shouted).not.toMatch(/sk_|whsk_|@example\.test|09171234567|Refund Fixture Guest/);
+      try {
+        await expect(
+          apiFor(finance, 'finance').admin.refunds.refundPayment({
+            paymentId: booking.paymentId,
+            amountCentavos: 50_000,
+            reason: 'Gateway fell over mid-refund.',
+          }),
+        ).rejects.toMatchObject({
+          code: 'INTERNAL_SERVER_ERROR',
+          // The two things this copy must do: forbid the retry, and send the
+          // admin to the gateway to find out what really happened.
+          message: expect.stringContaining('Do NOT refund again'),
+        });
+      } finally {
+        spy.mockRestore();
+      }
 
-    const unconfirmed = (await auditRows('bookings', booking.id)).filter(
-      (row) => row.action === 'payment.refund_unconfirmed',
-    );
-    expect(unconfirmed, 'the unconfirmed attempt wrote no audit row').toHaveLength(1);
-    expect(unconfirmed[0]).toMatchObject({ actor_type: 'user', actor_id: finance });
-    const trail = JSON.stringify(unconfirmed[0]?.data);
-    expect(trail).toContain('"provider":"paymongo"');
-    expect(trail).toContain('"amountCentavos":50000');
-    // There is no gateway reference, because the gateway never gave one —
-    // explicitly null rather than absent.
-    expect(trail).toContain('"providerRef":null');
+      const shouted = logged.join(' | ');
+      expect(shouted, 'an unconfirmed payout was not logged at all').toMatch(/DID NOT CONFIRM/);
+      expect(shouted).toContain('paymongo');
+      expect(shouted).toContain(String(booking.id));
+      expect(shouted).toContain(String(booking.paymentId));
+      expect(shouted).toContain('50000');
+      // No key, no secret, no guest PII in that line.
+      expect(shouted).not.toMatch(/sk_|whsk_|@example\.test|09171234567|Refund Fixture Guest/);
 
-    // And nothing was recorded as refunded: the money's fate is unknown, so
-    // the booking must not claim it went back.
-    expect(await refundedTotal(booking.id)).toBe(0);
-    expect(await paymentRows(booking.id)).toHaveLength(1);
-  });
+      const unconfirmed = (await auditRows('bookings', booking.id)).filter(
+        (row) => row.action === 'payment.refund_unconfirmed',
+      );
+      expect(unconfirmed, 'the unconfirmed attempt wrote no audit row').toHaveLength(1);
+      expect(unconfirmed[0]).toMatchObject({ actor_type: 'user', actor_id: finance });
+      const trail = JSON.stringify(unconfirmed[0]?.data);
+      expect(trail).toContain('"provider":"paymongo"');
+      expect(trail).toContain('"amountCentavos":50000');
+      // There is no gateway reference, because the gateway never gave one —
+      // explicitly null rather than absent.
+      expect(trail).toContain('"providerRef":null');
+
+      // And nothing was recorded as refunded: the money's fate is unknown, so
+      // the booking must not claim it went back.
+      expect(await refundedTotal(booking.id)).toBe(0);
+      expect(await paymentRows(booking.id)).toHaveLength(1);
+    });
+  }
 
   /**
    * 7d. The other half of finding 1: a gateway that read the request and
    * REJECTED it. No payout can have happened, so the plain message stands
-   * and nothing is shouted about — a 4xx on every malformed refund would
-   * otherwise train an admin to ignore the warning that matters.
+   * and nothing is shouted about — a warning on every malformed refund would
+   * otherwise train an admin to ignore the one that matters.
+   *
+   * `422` is on `DEFINITIVE_4XX` (`cancel-refund.ts`) and `429` is not, which
+   * is the whole point of that set being an allow-list rather than the range
+   * `400-499`: the 429 case sits in the group above, treated as a possible
+   * payout. This test is what keeps the definitive side from quietly
+   * collapsing into "everything warns", which would be just as useless.
    */
   it('keeps the plain message when the gateway definitively rejects a refund', async () => {
     const booking = await makePaidBooking('paymongo');

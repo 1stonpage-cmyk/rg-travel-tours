@@ -548,6 +548,30 @@ export async function refundPayment(input: RefundPaymentInput): Promise<RefundPa
 }
 
 /**
+ * The HTTP statuses that prove the gateway read the request and refused it,
+ * so no payout can exist.
+ *
+ * **An allow-list, never the range `400 <= status < 500`** (fix round 2). A
+ * hundred-wide range used as a safety allow-list is the same mistake
+ * CLAUDE.md's `VAN_STATUS_SELLABLE` rule exists to prevent: it silently
+ * admits whatever nobody thought of. At least three 4xx codes are NOT proof
+ * that nothing happened —
+ *
+ *  - **408** a proxy can return it after already forwarding the request;
+ *  - **409** a state conflict is a statement about state, not about whether
+ *    this call changed it;
+ *  - **429** rate limiting applied downstream of the origin rather than at
+ *    the edge can arrive after the work was done.
+ *
+ * — and each of those, treated as definitive, is a guest refunded twice by
+ * an admin who was told "nothing was refunded". They are deliberately absent,
+ * so they over-warn instead: a dispatcher checks a dashboard.
+ *
+ * Do not "simplify" this back to a range.
+ */
+const DEFINITIVE_4XX = new Set([400, 401, 403, 404, 422]);
+
+/**
  * Could this failure have paid the guest?
  *
  * Returns true only for refusals that provably happened BEFORE any money
@@ -558,18 +582,24 @@ export async function refundPayment(input: RefundPaymentInput): Promise<RefundPa
  *  - `PaymongoNotConfiguredError` — the provider refuses before building a
  *    request, deliberately, so a misconfigured deploy fails at the first
  *    payment rather than sending an unauthenticated one;
- *  - a gateway error carrying a **4xx** status: the gateway read the request
- *    and rejected it.
+ *  - a gateway error whose status is in `DEFINITIVE_4XX` above.
  *
  * **Everything else is ambiguous and must be treated as a possible payout**:
- * a timeout, a dropped socket, a 5xx, and — the easy one to miss — a 2xx
- * whose body could not be understood, which `createPaymongoProvider` reports
- * as `PaymongoApiError(200, …)`. The refund may well exist in that case.
+ * a timeout, a dropped socket, a 5xx, a 4xx that is not on the list, and —
+ * the easy one to miss — a 2xx whose body could not be understood, which
+ * `createPaymongoProvider` reports as `PaymongoApiError(200, …)`. The refund
+ * may well exist in that last case.
  *
- * The 4xx test is on the SHAPE (a numeric `status`), not on one gateway's
+ * The status test is on the SHAPE (a numeric `status`), not on one gateway's
  * class, so a second provider inherits the right default: an error of its own
  * that never left the process will be reported as ambiguous — over-warning,
  * which is the safe direction — until it is named here.
+ *
+ * **Both bounds of this predicate are tested** (fix round 2, finding 1): the
+ * 5xx and the unreadable-2xx cases in `admin-refunds.test.ts` go red if it is
+ * widened, which it must be possible to prove, because every other guarantee
+ * in this task rests on a mutation and this is the one the whole
+ * ambiguous-payout branch rests on.
  */
 function refusedWithoutPayingOut(error: unknown): boolean {
   if (error instanceof ProviderNotEnabledError || error instanceof UnknownProviderError) {
@@ -577,7 +607,7 @@ function refusedWithoutPayingOut(error: unknown): boolean {
   }
   if (error instanceof PaymongoNotConfiguredError) return true;
   const status = (error as { status?: unknown } | null)?.status;
-  return typeof status === 'number' && status >= 400 && status < 500;
+  return typeof status === 'number' && DEFINITIVE_4XX.has(status);
 }
 
 /**
