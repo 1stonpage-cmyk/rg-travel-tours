@@ -35,55 +35,55 @@ Copied verbatim from `CLAUDE.md` and the owner's instruction of 2026-10-16. **Ev
 
 Stated directly by the owner in-thread and logged here, **all owner-decided 2026-10-16**. Each row is the instruction as given; the task that implements it may not re-decide it.
 
-| # | Decision (owner-decided 2026-10-16) |
-| --- | --- |
-| D1 | Completed trips SHOW the driver payment box (cancelled/expired still hidden). Replace the false "nothing to collect" copy. Test: completed trip with balance owed shows "Collect PHP X". |
-| D2 | Finance/owner "reject cash claim — not received": pending cash row to rejected, reason required, audit, `amount_paid` untouched, unblocks the driver. New status value approved if needed (migration). Tests: reject moves no money; driver can re-record after; dispatcher/driver cannot reject. |
-| D3 | `driver_inactive` returns the identical error and comparable timing to a wrong PIN; real reason in `audit_log` only. Test the response bodies are byte-identical. |
-| D4 | Deactivating a driver deletes all their sessions in the same transaction; their future trips show as needs-assignment. Test: next request after deactivation is `UNAUTHORIZED`. |
-| D5 | Daily node-cron check: vans `on_trip` with no `in_progress` trip, to a dashboard alert. **Never auto-change status.** |
-| D6 | `booking_notes` gets a `visible_to_driver` boolean, default FALSE (migration). Driver portal shows only flagged notes; staff UI gets a "Show to driver" checkbox. Test: unflagged note never reaches the driver API. |
-| D7 | Admin cancellation releases the coupon redemption (audited), same as hold expiry. |
-| C1 | Write `cancel_reason` / `cancelled_at` / `completed_at` on the paths that own them. |
-| C2 | SPA routes `/driver`, `/admin`, `/portal` return HTTP 200. |
-| C3 | Daily cleanup of expired sessions (prod + test DB). |
-| C4 | Seed `tour_itinerary_stops` for seeded tours (dev seed only). |
-| C5 | Add `fleet_date_slots` to `LEAK_TABLES`; remove hand-written cleanups it makes redundant. |
-| C6 | One `isDuplicateKeyError` (shared), delete the copies. |
-| C7 | Limiter vs escalation: keep both; document escalation as the multi-IP defence and add a test where failures from several IPs reach the admin-unlock state. |
+| #   | Decision (owner-decided 2026-10-16)                                                                                                                                                                                                                                                               |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | Completed trips SHOW the driver payment box (cancelled/expired still hidden). Replace the false "nothing to collect" copy. Test: completed trip with balance owed shows "Collect PHP X".                                                                                                          |
+| D2  | Finance/owner "reject cash claim — not received": pending cash row to rejected, reason required, audit, `amount_paid` untouched, unblocks the driver. New status value approved if needed (migration). Tests: reject moves no money; driver can re-record after; dispatcher/driver cannot reject. |
+| D3  | `driver_inactive` returns the identical error and comparable timing to a wrong PIN; real reason in `audit_log` only. Test the response bodies are byte-identical.                                                                                                                                 |
+| D4  | Deactivating a driver deletes all their sessions in the same transaction; their future trips show as needs-assignment. Test: next request after deactivation is `UNAUTHORIZED`.                                                                                                                   |
+| D5  | Daily node-cron check: vans `on_trip` with no `in_progress` trip, to a dashboard alert. **Never auto-change status.**                                                                                                                                                                             |
+| D6  | `booking_notes` gets a `visible_to_driver` boolean, default FALSE (migration). Driver portal shows only flagged notes; staff UI gets a "Show to driver" checkbox. Test: unflagged note never reaches the driver API.                                                                              |
+| D7  | Admin cancellation releases the coupon redemption (audited), same as hold expiry.                                                                                                                                                                                                                 |
+| C1  | Write `cancel_reason` / `cancelled_at` / `completed_at` on the paths that own them.                                                                                                                                                                                                               |
+| C2  | SPA routes `/driver`, `/admin`, `/portal` return HTTP 200.                                                                                                                                                                                                                                        |
+| C3  | Daily cleanup of expired sessions (prod + test DB).                                                                                                                                                                                                                                               |
+| C4  | Seed `tour_itinerary_stops` for seeded tours (dev seed only).                                                                                                                                                                                                                                     |
+| C5  | Add `fleet_date_slots` to `LEAK_TABLES`; remove hand-written cleanups it makes redundant.                                                                                                                                                                                                         |
+| C6  | One `isDuplicateKeyError` (shared), delete the copies.                                                                                                                                                                                                                                            |
+| C7  | Limiter vs escalation: keep both; document escalation as the multi-IP defence and add a test where failures from several IPs reach the admin-unlock state.                                                                                                                                        |
 
 ### Pre-flight rulings (2026-10-16)
 
 Made before dispatch, each against the plan text that prompted it. An implementer may not re-decide these.
 
-1. **D2 needs NO migration and NO new enum value.** `PAYMENT_STATUSES` already carries `rejected`, and `payments.reject_reason` already exists with exactly these semantics — "an admin looked at this and refused it, and here is why" (`schema.ts`, the manual-receipt flow, owner decision 2026-10-14 Q6). The owner pre-approved a migration *if needed*; it is not needed, and a `cash_rejected` value beside `rejected` would give the system two words for one event. **Cost if wrong:** a report that wants to separate a refused receipt from refused cash joins on `method = 'cash'` — which it must do to find cash rows at all.
+1. **D2 needs NO migration and NO new enum value.** `PAYMENT_STATUSES` already carries `rejected`, and `payments.reject_reason` already exists with exactly these semantics — "an admin looked at this and refused it, and here is why" (`schema.ts`, the manual-receipt flow, owner decision 2026-10-14 Q6). The owner pre-approved a migration _if needed_; it is not needed, and a `cash_rejected` value beside `rejected` would give the system two words for one event. **Cost if wrong:** a report that wants to separate a refused receipt from refused cash joins on `method = 'cash'` — which it must do to find cash rows at all.
 2. **D2 does NOT reuse `verifyPendingManualPayment`.** That function is shared by the cash and receipt approval paths and moves the booking (`statusAfterManualVerified`). A cash rejection must move **nothing** on the booking — unlike a receipt rejection, which sends the guest back to `pending_payment` with a re-upload deadline, because that trip has not run yet. Cash is the balance on a trip that already ran. So: a separate `rejectCashPayment()` beside it, sharing only `assertMayVerifyPayments`. **Cost if wrong:** one more function in a file that already holds five.
 3. **D3 REMOVES `driver_inactive` from `DriverLoginRefusal`** (`shared/src/driver.ts`) rather than leaving it in the union unreachable. The client builds a compiler-exhaustive `Record<DriverLoginRefusal, string>`; a member the server can never send is a sentence no driver can ever read, and its presence would tell the next reader the state is reachable. Removing it makes the compiler prove the wire cannot carry it. The real reason lives in `audit_log` under its own action. **Cost if wrong:** restoring the member is a two-line revert.
 4. **D5 does NOT redden `trip-van-status.test.ts`'s last test.** `CLAUDE.md` warns that building the orphaned-`on_trip` sweep breaks that test and that whoever builds it must replace it with the sweep's own proof. D5 is explicitly **not** a sweep — "Never auto-change status" — so the pinned fact (nothing frees a van left `on_trip`) stays true, and that test stays green and stays in place. What changes is `CLAUDE.md`'s claim that the gap arrives "with nothing in the logs": after D5 there is a daily log line and a dashboard alert. **Cost if wrong:** the test goes red and reveals that the alert changed a status, which is the failure it exists to catch.
 5. **D6 must also build the note WRITER.** Nothing in the system writes `booking_notes` today — the table is read by `admin.bookings.detail` and `driver.trip`, and written by no mutation, no admin form and no seed (verified 2026-10-16). A "Show to driver" checkbox needs a form to live in, and a visibility flag with no writer is undemonstrable on a fresh clone — the same C4-shaped gap this week exists to close. So D6 includes `admin.bookings.addNote` and the admin form. **Cost if wrong:** more surface than the decision's wording implies; stated here so the owner can cut it.
 6. **D4 must also build the DEACTIVATION, because nothing can deactivate a driver today.** `drivers.is_active` is declared, read by `attemptDriverLogin` and by dispatch availability — and written by **no mutation at all** (verified 2026-10-16). `driverInputSchema` deliberately excludes it, `toUpdateValues` does not map it, and there is no `admin.drivers.setActive` to match vans' `admin.vans.setStatus`; `shared/src/dispatch.ts` says so in as many words ("`status` has no admin-facing setter in this task"). Week 6's measurement of the twelve-hour window was taken with a hand-written `UPDATE drivers`, which is consistent. So "deactivating a driver deletes their sessions" cannot be implemented without the act of deactivating existing first: D4 adds `admin.drivers.setActive`, modelled on `admin.vans.setStatus`, and hangs the revocation off it. **Cost if wrong:** a mutation the owner did not ask for, in a week about closing gaps — stated here so the call stays theirs. The alternative, a re-read of `is_active` on every driver request, was rejected: it costs a second query on the portal's hottest path and still leaves the twelve-hour window if the join is ever dropped.
 7. **D4's "future trips show as needs-assignment" goes through `unassignedSoon`, and needs its status filter widened too.** That alert is `status = 'confirmed'` only (owner-decided 2026-10-14, Q7), and assignment moves a booking `confirmed` to `assigned` (`dispatch/assign.ts:213`) — so a booking whose assigned driver is deactivated is `assigned` and the alert would never see it. Adding only the `is_active` term would ship **dead code that reads as a fix**. So the status set becomes `['confirmed', 'assigned']` and the predicate gains the inactive-driver term. The property that makes this safe is testable and must be tested: an `assigned` booking has both ids by construction, so the only way it can match is the inactive-driver term — **adding `assigned` changes no count on a healthy fleet**. **Cost if wrong:** the alert's §9 semantics widen by one status; the residue is that the alert's window is 48 hours, so a deactivated driver's trip further out surfaces as its date approaches rather than immediately. State that in `CLAUDE.md`.
-8. **C5's hand-written cleanups are LOAD-BEARING, not redundant.** `LEAK_TABLES` **detects** leaks; it does not clean. Twelve suites hand-delete `fleet_date_slots` rows in `afterAll`, and those deletes are what will keep the detector silent once the table is listed. Removing them would make the detector fire on every run — the opposite of the standing instruction that it stay silent. **So C5 adds the table and removes nothing**, then reports what the detector found. Any file the detector *does* catch is a suite missing a cleanup, and gets one. **Cost if wrong:** the owner wanted twelve lines deleted and gets a reason instead; the twelve call sites are named in the report so the call stays theirs.
+8. **C5's hand-written cleanups are LOAD-BEARING, not redundant.** `LEAK_TABLES` **detects** leaks; it does not clean. Twelve suites hand-delete `fleet_date_slots` rows in `afterAll`, and those deletes are what will keep the detector silent once the table is listed. Removing them would make the detector fire on every run — the opposite of the standing instruction that it stay silent. **So C5 adds the table and removes nothing**, then reports what the detector found. Any file the detector _does_ catch is a suite missing a cleanup, and gets one. **Cost if wrong:** the owner wanted twelve lines deleted and gets a reason instead; the twelve call sites are named in the report so the call stays theirs.
 
 ### Interface conflicts found by the pre-flight scan
 
 One row per pair of tasks that share a file or an interface, plus one per task on whether its own text agrees with itself.
 
-| Tasks | Shared surface | Finding |
-| --- | --- | --- |
-| D2, D7, C1 | `server/src/services/payments/` | D2 adds a function to `record-payment.ts`; D7 and C1 both edit `cancelBooking` in `cancel-refund.ts`. **C1 runs after D7**, so C1 edits a `.set()` D7 has already touched — sequence is load-bearing, and C1's brief must say the coupon release is already there. |
-| D7, C1 | `cancelBooking`'s audit payload | Both add a key (`couponReleased`, then the two timestamps are columns not payload). No collision; C1 adds no audit key. |
-| D3, D4 | driver auth | D3 edits `attemptDriverLogin`'s inactive branch; D4 edits `admin.drivers.update`. Disjoint files. Both assert on `is_active`, and **D4's test must not assume D3's refusal string** — after D3 an inactive driver's login answers `wrong_credentials`. |
-| D4, C3 | `server/src/services/sessions.ts` | D4 adds `revokeSessionsForSubject`, C3 adds `deleteExpiredSessions`. Two exports, no shared state. C3 runs later and must not refactor D4's. |
-| D5, C3 | `server/src/jobs/index.ts` | Both add a `schedule()` call. **C3 runs after D5**, so C3's brief must expect two jobs already registered, not one. |
-| D6, C4 | `server/src/db/schema.ts` + migrations | D6 generates a migration (`0012`). C4 touches seed data only, no schema. No ordering constraint beyond "D6's migration is applied before C4's tests run", which the test harness does automatically. |
-| D1, D6 | the driver trip screen | D1 edits `PaymentBox.tsx`, D6 edits the notes read. Both are rendered by `DriverTripPage.tsx` and neither touches it. |
-| C2, D5 | nothing | Disjoint. |
-| C6 | `server/src/db/duplicate-key.ts` | Used by five files already; C6 adds two importers and deletes two local copies. No signature change. |
-| C3, C5 | `server/src/__tests__/global-setup.ts` | C3 edits the teardown (prune `sessions`); C5 edits `LEAK_TABLES`. **C3 runs first**, so C5 must not revert C3's prune, and C5 must not add `sessions` to `LEAK_TABLES` — C3's brief explains why. |
-| D4, C1 | `bookings.driver_id` | D4 deliberately does NOT clear `driver_id` on deactivation (the id is the record of who was assigned). C1 adds no driver column. No collision. |
-| C7 | `driver-lockout.test.ts` | Test-only, plus a `CLAUDE.md` edit and a `LAUNCH_CHECKLIST.md` cross-reference. Touches no production code. |
-| Each task, internally | — | Checked: every task's tests name files that the same task creates or that exist today; no task specifies a test over code another task writes. |
+| Tasks                 | Shared surface                         | Finding                                                                                                                                                                                                                                                            |
+| --------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| D2, D7, C1            | `server/src/services/payments/`        | D2 adds a function to `record-payment.ts`; D7 and C1 both edit `cancelBooking` in `cancel-refund.ts`. **C1 runs after D7**, so C1 edits a `.set()` D7 has already touched — sequence is load-bearing, and C1's brief must say the coupon release is already there. |
+| D7, C1                | `cancelBooking`'s audit payload        | Both add a key (`couponReleased`, then the two timestamps are columns not payload). No collision; C1 adds no audit key.                                                                                                                                            |
+| D3, D4                | driver auth                            | D3 edits `attemptDriverLogin`'s inactive branch; D4 edits `admin.drivers.update`. Disjoint files. Both assert on `is_active`, and **D4's test must not assume D3's refusal string** — after D3 an inactive driver's login answers `wrong_credentials`.             |
+| D4, C3                | `server/src/services/sessions.ts`      | D4 adds `revokeSessionsForSubject`, C3 adds `deleteExpiredSessions`. Two exports, no shared state. C3 runs later and must not refactor D4's.                                                                                                                       |
+| D5, C3                | `server/src/jobs/index.ts`             | Both add a `schedule()` call. **C3 runs after D5**, so C3's brief must expect two jobs already registered, not one.                                                                                                                                                |
+| D6, C4                | `server/src/db/schema.ts` + migrations | D6 generates a migration (`0012`). C4 touches seed data only, no schema. No ordering constraint beyond "D6's migration is applied before C4's tests run", which the test harness does automatically.                                                               |
+| D1, D6                | the driver trip screen                 | D1 edits `PaymentBox.tsx`, D6 edits the notes read. Both are rendered by `DriverTripPage.tsx` and neither touches it.                                                                                                                                              |
+| C2, D5                | nothing                                | Disjoint.                                                                                                                                                                                                                                                          |
+| C6                    | `server/src/db/duplicate-key.ts`       | Used by five files already; C6 adds two importers and deletes two local copies. No signature change.                                                                                                                                                               |
+| C3, C5                | `server/src/__tests__/global-setup.ts` | C3 edits the teardown (prune `sessions`); C5 edits `LEAK_TABLES`. **C3 runs first**, so C5 must not revert C3's prune, and C5 must not add `sessions` to `LEAK_TABLES` — C3's brief explains why.                                                                  |
+| D4, C1                | `bookings.driver_id`                   | D4 deliberately does NOT clear `driver_id` on deactivation (the id is the record of who was assigned). C1 adds no driver column. No collision.                                                                                                                     |
+| C7                    | `driver-lockout.test.ts`               | Test-only, plus a `CLAUDE.md` edit and a `LAUNCH_CHECKLIST.md` cross-reference. Touches no production code.                                                                                                                                                        |
+| Each task, internally | —                                      | Checked: every task's tests name files that the same task creates or that exist today; no task specifies a test over code another task writes.                                                                                                                     |
 
 ---
 
@@ -91,14 +91,16 @@ One row per pair of tasks that share a file or an interface, plus one per task o
 
 **Decision:** D1, owner-decided 2026-10-16.
 
-**Why this is first.** It is the only item on the list where the screen currently states something false. After the last stop the trip is `completed`, the box disappears, and the driver reads *"This trip is finished. There is nothing to collect here."* while PHP 4,500 is owed — measured in the browser on 2026-10-16 (`2026-10-16-week6-walkthrough.md`, step 9). The server already answers `collect_cash` for a completed trip and `driver.recordCash` already accepts the claim; only this component refuses. So this task removes a client-side suppression, and adds nothing to the server.
+**Why this is first.** It is the only item on the list where the screen currently states something false. After the last stop the trip is `completed`, the box disappears, and the driver reads _"This trip is finished. There is nothing to collect here."_ while PHP 4,500 is owed — measured in the browser on 2026-10-16 (`2026-10-16-week6-walkthrough.md`, step 9). The server already answers `collect_cash` for a completed trip and `driver.recordCash` already accepts the claim; only this component refuses. So this task removes a client-side suppression, and adds nothing to the server.
 
 **Files:**
+
 - Modify: `client/src/components/driver/PaymentBox.tsx` (the `LIVE_STATUSES` allow-list, `NOT_LIVE_COPY`, and the module doc's rule 1)
 - Modify: `client/src/__tests__/driver-payment-box.test.tsx` (exact filename to be confirmed by the implementer with `ls client/src/__tests__/ | grep -i payment`; the suite that already covers this component)
 - Modify: `CLAUDE.md` (the Driver portal bullet beginning "The payment box is computed on the server")
 
 **Interfaces:**
+
 - Consumes: `PaymentBoxState` and `BookingStatus` from `@rg/shared`, unchanged. `PaymentBoxProps` unchanged.
 - Produces: nothing new. The rename below is internal to the file.
 
@@ -204,9 +206,9 @@ const NOT_COLLECTABLE_COPY: Record<
   Exclude<BookingStatus, CollectableStatus>,
   { tone: 'warn' | 'neutral'; heading: string; body: string }
 > = {
-  pending_payment: { /* unchanged */ },
-  cancelled: { /* unchanged */ },
-  expired: { /* unchanged */ },
+  pending_payment: {/* unchanged */},
+  cancelled: {/* unchanged */},
+  expired: {/* unchanged */},
 };
 ```
 
@@ -246,6 +248,7 @@ git push
 **The problem being solved.** A driver taps "Record cash collected" and one `pending` `payments` row exists from then on. If the money never reaches the office there is no way to close that row: `verifyCashPayment` only ever approves, and the pending row puts the driver's payment box into `unverified_do_not_collect`, so `driver.recordCash` answers `CONFLICT` on every later attempt. One mistaken tap blocks that booking's cash collection permanently and leaves a false claim sitting in the verification queue.
 
 **Files:**
+
 - Modify: `server/src/services/payments/errors.ts` (add `CashRejectionNeedsReasonError`)
 - Modify: `server/src/services/payments/record-payment.ts` (add `rejectCashPayment()`)
 - Modify: `server/src/routers/admin/bookings.ts` (add `rejectCash`, and widen the detail read if `rejectReason` is not already selected for cash rows)
@@ -256,8 +259,10 @@ git push
 - Modify: `CLAUDE.md` (the Driver portal bullet that ends "There is no reject path for a cash claim yet.")
 
 **Interfaces:**
+
 - Consumes: `assertMayVerifyPayments(verifier) -> number` (already exported from `record-payment.ts` for exactly this kind of reuse), `writeAudit`, `CashPaymentNotFoundError`, `CashPaymentNotPendingError` (both already exist), `asTrpcError` (already used by `approveCash`).
 - Produces:
+
   ```ts
   export interface RejectCashPaymentResult {
     paymentId: number;
@@ -271,6 +276,7 @@ git push
     verifier: { type: string; id: number | null; role: unknown };
   }): Promise<RejectCashPaymentResult>;
   ```
+
   tRPC: `admin.bookings.rejectCash({ paymentId: number, reason: string })` under `adminProcedure('verifyPayments')`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -307,8 +313,16 @@ it('moves no money and leaves the booking exactly as it was', async () => {
 });
 
 it('writes one audit row carrying the reason and the actor', async () => {
-  const { paymentId } = await recordPendingCash({ bookingId, amountCentavos: 100, collectedByDriverId: driverId });
-  await rejectCashPayment({ paymentId, reason: 'Short by 500.', verifier: { type: 'user', id: financeUserId, role: 'owner' } });
+  const { paymentId } = await recordPendingCash({
+    bookingId,
+    amountCentavos: 100,
+    collectedByDriverId: driverId,
+  });
+  await rejectCashPayment({
+    paymentId,
+    reason: 'Short by 500.',
+    verifier: { type: 'user', id: financeUserId, role: 'owner' },
+  });
 
   const rows = await auditRowsFor('payments', paymentId);
   const rejected = rows.filter((r) => r.action === 'payment.cash_rejected');
@@ -326,11 +340,21 @@ it('writes one audit row carrying the reason and the actor', async () => {
 });
 
 it('unblocks the driver: the box returns to collect_cash and a new claim succeeds', async () => {
-  const { paymentId } = await recordPendingCash({ bookingId, amountCentavos: 450000, collectedByDriverId: driverId });
+  const { paymentId } = await recordPendingCash({
+    bookingId,
+    amountCentavos: 450000,
+    collectedByDriverId: driverId,
+  });
   // While it is pending, the driver is refused.
-  await expect(recordDriverCash(driverId, bookingId, TOUR_DAY_NOON)).rejects.toMatchObject({ code: 'CONFLICT' });
+  await expect(recordDriverCash(driverId, bookingId, TOUR_DAY_NOON)).rejects.toMatchObject({
+    code: 'CONFLICT',
+  });
 
-  await rejectCashPayment({ paymentId, reason: 'Not received.', verifier: { type: 'user', id: financeUserId, role: 'finance' } });
+  await rejectCashPayment({
+    paymentId,
+    reason: 'Not received.',
+    verifier: { type: 'user', id: financeUserId, role: 'finance' },
+  });
 
   const detail = await driverTripDetail(driverId, bookingId);
   expect(detail.payment).toEqual({ kind: 'collect_cash', amountCentavos: 450000 });
@@ -339,26 +363,38 @@ it('unblocks the driver: the box returns to collect_cash and a new claim succeed
 });
 
 it('refuses a second rejection, and refuses one on an approved row', async () => {
-  const { paymentId } = await recordPendingCash({ bookingId, amountCentavos: 100, collectedByDriverId: driverId });
+  const { paymentId } = await recordPendingCash({
+    bookingId,
+    amountCentavos: 100,
+    collectedByDriverId: driverId,
+  });
   await rejectCashPayment({ paymentId, reason: 'One.', verifier: FINANCE });
-  await expect(rejectCashPayment({ paymentId, reason: 'Two.', verifier: FINANCE })).rejects.toBeInstanceOf(
-    CashPaymentNotPendingError,
-  );
+  await expect(
+    rejectCashPayment({ paymentId, reason: 'Two.', verifier: FINANCE }),
+  ).rejects.toBeInstanceOf(CashPaymentNotPendingError);
 });
 
 it('requires a reason, and refuses whitespace', async () => {
-  const { paymentId } = await recordPendingCash({ bookingId, amountCentavos: 100, collectedByDriverId: driverId });
+  const { paymentId } = await recordPendingCash({
+    bookingId,
+    amountCentavos: 100,
+    collectedByDriverId: driverId,
+  });
   for (const reason of ['', '   ', '\t\n']) {
-    await expect(rejectCashPayment({ paymentId, reason, verifier: FINANCE })).rejects.toBeInstanceOf(
-      CashRejectionNeedsReasonError,
-    );
+    await expect(
+      rejectCashPayment({ paymentId, reason, verifier: FINANCE }),
+    ).rejects.toBeInstanceOf(CashRejectionNeedsReasonError);
   }
   // And it wrote nothing while refusing.
   expect((await paymentRow(paymentId)).status).toBe('pending');
 });
 
 it('refuses a driver, a dispatcher, an unknown role and a non-user actor', async () => {
-  const { paymentId } = await recordPendingCash({ bookingId, amountCentavos: 100, collectedByDriverId: driverId });
+  const { paymentId } = await recordPendingCash({
+    bookingId,
+    amountCentavos: 100,
+    collectedByDriverId: driverId,
+  });
   const refused = [
     { type: 'driver', id: driverId, role: 'driver' },
     { type: 'user', id: dispatcherUserId, role: 'dispatcher' },
@@ -377,9 +413,9 @@ it('refuses a driver, a dispatcher, an unknown role and a non-user actor', async
 it('refuses a payment id that is not a driver-cash row', async () => {
   // A receipt row: provider manual, method bank_transfer, no collected_by_driver_id.
   const receiptId = await insertReceiptPayment(bookingId);
-  await expect(rejectCashPayment({ paymentId: receiptId, reason: 'No.', verifier: FINANCE })).rejects.toBeInstanceOf(
-    CashPaymentNotFoundError,
-  );
+  await expect(
+    rejectCashPayment({ paymentId: receiptId, reason: 'No.', verifier: FINANCE }),
+  ).rejects.toBeInstanceOf(CashPaymentNotFoundError);
 });
 ```
 
@@ -487,7 +523,11 @@ export async function rejectCashPayment(
     if (!booking) throw new BookingNotFoundError(unlocked.bookingId);
 
     const [payment] = await tx
-      .select({ status: payments.status, amountCentavos: payments.amountCentavos, collectedByDriverId: payments.collectedByDriverId })
+      .select({
+        status: payments.status,
+        amountCentavos: payments.amountCentavos,
+        collectedByDriverId: payments.collectedByDriverId,
+      })
       .from(payments)
       .where(cashRow(parsed.paymentId))
       .for('update')
@@ -590,6 +630,7 @@ Expected: all green. If `procedure-role-metadata.test.ts` goes red, it is asking
 In `AdminBookingDetailPage.tsx`, inside the existing per-claim `pendingCash.map(...)` panel. The panel's own comment currently explains why there is no reject button — **replace that comment**, do not leave it contradicting the button beside it.
 
 Requirements, each one a test:
+
 - One reason textarea and one reject button **per claim**, keyed by `claim.id`, exactly as the approve button already is. Two claims must be refusable independently.
 - The button is disabled while the reason is empty or whitespace, and while the mutation is pending.
 - The reason is a required field with a **visible label**, not a placeholder-only one.
@@ -603,6 +644,7 @@ Add to `client/src/__tests__/admin-bookings.test.tsx`: the button is absent for 
 - [ ] **Step 8: Prove the tests can fail**
 
 Four mutations, each restored byte-identically:
+
 1. Delete the `if (reason.length === 0) throw` line — the reason test must go red.
 2. Change `assertMayVerifyPayments` to return `verifier.id ?? 0` without checking the role — the role test must go red.
 3. Add `amountPaidCentavos` to a `bookings` update in the new function — **expect this to fail `pnpm typecheck` or the `schema-conventions` guard** rather than the test; record which, because that guard is what makes the money rule structural.
@@ -622,9 +664,10 @@ Two commits if the client work is separable: `feat(payments): finance can refuse
 
 **Decision:** D3, owner-decided 2026-10-16. **Pre-flight ruling 3 applies: `driver_inactive` leaves the shared union.**
 
-**The oracle being closed.** Today `attemptDriverLogin` refuses an inactive driver before hashing anything: a `403` with the message `driver_inactive`, answered in about 5ms where a wrong PIN takes about 250ms. Both halves leak. Anyone with a list of driver codes learns which ones are real and which have left the company, by reading the message or by timing the response — and a code that answers *differently* is a code worth attacking. Measured on the wire, 2026-10-16.
+**The oracle being closed.** Today `attemptDriverLogin` refuses an inactive driver before hashing anything: a `403` with the message `driver_inactive`, answered in about 5ms where a wrong PIN takes about 250ms. Both halves leak. Anyone with a list of driver codes learns which ones are real and which have left the company, by reading the message or by timing the response — and a code that answers _differently_ is a code worth attacking. Measured on the wire, 2026-10-16.
 
 **Files:**
+
 - Modify: `server/src/services/driver-auth.ts` (move the `is_active` branch below the hash; audit the real reason)
 - Modify: `shared/src/driver.ts` (`DriverLoginRefusal` loses `driver_inactive`)
 - Modify: `client/src/pages/driver/DriverLoginPage.tsx` (the copy map loses its entry — compiler-forced)
@@ -632,6 +675,7 @@ Two commits if the client work is separable: `feat(payments): finance can refuse
 - Modify: `CLAUDE.md` (the Driver portal bullet listing the four refusal reasons)
 
 **Interfaces:**
+
 - Consumes: `verifyPassword`, `evaluatePinAttempt`, `writeAudit`, all unchanged.
 - Produces: `DriverLoginRefusal = 'wrong_credentials' | 'locked' | 'needs_admin_unlock'`. **This is a narrowing of a shared type** — the client's `Record<DriverLoginRefusal, string>` must lose exactly one key and nothing else.
 
@@ -640,7 +684,11 @@ Two commits if the client work is separable: `feat(payments): finance can refuse
 ```ts
 it('answers an inactive driver EXACTLY as it answers a wrong PIN', async () => {
   const wrong = await attemptDriverLogin({ code: ACTIVE_CODE, pin: '000000', now: NOW });
-  const inactive = await attemptDriverLogin({ code: INACTIVE_CODE, pin: INACTIVE_REAL_PIN, now: NOW });
+  const inactive = await attemptDriverLogin({
+    code: INACTIVE_CODE,
+    pin: INACTIVE_REAL_PIN,
+    now: NOW,
+  });
 
   // Deep equality on the whole object, not just the reason — a field
   // present in one and absent in the other is the same oracle in a
@@ -651,15 +699,27 @@ it('answers an inactive driver EXACTLY as it answers a wrong PIN', async () => {
 it('answers an inactive driver with the CORRECT pin the same way too', async () => {
   // The case that matters: an attacker who knows the PIN must not be able
   // to tell "deactivated" from "wrong PIN".
-  const wrongPinOnInactive = await attemptDriverLogin({ code: INACTIVE_CODE, pin: '000000', now: NOW });
-  const rightPinOnInactive = await attemptDriverLogin({ code: INACTIVE_CODE, pin: INACTIVE_REAL_PIN, now: NOW });
+  const wrongPinOnInactive = await attemptDriverLogin({
+    code: INACTIVE_CODE,
+    pin: '000000',
+    now: NOW,
+  });
+  const rightPinOnInactive = await attemptDriverLogin({
+    code: INACTIVE_CODE,
+    pin: INACTIVE_REAL_PIN,
+    now: NOW,
+  });
   expect(rightPinOnInactive).toEqual(wrongPinOnInactive);
 });
 
 it('is byte-identical on the wire, not merely deep-equal in process', async () => {
   const app = createApp();
-  const wrong = await request(app).post('/trpc/driver.login').send({ code: ACTIVE_CODE, pin: '000000' });
-  const inactive = await request(app).post('/trpc/driver.login').send({ code: INACTIVE_CODE, pin: INACTIVE_REAL_PIN });
+  const wrong = await request(app)
+    .post('/trpc/driver.login')
+    .send({ code: ACTIVE_CODE, pin: '000000' });
+  const inactive = await request(app)
+    .post('/trpc/driver.login')
+    .send({ code: INACTIVE_CODE, pin: INACTIVE_REAL_PIN });
 
   expect(inactive.status).toBe(wrong.status);
   expect(inactive.status).toBe(401);
@@ -734,48 +794,48 @@ Expected: the equality, wire, timing and audit tests fail. The counters test pas
 In `attemptDriverLogin`, replace the early return at step 2 with a flag, and act on it after the verify:
 
 ```ts
-    // 2. A soft-deleted driver is NOT refused here any more (owner decision
-    //    2026-10-16, D3). Refusing before the hash answered in ~5ms where a
-    //    wrong PIN takes ~250ms, and with its own message — so both the
-    //    body and the clock told anyone holding a list of driver codes
-    //    which ones had left the company. The flag is carried past the
-    //    hash instead, and the refusal below is the wrong-credentials one,
-    //    byte for byte.
-    const inactive = !row.isActive;
+// 2. A soft-deleted driver is NOT refused here any more (owner decision
+//    2026-10-16, D3). Refusing before the hash answered in ~5ms where a
+//    wrong PIN takes ~250ms, and with its own message — so both the
+//    body and the clock told anyone holding a list of driver codes
+//    which ones had left the company. The flag is carried past the
+//    hash instead, and the refusal below is the wrong-credentials one,
+//    byte for byte.
+const inactive = !row.isActive;
 
-    // 3. ALWAYS, even when locked, and now also when inactive. See the
-    //    module note — this is the cost that makes every refusal cost the
-    //    same.
-    const pinOk = await verifyPassword(input.pin, row.pinHash);
+// 3. ALWAYS, even when locked, and now also when inactive. See the
+//    module note — this is the cost that makes every refusal cost the
+//    same.
+const pinOk = await verifyPassword(input.pin, row.pinHash);
 
-    if (inactive) {
-      /*
-       * The real reason goes to `audit_log` and nowhere else: an admin
-       * reading the trail must be able to see that a departed driver is
-       * still trying to sign in — that is a real operational signal — while
-       * the person at the keypad learns only "that did not work".
-       *
-       * The lockout counters are deliberately untouched, which is the one
-       * thing the old early return got right: a driver who left must not be
-       * able to lock out the code a new hire might later be given. So this
-       * returns BEFORE `evaluatePinAttempt` is consulted, and writes no
-       * `drivers` update at all.
-       *
-       * `pinOk` is recorded because "a departed driver still knows their
-       * PIN" and "someone is guessing at a departed driver's code" are
-       * different events, and an admin investigating wants to tell them
-       * apart. It is a boolean; the PIN itself never reaches this row.
-       */
-      await writeAudit(tx, {
-        actorType: 'driver',
-        actorId: row.id,
-        action: 'driver.login_inactive',
-        entity: 'driver',
-        entityId: row.id,
-        data: { code: row.code, pinCorrect: pinOk },
-      });
-      return { kind: 'refused', reason: 'wrong_credentials' };
-    }
+if (inactive) {
+  /*
+   * The real reason goes to `audit_log` and nowhere else: an admin
+   * reading the trail must be able to see that a departed driver is
+   * still trying to sign in — that is a real operational signal — while
+   * the person at the keypad learns only "that did not work".
+   *
+   * The lockout counters are deliberately untouched, which is the one
+   * thing the old early return got right: a driver who left must not be
+   * able to lock out the code a new hire might later be given. So this
+   * returns BEFORE `evaluatePinAttempt` is consulted, and writes no
+   * `drivers` update at all.
+   *
+   * `pinOk` is recorded because "a departed driver still knows their
+   * PIN" and "someone is guessing at a departed driver's code" are
+   * different events, and an admin investigating wants to tell them
+   * apart. It is a boolean; the PIN itself never reaches this row.
+   */
+  await writeAudit(tx, {
+    actorType: 'driver',
+    actorId: row.id,
+    action: 'driver.login_inactive',
+    entity: 'driver',
+    entityId: row.id,
+    data: { code: row.code, pinCorrect: pinOk },
+  });
+  return { kind: 'refused', reason: 'wrong_credentials' };
+}
 ```
 
 Delete the `'driver_inactive'` case from the `Verdict` type if it names reasons explicitly, and update the module header's numbered list (step 2 currently reads "refuse `driver_inactive` if `is_active = 0`").
@@ -813,6 +873,7 @@ Expected: green. Any test asserting the old `driver_inactive` refusal now assert
 - [ ] **Step 7: Prove the tests can fail**
 
 Three mutations:
+
 1. Restore the early return above `verifyPassword` (keeping `wrong_credentials`) — the **timing** test must go red while the equality tests stay green. That is the proof the timing test is the one carrying this property, and the reason it exists.
 2. Return `reason: 'driver_inactive'` — the wire test and the source-scan test must go red.
 3. Delete the `writeAudit` call — the audit test must go red.
@@ -840,6 +901,7 @@ The bullet beginning "**Every login refusal's `message` IS the reason string**" 
 **And the act of deactivating has to be built first** — pre-flight ruling 6. `drivers.is_active` is written by no mutation today: `driverInputSchema` excludes it, `toUpdateValues` does not map it, and there is no `admin.drivers.setActive` to match vans' `admin.vans.setStatus`. So this task adds that mutation and hangs the revocation off it.
 
 **Files:**
+
 - Modify: `shared/src/dispatch.ts` (the `setActive` input schema, beside `vanStatusInput`'s equivalent)
 - Modify: `server/src/services/sessions.ts` (add `revokeSessionsForSubject`)
 - Create in: `server/src/routers/admin/drivers.ts` (`setActive`, modelled on `admin.vans.setStatus` at `routers/admin/vans.ts:126`+, revoking in the same transaction)
@@ -850,8 +912,10 @@ The bullet beginning "**Every login refusal's `message` IS the reason string**" 
 - Modify: `CLAUDE.md` (the bullet beginning "**`requireDriver` reads the session**")
 
 **Interfaces:**
+
 - Consumes: `Transaction` from `../db/client`, `sessions` from `../db/schema`.
 - Produces:
+
   ```ts
   /**
    * Deletes every session row for one subject, inside the caller's
@@ -882,7 +946,10 @@ it('the next request after deactivation is UNAUTHORIZED', async () => {
 });
 
 it('deletes every session that driver had, and only theirs', async () => {
-  const mine = [await createSession('driver', driverId, NOW), await createSession('driver', driverId, NOW)];
+  const mine = [
+    await createSession('driver', driverId, NOW),
+    await createSession('driver', driverId, NOW),
+  ];
   const otherDriver = await createSession('driver', otherDriverId, NOW);
   const staff = await createSession('user', ownerUserId, NOW);
 
@@ -901,7 +968,11 @@ it('revokes in the SAME transaction as the write: a failed update revokes nothin
   // A patch that violates the unique index on `code` — the transaction
   // rolls back after the session delete would have run.
   await expect(
-    callAdmin('admin.drivers.update', { id: driverId, patch: { isActive: false, code: TAKEN_CODE } }, OWNER),
+    callAdmin(
+      'admin.drivers.update',
+      { id: driverId, patch: { isActive: false, code: TAKEN_CODE } },
+      OWNER,
+    ),
   ).rejects.toMatchObject({ code: 'CONFLICT' });
 
   expect(await readSession(session.token, NOW)).not.toBeNull();
@@ -910,7 +981,11 @@ it('revokes in the SAME transaction as the write: a failed update revokes nothin
 
 it('revokes nothing when the patch does not deactivate', async () => {
   const session = await createSession('driver', driverId, NOW);
-  await callAdmin('admin.drivers.update', { id: driverId, patch: { name: 'Juan Dela Cruz' } }, OWNER);
+  await callAdmin(
+    'admin.drivers.update',
+    { id: driverId, patch: { name: 'Juan Dela Cruz' } },
+    OWNER,
+  );
   expect(await readSession(session.token, NOW)).not.toBeNull();
 
   // And REACTIVATING does not revoke either — there is nothing to revoke,
@@ -998,21 +1073,19 @@ export async function revokeSessionsForSubject(
 In `admin/drivers.ts`'s `update` mutation, inside the existing transaction, after the `drivers` update and before the audit write:
 
 ```ts
-          /*
-           * Deactivation ends every session that driver holds, in THIS
-           * transaction (owner decision 2026-10-16, D4). Until this existed,
-           * `requireDriver` read the session and never re-read `is_active`,
-           * so a driver deactivated mid-shift kept up to twelve hours of
-           * access — measured on the wire, 2026-10-16.
-           *
-           * `=== false` and not `!input.patch.isActive`: the patch is
-           * partial, so `undefined` means "not changing this" and must not
-           * be read as "deactivate".
-           */
-          const sessionsRevoked =
-            input.patch.isActive === false
-              ? await revokeSessionsForSubject(tx, 'driver', input.id)
-              : 0;
+/*
+ * Deactivation ends every session that driver holds, in THIS
+ * transaction (owner decision 2026-10-16, D4). Until this existed,
+ * `requireDriver` read the session and never re-read `is_active`,
+ * so a driver deactivated mid-shift kept up to twelve hours of
+ * access — measured on the wire, 2026-10-16.
+ *
+ * `=== false` and not `!input.patch.isActive`: the patch is
+ * partial, so `undefined` means "not changing this" and must not
+ * be read as "deactivate".
+ */
+const sessionsRevoked =
+  input.patch.isActive === false ? await revokeSessionsForSubject(tx, 'driver', input.id) : 0;
 ```
 
 and add `sessionsRevoked` to the audit `data` beside `input.patch`.
@@ -1090,6 +1163,7 @@ Rewrite the bullet that currently records the twelve-hour window as "deliberate-
 **What this task does and does not do.** It makes the state visible in two places — a dashboard alert and a daily log line — and changes no van's status, ever. The owner's instruction is explicit, and the reason is sound: a sweep that frees a van automatically would, on the one day a trip genuinely overran, put a van with guests in it back on sale.
 
 **Files:**
+
 - Modify: `shared/src/` (the `DashboardAlert` union gains a kind — find it with `grep -rn "DashboardAlert" shared/src`)
 - Modify: `server/src/services/dispatch/alerts.ts` (add `orphanedOnTripVans`)
 - Modify: the admin dashboard router that assembles the five alerts (find it with `grep -rn "vansInRepair" server/src/routers`)
@@ -1101,7 +1175,9 @@ Rewrite the bullet that currently records the twelve-hour window as "deliberate-
 - Modify: `CLAUDE.md` (the KNOWN GAP paragraph in Dispatch)
 
 **Interfaces:**
+
 - Produces:
+
   ```ts
   /**
    * Vans sitting in `on_trip` with no `in_progress` booking to explain it.
@@ -1109,9 +1185,7 @@ Rewrite the bullet that currently records the twelve-hour window as "deliberate-
    * about state, not about the clock — the same narrowing `vansInRepair`
    * and `paymentsToVerify` already make.
    */
-  export async function orphanedOnTripVans(
-    db: Database | Transaction,
-  ): Promise<OrphanedVanAlert[]>;
+  export async function orphanedOnTripVans(db: Database | Transaction): Promise<OrphanedVanAlert[]>;
 
   /** The job. Logs and returns what it found; changes nothing. */
   export async function checkOrphanedVans(now: Date): Promise<{ found: number }>;
@@ -1215,9 +1289,7 @@ In `alerts.ts`, following the file's existing shape — one exported function pe
  * guess at which one stranded it: that booking may since have been
  * cancelled, completed or edited, so the row is a lead rather than a claim.
  */
-export async function orphanedOnTripVans(
-  db: Database | Transaction,
-): Promise<OrphanedVanAlert[]> {
+export async function orphanedOnTripVans(db: Database | Transaction): Promise<OrphanedVanAlert[]> {
   // ... SELECT vans WHERE status = 'on_trip' AND NOT EXISTS (
   //       SELECT 1 FROM bookings b WHERE b.van_id = vans.id AND b.status = 'in_progress'
   //     ), left-joined to the most recent booking for the ref, ordered by
@@ -1305,6 +1377,7 @@ The KNOWN GAP paragraph says the symptom arrives "with nothing in the logs" and 
 **The problem.** `driver.trip` returns every row of `booking_notes` for the trip, text only, oldest first. There is no visibility column, so there is no such thing as an office-eyes-only note — and the office has no way to record "the guest disputed the price, do not discuss it" without the driver reading it.
 
 **Files:**
+
 - Modify: `server/src/db/schema.ts` (`bookingNotes.visibleToDriver`)
 - Create: `server/src/db/migrations/0012_*.sql` (generated, never hand-written)
 - Modify: `server/src/routers/public/driver.ts` (filter the notes read)
@@ -1316,6 +1389,7 @@ The KNOWN GAP paragraph says the symptom arrives "with nothing in the logs" and 
 - Modify: `CLAUDE.md` (the bullet beginning "**`booking_notes` text is fully visible to drivers**")
 
 **Interfaces:**
+
 - Produces:
   - `bookingNotes.visibleToDriver: boolean` — `NOT NULL DEFAULT false`.
   - `admin.bookings.addNote({ bookingId: number, note: string, visibleToDriver: boolean })` under the same role gate the booking detail uses.
@@ -1326,7 +1400,10 @@ The KNOWN GAP paragraph says the symptom arrives "with nothing in the logs" and 
 
 ```ts
 it('an unflagged note NEVER reaches the driver API', async () => {
-  await addNote({ bookingId, note: 'Guest disputed the price — do not discuss.', visibleToDriver: false }, OWNER);
+  await addNote(
+    { bookingId, note: 'Guest disputed the price — do not discuss.', visibleToDriver: false },
+    OWNER,
+  );
   await addNote({ bookingId, note: 'Waiting at the second gate.', visibleToDriver: true }, OWNER);
 
   const detail = await driverTripDetail(driverId, bookingId);
@@ -1370,7 +1447,9 @@ it('records who wrote the note, and audits it', async () => {
   const row = await noteRow(id);
   expect(row.userId).toBe(financeUserId);
 
-  const audit = (await auditRowsFor('bookings', bookingId)).find((r) => r.action === 'booking.note_added');
+  const audit = (await auditRowsFor('bookings', bookingId)).find(
+    (r) => r.action === 'booking.note_added',
+  );
   expect(audit!.data).toMatchObject({ noteId: id, visibleToDriver: true });
   // The note TEXT is not duplicated into the audit payload: it is already
   // stored, and audit rows are exported in reports.
@@ -1383,14 +1462,18 @@ it('refuses an empty note, a whitespace note, and a driver', async () => {
       code: 'BAD_REQUEST',
     });
   }
-  await expect(addNote({ bookingId, note: 'No.', visibleToDriver: true }, DRIVER_CALLER)).rejects.toMatchObject({
+  await expect(
+    addNote({ bookingId, note: 'No.', visibleToDriver: true }, DRIVER_CALLER),
+  ).rejects.toMatchObject({
     code: 'UNAUTHORIZED',
   });
 });
 
 it('refuses a note on a booking that does not exist, writing nothing', async () => {
   const before = await noteCount();
-  await expect(addNote({ bookingId: 9_999_999, note: 'x', visibleToDriver: true }, OWNER)).rejects.toMatchObject({
+  await expect(
+    addNote({ bookingId: 9_999_999, note: 'x', visibleToDriver: true }, OWNER),
+  ).rejects.toMatchObject({
     code: 'NOT_FOUND',
   });
   expect(await noteCount()).toBe(before);
@@ -1477,6 +1560,7 @@ Client tests: the checkbox defaults unticked; submitting sends `visibleToDriver:
 Run: `pnpm --filter @rg/server test` and `pnpm --filter @rg/client test`
 
 Mutations:
+
 1. Remove the `visibleToDriver` term from the driver's WHERE — the first test must go red.
 2. Change the column default to `.default(true)`, regenerate **into a scratch file only** (do not apply), and instead simulate by raw-inserting with `visible_to_driver = 1` — confirm the default test is actually reading the database and not Drizzle's opinion.
 3. Make `visibleToDriver` optional in the input schema with a `true` default — the client test asserting an untouched checkbox sends `false` must go red.
@@ -1502,11 +1586,13 @@ Two commits: the migration and server change, then the admin UI.
 **The asymmetry being closed.** A hold that lapses releases its coupon slot — `expireHolds` calls `releaseRedemption()`, owner decision Q7/Q8. An admin cancellation does not, so a guest whose booking the office cancels has burned one use of a limited coupon for a trip that never ran. Nothing said what should happen because a cancel is a different event from an expiry; now something does.
 
 **Files:**
+
 - Modify: `server/src/services/payments/cancel-refund.ts` (`cancelBooking` releases the redemption)
 - Test: `server/src/__tests__/admin-refunds.test.ts` (the existing suite, which already owns the cancel tests)
 - Modify: `CLAUDE.md` (the Dispatch bullet on what a cancellation does)
 
 **Interfaces:**
+
 - Consumes: `releaseRedemption(tx, couponId, bookingId) -> Promise<void>` from `../coupons`, unchanged and already idempotent on its own DELETE's affected-row count.
 - Produces: `CancelBookingResult` gains `couponReleased: boolean`, and the audit payload gains the same key.
 
@@ -1518,7 +1604,11 @@ it('releases the coupon slot and decrements used_count exactly once', async () =
   expect(await couponUsedCount(couponId)).toBe(1);
   expect(await redemptionCount(couponId, bookingId)).toBe(1);
 
-  const result = await cancelBooking({ bookingId, reason: 'Guest cancelled.', actorUserId: ownerUserId });
+  const result = await cancelBooking({
+    bookingId,
+    reason: 'Guest cancelled.',
+    actorUserId: ownerUserId,
+  });
 
   expect(result.couponReleased).toBe(true);
   expect(await couponUsedCount(couponId)).toBe(0);
@@ -1531,22 +1621,28 @@ it('releases the coupon slot and decrements used_count exactly once', async () =
 it('a second cancel cannot decrement a second time', async () => {
   const { couponId, bookingId } = await heldBookingWithCoupon({ usageLimit: 1 });
   await cancelBooking({ bookingId, reason: 'One.', actorUserId: ownerUserId });
-  await expect(cancelBooking({ bookingId, reason: 'Two.', actorUserId: ownerUserId })).rejects.toBeInstanceOf(
-    BookingNotCancellableError,
-  );
+  await expect(
+    cancelBooking({ bookingId, reason: 'Two.', actorUserId: ownerUserId }),
+  ).rejects.toBeInstanceOf(BookingNotCancellableError);
   expect(await couponUsedCount(couponId)).toBe(0);
 });
 
 it('reports false, and touches no coupon, for a booking that used none', async () => {
   const bookingId = await heldBooking({ couponId: null });
-  const result = await cancelBooking({ bookingId, reason: 'No coupon here.', actorUserId: ownerUserId });
+  const result = await cancelBooking({
+    bookingId,
+    reason: 'No coupon here.',
+    actorUserId: ownerUserId,
+  });
   expect(result.couponReleased).toBe(false);
 });
 
 it('audits the release beside the cancellation, in the same row', async () => {
   const { bookingId } = await heldBookingWithCoupon({ usageLimit: 5 });
   await cancelBooking({ bookingId, reason: 'Guest cancelled.', actorUserId: ownerUserId });
-  const row = (await auditRowsFor('bookings', bookingId)).find((r) => r.action === 'booking.cancelled');
+  const row = (await auditRowsFor('bookings', bookingId)).find(
+    (r) => r.action === 'booking.cancelled',
+  );
   expect(row!.data).toMatchObject({ couponReleased: true, reason: 'Guest cancelled.' });
 });
 
@@ -1555,9 +1651,9 @@ it('rolls the release back with the cancel', async () => {
   // A booking whose status is not cancellable: the conditional UPDATE
   // matches nothing and the whole transaction throws.
   await getPool().query('UPDATE bookings SET status = ? WHERE id = ?', ['completed', bookingId]);
-  await expect(cancelBooking({ bookingId, reason: 'x', actorUserId: ownerUserId })).rejects.toBeInstanceOf(
-    BookingNotCancellableError,
-  );
+  await expect(
+    cancelBooking({ bookingId, reason: 'x', actorUserId: ownerUserId }),
+  ).rejects.toBeInstanceOf(BookingNotCancellableError);
   expect(await couponUsedCount(couponId)).toBe(1);
 });
 ```
@@ -1572,32 +1668,32 @@ Expected: the release tests fail; `couponReleased` does not exist.
 In `cancelBooking`, add `couponId` to the locking read's selection, and after the van release:
 
 ```ts
-    /*
-     * The coupon slot, given back (owner decision 2026-10-16, D7).
-     *
-     * A lapsed hold already did this (`expireHolds` -> `releaseRedemption`,
-     * owner decision Q7/Q8). A cancel is a different event and nothing said
-     * what it should do, so until now it did nothing — and a guest whose
-     * booking the office cancelled had burned one use of a limited coupon on
-     * a trip that never ran. The two events now agree: capacity comes back,
-     * and so does the coupon.
-     *
-     * `releaseRedemption` is idempotent on its own DELETE's affected-row
-     * count, so it cannot double-decrement — and it could not be reached
-     * twice anyway: the conditional UPDATE above refuses a second cancel.
-     * Both guards, deliberately, because the one that fails silently is the
-     * one that matters.
-     *
-     * LOCK ORDER: the booking row is already held, and this takes
-     * `coupon_redemptions` then `coupons`. `expireHolds` reaches the same
-     * two tables in the same order from behind the same booking lock
-     * (slots, booking, coupon), so the two paths cannot deadlock against
-     * each other.
-     */
-    const couponReleased = booking.couponId !== null;
-    if (booking.couponId !== null) {
-      await releaseRedemption(tx, booking.couponId, parsed.bookingId);
-    }
+/*
+ * The coupon slot, given back (owner decision 2026-10-16, D7).
+ *
+ * A lapsed hold already did this (`expireHolds` -> `releaseRedemption`,
+ * owner decision Q7/Q8). A cancel is a different event and nothing said
+ * what it should do, so until now it did nothing — and a guest whose
+ * booking the office cancelled had burned one use of a limited coupon on
+ * a trip that never ran. The two events now agree: capacity comes back,
+ * and so does the coupon.
+ *
+ * `releaseRedemption` is idempotent on its own DELETE's affected-row
+ * count, so it cannot double-decrement — and it could not be reached
+ * twice anyway: the conditional UPDATE above refuses a second cancel.
+ * Both guards, deliberately, because the one that fails silently is the
+ * one that matters.
+ *
+ * LOCK ORDER: the booking row is already held, and this takes
+ * `coupon_redemptions` then `coupons`. `expireHolds` reaches the same
+ * two tables in the same order from behind the same booking lock
+ * (slots, booking, coupon), so the two paths cannot deadlock against
+ * each other.
+ */
+const couponReleased = booking.couponId !== null;
+if (booking.couponId !== null) {
+  await releaseRedemption(tx, booking.couponId, parsed.bookingId);
+}
 ```
 
 Add `couponReleased` to the audit `data` and to the returned result, and extend the function's doc comment — it currently lists what the cancel does and does not do, and that list is now one item longer.
@@ -1607,6 +1703,7 @@ Add `couponReleased` to the audit `data` and to the returned result, and extend 
 Run: `pnpm --filter @rg/server test`
 
 Mutations:
+
 1. Delete the `releaseRedemption` call — the first test must go red.
 2. Move the call outside the transaction (await it after `getDb().transaction(...)` resolves) — the rollback test must go red.
 3. Call it unconditionally with `booking.couponId!` — the no-coupon test must go red (or throw), proving the null guard is tested.
@@ -1630,6 +1727,7 @@ The Dispatch bullet "**Cancelling a trip does not retract the check-ins already 
 **The data is not lost today** (the start time is the `stop_key = 0` checkpoint, the completion is the `trip.completed` audit row, the cancel is the cancel audit row), so this task is about making the obvious read correct rather than recovering anything. That matters for one specific reason: the next person to write a report over `completed_at` will get zeros, and will not find out from the schema.
 
 **Files:**
+
 - Modify: `server/src/services/trips/checkins.ts` (`startTrip`, `finishTrip`, and the completion undo)
 - Modify: `server/src/services/payments/cancel-refund.ts` (`cancelBooking`)
 - Modify: `server/src/routers/admin/refunds.ts` (pass `now`)
@@ -1637,6 +1735,7 @@ The Dispatch bullet "**Cancelling a trip does not retract the check-ins already 
 - Modify: `CLAUDE.md` (the Conventions bullet claiming the four columns are written by nothing)
 
 **Interfaces:**
+
 - `cancelBooking`'s input gains `now: Date` (`z.date()`), supplied by the router as `new Date()` — the house pattern `decideManualReceipt` already follows. `startTrip` and `finishTrip` already take a `now`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -1655,7 +1754,9 @@ it('finishTrip stamps completed_at, and the same instant as its audit row', asyn
   expect(row.completedAt).toEqual(AT_TWO);
   // One event, one instant: a report over the column and a report over the
   // trail must not disagree about when this trip ended.
-  const audit = (await auditRowsFor('bookings', bookingId)).find((r) => r.action === 'trip.completed');
+  const audit = (await auditRowsFor('bookings', bookingId)).find(
+    (r) => r.action === 'trip.completed',
+  );
   expect(audit!.createdAt.getTime()).toBeCloseTo(AT_TWO.getTime(), -3);
 });
 
@@ -1719,6 +1820,7 @@ Add `now: z.date()` to `cancelBookingInputSchema` and pass `new Date()` from the
 - [ ] **Step 5: Run everything, prove the tests can fail**
 
 Mutations:
+
 1. Remove `startedAt: now` — the first test goes red.
 2. Remove `completedAt: null` from the undo — the undo test goes red. **This is the important one**: it is the only test proving owner decision Q4's "restores the previous state exactly" extends to the new column.
 3. Remove `cancelReason` — the cancel test goes red.
@@ -1741,11 +1843,13 @@ Replace the Conventions bullet that says these four columns are "declared in `sc
 **The finding.** `resolvePage` has no case for `/driver`, `/admin` or `/portal`, so every app-surface route falls through to the not-found shell: HTTP **404** with `<title>Page not found | TravelSugbo</title>`. The SPA boots and renders correctly anyway — a browser renders a 404 body — so this is operational rather than broken. But a driver's tab reads "Page not found" for their whole shift, and an uptime monitor pointed at `/driver` reports the portal down.
 
 **Files:**
+
 - Modify: `server/src/seo/resolvers.ts` (an app-surface branch before `matchRoute`)
 - Test: `server/src/__tests__/seo-resolvers.test.ts` and whichever test drives the HTML surfaces (find both with `grep -rln "notFoundMeta\|resolvePage" server/src/__tests__`)
 - Modify: `CLAUDE.md` (the bullet beginning "**Every app-surface route is served HTTP 404**")
 
 **Interfaces:**
+
 - Produces: `appSurfaceMeta(pathname): PageMeta | null` — `null` when the path is not an app surface, so the caller falls through to the existing route table unchanged.
 
 - [ ] **Step 1: Write the failing tests**
@@ -1876,11 +1980,11 @@ export function appSurfaceMeta(pathname: string): PageMeta | null {
 In `resolvePage`, before `matchRoute`:
 
 ```ts
-  // Before the route table and before any settings read — see
-  // `appSurfaceMeta`. Returning here also bypasses the site-wide noindex
-  // gate below, which these routes do not need: they are noindex always.
-  const appSurface = appSurfaceMeta(pathname);
-  if (appSurface) return appSurface;
+// Before the route table and before any settings read — see
+// `appSurfaceMeta`. Returning here also bypasses the site-wide noindex
+// gate below, which these routes do not need: they are noindex always.
+const appSurface = appSurfaceMeta(pathname);
+if (appSurface) return appSurface;
 ```
 
 The titles are the user-visible half of this fix, so settle them with **ui-ux-pro-max** (`--domain ux`, page titles / wayfinding) rather than inventing them, and record the query. They must read as a place, not a status.
@@ -1888,6 +1992,7 @@ The titles are the user-visible half of this fix, so settle them with **ui-ux-pr
 - [ ] **Step 4: Run everything, prove the tests can fail**
 
 Mutations:
+
 1. Change the match from whole-segment to `startsWith` — the `/drivers` test must go red.
 2. Set `status: 404` — the surface cases go red.
 3. Add a `readContentUnverified()` call inside `appSurfaceMeta` — the statement-count test must go red.
@@ -1909,6 +2014,7 @@ Replace the bullet recording the 404 with what is true now: the three surfaces r
 **The finding.** Nothing deletes a `sessions` row. `revokeSession` removes one on sign-out, and an expired row simply stays: `readSession` checks `expires_at` and refuses it, so the row is harmless and permanent. `rg_travel_test` was holding 678 of them at the last count, and production will accumulate one per sign-in forever.
 
 **Files:**
+
 - Modify: `server/src/services/sessions.ts` (add `deleteExpiredSessions`)
 - Create: `server/src/jobs/prune-sessions.ts`
 - Modify: `server/src/jobs/index.ts`
@@ -1917,7 +2023,9 @@ Replace the bullet recording the 404 with what is true now: the three surfaces r
 - Modify: `docs/LAUNCH_CHECKLIST.md` (the scheduled-jobs list)
 
 **Interfaces:**
+
 - Produces:
+
   ```ts
   /**
    * Deletes every session whose `expires_at` has passed. Returns the count.
@@ -1986,6 +2094,7 @@ In `global-setup.ts`'s teardown, delete every `sessions` row before the leak che
 - [ ] **Step 5: Run everything, prove the tests can fail**
 
 Mutations:
+
 1. Change `lte` to `lt` in the sweep's `where` — the boundary test must go red.
 2. Narrow the sweep to `subjectType = 'driver'` — the all-subjects test must go red.
 3. Remove the teardown delete, run the full suite twice, and record the `sessions` row count after each — the count must grow, which is the measurement that justifies this task at all.
@@ -2007,6 +2116,7 @@ Mutations:
 **The finding.** `db:seed` ships zero `tour_itinerary_stops` across all six tours. So on a fresh clone the driver's itinerary screen shows "Start trip" and nothing else, the departures board reads `0/1` for every trip, and 6C — built and tested — is undemonstrable against seed content.
 
 **Files:**
+
 - Modify: `server/src/db/seed-data.ts` (stops for all six tours)
 - Modify: `server/src/db/seed.ts` (an app-only writer)
 - Test: `server/src/__tests__/seed-parity.test.ts` (the pure assertions)
@@ -2014,6 +2124,7 @@ Mutations:
 - Modify: `CLAUDE.md` (the Content bullet saying the seed ships no stops)
 
 **Interfaces:**
+
 - `SeedTour` gains `stops: SeedItineraryStop[]` where `SeedItineraryStop = { sortOrder: number; name: string; description: string | null }`.
 - `upsertItineraryStops(db, tourIdBySlug): Promise<void>` — called from `seed()` **only when `context === 'app'`**, beside `upsertFleet`, and for the same kind of reason: the test database deliberately keeps a narrower baseline, and a suite that counts rows must not have its answer changed by seed content.
 
@@ -2029,7 +2140,7 @@ describe('seeded itinerary stops (C4)', () => {
     }
   });
 
-  it('numbers each tour\'s stops 1..n, contiguous and unique', () => {
+  it("numbers each tour's stops 1..n, contiguous and unique", () => {
     for (const tour of SEED_TOURS) {
       const orders = tour.stops.map((s) => s.sortOrder).sort((a, b) => a - b);
       expect(orders, tour.slug).toEqual(Array.from({ length: orders.length }, (_, i) => i + 1));
@@ -2056,7 +2167,9 @@ it('writes the stops, in order, and is idempotent across re-runs', async () => {
     await upsertItineraryStops(getDb(), new Map([['kawasan-falls-canyoneering', tourId]]));
     const first = await stopsFor(tourId);
     expect(first.map((s) => s.sortOrder)).toEqual([1, 2, 3, 4]);
-    expect(first[0]!.name).toBe(SEED_TOURS.find((t) => t.slug === 'kawasan-falls-canyoneering')!.stops[0]!.name);
+    expect(first[0]!.name).toBe(
+      SEED_TOURS.find((t) => t.slug === 'kawasan-falls-canyoneering')!.stops[0]!.name,
+    );
 
     // A second run replaces rather than duplicating — the discipline
     // `upsertTour` already keeps for price tiers and images.
@@ -2095,23 +2208,24 @@ The six tours are `oslob-whale-shark-tumalog-falls`, `kawasan-falls-canyoneering
 In `seed.ts`, modelled on the price-tier and image blocks inside `upsertTour`: delete this tour's stops, insert the declared set. Then call it from `seed()` inside the existing `if (context === 'app')` block, with a comment giving the reason:
 
 ```ts
-    /*
-     * Itinerary stops are APP-ONLY, like the fleet (owner decision
-     * 2026-10-16, C4). `rg_travel_test` keeps a narrower baseline on
-     * purpose: suites count checkpoints and stops to decide how far a trip
-     * has progressed (`tripProgress`, `checkins.ts`), and seed content
-     * those suites did not create would change their answers.
-     *
-     * What this fixes is the fresh clone: `db:seed` shipped zero stops, so
-     * the driver's itinerary screen showed "Start trip" and nothing else
-     * and the departures board read 0/1 for every trip. 6C was built and
-     * tested all along; it was simply undemonstrable.
-     */
+/*
+ * Itinerary stops are APP-ONLY, like the fleet (owner decision
+ * 2026-10-16, C4). `rg_travel_test` keeps a narrower baseline on
+ * purpose: suites count checkpoints and stops to decide how far a trip
+ * has progressed (`tripProgress`, `checkins.ts`), and seed content
+ * those suites did not create would change their answers.
+ *
+ * What this fixes is the fresh clone: `db:seed` shipped zero stops, so
+ * the driver's itinerary screen showed "Start trip" and nothing else
+ * and the departures board read 0/1 for every trip. 6C was built and
+ * tested all along; it was simply undemonstrable.
+ */
 ```
 
 - [ ] **Step 5: Run everything, prove the tests can fail**
 
 Mutations:
+
 1. Remove one stop from one tour's data so its `sortOrder`s read `[1, 2, 4]` — the contiguity test must go red, naming the tour.
 2. Move the `upsertItineraryStops` call outside the `context === 'app'` guard — the "test-context seed writes NO stops" test must go red.
 3. Delete the `delete` before the insert — the idempotence test must go red on the second run.
@@ -2139,6 +2253,7 @@ Replace the Content bullet beginning "**The seed ships no `tour_itinerary_stops`
 **Carry-forward:** C5, owner-decided 2026-10-16. **Pre-flight ruling 6 applies: the hand-written cleanups stay, and the report explains why.**
 
 **Files:**
+
 - Modify: `server/src/__tests__/global-setup.ts` (`LEAK_TABLES`)
 - Possibly modify: any suite the detector then catches (each gets a cleanup, not a loosened assertion)
 
@@ -2164,6 +2279,7 @@ Replace the Content bullet beginning "**The seed ships no `tour_itinerary_stops`
 Run: `pnpm --filter @rg/server test`
 
 Three possible outcomes, and each has a different correct response:
+
 - **Silent.** The twelve existing cleanups cover every suite that takes a slot lock. Record that, and move on.
 - **One or more suites named.** Each is a real missing cleanup. Add a `DELETE FROM fleet_date_slots WHERE date = ?` to that suite's `afterAll`, matching the pattern the other twelve use. **Do not loosen the detector to fit the suite.**
 - **A suite is named that creates slots for a date it does not know.** Then the cleanup belongs in a helper rather than in the file. Say so in the report; do not invent one under time pressure.
@@ -2171,9 +2287,10 @@ Three possible outcomes, and each has a different correct response:
 - [ ] **Step 3: Answer the owner's second half honestly**
 
 The instruction asked to "remove hand-written cleanups it makes redundant". They are not redundant — the detector detects and does not clean. The report must:
+
 - name all twelve call sites (`grep -rn "DELETE FROM fleet_date_slots" server/src/__tests__`),
 - state that removing any of them makes the detector fire,
-- and name the one thing that *would* make them redundant, so the owner can decide separately: a shared `afterAll` helper (`releaseSlotsFor(dates)`) that each suite calls once, replacing twelve bespoke queries with twelve one-line calls. That is a test-infrastructure refactor touching twelve files and is not in this task's scope.
+- and name the one thing that _would_ make them redundant, so the owner can decide separately: a shared `afterAll` helper (`releaseSlotsFor(dates)`) that each suite calls once, replacing twelve bespoke queries with twelve one-line calls. That is a test-infrastructure refactor touching twelve files and is not in this task's scope.
 
 - [ ] **Step 4: Prove the detector can fail**
 
@@ -2196,6 +2313,7 @@ The carry-forward also noted `tour_date_slots` has no `ON DELETE` toward `tours`
 **The finding.** `isDuplicateKeyError` exists three times: the shared helper in `server/src/db/duplicate-key.ts`, plus private copies in `server/src/services/booking-ref.ts` and `server/src/routers/public/newsletter.ts`. All three walk the `.cause` chain looking for `ER_DUP_ENTRY`, because Drizzle wraps the mysql2 error. Three copies of a predicate that arbitrates a unique index is three chances for one of them to stop recognising a duplicate — and a duplicate-key catch that stops matching does not throw: it falls through to the generic error path and turns a safe retry into a 500.
 
 **Files:**
+
 - Modify: `server/src/services/booking-ref.ts` (import, delete the local copy)
 - Modify: `server/src/routers/public/newsletter.ts` (same)
 - Test: `server/src/__tests__/duplicate-key.test.ts` (the shared helper's own suite — confirm it exists and covers both shapes)
@@ -2231,6 +2349,7 @@ Comments in `checkins.ts` mention `isDuplicateKeyError` by name but not `ER_DUP_
 - [ ] **Step 4: Run everything, prove the tests can fail**
 
 Mutations:
+
 1. Re-add a private copy to `newsletter.ts` — the guard test must go red.
 2. Narrow the shared helper to check only the top-level error — whichever nesting test covers the deepest shape must go red. Record which call site that would have broken.
 
@@ -2247,6 +2366,7 @@ Mutations:
 **The measured fact this task documents.** §8's third limit is 10 `driver.login` attempts per IP per 15 minutes, and the three-lockout escalation needs fifteen failures — so **a single IP cannot drive one driver to `requires_admin_unlock` without the limiter firing first** (HTTP 429 on the 11th attempt, with the driver still at `lockout_count = 1`, measured 2026-10-16). That is correct behaviour and a reading hazard: the obvious conclusion is that the escalation is dead code. It is not. It is reachable across IPs — one driver's code tried from several phones or networks, which is the case the three-lockout rule exists for — and across windows.
 
 **Files:**
+
 - Test: `server/src/__tests__/driver-lockout.test.ts` (a new describe block)
 - Modify: `CLAUDE.md` (the bullet beginning "**§8's third limit is 10 `driver.login` attempts per IP**")
 - Modify: `docs/LAUNCH_CHECKLIST.md` (cross-reference the `trust proxy` item from the test)
@@ -2271,7 +2391,11 @@ describe('the escalation is reachable across IPs, and only across IPs (C7)', () 
     app.use(createDriverLoginLimiter());
     app.use(express.json());
     app.post('/trpc/driver.login', async (req, res) => {
-      const result = await attemptDriverLogin({ code: req.body.code, pin: req.body.pin, now: new Date() });
+      const result = await attemptDriverLogin({
+        code: req.body.code,
+        pin: req.body.pin,
+        now: new Date(),
+      });
       res.status('ok' in result ? 200 : 401).json(result);
     });
     return app;
@@ -2282,7 +2406,10 @@ describe('the escalation is reachable across IPs, and only across IPs (C7)', () 
     const ip = '203.0.113.10';
     let limited = 0;
     for (let i = 0; i < 20; i += 1) {
-      const res = await request(app).post('/trpc/driver.login').set('X-Forwarded-For', ip).send({ code: CODE, pin: '000000' });
+      const res = await request(app)
+        .post('/trpc/driver.login')
+        .set('X-Forwarded-For', ip)
+        .send({ code: CODE, pin: '000000' });
       if (res.status === 429) limited += 1;
     }
     expect(limited).toBeGreaterThan(0);
