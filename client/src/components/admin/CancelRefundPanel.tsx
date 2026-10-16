@@ -298,14 +298,25 @@ export default function CancelRefundPanel({
             const showError = refund.error && refund.variables?.paymentId === source.id;
             const form = formFor(source.id);
             /*
-             * Pesos in, centavos out, rounded the one place the conversion
-             * happens. Money is centavos everywhere else in this system
-             * (CLAUDE.md) — this field exists because an admin types pesos.
+             * Pesos in, centavos out, the one place the conversion happens.
+             * Money is centavos everywhere else in this system (CLAUDE.md) —
+             * this field exists because an admin types pesos.
+             *
+             * **WHOLE pesos only** (fix round 1, finding 5). `step={1}` does
+             * not stop someone typing `450.75`: that became a 45,075-centavo
+             * payout while both `formatPeso` and `pesosInWords` round to
+             * whole pesos, so the confirmation read "₱451 / Four hundred
+             * fifty-one pesos" for a different amount than the one sent. On a
+             * control whose entire defence is that the figures and the words
+             * agree with what leaves the account, that cannot stand — and
+             * every price in this system is whole pesos anyway, so the
+             * refusal costs nothing.
              */
-            const requestedCentavos = Math.round(Number(form.amountPesos) * 100);
+            const typedPesos = Number(form.amountPesos);
+            const requestedCentavos = Math.round(typedPesos * 100);
             const amountIsUsable =
               form.amountPesos.trim().length > 0 &&
-              Number.isFinite(requestedCentavos) &&
+              Number.isInteger(typedPesos) &&
               requestedCentavos > 0;
             const offlineReady = !manual || form.reference.trim().length > 0;
             const ready = amountIsUsable && form.reason.trim().length > 0 && offlineReady;
@@ -326,7 +337,9 @@ export default function CancelRefundPanel({
                 </p>
 
                 <div className="space-y-1.5">
-                  <Label htmlFor={`refund-amount-${source.id}`}>Amount to refund, in pesos</Label>
+                  <Label htmlFor={`refund-amount-${source.id}`}>
+                    Amount to refund, in whole pesos
+                  </Label>
                   <input
                     id={`refund-amount-${source.id}`}
                     type="number"

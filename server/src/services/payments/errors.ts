@@ -557,3 +557,36 @@ export class RefundNotRecordedError extends Error {
     this.providerRef = safeName(providerRef);
   }
 }
+
+/**
+ * **The gateway never answered, so nobody knows whether the guest was paid**
+ * (fix round 1, finding 1).
+ *
+ * A timeout, a dropped socket, a 5xx, or a 2xx whose body could not be
+ * understood. It is NOT the same as `RefundNotRecordedError`, where the
+ * payout is a known fact — here it is a maybe, and a maybe is the dangerous
+ * one, because the obvious next action is to click the button again.
+ * PayMongo's `/refunds` takes no idempotency key, so a blind retry pays the
+ * guest a second time while the booking's refund cap, computed from
+ * `payments` rows, cannot see the first payout at all.
+ *
+ * So the admin-facing message says "check the gateway", never "try again",
+ * and the service writes a `payment.refund_unconfirmed` audit row plus a log
+ * line naming the provider, the booking, the source payment and the amount.
+ * The refusals that provably paid nothing out keep the plain message — see
+ * `refusedWithoutPayingOut()` in `cancel-refund.ts`.
+ */
+export class RefundOutcomeUnknownError extends Error {
+  readonly provider: string;
+  readonly paymentId: number;
+
+  constructor(provider: unknown, paymentId: number) {
+    super(
+      `The ${safeName(provider)} refund against payment ${paymentId} was not confirmed by the ` +
+        'gateway. It may already have paid out: check the gateway before refunding again.',
+    );
+    this.name = 'RefundOutcomeUnknownError';
+    this.provider = safeName(provider);
+    this.paymentId = paymentId;
+  }
+}

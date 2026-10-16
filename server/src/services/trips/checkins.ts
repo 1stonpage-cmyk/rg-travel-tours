@@ -290,7 +290,7 @@ async function moveVanStatus(
   vanId: number | null,
   from: 'available' | 'on_trip',
   to: 'available' | 'on_trip',
-): Promise<void> {
+): Promise<boolean> {
   /*
    * A trip with a driver but no van cannot be produced by
    * `assignVanAndDriver` (it writes both or neither), so this guard is for
@@ -298,11 +298,24 @@ async function moveVanStatus(
    * instead of refusing, because a driver standing at a pickup must not be
    * blocked by a column nobody filled in.
    */
-  if (vanId === null) return;
-  await tx
+  if (vanId === null) return false;
+  /*
+   * Returns whether a van ACTUALLY moved, which the three callers in this
+   * file ignore (they move a van they have just read under a lock) and the
+   * cancel path reads, because its audit row states it (Task 13 fix round 1,
+   * finding 2: a flag that says `vanReleased: false` while a write happened
+   * is worse than the write).
+   *
+   * `affectedRows` is rows MATCHED, not changed (mysql2 connects with
+   * `CLIENT_FOUND_ROWS`) — which is exactly the question here: the WHERE
+   * matches only a van in the `from` status, so a match means this call is
+   * the one that moved it.
+   */
+  const [result] = await tx
     .update(vans)
     .set({ status: to })
     .where(and(eq(vans.id, vanId), eq(vans.status, from)));
+  return result.affectedRows > 0;
 }
 
 /**
@@ -320,9 +333,17 @@ async function moveVanStatus(
  * module that writes `vans.status` for a trip, and it stays that way.
  * Cancelling a booking that never started (no van, or a van still
  * `available`) matches nothing and writes nothing.
+ *
+ * Resolves with whether this call is what moved the van, so the caller's
+ * audit row can state the truth rather than its intention.
+ *
+ * **The caller decides WHEN.** It must only be called for a booking that was
+ * `in_progress`: a van named by a FUTURE `assigned` booking may be out on
+ * today's trip, and putting that one back on sale mid-journey is the one
+ * thing `vans.status` exists to prevent (fix round 1, finding 2).
  */
-export async function releaseVanFromTrip(tx: Transaction, vanId: number | null): Promise<void> {
-  await moveVanStatus(tx, vanId, 'on_trip', 'available');
+export async function releaseVanFromTrip(tx: Transaction, vanId: number | null): Promise<boolean> {
+  return moveVanStatus(tx, vanId, 'on_trip', 'available');
 }
 
 /**

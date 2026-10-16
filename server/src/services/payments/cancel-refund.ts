@@ -58,15 +58,19 @@ import { getDb, type Transaction } from '../../db/client';
 import { PAYMENT_METHODS, bookings, payments } from '../../db/schema';
 import { writeAudit } from '../audit';
 import { releaseVanFromTrip } from '../trips/checkins';
+import { PaymongoNotConfiguredError } from './paymongo';
 import { getProvider } from './registry';
 import { recordPayment } from './record-payment';
 import {
   BookingNotCancellableError,
   BookingNotFoundError,
+  ProviderNotEnabledError,
   RefundExceedsPaidError,
   RefundNotPossibleError,
   RefundNotRecordedError,
+  RefundOutcomeUnknownError,
   RefundSourcePaymentNotFoundError,
+  UnknownProviderError,
 } from './errors';
 
 /**
@@ -207,8 +211,22 @@ export async function cancelBooking(input: CancelBookingInput): Promise<CancelBo
       throw new BookingNotCancellableError(parsed.bookingId, booking.status);
     }
 
-    const vanReleased = booking.status === 'in_progress' && booking.vanId !== null;
-    await releaseVanFromTrip(tx, booking.vanId);
+    /*
+     * The van, and ONLY for a trip that was actually under way (fix round 1,
+     * finding 2). The release used to run for every cancellable status, which
+     * meant cancelling a FUTURE `assigned` booking could flip the van named
+     * on it — a van that may be out on today's trip — from `on_trip` to
+     * `available` mid-journey. The date join in `vansFreeOn()` stops that
+     * becoming a double-booking, but a van with guests in it must never read
+     * `available`, and the audit row said `false` while the write happened.
+     *
+     * `vanReleased` is now the RESULT of the write rather than a prediction
+     * of it: `releaseVanFromTrip` reports whether its conditional
+     * `on_trip → available` actually matched, so a van a dispatcher parked in
+     * `for_repair` is both left alone and reported as not released.
+     */
+    const vanReleased =
+      booking.status === 'in_progress' ? await releaseVanFromTrip(tx, booking.vanId) : false;
 
     await writeAudit(tx, {
       // An admin cancellation is `user` with that admin's id — §6's own
@@ -361,11 +379,14 @@ export async function refundPayment(input: RefundPaymentInput): Promise<RefundPa
   const [source] = await getDb()
     .select({
       bookingId: payments.bookingId,
+      /** For the audit rows the two failure branches write. */
+      bookingRef: bookings.ref,
       provider: payments.provider,
       method: payments.method,
       providerRef: payments.providerRef,
     })
     .from(payments)
+    .innerJoin(bookings, eq(bookings.id, payments.bookingId))
     .where(
       and(
         eq(payments.id, parsed.paymentId),
@@ -426,11 +447,53 @@ export async function refundPayment(input: RefundPaymentInput): Promise<RefundPa
    * to Xendit must not send last month's refunds to this month's company,
    * and the row is the only record of who actually holds the money.
    */
-  const gateway = await getProvider(source.provider).refund({
-    providerRef: source.providerRef,
-    amountCentavos: parsed.amountCentavos,
-    reason: parsed.reason,
-  });
+  const provider = getProvider(source.provider);
+
+  /*
+   * **The call that can fail without an answer** (fix round 1, finding 1).
+   *
+   * A timeout, a dropped connection or a 5xx tells us nothing about whether
+   * the gateway created the refund — and PayMongo's `/refunds` takes no
+   * idempotency key, so an admin who is told "that did not work" and clicks
+   * again pays the guest twice, with the booking cap blind to the first
+   * payout because no row was ever written. That is the same harm as the
+   * handled window below, reached through the error path, so it gets the
+   * same three things: a log line, a durable audit row, and copy that tells
+   * the admin to check the gateway rather than retry.
+   *
+   * The refusals that genuinely cannot have paid out keep the plain message
+   * — see `refusedWithoutPayingOut()`.
+   */
+  let gateway: { providerRef: string; providerStatus: string };
+  try {
+    gateway = await provider.refund({
+      providerRef: source.providerRef,
+      amountCentavos: parsed.amountCentavos,
+      reason: parsed.reason,
+    });
+  } catch (error) {
+    if (refusedWithoutPayingOut(error)) throw error;
+
+    console.error(
+      `[refunds] ${source.provider} refund of ${parsed.amountCentavos} centavos for booking id ` +
+        `${source.bookingId} (payment id ${parsed.paymentId}) DID NOT CONFIRM. The gateway may ` +
+        'have paid it out. Check the gateway before any retry.',
+      error,
+    );
+    await auditOutOfBand({
+      action: 'payment.refund_unconfirmed',
+      bookingId: source.bookingId,
+      bookingRef: source.bookingRef,
+      actorUserId: parsed.actorUserId,
+      provider: source.provider,
+      // There is none: the gateway never answered. Explicitly null rather
+      // than absent, so the row's shape does not depend on the outcome.
+      providerRef: null,
+      amountCentavos: parsed.amountCentavos,
+      paymentId: parsed.paymentId,
+    });
+    throw new RefundOutcomeUnknownError(source.provider, parsed.paymentId);
+  }
 
   /*
    * The money has left. From here the only acceptable outcomes are "it is
@@ -462,6 +525,114 @@ export async function refundPayment(input: RefundPaymentInput): Promise<RefundPa
         `for booking id ${source.bookingId} but could NOT be recorded. Reconcile by hand.`,
       error,
     );
+    /*
+     * And a row, not only a log line (fix round 1, finding 3). CLAUDE.md:
+     * every payment and refund writes to `audit_log`, and this is the one
+     * money-OUT event that used to write none — a PM2 log rotates, and
+     * reconciliation months later is exactly the case this branch exists
+     * for. It carries the gateway's own refund id, which is what makes the
+     * payout findable at the gateway.
+     */
+    await auditOutOfBand({
+      action: 'payment.refund_unrecorded',
+      bookingId: source.bookingId,
+      bookingRef: source.bookingRef,
+      actorUserId: parsed.actorUserId,
+      provider: source.provider,
+      providerRef: gateway.providerRef,
+      amountCentavos: parsed.amountCentavos,
+      paymentId: parsed.paymentId,
+    });
     throw new RefundNotRecordedError(source.provider, gateway.providerRef);
+  }
+}
+
+/**
+ * Could this failure have paid the guest?
+ *
+ * Returns true only for refusals that provably happened BEFORE any money
+ * could move, which keeps the plain "nothing was refunded" message for them:
+ *
+ *  - `ProviderNotEnabledError` and `UnknownProviderError` — thrown by the
+ *    stub or the registry with no socket opened at all;
+ *  - `PaymongoNotConfiguredError` — the provider refuses before building a
+ *    request, deliberately, so a misconfigured deploy fails at the first
+ *    payment rather than sending an unauthenticated one;
+ *  - a gateway error carrying a **4xx** status: the gateway read the request
+ *    and rejected it.
+ *
+ * **Everything else is ambiguous and must be treated as a possible payout**:
+ * a timeout, a dropped socket, a 5xx, and — the easy one to miss — a 2xx
+ * whose body could not be understood, which `createPaymongoProvider` reports
+ * as `PaymongoApiError(200, …)`. The refund may well exist in that case.
+ *
+ * The 4xx test is on the SHAPE (a numeric `status`), not on one gateway's
+ * class, so a second provider inherits the right default: an error of its own
+ * that never left the process will be reported as ambiguous — over-warning,
+ * which is the safe direction — until it is named here.
+ */
+function refusedWithoutPayingOut(error: unknown): boolean {
+  if (error instanceof ProviderNotEnabledError || error instanceof UnknownProviderError) {
+    return true;
+  }
+  if (error instanceof PaymongoNotConfiguredError) return true;
+  const status = (error as { status?: unknown } | null)?.status;
+  return typeof status === 'number' && status >= 400 && status < 500;
+}
+
+/**
+ * Writes one audit row OUTSIDE any transaction of its own caller's, for the
+ * two money-out events that have no `payments` row to hang off.
+ *
+ * A fresh transaction, because the one that failed is gone — and inside its
+ * own `try/catch`, because a failed audit row must not replace the refusal
+ * the caller is about to throw. If even this cannot be written, the
+ * `console.error` above it is the last line of defence and says so.
+ *
+ * Identifiers and amounts only: no key, no secret, no guest name, email or
+ * phone (RA 10173 — audit rows are read by every admin and exported in
+ * reports).
+ */
+async function auditOutOfBand(entry: {
+  action: 'payment.refund_unconfirmed' | 'payment.refund_unrecorded';
+  bookingId: number;
+  bookingRef: string;
+  actorUserId: number;
+  provider: string;
+  providerRef: string | null;
+  amountCentavos: number;
+  paymentId: number;
+}): Promise<void> {
+  try {
+    await getDb().transaction(async (tx: Transaction) => {
+      await writeAudit(tx, {
+        // The admin who asked for the refund. They are the person who has to
+        // resolve it, so the trail names them rather than `system`.
+        actorType: 'user',
+        actorId: entry.actorUserId,
+        action: entry.action,
+        /*
+         * `bookings`, not `payments`: there IS no payments row for this
+         * event — that is what it records — and the booking id is what the
+         * §9 detail screen reads a trail by.
+         */
+        entity: 'bookings',
+        entityId: entry.bookingId,
+        data: {
+          ref: entry.bookingRef,
+          provider: entry.provider,
+          providerRef: entry.providerRef,
+          amountCentavos: entry.amountCentavos,
+          /** The SOURCE payment the refund was against. */
+          paymentId: entry.paymentId,
+        },
+      });
+    });
+  } catch (auditError) {
+    console.error(
+      `[refunds] ${entry.action} for booking id ${entry.bookingId} could not even be written to ` +
+        'audit_log. The log line above it is now the only record.',
+      auditError,
+    );
   }
 }

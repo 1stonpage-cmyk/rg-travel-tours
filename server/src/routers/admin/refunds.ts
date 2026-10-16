@@ -37,6 +37,7 @@ import {
   RefundNotAdminInitiatedError,
   RefundNotPossibleError,
   RefundNotRecordedError,
+  RefundOutcomeUnknownError,
   RefundSourcePaymentNotFoundError,
   UnknownProviderError,
 } from '../../services/payments/errors';
@@ -100,7 +101,11 @@ const REFUND_REFUSAL_MESSAGE = {
 
 function asTrpcError(error: unknown): TRPCError {
   if (error instanceof BookingNotFoundError) {
-    return new TRPCError({ code: 'NOT_FOUND', message: 'That booking no longer exists.' });
+    return new TRPCError({
+      code: 'NOT_FOUND',
+      message: 'That booking no longer exists.',
+      cause: error,
+    });
   }
   /*
    * `CONFLICT`, not `BAD_REQUEST`: nothing was wrong with the request — the
@@ -113,18 +118,21 @@ function asTrpcError(error: unknown): TRPCError {
       message:
         `This booking is "${error.status}", so it cannot be cancelled. ` +
         'Refresh the screen. A refund does not need a cancellation.',
+      cause: error,
     });
   }
   if (error instanceof RefundSourcePaymentNotFoundError) {
     return new TRPCError({
       code: 'NOT_FOUND',
       message: 'That payment is not one this booking received, so there is nothing to refund.',
+      cause: error,
     });
   }
   if (error instanceof RefundNotPossibleError) {
     return new TRPCError({
       code: 'BAD_REQUEST',
       message: REFUND_REFUSAL_MESSAGE[error.reason],
+      cause: error,
     });
   }
   /*
@@ -139,14 +147,19 @@ function asTrpcError(error: unknown): TRPCError {
         'That is more than this booking can give back: ' +
         `${(error.amountPaidCentavos / 100).toFixed(2)} pesos were paid and ` +
         `${(error.alreadyRefundedCentavos / 100).toFixed(2)} has already been refunded.`,
+      cause: error,
     });
   }
   /*
-   * The money left and the row did not. The admin is the only person who can
-   * resolve it, so the message says what to do rather than apologising —
-   * and the gateway's own reference is NOT in it: it is in the server log
-   * and the audit trail, and a refund id in a browser is not something a
-   * screen needs to show to be actionable.
+   * The money left and the `payments` row did not. The admin is the only
+   * person who can resolve it, so the message says what to do rather than
+   * apologising — and the gateway's own reference is NOT in it, because a
+   * refund id in a browser is not what makes this actionable. It is durable
+   * in two places instead: the server log, and a `payment.refund_unrecorded`
+   * row in `audit_log` written by the service in a fresh transaction (fix
+   * round 1, finding 3 — this comment used to claim the audit row while none
+   * was written). `cause` carries the error object, whose `providerRef`
+   * property any future tRPC `onError` logger can read.
    */
   if (error instanceof RefundNotRecordedError) {
     return new TRPCError({
@@ -154,6 +167,26 @@ function asTrpcError(error: unknown): TRPCError {
       message:
         'The gateway accepted this refund but it could not be recorded. ' +
         'Do NOT refund again — check the gateway and tell whoever keeps the books.',
+      cause: error,
+    });
+  }
+  /*
+   * **The gateway never answered** (fix round 1, finding 1): a timeout, a
+   * 5xx, a dropped socket, or a 2xx whose body could not be read. The payout
+   * may or may not exist, and PayMongo's `/refunds` takes no idempotency
+   * key, so the one thing this copy must not invite is a retry — the admin
+   * is sent to the gateway to look, which is the only way to find out. The
+   * service has already logged it and written a `payment.refund_unconfirmed`
+   * audit row.
+   */
+  if (error instanceof RefundOutcomeUnknownError) {
+    return new TRPCError({
+      code: 'INTERNAL_SERVER_ERROR',
+      message:
+        `The ${error.provider} gateway did not confirm this refund, so it may or may not have ` +
+        'paid out. Do NOT refund again — check it at the gateway first, and tell whoever keeps ' +
+        'the books.',
+      cause: error,
     });
   }
   /*
@@ -167,6 +200,7 @@ function asTrpcError(error: unknown): TRPCError {
       message:
         'The gateway that took this payment cannot be reached from here, so nothing was ' +
         'refunded. Refund it at the gateway and record it by hand.',
+      cause: error,
     });
   }
   /*
@@ -177,11 +211,15 @@ function asTrpcError(error: unknown): TRPCError {
    * surface as a 500 if the two ever disagree.
    */
   if (error instanceof RefundNotAdminInitiatedError) {
-    return new TRPCError({ code: 'FORBIDDEN', message: 'Not permitted for this account.' });
+    return new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'Not permitted for this account.',
+      cause: error,
+    });
   }
   return error instanceof TRPCError
     ? error
-    : new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'That did not work.' });
+    : new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'That did not work.', cause: error });
 }
 
 export const adminRefundsRouter = router({

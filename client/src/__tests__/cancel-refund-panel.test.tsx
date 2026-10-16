@@ -240,6 +240,40 @@ describe('CancelRefundPanel', () => {
     ]);
   });
 
+  /**
+   * Fix round 1, finding 5. `step={1}` on a number input does not stop
+   * someone typing `450.75` — there is no form submit to validate against —
+   * and both `formatPeso` and `pesosInWords` round to whole pesos, so the
+   * confirmation would have read "₱451 / Four hundred fifty-one pesos" for a
+   * 45,075-centavo payout. The figures-and-words line exists precisely so the
+   * amount confirmed is the amount sent, so a fractional peso is refused
+   * before the confirmation can appear.
+   */
+  it('will not confirm a fractional peso amount', async () => {
+    const refunds: unknown[] = [];
+    renderPanel({ onRefund: (input) => refunds.push(input) });
+
+    await user.type(await screen.findByLabelText(/amount to refund/i), '450.75');
+    await user.type(screen.getByLabelText(/^why$/i), 'requested_by_customer');
+
+    const button = screen.getByRole('button', { name: /refund/i });
+    expect(button.getAttribute('disabled')).not.toBeNull();
+    await user.click(button);
+    // No confirmation step, and nothing sent.
+    expect(screen.queryByRole('button', { name: /yes — refund/i })).toBeNull();
+    expect(refunds).toEqual([]);
+
+    // The whole-peso amount beside it goes through, so this is the fraction
+    // being refused and not the field being broken.
+    await user.clear(screen.getByLabelText(/amount to refund/i));
+    await user.type(screen.getByLabelText(/amount to refund/i), '450');
+    await user.click(screen.getByRole('button', { name: /refund ₱450/i }));
+    await user.click(screen.getByRole('button', { name: /yes — refund ₱450/i }));
+    expect(refunds).toEqual([
+      { paymentId: 501, amountCentavos: 45_000, reason: 'requested_by_customer' },
+    ]);
+  });
+
   it('keeps each payment’s refund form to itself', async () => {
     // A booking can carry a gateway deposit and cash verified on tour day.
     // An amount typed against one must not appear under the other.

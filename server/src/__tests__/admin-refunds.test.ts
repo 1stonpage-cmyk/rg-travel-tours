@@ -55,6 +55,7 @@ import { bookings, destinations, tours, tripCheckpoints, users, vans } from '../
 import { ROLE_MATRIX } from '../middleware/require-role';
 import { appRouter } from '../routers/_app';
 import { generateBookingRef } from '../services/booking-ref';
+import { PaymongoApiError } from '../services/payments/paymongo';
 import { recordPayment } from '../services/payments/record-payment';
 import { staffContext } from './helpers/ctx';
 import { describeWithDb } from './helpers/db';
@@ -75,6 +76,12 @@ const gateway = vi.hoisted(() => ({
    * that uses it.
    */
   onRefund: null as null | (() => Promise<void>),
+  /**
+   * Thrown by the stubbed `refund()` AFTER the call is recorded, so a test
+   * can exercise a gateway that fails — ambiguously (a timeout, a 5xx) or
+   * definitively (a 4xx the gateway read and rejected).
+   */
+  failWith: null as unknown,
 }));
 
 vi.mock('../services/payments/registry', async (importOriginal) => {
@@ -95,6 +102,7 @@ vi.mock('../services/payments/registry', async (importOriginal) => {
         ...impl,
         refund: async (input: unknown) => {
           gateway.refunds.push({ asked: name, providerName: impl.name, input });
+          if (gateway.failWith) throw gateway.failWith;
           if (gateway.onRefund) await gateway.onRefund();
           return { providerRef: `rf_${gateway.refunds.length}`, providerStatus: 'succeeded' };
         },
@@ -235,7 +243,7 @@ async function makeVan(status: 'available' | 'on_trip'): Promise<number> {
 }
 
 interface BookingOptions {
-  status?: 'confirmed' | 'in_progress' | 'completed' | 'cancelled';
+  status?: 'confirmed' | 'assigned' | 'in_progress' | 'completed' | 'cancelled';
   vanId?: number | null;
 }
 
@@ -409,6 +417,7 @@ describeWithDb('admin.refunds — cancelling a booking and sending money back', 
     gateway.requested = [];
     gateway.refunds = [];
     gateway.onRefund = null;
+    gateway.failWith = null;
     networkGuard.mockClear();
 
     const slug = `__adminrefunds__${unique()}`;
@@ -849,6 +858,125 @@ describeWithDb('admin.refunds — cancelling a booking and sending money back', 
      */
     expect(await refundedTotal(booking.id)).toBe(PAID);
     expect(await paymentRows(booking.id)).toHaveLength(2);
+
+    /*
+     * And the payout is DURABLE, not only logged (fix round 1, finding 3). A
+     * PM2 log rotates; this row is what makes a payout reconcilable from the
+     * database months later, and it carries the gateway's own refund id.
+     */
+    const unrecorded = (await auditRows('bookings', booking.id)).filter(
+      (row) => row.action === 'payment.refund_unrecorded',
+    );
+    expect(unrecorded, 'a payout that left the account wrote no audit row').toHaveLength(1);
+    expect(unrecorded[0]).toMatchObject({ actor_type: 'user', actor_id: finance });
+    const trail = JSON.stringify(unrecorded[0]?.data);
+    expect(trail).toContain('rf_1');
+    expect(trail).toContain('"provider":"paymongo"');
+    expect(trail).toContain(`"amountCentavos":${PAID}`);
+    expect(trail).toContain(`"paymentId":${booking.paymentId}`);
+  });
+
+  /**
+   * 7c. **The gateway never answered** (fix round 1, finding 1) — a timeout,
+   * a dropped socket, a 5xx, or a 2xx whose body could not be read.
+   *
+   * This is the sibling of 7b and the more dangerous one, because the payout
+   * is a MAYBE: PayMongo's `/refunds` takes no idempotency key, so an admin
+   * told "that did not work" who clicks again pays the guest twice, and the
+   * booking's cap cannot see the first payout because no row exists. So the
+   * copy must never invite a retry, and the attempt must survive in the
+   * database rather than only in a log file.
+   */
+  it('warns and records the attempt when the gateway does not confirm a refund', async () => {
+    const booking = await makePaidBooking('paymongo');
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      logged.push(args.map((arg) => String(arg)).join(' '));
+    });
+    // A dropped connection: what `fetch` throws when it never got an answer.
+    gateway.failWith = new TypeError('fetch failed');
+
+    try {
+      await expect(
+        apiFor(finance, 'finance').admin.refunds.refundPayment({
+          paymentId: booking.paymentId,
+          amountCentavos: 50_000,
+          reason: 'Gateway fell over mid-refund.',
+        }),
+      ).rejects.toMatchObject({
+        code: 'INTERNAL_SERVER_ERROR',
+        // The two things this copy must do: forbid the retry, and send the
+        // admin to the gateway to find out what really happened.
+        message: expect.stringContaining('Do NOT refund again'),
+      });
+    } finally {
+      spy.mockRestore();
+    }
+
+    const shouted = logged.join(' | ');
+    expect(shouted, 'an unconfirmed payout was not logged at all').toMatch(/DID NOT CONFIRM/);
+    expect(shouted).toContain('paymongo');
+    expect(shouted).toContain(String(booking.id));
+    expect(shouted).toContain(String(booking.paymentId));
+    expect(shouted).toContain('50000');
+    // No key, no secret, no guest PII in that line.
+    expect(shouted).not.toMatch(/sk_|whsk_|@example\.test|09171234567|Refund Fixture Guest/);
+
+    const unconfirmed = (await auditRows('bookings', booking.id)).filter(
+      (row) => row.action === 'payment.refund_unconfirmed',
+    );
+    expect(unconfirmed, 'the unconfirmed attempt wrote no audit row').toHaveLength(1);
+    expect(unconfirmed[0]).toMatchObject({ actor_type: 'user', actor_id: finance });
+    const trail = JSON.stringify(unconfirmed[0]?.data);
+    expect(trail).toContain('"provider":"paymongo"');
+    expect(trail).toContain('"amountCentavos":50000');
+    // There is no gateway reference, because the gateway never gave one —
+    // explicitly null rather than absent.
+    expect(trail).toContain('"providerRef":null');
+
+    // And nothing was recorded as refunded: the money's fate is unknown, so
+    // the booking must not claim it went back.
+    expect(await refundedTotal(booking.id)).toBe(0);
+    expect(await paymentRows(booking.id)).toHaveLength(1);
+  });
+
+  /**
+   * 7d. The other half of finding 1: a gateway that read the request and
+   * REJECTED it. No payout can have happened, so the plain message stands
+   * and nothing is shouted about — a 4xx on every malformed refund would
+   * otherwise train an admin to ignore the warning that matters.
+   */
+  it('keeps the plain message when the gateway definitively rejects a refund', async () => {
+    const booking = await makePaidBooking('paymongo');
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      logged.push(args.map((arg) => String(arg)).join(' '));
+    });
+    gateway.failWith = new PaymongoApiError(422, 'amount exceeds the refundable balance');
+
+    try {
+      await expect(
+        apiFor(finance, 'finance').admin.refunds.refundPayment({
+          paymentId: booking.paymentId,
+          amountCentavos: 50_000,
+          reason: 'The gateway says no.',
+        }),
+      ).rejects.toMatchObject({ code: 'INTERNAL_SERVER_ERROR', message: 'That did not work.' });
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(logged.join(' | '), 'a definitive rejection was treated as a maybe').not.toMatch(
+      /DID NOT CONFIRM/,
+    );
+    expect(
+      (await auditRows('bookings', booking.id)).filter((row) =>
+        String(row.action).startsWith('payment.refund_un'),
+      ),
+      'a rejection that paid out nothing wrote a money-out audit row',
+    ).toEqual([]);
+    expect(await refundedTotal(booking.id)).toBe(0);
+    expect(await paymentRows(booking.id)).toHaveLength(1);
   });
 
   /**
@@ -969,6 +1097,43 @@ describeWithDb('admin.refunds — cancelling a booking and sending money back', 
     // And it moved no money at all: the cancel is a status change.
     expect(await paymentRows(booking.id)).toHaveLength(1);
     expect(await refundedTotal(booking.id)).toBe(0);
+  });
+
+  /**
+   * 10b. **A van that is out on today's trip is not freed by cancelling a
+   * FUTURE booking that happens to name it** (fix round 1, finding 2).
+   *
+   * Dispatch assigns a van to a date, so one van is named by many bookings.
+   * The release used to run for every cancellable status, which meant
+   * cancelling next week's `assigned` booking flipped a van with guests in it
+   * from `on_trip` to `available` — and the audit row then said
+   * `vanReleased: false`, which is worse than the write, because it is the
+   * record disagreeing with what happened. Only a cancel of the trip that is
+   * actually under way may touch the fleet.
+   *
+   * The flag is now the RESULT of the conditional write rather than a guess
+   * at it, so both halves of this are asserted: the van's status, and what
+   * the trail says about it.
+   */
+  it('leaves a van that is out on a trip alone when a future assigned booking is cancelled', async () => {
+    const vanId = await makeVan('on_trip');
+    const future = await makePaidBooking('paymongo', { status: 'assigned', vanId });
+
+    await expect(
+      apiFor(owner, 'owner').admin.refunds.cancelBooking({
+        bookingId: future.id,
+        reason: 'Guest cancelled next week’s trip.',
+      }),
+    ).resolves.toMatchObject({ previousStatus: 'assigned', vanReleased: false });
+
+    const [van] = await rows<{ status: string }>('SELECT status FROM vans WHERE id = ?', [vanId]);
+    expect(van?.status, 'a van with guests in it was put back on sale').toBe('on_trip');
+    expect(await bookingMoney(future.id)).toMatchObject({ status: 'cancelled' });
+
+    const trail = (await auditRows('bookings', future.id)).filter(
+      (row) => row.action === 'booking.cancelled',
+    );
+    expect(JSON.stringify(trail[0]?.data)).toContain('"vanReleased":false');
   });
 
   /**
