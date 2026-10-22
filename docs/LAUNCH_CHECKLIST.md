@@ -145,7 +145,13 @@ config changes.
       `trust proxy`, Express reads nginx's own address for every request, so every
       visitor collectively shares one IP's worth of rate limit — one abusive visitor
       exhausts the login/coupon/review limiter for everyone else behind the same
-      proxy, not just themselves.
+      proxy, not just themselves. **This is measured, not only reasoned:** the
+      "THREE IPs each keep their own budget" test in
+      `server/src/__tests__/driver-lockout.test.ts` sends fifteen driver-login attempts
+      from three client addresses and passes with `trust proxy` set; with the setting
+      removed from the test app it fails with 429s, because the three addresses collapse
+      onto nginx's single key. `app.ts` does not set it today, so this item is the only
+      thing that does.
 - [ ] **`NODE_ENV=production` is set** in the PM2 environment. tRPC's default error
       formatter includes the `stack` field when `NODE_ENV` is not `production`, so a
       malformed or hostile request gets a stack trace — file paths, call sites — back

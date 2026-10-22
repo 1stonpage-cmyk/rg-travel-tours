@@ -352,14 +352,26 @@ Every page reads tours, destinations, packages, reviews, FAQs and settings from 
   does, so a patient attacker can still tell them apart by hammering until `locked` appears
   (bounded by the per-IP limiter, 10 attempts per 15 minutes).
 - **§8's third limit is 10 `driver.login` attempts per IP per 15 minutes, and the three-lockout
-  escalation needs fifteen failures — so a single IP cannot reach `requires_admin_unlock` without
-  the limiter firing first** (measured 2026-10-16: HTTP 429 on the 11th attempt, with the driver
-  still at `lockout_count = 1`). Correct for an attacker, and the reason any walkthrough of the
-  escalation has to stage the counters and say so. It also means several drivers behind one office
-  NAT share that budget. **Do NOT conclude the escalation code is unreachable and delete it** — it
-  is reachable across IPs (one driver's code tried from several phones or networks, which is the
-  case the three-lockout rule exists for) and across windows. Both halves are tested independently,
-  and neither test proves the other.
+  escalation needs fifteen counted failures — so a single IP cannot reach `requires_admin_unlock`
+  inside one limiter window without the limiter firing first** (measured 2026-10-16 and now pinned:
+  HTTP 429 on the 11th attempt, with the driver still at `lockout_count = 1`). Correct for an
+  attacker, and the reason any walkthrough of the escalation has to stage the counters and say so. It
+  also means several drivers behind one office NAT share that budget. **Do NOT conclude the escalation
+  code is unreachable and delete it** — it is reachable across IPs (one driver's code tried from
+  several phones or networks, which is the case the three-lockout rule exists for) and across windows
+  (a patient single IP that waits out each 15-minute lockout never trips the limiter at all). That is
+  tested, not reasoned, in the C7 block of `server/src/__tests__/driver-lockout.test.ts`, three
+  tests that each own one layer: **one IP** through the real limiter gets ten attempts and a 429 on
+  the eleventh, the driver locked once and never escalated; **three IPs** through the same limiter
+  send fifteen attempts with no 429, because each address has its own budget; and
+  `attemptDriverLogin` driven directly with an advancing `now` reaches `needs_admin_unlock` on the
+  third lockout, which a correct PIN does not clear. No single test claims both halves, because a
+  request cannot inject `now` and a locked driver's attempts count toward nothing; the clock is why
+  the escalation test has no IP. **Deployment dependency:** the per-IP limit is only per-IP when
+  `trust proxy` is set (`docs/LAUNCH_CHECKLIST.md` carries it as a launch item; `app.ts` does not set
+  it), and without it all three limits collapse onto one key — measured by removing it from the test
+  app: the three-IP test fails with 429s, so one attacker could lock every driver's login out of
+  one window.
 - **The three app surfaces (`/driver`, `/admin`, `/portal`) are served HTTP 200 with a title of their
   own and `noindex,nofollow`** (owner decision 2026-10-16, C2; built Task 9). They used to fall through
   to the not-found shell: `404` and `<title>Page not found | TravelSugbo</title>`, so a driver's tab

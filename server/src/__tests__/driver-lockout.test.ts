@@ -12,12 +12,18 @@
  * Layer 2  the per-driver limits (the plan's seven tests)
  * Layer 3  the edges the plan's seven do not reach
  * Layer 4  the per-IP limiter, and the guard that it gets mounted in Week 6
+ * Layer 5  the escalation is reachable across IPs and not inside one window
+ *          (C7) — the ONLY layer that needs MySQL, so it is `describeWithDb`
+ *          and the four above still run on a machine without a database
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { eq } from 'drizzle-orm';
 import express from 'express';
 import request from 'supertest';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { getDb } from '../db/client';
+import { auditLog, drivers } from '../db/schema';
 import {
   createDriverLoginLimiter,
   DRIVER_LOGIN_IP_MAX,
@@ -25,6 +31,7 @@ import {
   DRIVER_LOGIN_PROCEDURES,
 } from '../middleware/rate-limit';
 import { appRouter } from '../routers/_app';
+import { attemptDriverLogin } from '../services/driver-auth';
 import {
   evaluatePinAttempt,
   LOCKOUT_MINUTES,
@@ -34,6 +41,8 @@ import {
   type LockoutDecision,
   type LockoutState,
 } from '../services/driver-lockout';
+import { hashPassword } from '../services/password';
+import { describeWithDb } from './helpers/db';
 
 const FRESH: LockoutState = {
   failedAttempts: 0,
@@ -400,4 +409,224 @@ describe('driver login per-IP limiter', () => {
       ).toContain(p);
     }
   });
+});
+
+// ---------------------------------------------------------------------------
+// Layer 5 — the escalation is reachable across IPs, and not inside one window
+// ---------------------------------------------------------------------------
+
+/**
+ * C7 (owner-decided 2026-10-16: keep both limits). Why this block exists:
+ * `MAX_LOCKOUTS_PER_WINDOW * MAX_FAILED_ATTEMPTS` is 15 counted failures, the
+ * per-IP limiter stops one IP at `DRIVER_LOGIN_IP_MAX` = 10, and the obvious
+ * reading is that the third-lockout escalation can therefore never fire and is
+ * dead code. It is not: it is the defence against the attacker the IP limit
+ * cannot see — one driver's code tried from several phones or networks.
+ *
+ * **Which layer proves which assertion.** Three tests, each owning one claim,
+ * none borrowing another's layer:
+ *
+ *  1. HTTP + the real limiter, ONE IP: the 429 ceiling, and that the driver is
+ *     locked once and never escalated. Proves what the limiter does.
+ *  2. HTTP + the real limiter, THREE IPs: 15 attempts across three client
+ *     addresses are not limited, because each address has its own budget.
+ *     Proves the limiter's KEY, which is the `trust proxy` dependency.
+ *  3. `attemptDriverLogin` called directly with an ADVANCING `now`, against the
+ *     real `drivers` row: five failures three times end in the admin-unlock
+ *     state. Proves the per-driver policy. A supertest request cannot inject
+ *     `now` (the router reads the clock at the request boundary), and a locked
+ *     driver's attempts do not count toward a second lockout, so an HTTP-only
+ *     test cannot reach the escalation inside one test run. Rather than stage
+ *     the counters by hand and call that an end-to-end proof, test 3 does not
+ *     claim an IP at all — the policy keys on the driver, never the address —
+ *     and tests 1 and 2 do not claim the escalation.
+ *
+ * The scope of test 1 is ONE WINDOW. A patient single IP that spends five
+ * attempts, waits out the 15-minute lockout, and repeats can still reach
+ * escalation across several windows without the limiter ever firing; that is
+ * the per-driver rule doing its job, not a hole in this one.
+ */
+describeWithDb('the escalation is reachable across IPs, and only across IPs (C7)', () => {
+  const unique = () => `${Math.floor(Math.random() * 1e9)}_${Date.now()}`;
+
+  /*
+   * The three numbers the argument rests on, written out as LITERALS rather
+   * than imported. Layer 1 pins the real constants to BUILD_SPEC §8; restating
+   * them here is what lets this block go red when one drifts, where importing
+   * them would let every assertion quietly follow the change (measured: with
+   * the escalation constant raised to 4 the escalation test stayed green until
+   * it stopped reading the import).
+   */
+  const IP_CEILING = 10; // attempts per IP per window before a 429
+  const FAILURES_TO_LOCK = 5; // consecutive failures that lock a driver
+  const LOCKOUTS_TO_ESCALATE = 3; // lockouts that need an admin
+  const MINUTES_PAST_LOCKOUT = 16; // past the 15-minute lockout, far inside 24 hours
+
+  let driverId = 0;
+  let code = '';
+  let realPin = '';
+  /** Never the real PIN, whatever the random draw was. */
+  let wrongPin = '';
+
+  beforeEach(async () => {
+    const suffix = unique();
+    code = `DL${suffix}`.slice(0, 20);
+    realPin = String(Math.floor(Math.random() * 1_000_000)).padStart(6, '0');
+    wrongPin = realPin === '000000' ? '111111' : '000000';
+    const [row] = await getDb()
+      .insert(drivers)
+      .values({
+        name: `Lockout Reach Fixture ${suffix}`,
+        code,
+        phone: '09170000000',
+        pinHash: await hashPassword(realPin),
+        isActive: true,
+      });
+    driverId = row.insertId;
+  }, 30_000);
+
+  // The fixture driver and every audit row its lockouts wrote. Deleting the
+  // driver also discards the five lockout columns, which is the reset.
+  afterEach(async () => {
+    if (driverId === 0) return;
+    await getDb().delete(auditLog).where(eq(auditLog.entityId, driverId));
+    await getDb().delete(drivers).where(eq(drivers.id, driverId));
+    driverId = 0;
+  });
+
+  async function lockoutColumns() {
+    const [row] = await getDb()
+      .select({
+        failedAttempts: drivers.failedAttempts,
+        lockoutCount: drivers.lockoutCount,
+        requiresAdminUnlock: drivers.requiresAdminUnlock,
+      })
+      .from(drivers)
+      .where(eq(drivers.id, driverId));
+    if (!row) throw new Error(`no driver ${driverId}`);
+    return row;
+  }
+
+  /**
+   * The login path behind the real limiter: the real limiter, the real
+   * `attemptDriverLogin`, the real `drivers` row. Only the tRPC envelope is
+   * missing, and the router's status mapping is copied (`wrong_credentials`
+   * 401, the other refusals 403) so the assertions can read a status.
+   *
+   * `trust proxy` is the DEPLOYED configuration, not a test convenience:
+   * `docs/LAUNCH_CHECKLIST.md` (the `trust proxy` item under "Deployment
+   * requirements") makes it a launch item because the app sits behind nginx,
+   * and without it `req.ip` is nginx's own address for every request — which
+   * turns this per-IP limiter into one global one. It is set HERE, on the
+   * test's own app, so the test can present distinct client addresses to one
+   * limiter the way several real phones would. `app.ts` deliberately does not
+   * set it: that is the deployment's decision and the checklist owns it.
+   *
+   * `'loopback'` rather than `true`: nginx proxies from the same host, so it
+   * is the hop to trust, and `true` makes the leftmost `X-Forwarded-For`
+   * entry believable from anyone — `express-rate-limit` says as much at
+   * runtime (`ERR_ERL_PERMISSIVE_TRUST_PROXY`). The deployed value should be
+   * as narrow as this one.
+   */
+  function appBehindProxy() {
+    const app = express();
+    app.set('trust proxy', 'loopback');
+    app.use(createDriverLoginLimiter());
+    app.use(express.json());
+    app.post('/trpc/driver.login', async (req, res) => {
+      const result = await attemptDriverLogin({
+        code: req.body.code,
+        pin: req.body.pin,
+        now: new Date(),
+      });
+      res.status(result.ok ? 200 : result.reason === 'wrong_credentials' ? 401 : 403).json(result);
+    });
+    return app;
+  }
+
+  const attemptFrom = (app: express.Express, ip: string, pin: string) =>
+    request(app).post('/trpc/driver.login').set('X-Forwarded-For', ip).send({ code, pin });
+
+  // Layer: HTTP + the real limiter. Proves the ceiling, not the escalation.
+  it('ONE IP is stopped by the limiter inside a window, and the driver is locked once and not escalated', async () => {
+    const app = appBehindProxy();
+    const statuses: number[] = [];
+    for (let i = 0; i < IP_CEILING + 3; i += 1) {
+      statuses.push((await attemptFrom(app, '203.0.113.10', wrongPin)).status);
+    }
+
+    // The ceiling, exactly: ten reach the login, the eleventh onwards do not.
+    expect(statuses.slice(0, IP_CEILING)).not.toContain(429);
+    expect(statuses.slice(IP_CEILING)).toEqual([429, 429, 429]);
+
+    // Those ten were four wrong credentials, the fifth failure that locks, and
+    // five refusals against the live lockout, which count toward nothing.
+    // Fifteen counted failures cannot fit under a ceiling of ten.
+    const driver = await lockoutColumns();
+    expect(driver.lockoutCount).toBe(1);
+    expect(driver.failedAttempts).toBe(FAILURES_TO_LOCK);
+    expect(driver.requiresAdminUnlock).toBe(false);
+  }, 60_000);
+
+  // Layer: HTTP + the real limiter. Proves the limiter's KEY, nothing about
+  // the policy — the driver is still on its first lockout afterwards, which is
+  // exactly why the escalation test below has to move the clock.
+  it('THREE IPs each keep their own budget: fifteen attempts, none limited', async () => {
+    const app = appBehindProxy();
+    const statuses: number[] = [];
+    for (const ip of ['203.0.113.10', '203.0.113.11', '203.0.113.12']) {
+      for (let i = 0; i < FAILURES_TO_LOCK; i += 1) {
+        statuses.push((await attemptFrom(app, ip, wrongPin)).status);
+      }
+    }
+
+    expect(statuses).toHaveLength(FAILURES_TO_LOCK * LOCKOUTS_TO_ESCALATE);
+    expect(
+      statuses,
+      'a 429 here means the three client addresses collapsed onto one limiter key — `trust proxy` not honoured',
+    ).not.toContain(429);
+
+    // The HTTP path alone has not escalated anything: real time has not moved,
+    // so the first lockout is still running and the later attempts bounced off
+    // it. Reaching the third lockout needs the clock — see the next test.
+    expect((await lockoutColumns()).requiresAdminUnlock).toBe(false);
+  }, 60_000);
+
+  // Layer: `attemptDriverLogin` + the real row, with `now` advancing. Proves
+  // the per-driver policy and says nothing about IPs, because the policy has
+  // no notion of one.
+  it('the escalation fires on the third lockout, and a correct PIN does not clear it', async () => {
+    let now = new Date('2026-10-23T02:00:00.000Z');
+
+    for (let lockout = 1; lockout <= LOCKOUTS_TO_ESCALATE; lockout += 1) {
+      // Five wrong PINs: the first four are `wrong_credentials`, the fifth is
+      // the one that locks (or, on the third round, escalates).
+      let last: Awaited<ReturnType<typeof attemptDriverLogin>> | undefined;
+      for (let i = 0; i < FAILURES_TO_LOCK; i += 1) {
+        last = await attemptDriverLogin({ code, pin: wrongPin, now });
+        now = new Date(now.getTime() + 1000);
+      }
+      expect(last).toEqual({
+        ok: false,
+        reason: lockout < LOCKOUTS_TO_ESCALATE ? 'locked' : 'needs_admin_unlock',
+      });
+      expect((await lockoutColumns()).lockoutCount).toBe(lockout);
+
+      // The lockout has to lapse before the next five can count. Sixteen
+      // minutes is past the fifteen and nowhere near the 24-hour window.
+      now = new Date(now.getTime() + MINUTES_PAST_LOCKOUT * MIN);
+    }
+
+    const driver = await lockoutColumns();
+    expect(driver.lockoutCount).toBe(LOCKOUTS_TO_ESCALATE);
+    expect(driver.requiresAdminUnlock).toBe(true);
+
+    // The real PIN, long after the lockout lapsed: still refused, with the
+    // reason string the screen matches on.
+    expect(await attemptDriverLogin({ code, pin: realPin, now })).toEqual({
+      ok: false,
+      reason: 'needs_admin_unlock',
+    });
+    expect((await lockoutColumns()).requiresAdminUnlock).toBe(true);
+  }, 120_000);
 });
