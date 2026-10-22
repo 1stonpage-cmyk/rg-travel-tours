@@ -57,6 +57,7 @@ import type { BookingStatus } from '@rg/shared';
 import { getDb, type Transaction } from '../../db/client';
 import { PAYMENT_METHODS, bookings, payments } from '../../db/schema';
 import { writeAudit } from '../audit';
+import { releaseRedemption } from '../coupons';
 import { releaseVanFromTrip } from '../trips/checkins';
 import { PaymongoNotConfiguredError } from './paymongo';
 import { getProvider } from './registry';
@@ -125,13 +126,18 @@ export interface CancelBookingResult {
   previousStatus: BookingStatus;
   /** True when this cancel also put an on-trip van back on sale. */
   vanReleased: boolean;
+  /**
+   * True when the booking held a coupon and this cancel gave the use back.
+   * False for a booking that used none.
+   */
+  couponReleased: boolean;
 }
 
 /**
  * Cancels a booking. **Moves no money at all.**
  *
  * One transaction: the booking row lock, the conditional status write, the
- * van release, the audit row. Rejects — writing nothing — when the booking
+ * van release, the coupon release, the audit row. Rejects — writing nothing — when the booking
  * does not exist or its status is not in `CANCELLABLE_STATUSES`.
  *
  * ## What it does to a trip already under way (owner ruling, 2026-10-16)
@@ -162,6 +168,15 @@ export interface CancelBookingResult {
  * `on_trip → available` door `checkins.ts` owns, never a write of its own.
  * A van parked in `for_repair` by a dispatcher is left exactly where they
  * put it.
+ *
+ * ## The coupon is given back too (owner decision, 2026-10-16, D7)
+ *
+ * A booking that held a coupon has its `coupon_redemptions` row deleted and
+ * `coupons.used_count` decremented, through `releaseRedemption()` - exactly
+ * what a lapsed hold gets from `expire-holds.ts`. The release is reported as
+ * `couponReleased`, in the result and in the same `booking.cancelled` audit
+ * row. Like everything else a cancel does, it moves no money: no `payments`
+ * row, and `amount_paid_centavos` is not touched.
  */
 export async function cancelBooking(input: CancelBookingInput): Promise<CancelBookingResult> {
   const parsed = cancelBookingInputSchema.parse(input);
@@ -182,7 +197,12 @@ export async function cancelBooking(input: CancelBookingInput): Promise<CancelBo
      * live booking attempt on that date for no correctness gained.
      */
     const [booking] = await tx
-      .select({ ref: bookings.ref, status: bookings.status, vanId: bookings.vanId })
+      .select({
+        ref: bookings.ref,
+        status: bookings.status,
+        vanId: bookings.vanId,
+        couponId: bookings.couponId,
+      })
       .from(bookings)
       .where(eq(bookings.id, parsed.bookingId))
       .for('update')
@@ -228,6 +248,39 @@ export async function cancelBooking(input: CancelBookingInput): Promise<CancelBo
     const vanReleased =
       booking.status === 'in_progress' ? await releaseVanFromTrip(tx, booking.vanId) : false;
 
+    /*
+     * The coupon slot, given back (owner decision 2026-10-16, D7).
+     *
+     * A lapsed hold already did this (`expire-holds.ts` calls
+     * `releaseRedemption` the same way, owner decision Q7/Q8). A cancel is a
+     * different event and nothing said what it should do, so until now it did
+     * nothing - and a guest whose booking the office cancelled had burned one
+     * use of a limited coupon on a trip that never ran. The two events now
+     * agree: the capacity comes back, and so does the coupon.
+     *
+     * `tx`, never `getDb()`: a second pooled connection taken while this
+     * transaction holds one is how concurrent callers come to hold every
+     * connection and each wait for one more. It also keeps the release inside
+     * the transaction, so it rolls back with the cancel and with the audit row
+     * below.
+     *
+     * `releaseRedemption` is idempotent on its own DELETE's affected-row
+     * count, so it cannot double-decrement - and it could not be reached twice
+     * anyway: the conditional UPDATE above refuses a second cancel. Both
+     * guards, deliberately, because the one that fails silently is the one
+     * that matters.
+     *
+     * LOCK ORDER: the booking row is already held, and this takes
+     * `coupon_redemptions` then `coupons`, LAST. `expire-holds.ts` reaches the
+     * same tables in the same order from behind the same booking lock (the
+     * global order: fleet slot, tour slot, booking, coupon), so the two paths
+     * cannot deadlock against each other.
+     */
+    const couponReleased = booking.couponId !== null;
+    if (booking.couponId !== null) {
+      await releaseRedemption(tx, booking.couponId, parsed.bookingId);
+    }
+
     await writeAudit(tx, {
       // An admin cancellation is `user` with that admin's id — §6's own
       // precedent, and never `system` (a cron) or `provider` (a gateway).
@@ -247,10 +300,11 @@ export async function cancelBooking(input: CancelBookingInput): Promise<CancelBo
         reason: parsed.reason,
         vanId: booking.vanId,
         vanReleased,
+        couponReleased,
       },
     });
 
-    return { ref: booking.ref, previousStatus: booking.status, vanReleased };
+    return { ref: booking.ref, previousStatus: booking.status, vanReleased, couponReleased };
   });
 }
 

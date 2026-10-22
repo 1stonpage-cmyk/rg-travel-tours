@@ -51,10 +51,17 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vite
 import { sql } from 'drizzle-orm';
 import { depositCentavos, type AdminRole, type PriceSnapshot } from '@rg/shared';
 import { getDb, getPool } from '../db/client';
-import { bookings, destinations, tours, tripCheckpoints, users, vans } from '../db/schema';
+import { bookings, coupons, destinations, tours, tripCheckpoints, users, vans } from '../db/schema';
 import { ROLE_MATRIX } from '../middleware/require-role';
 import { appRouter } from '../routers/_app';
 import { generateBookingRef } from '../services/booking-ref';
+import {
+  CouponUsageLimitReachedError,
+  recordRedemption,
+  validateCoupon,
+} from '../services/coupons';
+import { cancelBooking } from '../services/payments/cancel-refund';
+import { BookingNotCancellableError } from '../services/payments/errors';
 import { PaymongoApiError } from '../services/payments/paymongo';
 import { recordPayment } from '../services/payments/record-payment';
 import { staffContext } from './helpers/ctx';
@@ -111,6 +118,49 @@ vi.mock('../services/payments/registry', async (importOriginal) => {
   };
 });
 
+/**
+ * Two switches for the cancel's coupon tests, both OFF unless a test turns
+ * them on, and both reset in `beforeEach`. A rollback can only be proven by
+ * making something fail on the far side of the write it should undo, and
+ * neither failure can be reached with real data:
+ *
+ *  - `auditFailsFor` - `writeAudit` throws for that booking's
+ *    `booking.cancelled` row. The audit is the last write in the cancel, so
+ *    this is a failure AFTER the coupon release, and the release must not
+ *    outlive it.
+ *  - `releaseFails` - `releaseRedemption` throws. This is the failure the
+ *    other way round: the cancel's status write must not outlive it.
+ */
+const fault = vi.hoisted(() => ({
+  auditFailsFor: null as number | null,
+  releaseFails: false,
+}));
+
+vi.mock('../services/audit', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/audit')>();
+  return {
+    ...actual,
+    writeAudit: async (...args: Parameters<typeof actual.writeAudit>) => {
+      const [, entry] = args;
+      if (entry.action === 'booking.cancelled' && entry.entityId === fault.auditFailsFor) {
+        throw new Error('fixture: the audit write failed');
+      }
+      return actual.writeAudit(...args);
+    },
+  };
+});
+
+vi.mock('../services/coupons', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/coupons')>();
+  return {
+    ...actual,
+    releaseRedemption: async (...args: Parameters<typeof actual.releaseRedemption>) => {
+      if (fault.releaseFails) throw new Error('fixture: the coupon release failed');
+      return actual.releaseRedemption(...args);
+    },
+  };
+});
+
 const networkGuard = vi.fn((): never => {
   throw new Error('a test tried to reach the network');
 });
@@ -162,6 +212,7 @@ const created = {
   destIds: [] as number[],
   vanIds: [] as number[],
   userIds: [] as number[],
+  couponIds: [] as number[],
 };
 
 async function scalar(statement: Parameters<ReturnType<typeof getDb>['execute']>[0]) {
@@ -245,6 +296,40 @@ async function makeVan(status: 'available' | 'on_trip'): Promise<number> {
 interface BookingOptions {
   status?: 'confirmed' | 'assigned' | 'in_progress' | 'completed' | 'cancelled';
   vanId?: number | null;
+  /**
+   * A coupon the booking holds. Recorded through `recordRedemption()` itself
+   * - the redemption row AND the `used_count` bump - so the fixture and
+   * production agree about what holding a coupon is.
+   */
+  couponId?: number;
+}
+
+async function makeCoupon(usageLimit: number): Promise<{ id: number; code: string }> {
+  const code = `RFCPN${unique()}`.slice(0, 40);
+  const [row] = await getDb().insert(coupons).values({
+    code,
+    discountType: 'percent',
+    percentBp: 1000,
+    usageLimit,
+    isActive: true,
+  });
+  created.couponIds.push(row.insertId);
+  return { id: row.insertId, code };
+}
+
+async function couponUsedCount(couponId: number): Promise<number> {
+  const [row] = await rows<{ used_count: number }>('SELECT used_count FROM coupons WHERE id = ?', [
+    couponId,
+  ]);
+  return Number(row?.used_count ?? -1);
+}
+
+async function redemptionCount(couponId: number, bookingId: number): Promise<number> {
+  const [row] = await rows<{ n: number }>(
+    'SELECT COUNT(*) n FROM coupon_redemptions WHERE coupon_id = ? AND booking_id = ?',
+    [couponId, bookingId],
+  );
+  return Number(row?.n ?? -1);
 }
 
 /**
@@ -280,8 +365,13 @@ async function makePaidBooking(
       holdExpiresAt: null,
       vanId: options.vanId ?? null,
       driverId: null,
+      couponId: options.couponId ?? null,
     });
   created.bookingIds.push(booking.insertId);
+  if (options.couponId !== undefined) {
+    const couponId = options.couponId;
+    await getDb().transaction((tx) => recordRedemption(tx, couponId, booking.insertId));
+  }
 
   const manual = provider === 'manual';
   const recorded = await recordPayment({
@@ -418,6 +508,8 @@ describeWithDb('admin.refunds — cancelling a booking and sending money back', 
     gateway.refunds = [];
     gateway.onRefund = null;
     gateway.failWith = null;
+    fault.auditFailsFor = null;
+    fault.releaseFails = false;
     networkGuard.mockClear();
 
     const slug = `__adminrefunds__${unique()}`;
@@ -440,10 +532,12 @@ describeWithDb('admin.refunds — cancelling a booking and sending money back', 
   afterEach(async () => {
     const pool = getPool();
     for (const id of created.bookingIds) {
+      await pool.query('DELETE FROM coupon_redemptions WHERE booking_id = ?', [id]);
       await pool.query('DELETE FROM trip_checkpoints WHERE booking_id = ?', [id]);
       await pool.query('DELETE FROM payments WHERE booking_id = ?', [id]);
       await pool.query('DELETE FROM bookings WHERE id = ?', [id]);
     }
+    for (const id of created.couponIds) await pool.query('DELETE FROM coupons WHERE id = ?', [id]);
     for (const id of created.tourIds) await pool.query('DELETE FROM tours WHERE id = ?', [id]);
     for (const id of created.destIds) {
       await pool.query('DELETE FROM destinations WHERE id = ?', [id]);
@@ -461,6 +555,7 @@ describeWithDb('admin.refunds — cancelling a booking and sending money back', 
     created.destIds = [];
     created.vanIds = [];
     created.userIds = [];
+    created.couponIds = [];
   });
 
   /**
@@ -1210,6 +1305,130 @@ describeWithDb('admin.refunds — cancelling a booking and sending money back', 
     ).resolves.toMatchObject({ calledGateway: true });
     expect(await bookingMoney(ran.id)).toMatchObject({ status: 'completed' });
     expect(await refundedTotal(ran.id)).toBe(25_000);
+  });
+
+  /**
+   * 11b. The coupon, given back (owner decision 2026-10-16, D7). A lapsed
+   * hold already releases its slot; a cancel did not, so a guest whose trip
+   * the office cancelled had burned one use of a limited code.
+   *
+   * The first test ends on `validateCoupon()` succeeding for a code that was
+   * refused a line earlier. A counter reading zero only proves a column; the
+   * property that matters is that the next guest can use the code.
+   */
+  it('releases the coupon slot and decrements used_count exactly once', async () => {
+    const coupon = await makeCoupon(1);
+    const booking = await makePaidBooking('paymongo', { couponId: coupon.id });
+    expect(await couponUsedCount(coupon.id)).toBe(1);
+    expect(await redemptionCount(coupon.id, booking.id)).toBe(1);
+    await expect(validateCoupon(coupon.code, TOTAL, new Date())).rejects.toBeInstanceOf(
+      CouponUsageLimitReachedError,
+    );
+
+    const result = await cancelBooking({
+      bookingId: booking.id,
+      reason: 'Guest cancelled.',
+      actorUserId: owner,
+    });
+
+    expect(result.couponReleased).toBe(true);
+    expect(await couponUsedCount(coupon.id)).toBe(0);
+    expect(await redemptionCount(coupon.id, booking.id)).toBe(0);
+    await expect(validateCoupon(coupon.code, TOTAL, new Date())).resolves.toMatchObject({
+      id: coupon.id,
+    });
+  });
+
+  it('a second cancel cannot decrement a second time', async () => {
+    const coupon = await makeCoupon(2);
+    const booking = await makePaidBooking('paymongo', { couponId: coupon.id });
+    // A second guest holds the other use, so a double decrement would show
+    // as 0 here rather than hiding behind a floor.
+    await makePaidBooking('paymongo', { couponId: coupon.id });
+    expect(await couponUsedCount(coupon.id)).toBe(2);
+
+    await cancelBooking({ bookingId: booking.id, reason: 'One.', actorUserId: owner });
+    await expect(
+      cancelBooking({ bookingId: booking.id, reason: 'Two.', actorUserId: owner }),
+    ).rejects.toBeInstanceOf(BookingNotCancellableError);
+    expect(await couponUsedCount(coupon.id)).toBe(1);
+  });
+
+  it('reports false, and touches no coupon, for a booking that used none', async () => {
+    const coupon = await makeCoupon(5);
+    const holder = await makePaidBooking('paymongo', { couponId: coupon.id });
+    const booking = await makePaidBooking('paymongo');
+
+    const result = await cancelBooking({
+      bookingId: booking.id,
+      reason: 'No coupon here.',
+      actorUserId: owner,
+    });
+
+    expect(result.couponReleased).toBe(false);
+    expect(await couponUsedCount(coupon.id)).toBe(1);
+    expect(await redemptionCount(coupon.id, holder.id)).toBe(1);
+  });
+
+  it('audits the release beside the cancellation, in the same row', async () => {
+    const coupon = await makeCoupon(5);
+    const booking = await makePaidBooking('paymongo', { couponId: coupon.id });
+
+    await cancelBooking({ bookingId: booking.id, reason: 'Guest cancelled.', actorUserId: owner });
+
+    const cancelRows = (await auditRows('bookings', booking.id)).filter(
+      (row) => row.action === 'booking.cancelled',
+    );
+    expect(cancelRows).toHaveLength(1);
+    const data = cancelRows[0]!.data;
+    expect(typeof data === 'string' ? JSON.parse(data) : data).toMatchObject({
+      couponReleased: true,
+      reason: 'Guest cancelled.',
+    });
+  });
+
+  /**
+   * Atomicity, from both sides. The brief's own sketch for this - cancel a
+   * `completed` booking and see the count stay put - cannot fail under any
+   * edit: that throw happens before the release is reached whether or not
+   * the release is in the transaction. These two make the far side of the
+   * release fail instead.
+   *
+   *  - The audit write (the last thing the cancel does) fails: the release
+   *    must not survive it. Proves the release runs on the SAME transaction;
+   *    on a second connection it would commit on its own.
+   *  - The release fails: the cancel must not survive it. Proves the release
+   *    is INSIDE the transaction; awaited after it resolves, the booking
+   *    would already be cancelled and committed.
+   */
+  it('rolls the release back when a later write in the cancel fails', async () => {
+    const coupon = await makeCoupon(1);
+    const booking = await makePaidBooking('paymongo', { couponId: coupon.id });
+    fault.auditFailsFor = booking.id;
+
+    await expect(
+      cancelBooking({ bookingId: booking.id, reason: 'x', actorUserId: owner }),
+    ).rejects.toThrow('the audit write failed');
+
+    expect(await couponUsedCount(coupon.id)).toBe(1);
+    expect(await redemptionCount(coupon.id, booking.id)).toBe(1);
+    expect(await bookingMoney(booking.id)).toMatchObject({ status: 'confirmed' });
+  });
+
+  it('rolls the cancel back when the release itself fails', async () => {
+    const coupon = await makeCoupon(1);
+    const booking = await makePaidBooking('paymongo', { couponId: coupon.id });
+    fault.releaseFails = true;
+
+    await expect(
+      cancelBooking({ bookingId: booking.id, reason: 'x', actorUserId: owner }),
+    ).rejects.toThrow('the coupon release failed');
+
+    expect(await bookingMoney(booking.id)).toMatchObject({ status: 'confirmed' });
+    expect(await couponUsedCount(coupon.id)).toBe(1);
+    expect(
+      (await auditRows('bookings', booking.id)).filter((row) => row.action === 'booking.cancelled'),
+    ).toHaveLength(0);
   });
 
   /**

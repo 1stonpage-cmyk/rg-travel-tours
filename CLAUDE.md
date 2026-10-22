@@ -307,7 +307,12 @@ Every page reads tours, destinations, packages, reviews, FAQs and settings from 
   moments **after** a cancel, and `undoLastCheckIn` will still retract a tap on a cancelled
   booking; neither moves money nor the van. What the cancel does do is put an `on_trip` van back to
   `available` (`releaseVanFromTrip`), because the completion that would have cleared it is never
-  going to happen now.
+  going to happen now. **It also gives the booking's coupon back** (owner decision 2026-10-16, D7):
+  `releaseRedemption` deletes the `coupon_redemptions` row and decrements `coupons.used_count`
+  inside the cancel's transaction — the same treatment a lapsed hold gets from `expire-holds.ts` —
+  and the release is reported as `couponReleased` in the result and in the `booking.cancelled`
+  audit row. It is taken last, behind the booking lock, in the same order the expiry sweep uses.
+  Still no `payments` row and no change to `amount_paid_centavos`: a cancel moves no money.
 
 ## Driver portal (current state)
 
