@@ -31,9 +31,13 @@
  * name anywhere in this file; `'never puts a PIN in an audit row'` asserts
  * the same of `audit_log`.
  */
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import request from 'supertest';
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { DRIVER_SESSION_HOURS } from '@rg/shared';
+import { createApp } from '../app';
 import { appRouter } from '../routers/_app';
 import { getDb, getPool } from '../db/client';
 import { auditLog, drivers, sessions, users } from '../db/schema';
@@ -54,6 +58,8 @@ import { describeWithDb } from './helpers/db';
 /** Every decision in this file is made against this instant, never the clock. */
 const NOW = new Date('2026-10-15T04:00:00Z');
 const HOUR_MS = 3_600_000;
+/** Measured scrypt cost here is ~230-250ms; the old early return was ~5ms. */
+const MIN_HASH_MS = 80;
 
 const unique = () => `${Math.floor(Math.random() * 1e9)}_${Date.now()}`;
 
@@ -87,6 +93,17 @@ async function makeDriverWithPin() {
     });
   created.driverIds.push(row.insertId);
   return { code, pin, driverId: row.insertId };
+}
+
+/**
+ * A deactivated driver who still has a real PIN hash. The hash is the point:
+ * the inactive path must pay a REAL verification, so a fixture with a
+ * placeholder hash would make the timing test pass for the wrong reason.
+ */
+async function makeInactiveDriverWithPin() {
+  const made = await makeDriverWithPin();
+  await getDb().update(drivers).set({ isActive: false }).where(eq(drivers.id, made.driverId));
+  return made;
 }
 
 async function makeStaff(role: 'owner' = 'owner') {
@@ -333,16 +350,121 @@ describeWithDb('attemptDriverLogin', () => {
     expect((await driverRow(driverId)).failedAttempts).toBe(2);
   }, 60_000);
 
-  it('refuses a soft-deleted driver', async () => {
-    const { code, pin, driverId } = await makeDriverWithPin();
-    await getDb().update(drivers).set({ isActive: false }).where(eq(drivers.id, driverId));
-    expect(await attemptDriverLogin({ code, pin, now: NOW })).toMatchObject({
-      reason: 'driver_inactive',
-    });
-    // And it costs them nothing: a departed driver must not be able to
-    // lock out the code a new hire might later be given.
-    expect((await driverRow(driverId)).failedAttempts).toBe(0);
+  /*
+   * REWRITTEN (owner decision D3, 2026-10-16). This test used to be 'refuses
+   * a soft-deleted driver' and asserted `reason: 'driver_inactive'`: a
+   * distinct, early refusal. That is the decision the owner reversed, so it
+   * now asserts the opposite: an inactive driver is answered exactly as a
+   * wrong PIN is, and still costs the (departed) driver's counters nothing.
+   */
+  it('answers an inactive driver EXACTLY as it answers a wrong PIN', async () => {
+    const active = await makeDriverWithPin();
+    const inactive = await makeInactiveDriverWithPin();
+    const wrong = await attemptDriverLogin({ code: active.code, pin: '000000', now: NOW });
+    const gone = await attemptDriverLogin({ code: inactive.code, pin: inactive.pin, now: NOW });
+
+    // Deep equality on the whole object, not just the reason: a field present
+    // in one and absent in the other is the same oracle in another shape.
+    expect(gone).toEqual(wrong);
+    expect(gone).toEqual({ ok: false, reason: 'wrong_credentials' });
   }, 30_000);
+
+  it('answers an inactive driver with the CORRECT pin the same way as with a wrong one', async () => {
+    // The case that matters: an attacker who knows the PIN must not be able
+    // to tell "deactivated" from "wrong PIN".
+    const { code, pin } = await makeInactiveDriverWithPin();
+    const wrongPin = pin === '000000' ? '111111' : '000000';
+    const wrongPinOnInactive = await attemptDriverLogin({ code, pin: wrongPin, now: NOW });
+    const rightPinOnInactive = await attemptDriverLogin({ code, pin, now: NOW });
+    expect(rightPinOnInactive).toEqual(wrongPinOnInactive);
+    expect(rightPinOnInactive).toEqual({ ok: false, reason: 'wrong_credentials' });
+  }, 30_000);
+
+  it('never mints a session for an inactive driver, however right the PIN', async () => {
+    const { code, pin, driverId } = await makeInactiveDriverWithPin();
+    await attemptDriverLogin({ code, pin, now: NOW });
+    const rows = await getDb()
+      .select({ id: sessions.id })
+      .from(sessions)
+      .where(and(eq(sessions.subjectType, 'driver'), eq(sessions.subjectId, driverId)));
+    expect(rows, 'an inactive driver was handed a session').toHaveLength(0);
+  }, 30_000);
+
+  /**
+   * The oracle in TIME. Before D3 an inactive code answered in ~5ms and a
+   * wrong PIN in ~250ms. Both must now actually hash. The floor is well under
+   * the measured cost (so a slow box cannot fail it for being slow) and far
+   * above the ~5ms early return this exists to forbid.
+   */
+  it('pays the hash on the inactive path, so the timing does not answer either', async () => {
+    const active = await makeDriverWithPin();
+    const inactive = await makeInactiveDriverWithPin();
+    const time = async (code: string, pin: string) => {
+      const started = performance.now();
+      await attemptDriverLogin({ code, pin, now: NOW });
+      return performance.now() - started;
+    };
+    // Warm-up: the first scrypt call in a process pays one-off costs that
+    // would otherwise land on whichever path is measured first.
+    await time(active.code, '000000');
+
+    const wrong = await time(active.code, '000000');
+    const gone = await time(inactive.code, inactive.pin);
+
+    expect(wrong, 'a wrong PIN did not pay for a hash').toBeGreaterThan(MIN_HASH_MS);
+    expect(
+      gone,
+      'the inactive path skipped the hash: its response time says it is inactive',
+    ).toBeGreaterThan(MIN_HASH_MS);
+    // Comparable. A generous band: scrypt dominates both, so what differs is
+    // one UPDATE (active) against one audit INSERT (inactive).
+    expect(Math.abs(gone - wrong)).toBeLessThan(wrong);
+  }, 60_000);
+
+  it('records the REAL reason in audit_log, where only staff can read it', async () => {
+    const { code, pin, driverId } = await makeInactiveDriverWithPin();
+    await attemptDriverLogin({ code, pin, now: NOW });
+
+    const rows = await auditRowsFor('driver', driverId);
+    const row = rows.find((r) => r.action === 'driver.login_inactive');
+    expect(row, 'the inactive attempt left no audit row').toBeDefined();
+    expect(row!.actorType).toBe('driver');
+    expect(row!.actorId).toBe(driverId);
+    expect(row!.data).toEqual({ code, pinCorrect: true });
+    // Never the PIN. (Asserted on the PIN's own value rather than on "six
+    // digits": a driver code can itself contain a run of digits.)
+    expect(JSON.stringify(row!.data)).not.toContain(pin);
+  }, 30_000);
+
+  it('records pinCorrect: false when the departed driver guessed wrong', async () => {
+    const { code, pin, driverId } = await makeInactiveDriverWithPin();
+    await attemptDriverLogin({ code, pin: pin === '000000' ? '111111' : '000000', now: NOW });
+    const row = (await auditRowsFor('driver', driverId)).find(
+      (r) => r.action === 'driver.login_inactive',
+    );
+    expect(row!.data).toEqual({ code, pinCorrect: false });
+  }, 30_000);
+
+  it('does not touch the inactive driver lockout counters', async () => {
+    const { code, driverId } = await makeInactiveDriverWithPin();
+    const before = await driverRow(driverId);
+    for (let i = 0; i < MAX_FAILED_ATTEMPTS + 1; i += 1) {
+      const result = await attemptDriverLogin({ code, pin: '000000', now: NOW });
+      // Still the wrong-credentials answer on the sixth: never `locked`.
+      expect(result).toEqual({ ok: false, reason: 'wrong_credentials' });
+    }
+    const after = await driverRow(driverId);
+    // A driver who left the company must not be able to lock out the code a
+    // new hire might later be given.
+    expect(after).toEqual(before);
+  }, 60_000);
+
+  it('leaves no way to send driver_inactive over the wire', () => {
+    // The type-level half of this is `pnpm typecheck`; this is the runtime
+    // half, over the whole module's source.
+    const source = readFileSync(resolve(__dirname, '../services/driver-auth.ts'), 'utf8');
+    expect(source).not.toMatch(/reason:\s*'driver_inactive'/);
+  });
 
   it('writes an audit row for a lockout, naming the driver as the actor', async () => {
     const { code, driverId } = await makeDriverWithPin();
@@ -439,6 +561,35 @@ describeWithDb('driver.login / driver.logout (resolvers)', () => {
     });
 
     expect(set, 'a refused driver login handed out a cookie').toHaveLength(0);
+  }, 30_000);
+
+  /**
+   * The HTTP layer, through `createApp()`: status AND the serialised body,
+   * character for character, between a wrong PIN on a live code and the
+   * RIGHT PIN on a deactivated one. This is the wire-level proof; the
+   * service-level tests above prove only the returned object.
+   */
+  it('is byte-identical on the wire: inactive driver with the right PIN vs a wrong PIN', async () => {
+    const active = await makeDriverWithPin();
+    const inactive = await makeInactiveDriverWithPin();
+    const app = createApp();
+    const post = (code: string, pin: string) =>
+      request(app)
+        .post('/trpc/driver.login')
+        // A browser's Origin: the CSRF check runs ahead of the router.
+        .set('Origin', 'http://localhost:5180')
+        .send({ code, pin });
+
+    const wrong = await post(active.code, active.pin === '000000' ? '111111' : '000000');
+    const gone = await post(inactive.code, inactive.pin);
+
+    expect(wrong.status).toBe(401);
+    expect(gone.status).toBe(wrong.status);
+    // Same bytes, not merely the same parsed object.
+    expect(gone.text).toBe(wrong.text);
+    expect(gone.text).toContain('wrong_credentials');
+    expect(gone.headers['set-cookie']).toBeUndefined();
+    expect(wrong.headers['set-cookie']).toBeUndefined();
   }, 30_000);
 
   it('logout revokes the session ROW, so a later readSession on that token is null', async () => {

@@ -50,19 +50,27 @@ export const DRIVER_SESSION_HOURS = 12;
 /**
  * Every way a driver login can be refused, and nothing else.
  *
- * `wrong_credentials` covers an unknown code AND a wrong PIN, deliberately
- * and indivisibly — the same rule §7's booking lookup follows. Two
+ * `wrong_credentials` covers an unknown code, a wrong PIN AND a deactivated
+ * driver, deliberately and indivisibly — the same rule §7's booking lookup follows. Two
  * distinguishable answers would tell an attacker which half of the pair
  * they already have, which on a portal whose codes are short and printed on
  * a van is the only half that is hard to get.
+ *
+ * **There is deliberately no `driver_inactive`** (owner decision 2026-10-16,
+ * D3). The same argument applies: a distinguishable refusal told anyone
+ * holding a list of driver codes which ones had left the company. A
+ * deactivated driver gets the same 401 with the same body and a comparable
+ * hash cost; the real reason is written to `audit_log` as
+ * `driver.login_inactive`, where only staff can read it. Do not add it back
+ * to make a screen more helpful: the screen has nothing helpful to say that
+ * would not also be said to an attacker.
  *
  * `locked` and `needs_admin_unlock` are separate because the driver's next
  * action differs: wait fifteen minutes, or ring the office. Telling someone
  * to wait when only a dispatcher can help them is how a van leaves without
  * its manifest.
  */
-export type DriverLoginRefusal =
-  'wrong_credentials' | 'locked' | 'needs_admin_unlock' | 'driver_inactive';
+export type DriverLoginRefusal = 'wrong_credentials' | 'locked' | 'needs_admin_unlock';
 
 /* ------------------------------------------------------------------ *
  * The driver's trip list (Week 6 plan, Task 2 — BUILD_SPEC §8)

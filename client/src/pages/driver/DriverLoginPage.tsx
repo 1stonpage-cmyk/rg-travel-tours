@@ -91,12 +91,6 @@ const REFUSAL_COPY: Record<DriverLoginRefusal, Refusal> = {
     tone: 'stop',
     text: 'Ask the office to reset your PIN. Only they can open this account again.',
   },
-  // As uninformative as the server's own posture allows: it says what to do
-  // without confirming anything about the account behind the code.
-  driver_inactive: {
-    tone: 'stop',
-    text: 'This code cannot sign in. Ring the office.',
-  },
 };
 
 /** The per-IP limiter in `app.ts` answers a plain 429, not a refusal. */

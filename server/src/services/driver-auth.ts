@@ -11,8 +11,11 @@
  * The order is fixed, and every line of it is load-bearing:
  *
  *   1. read the driver row FOR UPDATE by `code`
- *   2. refuse `driver_inactive` if `is_active = 0`
- *   3. `verifyPassword(pin, row.pin_hash)` — ALWAYS, even when locked
+ *   2. note `is_active = 0` — and refuse NOTHING yet (owner decision D3)
+ *   3. `verifyPassword(pin, row.pin_hash)` — ALWAYS, even when locked or
+ *      inactive
+ *   3b. if inactive: audit `driver.login_inactive`, then answer exactly as
+ *      `wrong_credentials` — before the policy, touching no counter
  *   4. `evaluatePinAttempt(state, now, pinOk)`
  *   5. persist `decision.next` onto the row, same transaction
  *   6. `writeAudit` for a lockout or an escalation, same transaction
@@ -178,16 +181,52 @@ export async function attemptDriverLogin(input: {
       return { kind: 'unknown_code' };
     }
 
-    // 2. A soft-deleted driver is refused before the policy is consulted.
-    //    Their failure counters are not touched: a driver who left the
-    //    company should not be able to lock out the code a new hire might
-    //    later be given.
-    if (!row.isActive) {
-      return { kind: 'refused', reason: 'driver_inactive' };
-    }
+    // 2. A soft-deleted driver is NOT refused here (owner decision
+    //    2026-10-16, D3). Refusing before the hash answered in ~5ms where a
+    //    wrong PIN takes ~250ms, and with its own message, so both the body
+    //    and the clock told anyone holding a list of driver codes which ones
+    //    had left the company. The flag is carried past the hash instead.
+    const inactive = !row.isActive;
 
-    // 3. ALWAYS, even when locked. See the module note.
+    // 3. ALWAYS, even when locked, and now also when inactive. See the
+    //    module note: this is the cost that makes every refusal cost the
+    //    same.
     const pinOk = await verifyPassword(input.pin, row.pinHash);
+
+    if (inactive) {
+      /*
+       * The real reason goes to `audit_log` and nowhere else: an admin
+       * reading the trail can see that a departed driver is still trying to
+       * sign in, while the person at the keypad learns only "that did not
+       * work". The answer is `wrong_credentials`, the same value the
+       * wrong-PIN path returns.
+       *
+       * The lockout counters are deliberately untouched, which is the one
+       * thing the old early return got right: a driver who left must not be
+       * able to lock out the code a new hire might later be given. So this
+       * returns BEFORE `evaluatePinAttempt` is consulted and writes no
+       * `drivers` update at all.
+       *
+       * KNOWN RESIDUAL: because an active code locks after repeated wrong
+       * PINs and an inactive one never does, a patient attacker can still
+       * tell the two apart by hammering a code until `locked` appears
+       * (bounded by the per-IP limiter, 10 attempts per 15 minutes).
+       *
+       * `pinCorrect` is recorded because "a departed driver still knows
+       * their PIN" and "someone is guessing at a departed driver's code"
+       * are different events. It is a boolean; the PIN never reaches this
+       * row.
+       */
+      await writeAudit(tx, {
+        actorType: 'driver',
+        actorId: row.id,
+        action: 'driver.login_inactive',
+        entity: 'driver',
+        entityId: row.id,
+        data: { code: row.code, pinCorrect: pinOk },
+      });
+      return { kind: 'refused', reason: 'wrong_credentials' };
+    }
 
     // 4. The policy. Nothing here re-decides any part of it.
     const decision = evaluatePinAttempt(stateFrom(row), input.now, pinOk);

@@ -48,8 +48,9 @@ import { publicProcedure, router } from '../../trpc';
  *    code from a wrong PIN here, because the service does not distinguish
  *    them either.
  *  - `FORBIDDEN` — the credential may well be right, and the account is
- *    closed to them anyway: locked for fifteen minutes, needing a
- *    dispatcher, or deactivated.
+ *    closed to them anyway: locked for fifteen minutes, or needing a
+ *    dispatcher. (A deactivated driver is NOT here: they are answered as
+ *    `wrong_credentials`, owner decision D3.)
  *
  * Deliberately NOT `TOO_MANY_REQUESTS` for `locked`: 429 is what the per-IP
  * limiter answers, and `client/src/lib/mutation-errors.ts` reads that status
@@ -62,7 +63,6 @@ function asTrpcError(reason: DriverLoginRefusal): TRPCError {
       return new TRPCError({ code: 'UNAUTHORIZED', message: reason });
     case 'locked':
     case 'needs_admin_unlock':
-    case 'driver_inactive':
       return new TRPCError({ code: 'FORBIDDEN', message: reason });
     default: {
       // Exhaustiveness: a fifth refusal with no case here fails

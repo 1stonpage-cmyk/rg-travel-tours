@@ -220,15 +220,23 @@ describe('DriverLoginPage — what a refusal is allowed to say', () => {
     expect(alert.className).toMatch(/\btext-brand-error\b/);
   });
 
-  it('gives a deactivated code its own sentence without explaining itself', async () => {
+  /*
+   * REWRITTEN (owner decision D3, 2026-10-16). This used to assert that a
+   * `driver_inactive` refusal got its own "This code cannot sign in. Ring the
+   * office." sentence. The server no longer sends that reason (a deactivated
+   * driver is answered as `wrong_credentials`), so a sentence for it would
+   * be unreachable copy that confirms an account is closed. A stale
+   * `driver_inactive` now reads as any unrecognised reason does.
+   */
+  it('has no sentence of its own for a deactivated code', async () => {
     mockTrpcError('driver.login', 'FORBIDDEN', 'driver_inactive');
     const user = userEvent.setup();
     renderLogin();
     await signIn(user);
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent(/cannot sign in/i);
-    expect(alert).toHaveTextContent(/office/i);
+    expect(alert.textContent ?? '').not.toMatch(/cannot sign in/i);
+    expect(alert).toHaveTextContent(/not answering just now/i);
   });
 
   it('says something human when the refusal carries no reason it knows', async () => {

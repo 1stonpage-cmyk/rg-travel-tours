@@ -314,9 +314,16 @@ Every page reads tours, destinations, packages, reviews, FAQs and settings from 
   walking the whole table towards a guest's phone number (RA 10173). Both halves are one
   `WHERE id = ? AND driver_id = ?`, never a check afterwards.
 - **Every login refusal's `message` IS the reason string** (`wrong_credentials`, `locked`,
-  `needs_admin_unlock`, `driver_inactive`), so the login screen matches the reason rather than
-  parsing prose. `wrong_credentials` is `401`; the other three are `403`. A per-driver lockout is
-  never `429` — that status belongs to the per-IP limiter and the client reads it as "slow down".
+  `needs_admin_unlock`), so the login screen matches the reason rather than parsing prose.
+  `wrong_credentials` is `401`; the other two are `403`. A per-driver lockout is never `429` — that
+  status belongs to the per-IP limiter and the client reads it as "slow down".
+  **A deactivated driver is `wrong_credentials` too** (owner decision 2026-10-16, D3): same 401, same
+  body byte for byte, and the PIN hash is paid on that path as on every other, so the timing says
+  nothing either. There is deliberately no `driver_inactive` reason; the real one is the
+  `driver.login_inactive` row in `audit_log`, and an inactive code's attempts touch no lockout
+  counter. **Known residual:** active codes lock after repeated wrong PINs and an inactive one never
+  does, so a patient attacker can still tell them apart by hammering until `locked` appears
+  (bounded by the per-IP limiter, 10 attempts per 15 minutes).
 - **§8's third limit is 10 `driver.login` attempts per IP per 15 minutes, and the three-lockout
   escalation needs fifteen failures — so a single IP cannot reach `requires_admin_unlock` without
   the limiter firing first** (measured 2026-10-16: HTTP 429 on the 11th attempt, with the driver
