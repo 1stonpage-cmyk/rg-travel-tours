@@ -37,7 +37,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
 import AdminDriversPage from '@/pages/admin/AdminDriversPage';
 import { TrpcProviders } from '@/lib/trpc';
-import { mockTrpc, resetTrpcMock } from './helpers/mock-trpc';
+import { mockTrpc, mockTrpcError, resetTrpcMock } from './helpers/mock-trpc';
 
 const user = userEvent.setup();
 
@@ -69,6 +69,8 @@ interface RenderOverrides {
   rating?: { average: number; count: number } | null;
   onResetPin?: (input: unknown) => void;
   onRemoveLeave?: (input: unknown) => void;
+  /** Records what `setActive` was called with. */
+  onSetActive?: (input: unknown) => void;
   leaves?: Array<{ id: number; startDate: string; endDate: string; reason: string | null }>;
   addLeaveError?: string;
 }
@@ -91,8 +93,17 @@ function renderPage(overrides: RenderOverrides = {}) {
     ...(overrides.isActive === undefined ? {} : { isActive: overrides.isActive }),
     ...(overrides.rating === undefined ? {} : { rating: overrides.rating }),
   };
+  // `list` answers from a variable `setActive` flips, as the real server
+  // does, so a test can see the page re-render what the server now says
+  // rather than what the page assumed.
+  let serverIsActive = driver.isActive;
   mockTrpc({
-    'admin.drivers.list': [driver],
+    'admin.drivers.list': () => [{ ...driver, isActive: serverIsActive }],
+    'admin.drivers.setActive': (input: unknown) => {
+      overrides.onSetActive?.(input);
+      serverIsActive = (input as { isActive: boolean }).isActive;
+      return { ok: true };
+    },
     'admin.drivers.create': () => ({ id: 2, pin: '654321' }),
     'admin.drivers.update': () => ({ ok: true }),
     'admin.drivers.addLeave': overrides.addLeaveError
@@ -240,5 +251,101 @@ describe('AdminDriversPage', () => {
     });
     await user.click(await screen.findByRole('button', { name: /remove/i }));
     expect(calls).toEqual([{ id: 42 }]);
+  });
+
+  /*
+   * Week 6.5 Task 4 (D4): deactivating a driver. The server half (sessions
+   * deleted in the same transaction) is `driver-deactivation.test.ts`; this
+   * is the screen's half: the confirm gates the call, says what it does, and
+   * the card shows what the SERVER then reports.
+   */
+  describe('deactivating a driver', () => {
+    it('asks first, says it signs the driver out, and calls nothing until confirmed', async () => {
+      const calls: unknown[] = [];
+      renderPage({ onSetActive: (v) => calls.push(v) });
+
+      await user.click(await screen.findByRole('button', { name: 'Deactivate Maria Santos' }));
+
+      const confirm = await screen.findByRole('group', {
+        name: /confirm deactivating maria santos/i,
+      });
+      expect(confirm.textContent).toMatch(/signs them out of the driver portal immediately/i);
+      expect(confirm.textContent).toMatch(/upcoming trips/i);
+      expect(calls).toEqual([]);
+    });
+
+    it('moves focus to the safe answer, so a stray Enter keeps the driver signed in', async () => {
+      renderPage();
+      await user.click(await screen.findByRole('button', { name: 'Deactivate Maria Santos' }));
+      const keep = await screen.findByRole('button', { name: /keep maria santos active/i });
+      expect(document.activeElement).toBe(keep);
+    });
+
+    it('cancelling deactivates nothing and closes the question', async () => {
+      const calls: unknown[] = [];
+      renderPage({ onSetActive: (v) => calls.push(v) });
+      await user.click(await screen.findByRole('button', { name: 'Deactivate Maria Santos' }));
+      await user.click(await screen.findByRole('button', { name: /keep maria santos active/i }));
+
+      expect(screen.queryByRole('group', { name: /confirm deactivating/i })).toBeNull();
+      expect(calls).toEqual([]);
+      expect(screen.getByText(/^active$/i)).toBeTruthy();
+    });
+
+    it('confirming sends the real id and shows the driver as off the roster', async () => {
+      const calls: unknown[] = [];
+      renderPage({ onSetActive: (v) => calls.push(v) });
+      await user.click(await screen.findByRole('button', { name: 'Deactivate Maria Santos' }));
+      await user.click(
+        await screen.findByRole('button', { name: /yes, deactivate maria santos/i }),
+      );
+
+      expect(await screen.findByText(/inactive — not on the roster/i)).toBeTruthy();
+      expect(calls).toEqual([{ id: 1, isActive: false }]);
+      expect((await screen.findByRole('status')).textContent).toMatch(
+        /maria santos is deactivated and signed out/i,
+      );
+      expect(screen.queryByRole('group', { name: /confirm deactivating/i })).toBeNull();
+    });
+
+    it('offers Reactivate (and not Deactivate) on an inactive driver, and Deactivate (not Reactivate) on an active one', async () => {
+      const inactive = renderPage({ isActive: false });
+      expect(await screen.findByRole('button', { name: 'Reactivate Maria Santos' })).toBeTruthy();
+      expect(screen.queryByRole('button', { name: /^deactivate/i })).toBeNull();
+      inactive.unmount();
+      resetTrpcMock();
+
+      renderPage();
+      expect(await screen.findByRole('button', { name: 'Deactivate Maria Santos' })).toBeTruthy();
+      expect(screen.queryByRole('button', { name: /^reactivate/i })).toBeNull();
+    });
+
+    it('reactivates in ONE tap with no question, and says they sign in again', async () => {
+      const calls: unknown[] = [];
+      renderPage({ isActive: false, onSetActive: (v) => calls.push(v) });
+      await user.click(await screen.findByRole('button', { name: 'Reactivate Maria Santos' }));
+
+      expect(await screen.findByText(/^active$/i)).toBeTruthy();
+      expect(calls).toEqual([{ id: 1, isActive: true }]);
+      expect(screen.queryByRole('group')).toBeNull();
+      expect((await screen.findByRole('status')).textContent).toMatch(
+        /sign in again with their pin/i,
+      );
+    });
+
+    it('shows the server refusal in an alert and leaves the card active', async () => {
+      renderPage();
+      mockTrpcError('admin.drivers.setActive', 'FORBIDDEN', 'You do not have access to this.');
+      await user.click(await screen.findByRole('button', { name: 'Deactivate Maria Santos' }));
+      await user.click(
+        await screen.findByRole('button', { name: /yes, deactivate maria santos/i }),
+      );
+
+      expect((await screen.findByRole('alert')).textContent).toMatch(/do not have access/i);
+      // The page did not flip the badge on its own: the server said no.
+      expect(screen.getByText(/^active$/i)).toBeTruthy();
+      expect(screen.queryByText(/inactive — not on the roster/i)).toBeNull();
+      expect(screen.queryByRole('status')).toBeNull();
+    });
   });
 });

@@ -28,6 +28,27 @@
  * colour — there is no red anywhere in this project, and a reset is a
  * correction a dispatcher makes routinely, not a one-way deletion.
  *
+ * ## Deactivating a driver (Week 6.5, D4)
+ *
+ * "Deactivate" signs the driver out of the driver portal on the spot
+ * (`admin.drivers.setActive` deletes their sessions in the same transaction
+ * as the write), so it gets the same inline two-step confirm as the PIN
+ * reset — still no modal — and the confirm says plainly what it does,
+ * because a dispatcher who taps it mid-shift has just cut someone off from
+ * the job in their hand. Focus moves to Cancel when the confirm opens, so
+ * a stray Enter keeps the driver signed in: the safe answer is the default
+ * one. The confirm is amber, never red.
+ *
+ * "Reactivate" has NO confirm: it is the undo, it signs nobody out and
+ * restores nothing but the roster, and putting a question in front of the
+ * correction would make the mistake harder to fix than to make. The driver
+ * signs in again with their PIN; their old sessions stay gone.
+ *
+ * The server's answer is the source of truth for the badge: the page
+ * invalidates `list` and renders what comes back, so a refused call
+ * (finance, an expired session) leaves the card exactly as it was and shows
+ * the reason in an amber banner rather than flipping optimistically.
+ *
  * ## Leaves — now a real, server-sourced list (fix round 1, 2026-10-14)
  *
  * The first version of this page could not fetch a driver's leaves at all
@@ -58,8 +79,7 @@
  * nowhere else; there is no public or portal surface that renders any of
  * it.
  */
-import { useState } from 'react';
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { TRPCClientError } from '@trpc/client';
@@ -354,6 +374,11 @@ export default function AdminDriversPage() {
     pin: string;
   } | null>(null);
   const [confirmResetId, setConfirmResetId] = useState<number | null>(null);
+  const [confirmDeactivateId, setConfirmDeactivateId] = useState<number | null>(null);
+  const [activeBanner, setActiveBanner] = useState<string | null>(null);
+  const [activeNotice, setActiveNotice] = useState<string | null>(null);
+  /** The confirm's Cancel button, so opening the confirm can put focus on the safe answer. */
+  const cancelDeactivateRef = useRef<HTMLButtonElement | null>(null);
 
   const [leaveForms, setLeaveForms] = useState<Record<number, LeaveFormState>>({});
   const [removeLeaveBanner, setRemoveLeaveBanner] = useState<string | null>(null);
@@ -365,7 +390,12 @@ export default function AdminDriversPage() {
   useEffect(() => {
     setPinPanel(null);
     setConfirmResetId(null);
+    setConfirmDeactivateId(null);
   }, [location.pathname]);
+
+  useEffect(() => {
+    if (confirmDeactivateId !== null) cancelDeactivateRef.current?.focus();
+  }, [confirmDeactivateId]);
 
   function leaveFormFor(driverId: number): LeaveFormState {
     return leaveForms[driverId] ?? freshLeaveFormState();
@@ -414,6 +444,29 @@ export default function AdminDriversPage() {
       const driver = (list.data ?? []).find((candidate) => candidate.id === variables.id);
       setPinPanel({ kind: 'reset', name: driver?.name ?? 'this driver', pin: data.pin });
       setConfirmResetId(null);
+    },
+  });
+
+  const setActive = trpc.admin.drivers.setActive.useMutation({
+    onMutate: () => {
+      setActiveBanner(null);
+      setActiveNotice(null);
+    },
+    onSuccess: (_data, variables) => {
+      const driver = (list.data ?? []).find((candidate) => candidate.id === variables.id);
+      const name = driver?.name ?? 'This driver';
+      setPinPanel(null);
+      setConfirmDeactivateId(null);
+      setActiveNotice(
+        variables.isActive
+          ? `${name} is back on the roster. They sign in again with their PIN.`
+          : `${name} is deactivated and signed out of the driver portal.`,
+      );
+      void utils.admin.drivers.list.invalidate();
+    },
+    onError: (error) => {
+      setConfirmDeactivateId(null);
+      setActiveBanner(errorMessage(error, 'Could not change this driver. Nothing was changed.'));
     },
   });
 
@@ -574,6 +627,24 @@ export default function AdminDriversPage() {
         </div>
       ) : null}
 
+      {activeNotice ? (
+        <p
+          role="status"
+          className="border-brand-blue-200 bg-brand-blue-50 text-brand-blue-900 mt-6 rounded-lg border p-3 text-sm font-medium"
+        >
+          {activeNotice}
+        </p>
+      ) : null}
+
+      {activeBanner ? (
+        <p
+          role="alert"
+          className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 mt-6 rounded-lg border p-3 text-sm font-medium"
+        >
+          {activeBanner}
+        </p>
+      ) : null}
+
       <Card className="mt-6">
         <CardHeader>
           <CardTitle className="text-brand-blue-900 text-base">Add a driver</CardTitle>
@@ -683,6 +754,7 @@ export default function AdminDriversPage() {
             const leaveMutationPending =
               addLeave.isPending && addLeave.variables?.driverId === driver.id;
             const resettingThisDriver = resetPin.isPending && resetPin.variables?.id === driver.id;
+            const changingThisDriver = setActive.isPending && setActive.variables?.id === driver.id;
 
             return (
               <li key={driver.id}>
@@ -753,7 +825,74 @@ export default function AdminDriversPage() {
                           Reset PIN
                         </Button>
                       )}
+
+                      {driver.isActive ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="tap-target"
+                          disabled={setActive.isPending}
+                          aria-label={`Deactivate ${driver.name}`}
+                          onClick={() => {
+                            setActiveNotice(null);
+                            setConfirmDeactivateId(driver.id);
+                          }}
+                        >
+                          Deactivate
+                        </Button>
+                      ) : (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="tap-target"
+                          disabled={setActive.isPending}
+                          aria-label={`Reactivate ${driver.name}`}
+                          onClick={() => setActive.mutate({ id: driver.id, isActive: true })}
+                        >
+                          {changingThisDriver ? 'Reactivating…' : 'Reactivate'}
+                        </Button>
+                      )}
                     </div>
+
+                    {confirmDeactivateId === driver.id && driver.isActive ? (
+                      <div
+                        role="group"
+                        aria-label={`Confirm deactivating ${driver.name}`}
+                        className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 mt-3 rounded-lg border p-3 text-sm"
+                      >
+                        <p className="font-medium">
+                          Deactivate {driver.name}? This signs them out of the driver portal
+                          immediately, and takes them off the roster. Their upcoming trips will show
+                          as needing a driver.
+                        </p>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="tap-target"
+                            disabled={setActive.isPending}
+                            onClick={() => setActive.mutate({ id: driver.id, isActive: false })}
+                          >
+                            {changingThisDriver
+                              ? 'Deactivating…'
+                              : `Yes, deactivate ${driver.name}`}
+                          </Button>
+                          <Button
+                            ref={cancelDeactivateRef}
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="tap-target"
+                            disabled={setActive.isPending}
+                            onClick={() => setConfirmDeactivateId(null)}
+                          >
+                            Keep {driver.name} active
+                          </Button>
+                        </div>
+                      </div>
+                    ) : null}
 
                     <div className="mt-5 border-t pt-4">
                       <h3 className="text-brand-blue-900 text-sm font-semibold">Leave</h3>
