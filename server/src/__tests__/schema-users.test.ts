@@ -40,7 +40,13 @@ describe('admin roles', () => {
 describe('users table', () => {
   it('stores only a password hash — no column can hold a plaintext password', () => {
     expect(columnNames).toContain('password_hash');
-    expect(columnNames.filter((n) => /password|passwd|pin/i.test(n))).toEqual(['password_hash']);
+    // `must_change_password` is the forced-change FLAG (staff accounts,
+    // 2026-10-23): a boolean, so it cannot hold a password. Named here so a
+    // second password-ish column still fails this test.
+    expect(
+      columnNames.filter((n) => /password|passwd|pin/i.test(n) && n !== 'must_change_password'),
+    ).toEqual(['password_hash']);
+    expect(column('must_change_password')?.dataType).toBe('boolean');
   });
 
   it('constrains role to the shared ADMIN_ROLES, so there is one source of truth', () => {
