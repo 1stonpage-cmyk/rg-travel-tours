@@ -31,6 +31,7 @@ import { getDb, getPool } from '../db/client';
 import { auditLog, drivers, sessions, users } from '../db/schema';
 import * as auditService from '../services/audit';
 import { hashPassword } from '../services/password';
+import * as sessionsService from '../services/sessions';
 import { createSession, readSession, revokeSessionsForSubject } from '../services/sessions';
 import { staffContext } from './helpers/ctx';
 import { describeWithDb } from './helpers/db';
@@ -235,6 +236,26 @@ describeWithDb('deactivating a driver ends their sessions', () => {
       await expect(
         ownerApi().admin.drivers.setActive({ id: driverId, isActive: false }),
       ).rejects.toThrow('audit down');
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(await isActive(driverId)).toBe(true);
+    expect(await readSession(session.token, NOW)).not.toBeNull();
+    expect(await auditRowsFor(driverId)).toEqual([]);
+  }, 30_000);
+
+  it('revokes in the SAME transaction: a failing revoke leaves the driver ACTIVE (router level)', async () => {
+    const { driverId } = await makeDriverWithPin();
+    const session = await createSession('driver', driverId, NOW);
+
+    const spy = vi
+      .spyOn(sessionsService, 'revokeSessionsForSubject')
+      .mockRejectedValueOnce(new Error('revoke down'));
+    try {
+      await expect(
+        ownerApi().admin.drivers.setActive({ id: driverId, isActive: false }),
+      ).rejects.toThrow('revoke down');
     } finally {
       spy.mockRestore();
     }
