@@ -14,11 +14,10 @@
  * `ER_DUP_ENTRY` goes unrecognised falls through to `recordPayment()` and
  * double-pays a booking.
  *
- * NOTE: `services/booking-ref.ts` and `routers/public/newsletter.ts` each
- * carry a private copy of this predicate, written before there was a shared
- * home for it. This module is that home; folding those two into it is a
- * small refactor of two paths outside Task 15's scope, so it is reported as
- * a follow-up rather than done here. Do not add a fourth copy.
+ * This is the ONLY implementation. `services/booking-ref.ts` and
+ * `routers/public/newsletter.ts` used to carry private copies; they now import
+ * this one, and `__tests__/duplicate-key.test.ts` fails if a second appears.
+ * Do not add another.
  */
 
 /**

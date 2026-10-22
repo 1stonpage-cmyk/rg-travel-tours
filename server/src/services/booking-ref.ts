@@ -13,6 +13,7 @@ import { randomInt } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { bookings } from '../db/schema';
 import type { Transaction } from '../db/client';
+import { isDuplicateKeyError } from '../db/duplicate-key';
 
 /**
  * The 30 characters a ref may contain, chosen so it survives being read
@@ -30,40 +31,6 @@ const REF_LENGTH = 6;
 
 /** Attempts before `insertBookingWithRef` refuses rather than loops. */
 const MAX_REF_ATTEMPTS = 5;
-
-/**
- * How many `.cause` links to walk looking for the MySQL error code.
- *
- * mysql2 puts `code: 'ER_DUP_ENTRY'` on the error it throws, but Drizzle
- * wraps that in its own `DrizzleQueryError` and moves the original onto
- * `.cause` — so reading `error.code` one level up finds `undefined` and the
- * retry below would never fire. That is not hypothetical: the gated test
- * `retries when the generated ref is already taken` failed exactly this way
- * before the walk was added.
- *
- * A bounded chain rather than one fixed level, for the same reason
- * `server/src/routers/public/newsletter.ts` walks one: the wrapping depth
- * has already changed once in this codebase's lifetime, and a bound stops a
- * cyclic `.cause` from looping forever.
- */
-const MAX_CAUSE_DEPTH = 5;
-
-/**
- * True for a MySQL duplicate-key error anywhere in the first
- * {@link MAX_CAUSE_DEPTH} links of `err`'s cause chain.
- *
- * Narrowed by hand rather than `instanceof`: neither mysql2 nor Drizzle
- * exports a class for this, only a `.code`-decorated `Error`.
- */
-function isDuplicateEntryError(err: unknown): boolean {
-  let current: unknown = err;
-  for (let depth = 0; depth < MAX_CAUSE_DEPTH && current != null; depth += 1) {
-    if (typeof current !== 'object') break;
-    if ((current as { code?: unknown }).code === 'ER_DUP_ENTRY') return true;
-    current = (current as { cause?: unknown }).cause;
-  }
-  return false;
-}
 
 /**
  * `RG-` plus six characters from {@link REF_ALPHABET}: `RG-7KQ4M9`.
@@ -122,10 +89,11 @@ export async function insertBookingWithRef(
       if (!row) throw new Error(`Booking ${ref} vanished between insert and read-back.`);
       return { id: row.id, ref };
     } catch (error) {
-      // Only a ref collision is retryable. Anything else — a bad FK, a
+      // Only a ref collision is retryable (`isDuplicateKeyError` walks Drizzle's
+      // `.cause` wrapping; see `db/duplicate-key.ts`). Anything else — a bad FK, a
       // missing column, a dead connection — is rethrown untouched, so a
       // real fault cannot hide inside five silent retries.
-      if (!isDuplicateEntryError(error)) throw error;
+      if (!isDuplicateKeyError(error)) throw error;
     }
   }
   throw new Error(
