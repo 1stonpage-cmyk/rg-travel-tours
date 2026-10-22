@@ -135,6 +135,17 @@ export interface SeedTourImage {
   sortOrder: number;
 }
 
+/**
+ * One stop on a tour's route, in the order the van reaches it. `sortOrder` is
+ * 1-based and contiguous within a tour; `description` is `null` unless it
+ * tells a driver something the name does not.
+ */
+export interface SeedItineraryStop {
+  sortOrder: number;
+  name: string;
+  description: string | null;
+}
+
 export interface SeedTour {
   slug: string;
   title: string;
@@ -163,6 +174,8 @@ export interface SeedTour {
   freeCancelHours: number | null;
   priceTiers: SeedPriceTier[];
   images: SeedTourImage[];
+  /** Written to `rg_travel` only; the test database ships none. See `SEED_TOURS`. */
+  stops: SeedItineraryStop[];
 }
 
 /** Ruling 1: lowest tier equals `base` exactly — the displayed "from" price. */
@@ -179,6 +192,23 @@ function singleImage(slug: string, alt: string): SeedTourImage[] {
   return [{ path: placeholderImage(slug), alt, width: 1200, height: 800, sortOrder: 0 }];
 }
 
+/*
+ * ITINERARY STOPS (Week 6.5, Task 11 / C4) are APP-DATABASE ONLY: `seed.ts`
+ * writes them for `rg_travel` and never for `rg_travel_test`, whose suites
+ * count stops to decide how far a trip has got.
+ *
+ * They are real Cebu and Bohol places in the order a van reaches them, so a
+ * driver's itinerary screen and the departures board have something to show on
+ * a fresh clone. They are still SEED CONTENT: `settings.content_unverified`
+ * is set and the production build is still gated by
+ * `client/scripts/check-placeholders.mjs`, so none of this publishes. Whoever
+ * replaces the seed content with the operator's real routes replaces these
+ * too, and the operator's dispatcher, not this file, is the authority on stop
+ * order and timing.
+ *
+ * No stop carries a permit, accreditation or price; a place name is not an
+ * accreditation number and none is invented here.
+ */
 export const SEED_TOURS: SeedTour[] = [
   {
     slug: 'oslob-whale-shark-tumalog-falls',
@@ -193,6 +223,19 @@ export const SEED_TOURS: SeedTour[] = [
       'oslob',
       'Placeholder image for the Oslob whale shark and Tumalog Falls day tour',
     ),
+    stops: [
+      {
+        sortOrder: 1,
+        name: 'Oslob whale shark watching, Tan-awan',
+        description: 'Registration and the briefing come before anyone enters the water.',
+      },
+      { sortOrder: 2, name: 'Tumalog Falls, Barangay Tumalog', description: null },
+      {
+        sortOrder: 3,
+        name: 'Simala Shrine, Sibonga',
+        description: 'Last stop of the day, on the way back north.',
+      },
+    ],
   },
   {
     slug: 'kawasan-falls-canyoneering',
@@ -207,6 +250,19 @@ export const SEED_TOURS: SeedTour[] = [
       'badian-kawasan',
       'Placeholder image for the Kawasan Falls canyoneering day tour',
     ),
+    stops: [
+      {
+        sortOrder: 1,
+        name: 'Badian canyoneering jump-off, Matutinao',
+        description: 'Gear fitting and the guide briefing happen here.',
+      },
+      { sortOrder: 2, name: 'Kawasan Falls, Matutinao', description: null },
+      {
+        sortOrder: 3,
+        name: 'Carcar chicharon stop, Carcar City',
+        description: 'Short food stop on the way home.',
+      },
+    ],
   },
   {
     slug: 'moalboal-sardine-run-turtles',
@@ -221,6 +277,20 @@ export const SEED_TOURS: SeedTour[] = [
       'moalboal',
       'Placeholder image for the Moalboal sardine run and sea turtle snorkelling tour',
     ),
+    stops: [
+      {
+        sortOrder: 1,
+        name: 'Panagsama Beach, Moalboal',
+        description: 'Sardines and sea turtles are both snorkelled straight off this beach.',
+      },
+      { sortOrder: 2, name: 'Pescador Island, Moalboal', description: null },
+      { sortOrder: 3, name: 'Basdiot White Beach, Moalboal', description: null },
+      {
+        sortOrder: 4,
+        name: 'Carcar chicharon stop, Carcar City',
+        description: 'Short food stop on the way home.',
+      },
+    ],
   },
   {
     slug: 'mactan-island-hopping',
@@ -236,6 +306,20 @@ export const SEED_TOURS: SeedTour[] = [
       'mactan',
       'Placeholder image for the Mactan island hopping and snorkelling tour',
     ),
+    stops: [
+      {
+        sortOrder: 1,
+        name: 'Mactan boat landing, Cordova',
+        description: 'Boat briefing and life jackets before departure.',
+      },
+      { sortOrder: 2, name: 'Hilutungan Island marine sanctuary', description: null },
+      { sortOrder: 3, name: 'Nalusuan Island marine sanctuary', description: null },
+      {
+        sortOrder: 4,
+        name: 'Mactan Shrine, Punta Engaño',
+        description: 'Heritage stop at the end, once the boat is back.',
+      },
+    ],
   },
   {
     slug: 'cebu-city-heritage-tour',
@@ -250,6 +334,25 @@ export const SEED_TOURS: SeedTour[] = [
       'cebu-city',
       'Placeholder image for the Cebu City heritage and temple tour',
     ),
+    stops: [
+      { sortOrder: 1, name: 'Basilica Minore del Santo Niño', description: null },
+      {
+        sortOrder: 2,
+        name: "Magellan's Cross",
+        description: 'Next door to the Basilica; guests walk across, no second drop-off needed.',
+      },
+      { sortOrder: 3, name: 'Fort San Pedro', description: null },
+      {
+        sortOrder: 4,
+        name: 'Taoist Temple, Beverly Hills',
+        description: 'Uphill from the city; the road narrows near the top.',
+      },
+      {
+        sortOrder: 5,
+        name: 'Temple of Leah, Busay',
+        description: 'Steep, narrow hill road; allow extra time for the climb.',
+      },
+    ],
   },
   {
     slug: 'bohol-countryside-chocolate-hills',
@@ -264,6 +367,21 @@ export const SEED_TOURS: SeedTour[] = [
       'bohol',
       'Placeholder image for the Bohol countryside and Chocolate Hills tour',
     ),
+    stops: [
+      { sortOrder: 1, name: 'Baclayon Church, Baclayon', description: null },
+      {
+        sortOrder: 2,
+        name: 'Tarsier sanctuary, Corella',
+        description: 'Quiet voices and no flash photography.',
+      },
+      { sortOrder: 3, name: 'Loboc River cruise and lunch', description: null },
+      { sortOrder: 4, name: 'Man-made forest, Bilar', description: null },
+      {
+        sortOrder: 5,
+        name: 'Chocolate Hills complex, Carmen',
+        description: 'Last stop before the drive back to Tagbilaran.',
+      },
+    ],
   },
 ];
 

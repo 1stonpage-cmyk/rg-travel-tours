@@ -9,7 +9,8 @@
  * destinations/tours/packages, `key` for settings, `name` + `tourId` for
  * reviews). A tour's price tiers and images have no natural key of their
  * own, so they are replaced wholesale for that tour on every run — same
- * fixed set in, same fixed set out, never duplicated.
+ * fixed set in, same fixed set out, never duplicated. Itinerary stops follow
+ * the same rule but are app-database only (`upsertItineraryStops`).
  *
  * `assertDatabaseName` + `assertConnectedDatabase` run first (CLAUDE.md:
  * this project may only ever touch `rg_travel` for the app, `rg_travel_test`
@@ -461,6 +462,53 @@ async function upsertFleet(db: Db, tourIdBySlug: Map<string, number>): Promise<v
   );
 }
 
+/**
+ * Each tour's itinerary stops, in van order — **APP DATABASE ONLY** (owner
+ * decision 2026-10-16, C4). Called from `seed()` beside `upsertFleet`, never
+ * from `upsertTour`, so the gate is visible in one place.
+ *
+ * `rg_travel_test` keeps a narrower baseline on purpose: suites count
+ * checkpoints and stops to decide how far a trip has progressed
+ * (`tripProgress`, `checkins.ts`), and seed content those suites did not
+ * create would change their answers.
+ *
+ * What this fixes is the fresh clone: `db:seed` shipped zero stops, so the
+ * driver's itinerary screen showed "Start trip" and nothing else and the
+ * departures board read 0/1 for every trip. 6C was built and tested all
+ * along; it was simply undemonstrable.
+ *
+ * Like a tour's price tiers and images, stops have no natural key, so a
+ * tour's set is replaced wholesale: delete, then insert. `tour_id` carries no
+ * foreign key, so a slug that is not a seeded tour throws rather than writing
+ * stops against an id nobody can trace back.
+ */
+export async function upsertItineraryStops(
+  db: Db,
+  tourIdBySlug: Map<string, number>,
+): Promise<void> {
+  let written = 0;
+  for (const [slug, tourId] of tourIdBySlug) {
+    const tour = SEED_TOURS.find((t) => t.slug === slug);
+    if (tour === undefined) {
+      throw new Error(`seed: itinerary stops requested for unknown tour "${slug}"`);
+    }
+
+    await db.delete(schema.tourItineraryStops).where(eq(schema.tourItineraryStops.tourId, tourId));
+    if (tour.stops.length > 0) {
+      await db.insert(schema.tourItineraryStops).values(
+        tour.stops.map((stop) => ({
+          tourId,
+          sortOrder: stop.sortOrder,
+          name: stop.name,
+          description: stop.description,
+        })),
+      );
+    }
+    written += tour.stops.length;
+  }
+  console.log(`[seed] itinerary stops: ${written} across ${tourIdBySlug.size} tours`);
+}
+
 export async function seed(context: DatabaseContext = 'app'): Promise<void> {
   const url = context === 'test' ? env.TEST_DATABASE_URL : env.DATABASE_URL;
   if (!url) {
@@ -522,6 +570,24 @@ export async function seed(context: DatabaseContext = 'app'): Promise<void> {
     await upsertFleet(db, tourIdBySlug);
   } else {
     console.log('[seed] fleet: skipped (test database keeps an empty fleet by design)');
+  }
+
+  /*
+   * Itinerary stops are APP-ONLY, like the fleet (owner decision
+   * 2026-10-16, C4). `rg_travel_test` keeps a narrower baseline on
+   * purpose: suites count checkpoints and stops to decide how far a trip
+   * has progressed (`tripProgress`, `checkins.ts`), and seed content
+   * those suites did not create would change their answers.
+   *
+   * What this fixes is the fresh clone: `db:seed` shipped zero stops, so
+   * the driver's itinerary screen showed "Start trip" and nothing else
+   * and the departures board read 0/1 for every trip. 6C was built and
+   * tested all along; it was simply undemonstrable.
+   */
+  if (context === 'app') {
+    await upsertItineraryStops(db, tourIdBySlug);
+  } else {
+    console.log('[seed] itinerary stops: skipped (test database ships none by design)');
   }
 
   console.log('[seed] done.');

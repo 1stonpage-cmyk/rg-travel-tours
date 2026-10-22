@@ -152,3 +152,46 @@ describe('legal placeholders open with the required TODO blockquote', () => {
     expect(SEED_SETTINGS[key].markdown.startsWith('> **TODO: client legal review.**')).toBe(true);
   });
 });
+
+describe('seeded itinerary stops (C4)', () => {
+  it('gives every tour at least three stops', () => {
+    for (const tour of SEED_TOURS) {
+      expect(tour.stops.length, tour.slug).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it('gives no tour more than five stops', () => {
+    for (const tour of SEED_TOURS) {
+      expect(tour.stops.length, tour.slug).toBeLessThanOrEqual(5);
+    }
+  });
+
+  it("numbers each tour's stops 1..n, contiguous and unique", () => {
+    for (const tour of SEED_TOURS) {
+      const orders = tour.stops.map((s) => s.sortOrder).sort((a, b) => a - b);
+      expect(orders, tour.slug).toEqual(Array.from({ length: orders.length }, (_, i) => i + 1));
+    }
+  });
+
+  it('names real places, not filler', () => {
+    for (const tour of SEED_TOURS) {
+      for (const stop of tour.stops) {
+        expect(stop.name.length).toBeGreaterThan(3);
+        expect(stop.name).not.toMatch(/placeholder|lorem|TBD|stop \d/i);
+      }
+    }
+  });
+
+  it('never lets a description merely restate its stop name', () => {
+    for (const tour of SEED_TOURS) {
+      for (const stop of tour.stops) {
+        if (stop.description !== null) {
+          expect(stop.description.trim().toLowerCase(), tour.slug).not.toBe(
+            stop.name.trim().toLowerCase(),
+          );
+          expect(stop.description.trim().length, tour.slug).toBeGreaterThan(0);
+        }
+      }
+    }
+  });
+});

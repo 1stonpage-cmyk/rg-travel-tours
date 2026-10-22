@@ -1067,10 +1067,9 @@ real HTTP with real session cookies, the eleventh (the 360px browser) driven sep
 - **No reject path for a driver's cash claim.** A `pending` cash row can be approved; it cannot be
   refused. A claim for money that never arrives sits `pending` and blocks that driver from
   re-recording. Owner decision 2 in the walkthrough.
-- **The seed ships no `tour_itinerary_stops`.** All six seeded tours have zero, so on a fresh clone
-  the driver's itinerary screen is "Start trip" and nothing else and the departures board reads
-  `0/1`. 6C is complete; it is simply undemonstrable against seed content, and 7F's editing screens
-  do not cover itinerary stops either.
+- **The seed shipped no `tour_itinerary_stops`.** Resolved in Week 6.5 Task 11: the dev seed now
+  ships three to five stops per tour, so 6C is demonstrable on a fresh clone (the test database
+  still ships none, on purpose). 7F's editing screens still do not cover itinerary stops.
 
 **The browser is the gap, as it was in Week 5, and for a driver portal that matters more.** Every
 walkthrough step but one went through HTTP and the database. jsdom does no layout, so 360px,
@@ -1139,10 +1138,12 @@ exists (it is part of 2B), but no submission, moderation, admin or export side o
 > 5. **The gateway wire check** remains blocked on the PayMongo account. `provider.refund()` has
 >    only ever run against the mock, and **no real payment and no real refund has ever been
 >    issued.** The same blocking pre-launch item `LAUNCH_CHECKLIST.md` carries.
-> 6. **`db:seed` ships ZERO `tour_itinerary_stops` — across all six tours.** So on a fresh clone 6C's
->    check-ins cannot be demonstrated at all: the driver's itinerary screen is "Start trip" and
->    nothing else, and the departures board reads `0/1` for every trip. The next person hits this in
->    their first ten minutes and has no way to tell a missing feature from missing content.
+> 6. **`db:seed` ships ZERO `tour_itinerary_stops` — across all six tours.**
+>    **Resolved in Week 6.5 Task 11:** the dev seed (not the test database) now ships three to five
+>    stops per tour. As found, on a fresh clone 6C's check-ins could not be demonstrated at all: the
+>    driver's itinerary screen is "Start trip" and nothing else, and the departures board reads `0/1`
+>    for every trip. The next person hits this in their first ten minutes and has no way to tell a
+>    missing feature from missing content.
 >    Deliberately **not** fixed as Week 6 closed: changing shared seed content touches
 >    `seed-parity.test.ts` and anything that assumes an empty `tour_itinerary_stops`, and it is
 >    outside 6A–6F. Whoever does it should add stops to at least one tour and check what the fleet
