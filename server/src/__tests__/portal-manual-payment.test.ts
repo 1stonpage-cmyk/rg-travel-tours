@@ -439,6 +439,32 @@ describeWithDb('GET /api/payment-qr', () => {
     await removeImage(CONFIGURED.imagePath);
   });
 
+  /**
+   * A staff member who still owes a password change has not finished
+   * signing in, so they are not shown the QR either (staff accounts,
+   * 2026-10-23). This route answers 404 for several other reasons, so the
+   * refusal is only meaningful next to the 200 for the same person once the
+   * flag is cleared, with everything else held still.
+   */
+  it('REFUSES staff who still owe a password change, then serves the QR once cleared', async () => {
+    storedQr = await readQrRow();
+    await writeQrRow(CONFIGURED);
+    await putImage(CONFIGURED.imagePath);
+    const staffId = await makeStaff();
+    const { token } = await createSession('user', staffId, new Date());
+    const get = () =>
+      request(createApp()).get('/api/payment-qr').set('Cookie', `${SESSION_COOKIE}=${token}`);
+
+    await getPool().query('UPDATE users SET must_change_password = 1 WHERE id = ?', [staffId]);
+    const owing = await get();
+    expect(owing.status, 'a staff session that owes a new password was served the QR').toBe(404);
+
+    await getPool().query('UPDATE users SET must_change_password = 0 WHERE id = ?', [staffId]);
+    expect((await get()).status).toBe(200);
+
+    await removeImage(CONFIGURED.imagePath);
+  });
+
   /** Nothing is configured, so there is nothing to serve — and no hint either. */
   it('REFUSES while payment_qr is unconfigured, even to a signed-in guest', async () => {
     const mine = await makeBooking();

@@ -170,6 +170,30 @@ describeWithDb('GET /api/receipts/:name', () => {
   });
 
   /**
+   * A staff member who still owes a password change has not finished
+   * signing in (staff accounts, 2026-10-23): every admin procedure refuses
+   * them, and this route must not be the side door. 404, the same answer as
+   * every other refusal here. The 200 for the same person once the flag is
+   * cleared is what proves the 404 came from the flag and not from some other
+   * reason the request was turned away.
+   */
+  it('REFUSES a staff session that still owes a password change, then serves it once cleared', async () => {
+    const { path } = await makeBookingWithReceipt();
+    const staffId = await makeStaff();
+    const { token } = await createSession('user', staffId, new Date());
+    const get = () =>
+      request(createApp()).get(`/api/receipts/${path}`).set('Cookie', cookie(token));
+
+    await getPool().query('UPDATE users SET must_change_password = 1 WHERE id = ?', [staffId]);
+    const owing = await get();
+    expect(owing.status, 'a staff session that owes a new password was served a receipt').toBe(404);
+    expect(owing.body).toEqual({ error: 'Not found' });
+
+    await getPool().query('UPDATE users SET must_change_password = 0 WHERE id = ?', [staffId]);
+    expect((await get()).status).toBe(200);
+  });
+
+  /**
    * **The central property.** Four different reasons to refuse, one
    * indistinguishable answer. Asserted by deep equality across all four
    * responses, not one at a time — a test that checked each separately

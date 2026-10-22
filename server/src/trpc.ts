@@ -333,7 +333,7 @@ export function adminProcedure(area: AdminArea) {
  * the must-change refusal. For `staffAuth.me` (the client asks it whether a
  * change is owed) and `staffAuth.changePassword` (the way out of the state).
  * `logout` is public and needs neither. Anything else added here lets a
- * temporary password do real work, so `staff-must-change.test.ts` pins the
+ * temporary password do real work, so `staff-must-change-gate.test.ts` pins the
  * exact list.
  */
 export function adminProcedureAllowingPasswordChange(area: AdminArea) {
