@@ -65,7 +65,7 @@ function asTrpcError(reason: DriverLoginRefusal): TRPCError {
     case 'needs_admin_unlock':
       return new TRPCError({ code: 'FORBIDDEN', message: reason });
     default: {
-      // Exhaustiveness: a fifth refusal with no case here fails
+      // Exhaustiveness: a fourth refusal with no case here fails
       // `pnpm typecheck` instead of surfacing as an unexplained 500.
       const unreachable: never = reason;
       throw new Error(`Unhandled DriverLoginRefusal: ${String(unreachable)}`);
