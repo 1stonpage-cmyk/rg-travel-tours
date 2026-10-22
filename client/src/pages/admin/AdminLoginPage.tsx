@@ -36,6 +36,7 @@
  * are Tailwind's own utilities only.
  */
 import { useState, type FormEvent } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { Eye, EyeOff, Loader2, Lock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -48,13 +49,17 @@ const ERROR_ID = 'staff-login-error';
 
 export default function AdminLoginPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [revealed, setRevealed] = useState(false);
 
   const login = trpc.staffAuth.login.useMutation({
-    onSuccess: (result) =>
-      navigate(result.mustChangePassword ? '/admin/change-password' : '/admin', { replace: true }),
+    onSuccess: (result) => {
+      // Whatever the last person on this tab left cached is not this person's.
+      queryClient.clear();
+      navigate(result.mustChangePassword ? '/admin/change-password' : '/admin', { replace: true });
+    },
   });
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {

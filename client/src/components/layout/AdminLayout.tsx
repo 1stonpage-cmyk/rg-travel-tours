@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { LogOut } from 'lucide-react';
 import { Link, Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { trpc } from '@/lib/trpc';
@@ -59,9 +60,14 @@ function roleLabel(role: string): string {
  */
 function StaffIdentity() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const me = trpc.staffAuth.me.useQuery(undefined, { retry: false });
   const logout = trpc.staffAuth.logout.useMutation({
-    onSuccess: () => navigate('/admin/login', { replace: true }),
+    onSuccess: () => {
+      // The next person at this screen must not see this person's cached identity.
+      queryClient.clear();
+      navigate('/admin/login', { replace: true });
+    },
   });
 
   return (
