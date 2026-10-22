@@ -64,7 +64,8 @@ on Windows fails `pnpm format:check` on every text file (BUG-099). Do not relax 
   src/components | src/lib
 /server   Express + tRPC
   src/routers | services | db | seo | content | middleware   (built)
-  src/jobs | webhooks                                        (Week 3+, not yet created)
+  src/jobs                                                   (built: expire-holds, orphaned-vans, prune-sessions)
+  src/routers/webhooks                                       (built)
 /shared   Zod schemas, types, constants
 /uploads  OUTSIDE the web root; receipts served via an authenticated route
 /docs     BUILD_SPEC.md and superpowers plans

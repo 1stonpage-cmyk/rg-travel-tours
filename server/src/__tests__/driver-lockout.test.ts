@@ -18,7 +18,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import express from 'express';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -489,7 +489,9 @@ describeWithDb('the escalation is reachable across IPs, and only across IPs (C7)
   // driver also discards the five lockout columns, which is the reset.
   afterEach(async () => {
     if (driverId === 0) return;
-    await getDb().delete(auditLog).where(eq(auditLog.entityId, driverId));
+    await getDb()
+      .delete(auditLog)
+      .where(and(eq(auditLog.entity, 'driver'), eq(auditLog.entityId, driverId)));
     await getDb().delete(drivers).where(eq(drivers.id, driverId));
     driverId = 0;
   });

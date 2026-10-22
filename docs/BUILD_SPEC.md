@@ -1062,11 +1062,13 @@ real HTTP with real session cookies, the eleventh (the 360px browser) driven sep
 - **The live gateway check.** `provider.refund()` has only ever run against the mock. **No real
   payment and no real refund has ever been issued** — blocked on the PayMongo account, the same item
   `LAUNCH_CHECKLIST.md` carries.
-- **No sweep for a van left `on_trip` by a trip nobody completed.** Declared in full in Week 7's
-  preamble below, and pinned by the last test in `trip-van-status.test.ts`.
-- **No reject path for a driver's cash claim.** A `pending` cash row can be approved; it cannot be
-  refused. A claim for money that never arrives sits `pending` and blocks that driver from
-  re-recording. Owner decision 2 in the walkthrough.
+- **No sweep for a van left `on_trip` by a trip nobody completed — by decision.** Resolved in Week 6.5
+  Task 5 (owner-decided D5): the van is made visible (a sixth dashboard alert and a daily 07:00
+  Asia/Manila log line) and never auto-freed. Pinned by the last test in `trip-van-status.test.ts`
+  and by `orphaned-vans.test.ts`.
+- **A driver's cash claim can be refused.** Resolved in Week 6.5 Task 2 (owner-decided D2):
+  `admin.bookings.rejectCash` under `verifyPayments`. The refused row is kept as `rejected`, moves no
+  money, and returns the driver's box to `collect_cash`.
 - **The seed shipped no `tour_itinerary_stops`.** Resolved in Week 6.5 Task 11: the dev seed now
   ships three to five stops per tour, so 6C is demonstrable on a fresh clone (the test database
   still ships none, on purpose). 7F's editing screens still do not cover itinerary stops.
@@ -1088,28 +1090,20 @@ driven separately for exactly that reason.
 Nothing in this week is built. Public _display_ of reviews, packages and the newsletter form
 exists (it is part of 2B), but no submission, moderation, admin or export side of any of it.
 
-> **What Week 6 hands this week: an orphaned `on_trip` van has no sweep, and that is a declared
-> gap rather than an oversight** (Task 7, 2026-10-15).
+> **What Week 6 handed this week, and how Week 6.5 settled it: an orphaned `on_trip` van is made
+> visible, never auto-freed** (owner decision D5, 2026-10-16).
 >
 > 6C sets `vans.status = 'on_trip'` on Start and clears it on completion, one transaction each,
 > and `server/src/__tests__/trip-van-status.test.ts` proves dispatch honours both halves by asking
-> `assessCapacity` / `vansFreeOn` about a date thirty days out. What nothing does is clear
-> `on_trip` for a trip **nobody ever completes**. A driver whose phone dies at the last stop, or
-> who simply forgets, leaves that van unsellable on every future date at once — `available` is the
-> only sellable status (Week 5's allow-list) and `vans.status` is not date-scoped. The symptom
-> arrives weeks later as "we're fully booked" on a day with idle vans, with nothing in the logs,
-> and the only cures today are the driver finishing the trip and a hand-written `UPDATE vans`.
->
-> **Two candidate fixes, both needing an owner decision because both are new surface area:** a
-> `node-cron` job that frees a van whose booking is still `in_progress` past its tour date
-> (`node-cron` is already an approved dependency, but a new scheduled job is a new failure mode of
-> its own), or a dispatcher-facing **force complete** on the booking detail, audited like any other
-> status change (no scheduler, but somebody has to notice first). If 7E's day-before reminder cron
-> gets built, the sweep is the cheaper of the two to add beside it.
->
-> The current behaviour is pinned by the last test in `trip-van-status.test.ts`, so the gap is a
-> known quantity with a name. Building either fix turns that test red — that is the intended
-> signal. Replace it with the new behaviour's own proof rather than loosening it.
+> `assessCapacity` / `vansFreeOn` about a date thirty days out. A trip nobody ever completes (a
+> driver whose phone dies at the last stop, or who forgets) leaves that van unsellable on every
+> future date at once. The owner chose neither candidate fix from Week 6. Instead: a sixth dashboard
+> alert, `orphaned_on_trip`, and a daily `orphaned-vans` job (07:00 Asia/Manila) that logs a warning.
+> **Neither changes a status and neither writes an audit row**, because on the one night a trip
+> genuinely overruns past midnight an automatic sweep would put a van with guests in it back on
+> sale. A human completes or corrects the trip. The no-sweep rule is pinned by the last test in
+> `trip-van-status.test.ts` and by `orphaned-vans.test.ts`; a future sweep or force-complete should
+> replace those tests with its own proof rather than loosen them.
 
 > **The rest of what Week 6 hands this week** (walkthrough, 2026-10-16). Ten items, none of them
 > blocking, all of them cheap to lose track of.
@@ -1126,6 +1120,12 @@ exists (it is part of 2B), but no submission, moderation, admin or export side o
 >    references `tours.id` with no `ON DELETE`, so several suites carry a hand-written cleanup line
 >    to work around it. Either the list grows or the FK gets a cascade; doing neither is how the
 >    next suite inherits the same line.
+>    **Resolved in Week 6.5 Task 12 (C5):** `fleet_date_slots` joined `LEAK_TABLES`, and the detector
+>    immediately found two suites that were leaking it (`phase1-walkthrough`, one `create-hold` test),
+>    both now cleaned. `tour_date_slots` and `sessions` stay out on purpose (`sessions` is pruned in
+>    teardown, Task 10); `tour_date_slots` has no orphans against `tours` in the test database. The
+>    hand-written `DELETE FROM fleet_date_slots` lines stay: only a shared `releaseSlotsFor(dates)`
+>    `afterAll` helper would make them redundant, and that refactor is not done.
 > 3. **`sessions` rows accumulate unbounded in `rg_travel_test`** — 675 as of 2026-10-16. Nothing
 >    truncates them between runs and nothing expires them. Harmless until it is not.
 >    **Resolved in Week 6.5 Task 10:** a daily `prune-sessions` job now deletes expired rows, and the
@@ -1135,6 +1135,8 @@ exists (it is part of 2B), but no submission, moderation, admin or export side o
 >    `server/src/routers/public/newsletter.ts` and `server/src/services/booking-ref.ts`. The shared
 >    one is the complete one (it walks `.cause`, which is what Drizzle's wrapping requires); the
 >    other two should become imports.
+>    **Resolved in Week 6.5 Task 13 (C6):** both private copies are deleted and a guard test in
+>    `duplicate-key.test.ts` fails if another implementation appears.
 > 5. **The gateway wire check** remains blocked on the PayMongo account. `provider.refund()` has
 >    only ever run against the mock, and **no real payment and no real refund has ever been
 >    issued.** The same blocking pre-launch item `LAUNCH_CHECKLIST.md` carries.
@@ -1155,6 +1157,12 @@ exists (it is part of 2B), but no submission, moderation, admin or export side o
 >    The policy is reachable **across** IPs — a driver's code tried from several phones or networks,
 >    which is exactly the case the three-lockout rule exists for — and across windows. Both halves
 >    are tested independently; neither test proves the other.
+>    **Resolved in Week 6.5 Task 14 (C7), by proof rather than change:** both limits are kept and the
+>    reachability is now tested (`driver-lockout.test.ts`). One IP gets a 429 on the 11th attempt with
+>    the driver at `lockout_count = 1`; three IPs reach `needs_admin_unlock`. Corrected on the way: "a
+>    single IP can never reach it" holds only inside one limiter window, since a patient IP that
+>    waits out each 15-minute lockout never trips the limiter. The per-IP limit also depends on
+>    `trust proxy` being set at deploy (`LAUNCH_CHECKLIST.md`).
 > 8. **Every app-surface route is served HTTP 404 with the "Page not found" title.** `resolvePage`
 >    has no case for `/driver`, `/admin` or `/portal`, so the shell they get is the not-found one:
 >    `/driver/login`, `/driver/trip/:id`, `/admin` and `/portal` all answer `404` with
@@ -1181,14 +1189,17 @@ exists (it is part of 2B), but no submission, moderation, admin or export side o
 >    **Resolved 2026-10-23 (Week 6.5, Task 8, owner-decided C1): the four are now written**, each in
 >    the same conditional `UPDATE` as the status change. Bookings that predate the fix still have
 >    nulls; the checkpoints and the audit trail remain the authoritative record.
-> 10. **Seven owner decisions are open**, listed in one place with each one's safe current behaviour
->     in `docs/superpowers/plans/2026-10-16-week6-walkthrough.md`. Three of them are driver-portal
->     behaviour an owner can answer in a sentence (the payment box on a `completed` trip; whether a
->     cash claim can be refused; whether `booking_notes` needs a visibility column); two are security
->     postures (`driver_inactive` being distinguishable; a driver deactivated mid-shift keeping up to
->     12 hours of access, where staff deactivation is immediate); one is the `on_trip` sweep above;
->     and one is whether an admin cancellation returns the booking's coupon use — hold expiry does, a
->     cancel is a different event, and nothing says.
+> 10. **The seven owner decisions were all made on 2026-10-16 and built in Week 6.5 (D1–D7).**
+>     Listed for the record, with the walkthrough at
+>     `docs/superpowers/plans/2026-10-16-week6-walkthrough.md` as the original question set: the
+>     payment box on a `completed` trip (shown, D1); whether a cash claim can be refused (yes, D2);
+>     `driver_inactive` being distinguishable (no — a deactivated driver is `wrong_credentials`, D3);
+>     a driver deactivated mid-shift keeping up to 12 hours of access (no — sessions are revoked in
+>     the same transaction, D4); the `on_trip` sweep (visibility only, never auto-freed, D5);
+>     `booking_notes` needing a visibility column (yes, default private, D6); and whether an admin
+>     cancellation returns the coupon use (yes, D7). **What is still open from this list:** item 1
+>     (`TripProgressStop` has no checkpoint id; label only) and item 5 (the gateway wire check, still
+>     blocking before launch).
 
 - **7A** Reviews: submit (portal + public), moderation, replies, helpful votes, verified badge.
 - **7B** Coupons admin + redemption log.
