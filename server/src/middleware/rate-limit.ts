@@ -310,7 +310,7 @@ export const BOOKING_LOOKUP_PROCEDURES = ['checkout.bookingLookup', 'portal.logi
  */
 export const STAFF_LOGIN_WINDOW_MS = 15 * 60_000;
 export const STAFF_LOGIN_MAX_PER_IP = 10;
-export const STAFF_LOGIN_PROCEDURES = ['staffAuth.login'] as const;
+export const STAFF_LOGIN_PROCEDURES = ['staffAuth.login', 'staffAuth.changePassword'] as const;
 
 export function createStaffLoginLimiter(): RequestHandler {
   return createProcedureRateLimit([...STAFF_LOGIN_PROCEDURES], {

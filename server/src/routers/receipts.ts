@@ -225,7 +225,8 @@ export function createReceiptRouter(): Router {
       .limit(1);
     if (!payment) return refuse();
 
-    const isStaff = session.subjectType === 'user';
+    // A staff member still on a temporary password has not finished signing in.
+    const isStaff = session.subjectType === 'user' && session.mustChangePassword !== true;
     const isOwner = session.subjectType === 'customer' && session.subjectId === payment.bookingId;
     // A superseded receipt is kept for the people who verify payments. The
     // guest has the one that replaced it; the same 404 as any other

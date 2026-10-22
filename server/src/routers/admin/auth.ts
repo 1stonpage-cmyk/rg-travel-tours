@@ -11,8 +11,8 @@
  * three live here, where `login` and `logout` are honestly public and `me`
  * is honestly gated.
  *
- * Narrow by owner approval: a login, a logout, a `me`, and the role gate.
- * No password reset, no invitations, no user management.
+ * A login, a logout, a `me` and a `changePassword` live here. Creating and
+ * resetting accounts is the owner's `admin.staffUsers` router (2026-10-23).
  *
  * ## Everything security-shaped here is somewhere else
  *
@@ -41,17 +41,32 @@
  * no code path here that could put it there.
  */
 import { TRPCError } from '@trpc/server';
+import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
+import { changePasswordInputSchema } from '@rg/shared';
 import { getDb } from '../../db/client';
+import { users } from '../../db/schema';
 import {
   clearSessionCookie,
   setSessionCookie,
   SESSION_COOKIE,
 } from '../../middleware/session-cookie';
 import { writeAudit } from '../../services/audit';
-import { createSession, revokeSession } from '../../services/sessions';
-import { markStaffLogin, verifyStaffPassword } from '../../services/staff-auth';
-import { adminProcedure, publicProcedure, router } from '../../trpc';
+import { hashPassword, verifyPassword } from '../../services/password';
+import {
+  createSession,
+  revokeOtherSessionsForSubject,
+  revokeSession,
+  revokeSessionsForSubject,
+} from '../../services/sessions';
+import {
+  clearChangePasswordFailures,
+  isChangePasswordThrottled,
+  markStaffLogin,
+  recordChangePasswordFailure,
+  verifyStaffPassword,
+} from '../../services/staff-auth';
+import { adminProcedureAllowingPasswordChange, publicProcedure, router } from '../../trpc';
 
 /**
  * `.strict()`, so a request carrying anything else — a `role`, a `userId`,
@@ -111,7 +126,7 @@ export const staffAuthRouter = router({
     });
     await markStaffLogin(identity.userId, now);
 
-    return { role: identity.role };
+    return { role: identity.role, mustChangePassword: identity.mustChangePassword };
   }),
 
   /**
@@ -155,8 +170,96 @@ export const staffAuthRouter = router({
    * reach. Every other admin procedure in the tree depends on that chain
    * and, until Task 1, none of it had ever run.
    */
-  me: adminProcedure('dashboard').query(({ ctx }) => ({
+  me: adminProcedureAllowingPasswordChange('dashboard').query(({ ctx }) => ({
     userId: ctx.session.subjectId,
     role: ctx.session.role,
+    // Tells the client to send this person to "Set a new password" first.
+    mustChangePassword: ctx.session.mustChangePassword === true,
   })),
+
+  /**
+   * Replace your own password: the forced change after a temporary one, and
+   * the voluntary one from the menu. `dashboard` is every role's area, and the
+   * builder is the one allowed through the must-change gate.
+   *
+   *  - The CURRENT password is verified, so a borrowed session cannot set a
+   *    new one. Wrong guesses are throttled per user, on top of the per-IP
+   *    limiter on `/trpc` (`STAFF_LOGIN_PROCEDURES`).
+   *  - The new one must differ from the current one and meet the same length
+   *    rule as everywhere else (`staffPasswordSchema`).
+   *  - The write is conditional on the hash that was verified, so a reset the
+   *    owner makes while this request is hashing is not silently overwritten.
+   *  - Clears the flag, keeps THIS session, ends the user's others: one
+   *    transaction, then one audit row. No password or hash in the row.
+   */
+  changePassword: adminProcedureAllowingPasswordChange('dashboard')
+    .input(changePasswordInputSchema)
+    .mutation(async ({ input, ctx }) => {
+      const now = new Date();
+      const userId = ctx.session.subjectId;
+
+      if (isChangePasswordThrottled(userId, now)) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Too many attempts. Wait a few minutes and try again.',
+        });
+      }
+
+      const [user] = await getDb()
+        .select({ passwordHash: users.passwordHash, mustChangePassword: users.mustChangePassword })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+      if (!user) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Admin sign-in required.' });
+
+      if (!(await verifyPassword(input.currentPassword, user.passwordHash))) {
+        recordChangePasswordFailure(userId, now);
+        throw new TRPCError({
+          code: 'UNAUTHORIZED',
+          message: 'Your current password is not right.',
+        });
+      }
+      clearChangePasswordFailures(userId);
+
+      if (input.newPassword === input.currentPassword) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Choose a password you are not using now.',
+        });
+      }
+
+      const newHash = await hashPassword(input.newPassword);
+      const cookies = ctx.req.cookies as Record<string, string | undefined> | undefined;
+      const token = cookies?.[SESSION_COOKIE];
+
+      await getDb().transaction(async (tx) => {
+        const [updated] = await tx
+          .update(users)
+          .set({ passwordHash: newHash, mustChangePassword: false })
+          .where(and(eq(users.id, userId), eq(users.passwordHash, user.passwordHash)));
+        if (updated.affectedRows !== 1) {
+          throw new TRPCError({
+            code: 'CONFLICT',
+            message: 'Your password was changed by someone else. Sign in again.',
+          });
+        }
+
+        // No token (a context that never came from a cookie) keeps nothing:
+        // fail closed rather than leave every other session standing.
+        const sessionsRevoked = token
+          ? await revokeOtherSessionsForSubject(tx, 'user', userId, token)
+          : await revokeSessionsForSubject(tx, 'user', userId);
+
+        await writeAudit(tx, {
+          actorType: 'user',
+          actorId: userId,
+          action: 'staff.password_changed',
+          entity: 'users',
+          entityId: userId,
+          data: { forced: user.mustChangePassword, sessionsRevoked },
+        });
+      });
+
+      return { ok: true as const };
+    }),
 });

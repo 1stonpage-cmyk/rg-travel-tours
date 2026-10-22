@@ -36,7 +36,7 @@
  * table is worth a query per request.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { and, eq, gt, lte } from 'drizzle-orm';
+import { and, eq, gt, lte, ne } from 'drizzle-orm';
 import { getDb, type Transaction } from '../db/client';
 import { sessions, users } from '../db/schema';
 
@@ -78,6 +78,11 @@ export interface ResolvedSession {
    * `readSession` for why that matters.
    */
   role?: string;
+  /**
+   * For `subject_type = 'user'` only, and live like `role`: a reset made
+   * while the staff member is mid-session takes effect on their next request.
+   */
+  mustChangePassword?: boolean;
 }
 
 /** One-way, fast, and the only form the token takes at rest. */
@@ -155,6 +160,7 @@ export async function readSession(token: string, now: Date): Promise<ResolvedSes
       subjectId: sessions.subjectId,
       role: users.role,
       isActive: users.isActive,
+      mustChangePassword: users.mustChangePassword,
     })
     .from(sessions)
     .leftJoin(users, and(eq(sessions.subjectType, 'user'), eq(users.id, sessions.subjectId)))
@@ -168,7 +174,12 @@ export async function readSession(token: string, now: Date): Promise<ResolvedSes
     // Fails closed, and silently: the caller gets the same `null` as an
     // expired token, because it cannot act on the difference.
     if (!row.role || row.isActive !== true) return null;
-    return { subjectType: row.subjectType, subjectId: row.subjectId, role: row.role };
+    return {
+      subjectType: row.subjectType,
+      subjectId: row.subjectId,
+      role: row.role,
+      mustChangePassword: row.mustChangePassword === true,
+    };
   }
 
   return { subjectType: row.subjectType, subjectId: row.subjectId };
@@ -222,6 +233,30 @@ export async function revokeSessionsForSubject(
   const [result] = await tx
     .delete(sessions)
     .where(and(eq(sessions.subjectType, subjectType), eq(sessions.subjectId, subjectId)));
+  return result.affectedRows;
+}
+
+/**
+ * Ends every session one subject holds EXCEPT the one whose token is given —
+ * the "change password" rule: the device that changed it stays signed in, every
+ * other device is signed out. Same transaction discipline as
+ * `revokeSessionsForSubject`. Returns how many were ended, for the audit row.
+ */
+export async function revokeOtherSessionsForSubject(
+  tx: Transaction,
+  subjectType: SessionSubject,
+  subjectId: number,
+  keepToken: string,
+): Promise<number> {
+  const [result] = await tx
+    .delete(sessions)
+    .where(
+      and(
+        eq(sessions.subjectType, subjectType),
+        eq(sessions.subjectId, subjectId),
+        ne(sessions.tokenHash, hashToken(keepToken)),
+      ),
+    );
   return result.affectedRows;
 }
 

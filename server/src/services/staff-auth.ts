@@ -3,9 +3,8 @@
  * owner decision 2026-10-13 because Task 7's approve/reject needs a human
  * who can actually sign in).
  *
- * Narrow on purpose, as approved: verify a password, and throttle guessing.
- * No password reset, no invitations, no user management — those arrive with
- * the admin weeks.
+ * Verify a password, and throttle guessing. Account management is the
+ * owner's `admin.staffUsers` router; this file only answers "who is this?".
  *
  * ## Every failure is the same failure
  *
@@ -100,11 +99,44 @@ function clearFailures(email: string): void {
 /** Test-only: the counter is process-global, so a suite must be able to reset it. */
 export function resetEmailThrottleForTests(): void {
   byEmail.clear();
+  changeAttemptsByUser.clear();
 }
 
 export interface StaffIdentity {
   userId: number;
   role: AdminRole;
+  mustChangePassword: boolean;
+}
+
+/*
+ * The same budget for `staffAuth.changePassword`, keyed by USER ID: a stolen
+ * session cookie must not become an unlimited guessing oracle for the current
+ * password. Own map, so wrong login guesses against an email do not lock the
+ * signed-in owner out of changing theirs, and the reverse.
+ */
+const changeAttemptsByUser = new Map<number, Attempts>();
+
+export function isChangePasswordThrottled(userId: number, now: Date): boolean {
+  const entry = changeAttemptsByUser.get(userId);
+  if (!entry) return false;
+  if (entry.resetAt <= now.getTime()) {
+    changeAttemptsByUser.delete(userId);
+    return false;
+  }
+  return entry.count >= STAFF_LOGIN_MAX_PER_EMAIL;
+}
+
+export function recordChangePasswordFailure(userId: number, now: Date): void {
+  const entry = changeAttemptsByUser.get(userId);
+  if (!entry || entry.resetAt <= now.getTime()) {
+    changeAttemptsByUser.set(userId, { count: 1, resetAt: now.getTime() + STAFF_LOGIN_WINDOW_MS });
+    return;
+  }
+  entry.count += 1;
+}
+
+export function clearChangePasswordFailures(userId: number): void {
+  changeAttemptsByUser.delete(userId);
 }
 
 /**
@@ -128,6 +160,7 @@ export async function verifyStaffPassword(
       role: users.role,
       isActive: users.isActive,
       passwordHash: users.passwordHash,
+      mustChangePassword: users.mustChangePassword,
     })
     .from(users)
     // Case-insensitively, because an email is not case-sensitive in practice
@@ -157,7 +190,7 @@ export async function verifyStaffPassword(
   }
 
   clearFailures(email);
-  return { userId: user.id, role: user.role };
+  return { userId: user.id, role: user.role, mustChangePassword: user.mustChangePassword };
 }
 
 /**

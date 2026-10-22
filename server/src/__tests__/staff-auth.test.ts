@@ -60,6 +60,7 @@ describeWithDb('verifyStaffPassword', () => {
     expect(await verifyStaffPassword(EMAIL.owner, PASSWORD, NOW)).toEqual({
       userId: createdIds[0],
       role: 'owner',
+      mustChangePassword: false,
     });
     expect((await verifyStaffPassword(EMAIL.finance, PASSWORD, NOW))?.role).toBe('finance');
   });
@@ -155,7 +156,7 @@ describeWithDb('verifyStaffPassword', () => {
   it('never returns or echoes the password', async () => {
     const result = await verifyStaffPassword(EMAIL.owner, PASSWORD, NOW);
     expect(JSON.stringify(result)).not.toContain(PASSWORD);
-    expect(Object.keys(result!)).toEqual(['userId', 'role']);
+    expect(Object.keys(result!)).toEqual(['userId', 'role', 'mustChangePassword']);
   });
 
   it('stores a hash, never the password', async () => {

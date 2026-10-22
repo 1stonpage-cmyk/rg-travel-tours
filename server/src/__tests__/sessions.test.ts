@@ -168,6 +168,7 @@ describeWithDb('sessions', () => {
       subjectType: 'user',
       subjectId: staffId,
       role: 'owner',
+      mustChangePassword: false,
     });
   });
 

@@ -42,10 +42,10 @@
  * `TRPCError.cause` (the real error, kept for the server) was never part of
  * the response shape to begin with.
  */
-import { initTRPC } from '@trpc/server';
+import { initTRPC, TRPCError } from '@trpc/server';
 import type { Context } from './context';
 import { ZodError, z } from 'zod';
-import type { AdminRole } from '@rg/shared';
+import { PASSWORD_CHANGE_REQUIRED, type AdminRole } from '@rg/shared';
 import { requireCustomer } from './middleware/require-customer';
 import { requireDriver } from './middleware/require-driver';
 import {
@@ -122,6 +122,13 @@ export type ProcedureAccess =
       readonly access: 'admin';
       readonly area: AdminArea;
       readonly roles: readonly AdminRole[];
+      /**
+       * True only on the procedures a staff member who still has to replace a
+       * temporary password may call. `adminProcedure` refuses everyone in that
+       * state; `adminProcedureAllowingPasswordChange` is the one exemption,
+       * and the guard test pins exactly which procedures use it.
+       */
+      readonly allowsPasswordChange?: true;
     };
 
 /*
@@ -307,9 +314,37 @@ export function adminProcedure(area: AdminArea) {
      * narrowed session, and it REPLACES whatever `session` the incoming
      * context carried — a procedure downstream can never read an unvalidated
      * one.
+     *
+     * The must-change check lives HERE, in the one builder every admin
+     * procedure comes from, so a procedure written next year is gated without
+     * its author doing anything. It runs after the role check: a caller who is
+     * not permitted at all is told that, not that they owe a new password.
      */
-    ({ ctx, next }) => next({ ctx: { session: requireRole(...ROLE_MATRIX[area])(ctx) } }),
+    ({ ctx, next }) => {
+      const session = requireRole(...ROLE_MATRIX[area])(ctx);
+      if (session.mustChangePassword === true) throw passwordChangeRequired();
+      return next({ ctx: { session } });
+    },
   );
+}
+
+/**
+ * The ONLY other way to build an admin procedure: the same role gate, minus
+ * the must-change refusal. For `staffAuth.me` (the client asks it whether a
+ * change is owed) and `staffAuth.changePassword` (the way out of the state).
+ * `logout` is public and needs neither. Anything else added here lets a
+ * temporary password do real work, so `staff-must-change.test.ts` pins the
+ * exact list.
+ */
+export function adminProcedureAllowingPasswordChange(area: AdminArea) {
+  return t.procedure
+    .meta({ access: 'admin', area, roles: ROLE_MATRIX[area], allowsPasswordChange: true })
+    .use(({ ctx, next }) => next({ ctx: { session: requireRole(...ROLE_MATRIX[area])(ctx) } }));
+}
+
+/** `message` IS the reason string, as the driver login's refusals are. */
+function passwordChangeRequired(): TRPCError {
+  return new TRPCError({ code: 'FORBIDDEN', message: PASSWORD_CHANGE_REQUIRED });
 }
 
 export type { AdminArea, StaffSession };

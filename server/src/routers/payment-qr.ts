@@ -74,6 +74,8 @@ export function createPaymentQrRouter(): Router {
     const session = await readSession(token, new Date());
     if (!session) return refuse();
     if (session.subjectType !== 'customer' && session.subjectType !== 'user') return refuse();
+    // A staff member still on a temporary password has not finished signing in.
+    if (session.mustChangePassword === true) return refuse();
 
     const qr = await readSettingBlock('payment_qr');
     if (!qr.isConfigured || !qr.imagePath || !QR_NAME.test(qr.imagePath)) return refuse();

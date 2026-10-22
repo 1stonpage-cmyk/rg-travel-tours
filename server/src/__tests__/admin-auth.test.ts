@@ -103,6 +103,7 @@ describeWithDb('staffAuth.login', () => {
 
     await expect(api.staffAuth.login({ email: EMAIL.owner, password: PASSWORD })).resolves.toEqual({
       role: 'owner',
+      mustChangePassword: false,
     });
 
     expect(set).toHaveLength(1);
@@ -112,6 +113,7 @@ describeWithDb('staffAuth.login', () => {
       subjectType: 'user',
       subjectId: ownerId,
       role: 'owner',
+      mustChangePassword: false,
     });
   });
 
@@ -281,7 +283,11 @@ describeWithDb('staffAuth.me', () => {
    */
   it('reports the signed-in staff member', async () => {
     const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
-    await expect(api.staffAuth.me()).resolves.toEqual({ userId: ownerId, role: 'owner' });
+    await expect(api.staffAuth.me()).resolves.toEqual({
+      userId: ownerId,
+      role: 'owner',
+      mustChangePassword: false,
+    });
   });
 
   it('REFUSES no session at all', async () => {

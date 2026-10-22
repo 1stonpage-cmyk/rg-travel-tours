@@ -86,6 +86,11 @@ export interface StaffSession {
   subjectId: number;
   /** `users.role` — validated against `ADMIN_ROLES`, never trusted as typed. */
   role: AdminRole;
+  /**
+   * `users.must_change_password`, read live with the role. When true,
+   * `adminProcedure` refuses everything except the change-password flow.
+   */
+  mustChangePassword?: boolean;
 }
 
 /** The session-bearing slice of a tRPC context, as admin procedures will have it. */
