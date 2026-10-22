@@ -13,7 +13,7 @@
  * server side). What is asserted here is that the UI does not offer an
  * action it knows will be refused.
  */
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -102,6 +102,14 @@ const DETAIL = {
     {
       id: 3,
       note: 'Guest asked for an early pickup.',
+      visibleToDriver: true,
+      userId: 1,
+      createdAt: new Date().toISOString(),
+    },
+    {
+      id: 4,
+      note: 'Guest disputed the price, do not discuss.',
+      visibleToDriver: false,
       userId: 1,
       createdAt: new Date().toISOString(),
     },
@@ -731,5 +739,156 @@ describe('AdminBookingDetailPage — the cash a driver says they took', () => {
       screen.queryByRole('region', { name: /cash a driver says they collected/i }),
     ).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /confirm/i })).not.toBeInTheDocument();
+  });
+});
+
+/* ====================================================================
+ * D6 — writing a staff note, and choosing whether the driver reads it.
+ *
+ * `server/src/__tests__/booking-notes.test.ts` proves the filter, the
+ * default in the database and the audit row. What is asserted here is only
+ * what the screen does: the safe default, the decision reaching the server
+ * as stated, visibility readable as words, and no form for a role that may
+ * not write notes.
+ * ================================================================== */
+describe('AdminBookingDetailPage — staff notes', () => {
+  const CHECKBOX = /show this note to the driver/i;
+
+  it('says in words which notes the driver can see', async () => {
+    mockTrpc({ 'admin.bookings.detail': DETAIL, 'staffAuth.me': { userId: 1, role: 'owner' } });
+    renderDetail();
+
+    const shared = (await screen.findByText(/early pickup/i)).closest('li')!;
+    const office = screen.getByText(/disputed the price/i).closest('li')!;
+    expect(within(shared).getByText('Driver can see this')).toBeInTheDocument();
+    expect(within(office).getByText('Office only')).toBeInTheDocument();
+    // Each note carries exactly one of the two phrases.
+    expect(within(shared).queryByText('Office only')).not.toBeInTheDocument();
+    expect(within(office).queryByText('Driver can see this')).not.toBeInTheDocument();
+  });
+
+  it('starts with the box unticked and says what that means', async () => {
+    mockTrpc({ 'admin.bookings.detail': DETAIL, 'staffAuth.me': { userId: 1, role: 'owner' } });
+    renderDetail();
+
+    const box = await screen.findByLabelText(CHECKBOX);
+    expect(box).not.toBeChecked();
+    expect(screen.getByText(/office-only unless this is ticked/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/add a note/i)).toBeInTheDocument();
+  });
+
+  it('sends visibleToDriver false when the box is left alone', async () => {
+    const sent: unknown[] = [];
+    mockTrpc({
+      'admin.bookings.detail': DETAIL,
+      'staffAuth.me': { userId: 1, role: 'owner' },
+      'admin.bookings.addNote': (input: unknown) => {
+        sent.push(input);
+        return { id: 9 };
+      },
+    });
+    renderDetail();
+
+    await userEvent.type(await screen.findByLabelText(/add a note/i), '  Call the guest first.  ');
+    await userEvent.click(screen.getByRole('button', { name: /save note/i }));
+
+    expect(sent).toEqual([{ bookingId: 1, note: 'Call the guest first.', visibleToDriver: false }]);
+  });
+
+  it('sends visibleToDriver true when the box is ticked', async () => {
+    const sent: unknown[] = [];
+    mockTrpc({
+      'admin.bookings.detail': DETAIL,
+      'staffAuth.me': { userId: 3, role: 'dispatcher' },
+      'admin.bookings.addNote': (input: unknown) => {
+        sent.push(input);
+        return { id: 9 };
+      },
+    });
+    renderDetail();
+
+    await userEvent.type(await screen.findByLabelText(/add a note/i), 'Waiting at gate two.');
+    await userEvent.click(screen.getByLabelText(CHECKBOX));
+    await userEvent.click(screen.getByRole('button', { name: /save note/i }));
+
+    expect(sent).toEqual([{ bookingId: 1, note: 'Waiting at gate two.', visibleToDriver: true }]);
+  });
+
+  it('will not send an empty or whitespace note', async () => {
+    let calls = 0;
+    mockTrpc({
+      'admin.bookings.detail': DETAIL,
+      'staffAuth.me': { userId: 1, role: 'owner' },
+      'admin.bookings.addNote': () => {
+        calls += 1;
+        return { id: 9 };
+      },
+    });
+    renderDetail();
+
+    const button = await screen.findByRole('button', { name: /save note/i });
+    expect(button).toBeDisabled();
+    await userEvent.type(screen.getByLabelText(/add a note/i), '   ');
+    expect(screen.getByRole('button', { name: /save note/i })).toBeDisabled();
+    expect(calls).toBe(0);
+  });
+
+  it('clears the text and puts the box back to unticked after a save', async () => {
+    mockTrpc({
+      'admin.bookings.detail': DETAIL,
+      'staffAuth.me': { userId: 1, role: 'owner' },
+      'admin.bookings.addNote': { id: 9 },
+    });
+    renderDetail();
+
+    const text = await screen.findByLabelText(/add a note/i);
+    await userEvent.type(text, 'Shared note.');
+    await userEvent.click(screen.getByLabelText(CHECKBOX));
+    expect(screen.getByLabelText(CHECKBOX)).toBeChecked();
+    await userEvent.click(screen.getByRole('button', { name: /save note/i }));
+
+    await waitFor(() => expect(screen.getByLabelText(/add a note/i)).toHaveValue(''));
+    // The safe default is re-asserted after every write, not only on first load.
+    expect(screen.getByLabelText(CHECKBOX)).not.toBeChecked();
+  });
+
+  it('shows the server refusal in an alert and keeps what was typed', async () => {
+    mockTrpc({ 'admin.bookings.detail': DETAIL, 'staffAuth.me': { userId: 1, role: 'owner' } });
+    mockTrpcError('admin.bookings.addNote', 'NOT_FOUND', 'No booking with that id.');
+    renderDetail();
+
+    await userEvent.type(await screen.findByLabelText(/add a note/i), 'Lost note?');
+    await userEvent.click(screen.getByRole('button', { name: /save note/i }));
+
+    // Scoped to the note form: other panels on this page raise their own alerts.
+    const form = screen.getByLabelText(/add a note/i).closest('form')!;
+    expect(await within(form).findByRole('alert')).toHaveTextContent(/no booking with that id/i);
+    expect(screen.getByLabelText(/add a note/i)).toHaveValue('Lost note?');
+  });
+
+  it('draws no form for a role that may not write notes', async () => {
+    mockTrpc({ 'admin.bookings.detail': DETAIL, 'staffAuth.me': { userId: 8, role: 'driver' } });
+    renderDetail();
+
+    expect(await screen.findByRole('heading', { name: 'RG-AAAAA1' })).toBeInTheDocument();
+    expect(screen.queryByLabelText(/add a note/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(CHECKBOX)).not.toBeInTheDocument();
+    // The notes themselves still read.
+    expect(screen.getByText(/early pickup/i)).toBeInTheDocument();
+  });
+
+  it('draws no form while who you are is unknown', async () => {
+    mockTrpc({ 'admin.bookings.detail': DETAIL });
+    mockTrpcError('staffAuth.me', 'UNAUTHORIZED', 'Admin sign-in required.');
+    renderDetail();
+
+    expect(await screen.findByRole('heading', { name: 'RG-AAAAA1' })).toBeInTheDocument();
+    expect(screen.queryByLabelText(/add a note/i)).not.toBeInTheDocument();
+  });
+
+  it('offers finance the form too', async () => {
+    mockTrpc({ 'admin.bookings.detail': DETAIL, 'staffAuth.me': { userId: 2, role: 'finance' } });
+    renderDetail();
+    expect(await screen.findByLabelText(/add a note/i)).toBeInTheDocument();
   });
 });

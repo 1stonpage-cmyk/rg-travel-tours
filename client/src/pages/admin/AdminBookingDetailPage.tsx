@@ -44,7 +44,7 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ExternalLink, Loader2 } from 'lucide-react';
-import { formatPeso } from '@rg/shared';
+import { BOOKING_NOTE_MAX_LENGTH, formatPeso } from '@rg/shared';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { trpc } from '@/lib/trpc';
@@ -65,11 +65,26 @@ const STATUS_LABELS: Record<string, string> = {
 /** §9: verify payments is owner and finance. The server enforces it. */
 const MAY_VERIFY = ['owner', 'finance'];
 
+/**
+ * §9 "Bookings: view, notes": every staff role that can open this page may
+ * also write a note on it (`bookingsView`). The server enforces it; this only
+ * decides whether to draw the form.
+ */
+const MAY_WRITE_NOTES = ['owner', 'dispatcher', 'finance'];
+
 export default function AdminBookingDetailPage() {
   const { ref = '' } = useParams();
   const [reason, setReason] = useState('');
   /** One refusal reason per pending cash claim, keyed by `payments.id`. */
   const [cashReasons, setCashReasons] = useState<Record<number, string>>({});
+  /*
+   * The note form (Week 6.5 D6). `shareWithDriver` starts false and is put
+   * back to false after every write: the safe direction is the one the form
+   * returns to, so a note is never shown to a driver by leftover state from
+   * the note before it.
+   */
+  const [noteText, setNoteText] = useState('');
+  const [shareWithDriver, setShareWithDriver] = useState(false);
 
   const me = trpc.staffAuth.me.useQuery(undefined, { retry: false });
   const query = trpc.admin.bookings.detail.useQuery({ ref }, { retry: false, enabled: ref !== '' });
@@ -99,6 +114,14 @@ export default function AdminBookingDetailPage() {
         delete next[variables.paymentId];
         return next;
       });
+      void query.refetch();
+    },
+  });
+
+  const addNote = trpc.admin.bookings.addNote.useMutation({
+    onSuccess: () => {
+      setNoteText('');
+      setShareWithDriver(false);
       void query.refetch();
     },
   });
@@ -162,6 +185,8 @@ export default function AdminBookingDetailPage() {
       payment.method === 'cash',
   );
   const mayVerify = me.data ? MAY_VERIFY.includes(me.data.role) : false;
+  const mayWriteNotes = me.data ? MAY_WRITE_NOTES.includes(me.data.role) : false;
+  const noteIsEmpty = noteText.trim() === '';
   const decisionError = approve.error?.message ?? reject.error?.message ?? null;
 
   return (
@@ -533,7 +558,7 @@ export default function AdminBookingDetailPage() {
         onChanged={() => void query.refetch()}
       />
 
-      {booking.notes.length > 0 ? (
+      {booking.notes.length > 0 || mayWriteNotes ? (
         <section
           aria-labelledby="notes-heading"
           className="border-border bg-background mt-6 rounded-2xl border p-5 text-sm"
@@ -541,13 +566,94 @@ export default function AdminBookingDetailPage() {
           <h2 id="notes-heading" className="text-brand-blue-900 text-base font-semibold">
             Staff notes
           </h2>
-          <ul className="mt-3 space-y-2">
-            {booking.notes.map((note) => (
-              <li key={note.id} className="text-brand-blue-900">
-                {note.note}
-              </li>
-            ))}
-          </ul>
+          {booking.notes.length > 0 ? (
+            <ul className="mt-3 space-y-3">
+              {booking.notes.map((note) => (
+                <li key={note.id} className="text-brand-blue-900">
+                  <p>{note.note}</p>
+                  {/*
+                   * Visibility in WORDS (WCAG 1.4.1): which notes the driver
+                   * is reading must not depend on a colour or an icon.
+                   */}
+                  <p className="text-muted-foreground mt-0.5 text-xs font-medium">
+                    {note.visibleToDriver ? 'Driver can see this' : 'Office only'}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+
+          {mayWriteNotes ? (
+            <form
+              className="mt-4 space-y-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (noteIsEmpty || addNote.isPending) return;
+                addNote.mutate({
+                  bookingId: booking.id,
+                  note: noteText.trim(),
+                  visibleToDriver: shareWithDriver,
+                });
+              }}
+            >
+              <div className="space-y-1.5">
+                <Label htmlFor="booking-note">Add a note</Label>
+                <textarea
+                  id="booking-note"
+                  value={noteText}
+                  maxLength={BOOKING_NOTE_MAX_LENGTH}
+                  rows={3}
+                  onChange={(event) => setNoteText(event.target.value)}
+                  className="border-input bg-background focus-visible:ring-ring min-h-24 w-full rounded-md border px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="booking-note-driver"
+                  className="tap-target flex cursor-pointer items-center gap-2 text-sm font-medium"
+                >
+                  <input
+                    id="booking-note-driver"
+                    type="checkbox"
+                    checked={shareWithDriver}
+                    onChange={(event) => setShareWithDriver(event.target.checked)}
+                    className="accent-brand-blue-600 size-5 shrink-0"
+                    aria-describedby="booking-note-driver-help"
+                  />
+                  Show this note to the driver
+                </label>
+                <p id="booking-note-driver-help" className="text-muted-foreground text-xs">
+                  Notes are office-only unless this is ticked. The driver is not told that
+                  office-only notes exist.
+                </p>
+              </div>
+
+              {addNote.isError ? (
+                <p
+                  role="alert"
+                  className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-lg border p-3 text-sm font-medium"
+                >
+                  {addNote.error.message}
+                </p>
+              ) : null}
+
+              <Button
+                type="submit"
+                className="tap-target"
+                disabled={noteIsEmpty || addNote.isPending}
+              >
+                {addNote.isPending ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                    Saving note…
+                  </>
+                ) : (
+                  'Save note'
+                )}
+              </Button>
+            </form>
+          ) : null}
         </section>
       ) : null}
 
