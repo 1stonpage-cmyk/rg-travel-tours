@@ -37,7 +37,7 @@ const schema = z.object({
   /*
    * The first owner account, read by the seed (Week 4, Task 5). Both
    * optional so `pnpm test` can seed `rg_travel_test` without
-   * production-shaped config; `upsertOwner()` in `db/seed.ts` refuses if
+   * production-shaped config; `seedFirstOwner()` in `db/seed.ts` refuses if
    * one is set without the other, or if the password is under 12
    * characters. NEVER defaulted, never logged.
    */

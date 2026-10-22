@@ -6,7 +6,7 @@
  * change it. So there is no default, no fallback, no "changeme", and these
  * tests assert the refusals rather than the happy path only.
  *
- * `upsertOwner` is not exported — it is a step inside `seed()` — so these
+ * `seedFirstOwner` is not exported — it is a step inside `seed()` — so these
  * tests drive the same validation through the exported seed by setting the
  * environment the way a deployer would, which is also the only way to prove
  * the wiring is real rather than the helper being correct in isolation.
@@ -17,7 +17,7 @@ import { getDb } from '../db/client';
 import { users } from '../db/schema';
 import { env } from '../env';
 import { seed } from '../db/seed';
-import { verifyPassword } from '../services/password';
+import { hashPassword, verifyPassword } from '../services/password';
 import { describeWithDb } from './helpers/db';
 
 const EMAIL = `seeded_owner_${Math.floor(Math.random() * 1e9)}@example.test`;
@@ -126,27 +126,81 @@ describeWithDb('the owner seed', () => {
   }, 60_000);
 
   /**
-   * Re-running the seed resets the password from `.env` rather than
-   * creating a second account or failing on the unique email. That is what
-   * makes it a recovery path: an owner who has lost their password changes
-   * `.env`, re-seeds, and signs in.
+   * Owner decision 2026-10-23: the seed only ever creates the FIRST owner.
+   * Once an active owner exists, re-seeding with a different `.env` password
+   * must not reset it — accounts are managed from the admin, and a re-seed
+   * silently undoing a password someone chose is the failure this prevents.
    */
-  it('updates the existing owner on a second run, rather than duplicating', async () => {
+  it('does NOT overwrite an existing owner on a second run', async () => {
     (env as { OWNER_EMAIL?: string }).OWNER_EMAIL = EMAIL;
     (env as { OWNER_PASSWORD?: string }).OWNER_PASSWORD = STRONG;
     await seed('test');
 
-    const replacement = 'a-different-long-password';
-    (env as { OWNER_PASSWORD?: string }).OWNER_PASSWORD = replacement;
+    (env as { OWNER_PASSWORD?: string }).OWNER_PASSWORD = 'a-different-long-password';
     await seed('test');
 
     const rows = await getDb()
-      .select({ hash: users.passwordHash })
+      .select({ hash: users.passwordHash, role: users.role, isActive: users.isActive })
       .from(users)
       .where(eq(users.email, EMAIL));
 
     expect(rows, 'a second owner row was created').toHaveLength(1);
-    expect(await verifyPassword(replacement, rows[0]!.hash)).toBe(true);
-    expect(await verifyPassword(STRONG, rows[0]!.hash), 'the old password still works').toBe(false);
+    expect(await verifyPassword(STRONG, rows[0]!.hash), 'the original password was replaced').toBe(
+      true,
+    );
+    expect(
+      await verifyPassword('a-different-long-password', rows[0]!.hash),
+      'the .env password replaced the stored one',
+    ).toBe(false);
   }, 120_000);
+
+  /**
+   * With no active owner, an email that already belongs to another account is
+   * still not touched: not re-roled to owner, not reactivated, password kept.
+   */
+  it('does NOT promote, reactivate or re-password an existing non-owner with that email', async () => {
+    const original = await hashPassword('the-original-password-1');
+    await getDb().insert(users).values({
+      name: 'Seeded Dispatcher',
+      email: EMAIL,
+      passwordHash: original,
+      role: 'dispatcher',
+      isActive: false,
+    });
+
+    (env as { OWNER_EMAIL?: string }).OWNER_EMAIL = EMAIL;
+    (env as { OWNER_PASSWORD?: string }).OWNER_PASSWORD = STRONG;
+    await seed('test');
+
+    const rows = await getDb()
+      .select({ hash: users.passwordHash, role: users.role, isActive: users.isActive })
+      .from(users)
+      .where(eq(users.email, EMAIL));
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.role).toBe('dispatcher');
+    expect(rows[0]!.isActive).toBe(false);
+    expect(rows[0]!.hash).toBe(original);
+  }, 60_000);
+
+  /** Another owner already exists: the seed makes no second one for a new email. */
+  it('creates nothing when a different active owner already exists', async () => {
+    const other = `seeded_owner_other_${Math.floor(Math.random() * 1e9)}@example.test`;
+    await getDb()
+      .insert(users)
+      .values({
+        name: 'Existing Owner',
+        email: other,
+        passwordHash: await hashPassword('the-original-password-1'),
+        role: 'owner',
+        isActive: true,
+      });
+
+    (env as { OWNER_EMAIL?: string }).OWNER_EMAIL = EMAIL;
+    (env as { OWNER_PASSWORD?: string }).OWNER_PASSWORD = STRONG;
+    await seed('test');
+
+    const rows = await getDb().select({ id: users.id }).from(users).where(eq(users.email, EMAIL));
+    expect(rows, 'a second owner was seeded alongside the existing one').toHaveLength(0);
+  }, 60_000);
 });

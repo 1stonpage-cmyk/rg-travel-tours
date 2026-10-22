@@ -205,7 +205,8 @@ async function upsertSetting(db: Db, key: string, value: unknown): Promise<void>
 }
 
 /**
- * The first owner account (Week 4, Task 5; owner instruction 2026-10-14).
+ * The first owner account (Week 4, Task 5; owner instruction 2026-10-14; changed to
+ * create-only by owner decision 2026-10-23).
  *
  * **Read from `OWNER_EMAIL` and `OWNER_PASSWORD` in `.env`, never from this
  * file.** A password in the repository is a password in every clone, every
@@ -214,7 +215,7 @@ async function upsertSetting(db: Db, key: string, value: unknown): Promise<void>
  * fallback and no "changeme".
  *
  * It is never printed either — not the password, not a masked version of
- * it. The only thing logged is whether an owner was created or updated.
+ * it. The only thing logged is whether an owner was created or left alone.
  *
  * ## When neither variable is set, this step is SKIPPED, loudly
  *
@@ -234,7 +235,7 @@ async function upsertSetting(db: Db, key: string, value: unknown): Promise<void>
  * or committed owner password — impossible, without making every test run
  * depend on production-shaped configuration.
  */
-async function upsertOwner(db: Db): Promise<void> {
+async function seedFirstOwner(db: Db): Promise<void> {
   const email = env.OWNER_EMAIL?.trim();
   const password = env.OWNER_PASSWORD;
 
@@ -259,24 +260,45 @@ async function upsertOwner(db: Db): Promise<void> {
     );
   }
 
-  const passwordHash = await hashPassword(password);
-  const existing = await db
+  /*
+   * Only the FIRST owner (owner decision 2026-10-23). Once any active owner
+   * exists, accounts are managed from the admin and this step touches nothing:
+   * re-seeding must never reset a password or change a role that a person set.
+   * An email that already belongs to some other account is left alone too.
+   */
+  const [activeOwner] = await db
     .select({ id: schema.users.id })
     .from(schema.users)
-    .where(eq(schema.users.email, email));
-
-  if (existing.length > 0) {
-    await db
-      .update(schema.users)
-      .set({ passwordHash, role: 'owner', isActive: true })
-      .where(eq(schema.users.id, existing[0]!.id));
-    console.log('[seed] owner: updated the existing account (password reset from .env)');
+    .where(and(eq(schema.users.role, 'owner'), eq(schema.users.isActive, true)))
+    .limit(1);
+  if (activeOwner) {
+    console.log('[seed] owner: an active owner already exists, nothing changed');
     return;
   }
 
-  await db
-    .insert(schema.users)
-    .values({ name: 'Owner', email, passwordHash, role: 'owner', isActive: true });
+  const [sameEmail] = await db
+    .select({ id: schema.users.id })
+    .from(schema.users)
+    .where(eq(schema.users.email, email.toLowerCase()))
+    .limit(1);
+  if (sameEmail) {
+    console.warn(
+      '[seed] owner: SKIPPED — OWNER_EMAIL already belongs to an existing account and no active ' +
+        'owner exists. Reactivate it in the database or use another email; the seed never ' +
+        'overwrites an account.',
+    );
+    return;
+  }
+
+  const passwordHash = await hashPassword(password);
+  await db.insert(schema.users).values({
+    name: 'Owner',
+    email: email.toLowerCase(),
+    passwordHash,
+    role: 'owner',
+    isActive: true,
+    mustChangePassword: false,
+  });
   console.log('[seed] owner: created');
 }
 
@@ -521,7 +543,7 @@ export async function seed(context: DatabaseContext = 'app'): Promise<void> {
 
   const db = getDb();
 
-  await upsertOwner(db);
+  await seedFirstOwner(db);
 
   const destinationIdBySlug = new Map<string, number>();
   for (const destination of SEED_DESTINATIONS) {

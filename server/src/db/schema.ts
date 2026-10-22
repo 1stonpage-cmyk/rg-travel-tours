@@ -313,6 +313,12 @@ export const users = mysqlTable(
     passwordHash: varchar('password_hash', { length: 255 }).notNull(),
     role: mysqlEnum('role', ADMIN_ROLES).notNull(),
     isActive: boolean('is_active').notNull().default(true),
+    /**
+     * True after the owner creates the account or resets its password: the
+     * password on file is a temporary one the owner typed, so the holder must
+     * replace it before using anything else (owner decision 2026-10-23).
+     */
+    mustChangePassword: boolean('must_change_password').notNull().default(false),
     lastLoginAt: datetime('last_login_at', { mode: 'date' }),
     createdAt: datetime('created_at', { mode: 'date' })
       .notNull()
