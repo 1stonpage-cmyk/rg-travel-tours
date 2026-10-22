@@ -232,9 +232,12 @@ describe('AdminStaffPage', () => {
     expect(within(olivia).getByText(/cannot change your own role/i)).toBeInTheDocument();
   });
 
-  it('shows a calm refusal, and no staff rows, when the server says the caller is not the owner', async () => {
+  it('shows a calm refusal, and no staff rows, when the list call itself is refused', async () => {
+    // The viewer looks like an owner to the page, so the list query IS issued
+    // and its refusal is what the screen has to render (the page-level role
+    // check is a separate case, below).
     mockTrpcError('admin.staffUsers.list', 'FORBIDDEN', 'Not allowed for your role.');
-    mockTrpc({ 'staffAuth.me': { userId: 5, role: 'dispatcher', mustChangePassword: false } });
+    mockTrpc({ 'staffAuth.me': { userId: 1, role: 'owner', mustChangePassword: false } });
     render(
       <TrpcProviders>
         <MemoryRouter>
@@ -248,6 +251,7 @@ describe('AdminStaffPage', () => {
       }),
     ).toBeInTheDocument();
     expect(screen.queryByText('Dan Dispatcher')).toBeNull();
+    expect(screen.queryByText('Not allowed for your role.')).toBeNull();
   });
 });
 
