@@ -86,6 +86,19 @@ export const driverInputSchema = z
 export type DriverInput = z.infer<typeof driverInputSchema>;
 
 /**
+ * `admin.drivers.setActive` input (Week 6.5, Task 4, D4). The soft-delete
+ * switch for a driver, kept OUT of `driverInputSchema` on purpose: switching a
+ * driver off ends their sessions, which is not a field edit, and a dedicated
+ * mutation keeps "who turned this driver off" a single audit action rather
+ * than a key to look for in a patch payload. Modelled on the vans'
+ * `setStatus` input.
+ */
+export const driverActiveInputSchema = z
+  .object({ id: z.number().int().positive(), isActive: z.boolean() })
+  .strict();
+export type DriverActiveInput = z.infer<typeof driverActiveInputSchema>;
+
+/**
  * One row of the fleet-of-people list (`admin.drivers.list`).
  *
  * No `pinHash` field exists on this type — not "present but omitted at the

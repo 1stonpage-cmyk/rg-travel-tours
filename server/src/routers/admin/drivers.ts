@@ -31,6 +31,7 @@ import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import {
   CAPACITY_HOLDING_STATUSES,
+  driverActiveInputSchema,
   driverInputSchema,
   driverLeaveInputSchema,
   civilDateFromDate,
@@ -46,6 +47,7 @@ import { isDuplicateKeyError } from '../../db/duplicate-key';
 import { bookings, driverLeaves, drivers, reviews } from '../../db/schema';
 import { hashPassword } from '../../services/password';
 import { writeAudit } from '../../services/audit';
+import { revokeSessionsForSubject } from '../../services/sessions';
 import { adminProcedure, router } from '../../trpc';
 
 /** The driver row shape as Drizzle's explicit `list` projection selects it. */
@@ -322,6 +324,65 @@ export const adminDriversRouter = router({
         }
         throw error;
       }
+    }),
+
+  /**
+   * Switches a driver on or off (Week 6.5, D4) — the act that did not exist:
+   * `driverInputSchema` excludes `is_active` and nothing else wrote it.
+   *
+   * **Deactivating deletes every session that driver holds, in THIS
+   * transaction** (owner decision 2026-10-16, D4). `requireDriver` reads the
+   * session and never re-reads `is_active`, so without this a driver switched
+   * off mid-shift kept up to twelve hours of access. Revoking at the write
+   * costs nothing on the portal's hottest path and closes the window at the
+   * one moment the state changes. The revocation is inside the transaction so
+   * that a failed write cannot sign a driver out of a job they still hold.
+   *
+   * **Reactivating revokes nothing.** There is nothing to take back, and the
+   * old sessions were already deleted when the driver was switched off — a
+   * reactivated driver signs in afresh.
+   *
+   * It deliberately does NOT touch `bookings.driver_id`: that id is the
+   * record of who was assigned, and an audit trail that forgets is not one.
+   * A deactivated driver's future trips instead surface through the
+   * `unassigned_soon` dashboard alert, which asks about the driver's state
+   * (`services/dispatch/alerts.ts`).
+   *
+   * Two audit actions, dotted (`driver.deactivated` / `driver.reactivated`),
+   * rather than one `driver.active_set`: "who turned this driver off" is the
+   * question an admin asks, and it should not need a payload to answer.
+   */
+  setActive: adminProcedure('vansDrivers')
+    .input(driverActiveInputSchema)
+    .mutation(async ({ input, ctx }) => {
+      await getDb().transaction(async (tx) => {
+        const [result] = await tx
+          .update(drivers)
+          .set({ isActive: input.isActive })
+          .where(eq(drivers.id, input.id));
+        if (result.affectedRows === 0) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'No driver with that id.' });
+        }
+        const [row] = await tx
+          .select({ code: drivers.code })
+          .from(drivers)
+          .where(eq(drivers.id, input.id));
+
+        // Switching OFF is the only direction that revokes.
+        const sessionsRevoked = input.isActive
+          ? 0
+          : await revokeSessionsForSubject(tx, 'driver', input.id);
+
+        await writeAudit(tx, {
+          actorType: 'user',
+          actorId: ctx.session.subjectId,
+          action: input.isActive ? 'driver.reactivated' : 'driver.deactivated',
+          entity: 'driver',
+          entityId: input.id,
+          data: { code: row?.code ?? null, isActive: input.isActive, sessionsRevoked },
+        });
+      });
+      return { ok: true as const };
     }),
 
   /**

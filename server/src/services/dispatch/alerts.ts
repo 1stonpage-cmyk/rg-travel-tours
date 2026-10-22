@@ -36,7 +36,7 @@
  * compile, and converting the threshold to a `Date` to make it compile
  * reintroduces the eight-hour shift this convention exists to avoid.
  */
-import { and, asc, eq, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import {
   PAPERS_EXPIRING_DAYS,
   SERVICE_DUE_DAYS,
@@ -104,8 +104,9 @@ export async function paymentsToVerify(tx: Transaction): Promise<DashboardAlert>
 
 /**
  * §9 "Unassigned trips within 48 hours" — owner-decided 2026-10-14 (Q7):
- * counted **back from the tour date**, `confirmed` only, missing a van
- * **OR** a driver.
+ * counted **back from the tour date**, `confirmed` or `assigned`, missing a van
+ * **OR** a driver **OR** holding a driver who has since been deactivated
+ * (D4, 2026-10-16 — `assigned` was added to the status set for that).
  *
  * The window is Manila-local and compared civil date to civil date. A naive
  * `now + 48h` against a civil `tour_date` is out by eight hours, which for
@@ -131,13 +132,39 @@ export async function unassignedSoon(tx: Transaction, now: Date): Promise<Dashbo
     })
     .from(bookings)
     .innerJoin(tours, eq(tours.id, bookings.tourId))
+    /*
+     * LEFT, never inner: a booking with a null `driver_id` has no drivers row
+     * to join, and an inner join would drop exactly the alert's original and
+     * most important case.
+     */
+    .leftJoin(drivers, eq(drivers.id, bookings.driverId))
     .where(
       and(
-        eq(bookings.status, 'confirmed'),
+        inArray(bookings.status, ['confirmed', 'assigned']),
         sql`${bookings.tourDate} >= ${today}`,
         onOrBefore(bookings.tourDate, windowEnd),
-        // OR, never AND: a van with no driver is just as stranded.
-        or(isNull(bookings.vanId), isNull(bookings.driverId)),
+        /*
+         * OR, never AND: a van with no driver is just as stranded.
+         *
+         * A trip whose driver has been DEACTIVATED needs assigning, even
+         * though `driver_id` is set (owner decision 2026-10-16, D4).
+         * Deactivation does not clear `bookings.driver_id` — deliberately,
+         * because that id is the record of who was assigned and an audit
+         * trail that forgets is not one — so the alert asks about the
+         * driver's state rather than the column's nullity.
+         *
+         * `assigned` joins `confirmed` in the status filter for the same
+         * decision (assignment moves a booking `confirmed` to `assigned`, so
+         * without it this term could never fire). It changes no count on a
+         * healthy fleet: an `assigned` booking has BOTH ids by construction,
+         * so the only term it can match is the inactive-driver one. Pinned by
+         * `dashboard-alerts.test.ts`.
+         *
+         * `isActive = false` on a NULL `drivers.is_active` (no joined row) is
+         * NULL, not true — and the null-driver case is already caught by
+         * `isNull(bookings.driverId)` above.
+         */
+        or(isNull(bookings.vanId), isNull(bookings.driverId), eq(drivers.isActive, false)),
       ),
     )
     .orderBy(asc(bookings.tourDate), asc(bookings.id));

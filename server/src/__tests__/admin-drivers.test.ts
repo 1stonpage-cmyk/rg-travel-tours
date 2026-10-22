@@ -33,7 +33,7 @@
  * broken code. `admin-bookings.test.ts:256-272` and `admin-vans.test.ts` use
  * the same `.rejects.toMatchObject({ code })` pattern.
  */
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { PriceSnapshot } from '@rg/shared';
 import { appRouter } from '../routers/_app';
@@ -45,13 +45,15 @@ import {
   driverLeaves,
   drivers,
   reviews,
+  sessions,
   tours,
   users,
 } from '../db/schema';
 import { generateBookingRef } from '../services/booking-ref';
 import { evaluatePinAttempt } from '../services/driver-lockout';
 import { verifyPassword } from '../services/password';
-import { staffContext } from './helpers/ctx';
+import { createSession, readSession } from '../services/sessions';
+import { driverCaller, staffContext, testContext } from './helpers/ctx';
 import { describeWithDb } from './helpers/db';
 
 /** The tour day the "already assigned" leave test uses. */
@@ -235,6 +237,11 @@ afterAll(async () => {
   if (created.driverIds.length > 0) {
     await db.delete(driverLeaves).where(inArray(driverLeaves.driverId, created.driverIds));
     await db
+      .delete(sessions)
+      .where(
+        and(eq(sessions.subjectType, 'driver'), inArray(sessions.subjectId, created.driverIds)),
+      );
+    await db
       .delete(auditLog)
       .where(and(eq(auditLog.entity, 'driver'), inArray(auditLog.entityId, created.driverIds)));
     await db.delete(drivers).where(inArray(drivers.id, created.driverIds));
@@ -361,12 +368,13 @@ describeWithDb('drivers', () => {
         .update({ id: driverId, patch: { name: 'Finance Should Not Reach This' } })
         .catch((e: unknown) => e),
       api.admin.drivers.resetPin({ id: driverId }).catch((e: unknown) => e),
+      api.admin.drivers.setActive({ id: driverId, isActive: false }).catch((e: unknown) => e),
       api.admin.drivers.addLeave(VALID_LEAVE).catch((e: unknown) => e),
       api.admin.drivers.removeLeave({ id: 1 }).catch((e: unknown) => e),
     ]);
 
-    // Exactly six, every one FORBIDDEN — not "at least one refusal".
-    expect(refusals).toHaveLength(6);
+    // Exactly seven, every one FORBIDDEN — not "at least one refusal".
+    expect(refusals).toHaveLength(7);
     for (const refusal of refusals) {
       expect(refusal).toMatchObject({ code: 'FORBIDDEN' });
     }
@@ -606,6 +614,207 @@ describeWithDb('drivers', () => {
         reason: null,
       }),
     ).rejects.toThrow(/assigned/i);
+  });
+
+  /*
+   * `admin.drivers.setActive` — Week 6.5 Task 4 (D4). The end-to-end session
+   * story (a real cookie, over HTTP) is `driver-deactivation.test.ts`; this
+   * block owns the procedure's own contract: who may call it, what it
+   * audits, what it refuses, and that a refusal changes nothing.
+   *
+   * Every test makes its OWN driver: the writes under test flip `is_active`,
+   * and a shared fixture would leak that state into the next test.
+   */
+  describe('setActive', () => {
+    const NOW = new Date('2026-10-15T04:00:00Z');
+
+    async function stateOf(id: number) {
+      const [row] = await getDb()
+        .select({ isActive: drivers.isActive })
+        .from(drivers)
+        .where(eq(drivers.id, id));
+      const held = await getDb()
+        .select({ id: sessions.id })
+        .from(sessions)
+        .where(and(eq(sessions.subjectType, 'driver'), eq(sessions.subjectId, id)));
+      return { isActive: row?.isActive, sessionRows: held.length };
+    }
+
+    /** A driver who is active and signed in, so a refusal has something to leave alone. */
+    async function signedInDriver() {
+      const id = await makeDriver();
+      const { token } = await createSession('driver', id, NOW);
+      return { id, token };
+    }
+
+    it('ALLOWS the owner: deactivates and ends the sessions', async () => {
+      const { id, token } = await signedInDriver();
+      const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
+
+      await expect(api.admin.drivers.setActive({ id, isActive: false })).resolves.toEqual({
+        ok: true,
+      });
+
+      expect(await stateOf(id)).toEqual({ isActive: false, sessionRows: 0 });
+      expect(await readSession(token, NOW)).toBeNull();
+    });
+
+    it('ALLOWS the dispatcher: the same area, the same power', async () => {
+      const { id } = await signedInDriver();
+      const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+
+      await expect(api.admin.drivers.setActive({ id, isActive: false })).resolves.toEqual({
+        ok: true,
+      });
+
+      expect(await stateOf(id)).toEqual({ isActive: false, sessionRows: 0 });
+    });
+
+    it('REFUSES finance with FORBIDDEN and leaves the driver and their sessions untouched', async () => {
+      const { id, token } = await signedInDriver();
+      const api = appRouter.createCaller(staffContext(financeId, 'finance') as never);
+
+      await expect(api.admin.drivers.setActive({ id, isActive: false })).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+      });
+
+      expect(await stateOf(id)).toEqual({ isActive: true, sessionRows: 1 });
+      expect(await readSession(token, NOW)).not.toBeNull();
+      expect(await auditRowsFor('driver', id)).toEqual([]);
+    });
+
+    it('REFUSES a driver session with UNAUTHORIZED: a driver cannot deactivate anyone, even themselves', async () => {
+      const { id, token } = await signedInDriver();
+
+      await expect(
+        driverCaller(id).admin.drivers.setActive({ id, isActive: false }),
+      ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+
+      expect(await stateOf(id)).toEqual({ isActive: true, sessionRows: 1 });
+      expect(await readSession(token, NOW)).not.toBeNull();
+      expect(await auditRowsFor('driver', id)).toEqual([]);
+    });
+
+    it('REFUSES an anonymous caller with UNAUTHORIZED and changes nothing', async () => {
+      const { id, token } = await signedInDriver();
+      const api = appRouter.createCaller(testContext(null) as never);
+
+      await expect(api.admin.drivers.setActive({ id, isActive: false })).rejects.toMatchObject({
+        code: 'UNAUTHORIZED',
+      });
+
+      expect(await stateOf(id)).toEqual({ isActive: true, sessionRows: 1 });
+      expect(await readSession(token, NOW)).not.toBeNull();
+      expect(await auditRowsFor('driver', id)).toEqual([]);
+    });
+
+    it('REFUSES a customer session with UNAUTHORIZED', async () => {
+      const { id } = await signedInDriver();
+      const api = appRouter.createCaller(
+        testContext({ subjectType: 'customer', subjectId: bookingId }) as never,
+      );
+
+      await expect(api.admin.drivers.setActive({ id, isActive: false })).rejects.toMatchObject({
+        code: 'UNAUTHORIZED',
+      });
+
+      expect(await stateOf(id)).toEqual({ isActive: true, sessionRows: 1 });
+    });
+
+    it('writes one dotted audit row per change, naming the actor, the code and the count', async () => {
+      const { id } = await signedInDriver();
+      await createSession('driver', id, NOW);
+      const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+
+      await api.admin.drivers.setActive({ id, isActive: false });
+      await api.admin.drivers.setActive({ id, isActive: true });
+
+      const rows = await auditRowsFor('driver', id);
+      expect(rows).toHaveLength(2);
+      expect(rows[0]).toMatchObject({
+        action: 'driver.deactivated',
+        actorType: 'user',
+        actorId: dispatcherId,
+        data: { isActive: false, sessionsRevoked: 2 },
+      });
+      expect(rows[1]).toMatchObject({
+        action: 'driver.reactivated',
+        actorType: 'user',
+        actorId: dispatcherId,
+        data: { isActive: true, sessionsRevoked: 0 },
+      });
+      // The code is the stable human label: the audit page can say WHICH
+      // driver without a join that a later rename would break.
+      expect((rows[0]?.data as { code: string }).code).toMatch(/^ADD/);
+    });
+
+    it('never puts the PIN hash in the audit row', async () => {
+      const { id } = await signedInDriver();
+      await appRouter
+        .createCaller(staffContext(ownerId, 'owner') as never)
+        .admin.drivers.setActive({ id, isActive: false });
+      const [row] = await auditRowsFor('driver', id);
+      expect(JSON.stringify(row?.data)).not.toContain('fixture_not_a_pin_hash');
+      expect(JSON.stringify(row?.data)).not.toMatch(/pin/i);
+    });
+
+    it('answers NOT_FOUND for a driver that does not exist, and audits nothing', async () => {
+      const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
+      const missing = 2_000_000_000;
+      // Hermetic: a broken build that audits a missing driver would leave a
+      // row behind (there is no fixture row to hang cleanup on), so this test
+      // clears its own id first and last rather than inheriting the damage.
+      const clear = () =>
+        getDb()
+          .delete(auditLog)
+          .where(and(eq(auditLog.entity, 'driver'), eq(auditLog.entityId, missing)));
+      await clear();
+      await expect(
+        api.admin.drivers.setActive({ id: missing, isActive: false }),
+      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      const leftBehind = await auditRowsFor('driver', missing);
+      await clear();
+      expect(leftBehind).toEqual([]);
+    });
+
+    it('refuses malformed input at the Zod boundary and changes nothing', async () => {
+      const { id } = await signedInDriver();
+      const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
+
+      // `.strict()`: an extra key is a refusal, not silently ignored, so a
+      // caller cannot smuggle a second column through this endpoint.
+      await expect(
+        api.admin.drivers.setActive({ id, isActive: false, name: 'x' } as never),
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      // A truthy string is not a boolean.
+      await expect(
+        api.admin.drivers.setActive({ id, isActive: 'false' } as never),
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      await expect(api.admin.drivers.setActive({ id: 0, isActive: false })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+      });
+
+      expect(await stateOf(id)).toEqual({ isActive: true, sessionRows: 1 });
+    });
+
+    it('reactivation restores the roster but resurrects no session', async () => {
+      const { id, token } = await signedInDriver();
+      const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
+
+      await api.admin.drivers.setActive({ id, isActive: false });
+      await api.admin.drivers.setActive({ id, isActive: true });
+
+      expect(await stateOf(id)).toEqual({ isActive: true, sessionRows: 0 });
+      expect(await readSession(token, NOW)).toBeNull();
+    });
+
+    it('lists the driver as inactive after deactivation', async () => {
+      const { id } = await signedInDriver();
+      const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
+      await api.admin.drivers.setActive({ id, isActive: false });
+      const listed = await api.admin.drivers.list();
+      expect(listed.find((d) => d.id === id)?.isActive).toBe(false);
+    });
   });
 
   it('ALLOWS dispatcher and owner to list drivers', async () => {

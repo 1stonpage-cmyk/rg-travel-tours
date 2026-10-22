@@ -37,7 +37,7 @@
  */
 import { createHash, randomBytes } from 'node:crypto';
 import { and, eq, gt } from 'drizzle-orm';
-import { getDb } from '../db/client';
+import { getDb, type Transaction } from '../db/client';
 import { sessions, users } from '../db/schema';
 
 /** The three things a session can belong to — `sessions.subject_type`. */
@@ -187,4 +187,40 @@ export async function revokeSession(token: string): Promise<void> {
   await getDb()
     .delete(sessions)
     .where(eq(sessions.tokenHash, hashToken(token)));
+}
+
+/**
+ * Ends every session one subject holds — "log this driver out everywhere"
+ * (owner decision 2026-10-16, D4).
+ *
+ * How it differs from `revokeSession`: that one is a LOGOUT, keyed on the
+ * token, deleting one row and leaving a sibling device signed in. This is a
+ * REVOCATION, keyed on the subject, deleting all of them.
+ *
+ * Takes the CALLER'S transaction rather than opening its own, which is the
+ * whole point: the revocation and the state change that justifies it commit
+ * together or not at all. A revocation in its own transaction would log a
+ * driver out of a deactivation that then rolled back — and a driver locked
+ * out of a job they still hold, at a pier, is a worse failure than the one
+ * this closes.
+ *
+ * `subject_id` is polymorphic (`schema.ts`), so the TYPE is half of the key:
+ * `drivers.id = 7` and `users.id = 7` are different subjects, and
+ * `sessions_subject_idx` is on the pair for exactly this query.
+ *
+ * Returns the count so the caller can audit it. `affectedRows` is a true
+ * count here, unlike on an UPDATE: `CLIENT_FOUND_ROWS` changes what an UPDATE
+ * reports (matched, not changed — see the note beside `getPool()`) and has no
+ * bearing on a DELETE. Zero is an ordinary answer: a driver who was not
+ * signed in anywhere.
+ */
+export async function revokeSessionsForSubject(
+  tx: Transaction,
+  subjectType: SessionSubject,
+  subjectId: number,
+): Promise<number> {
+  const [result] = await tx
+    .delete(sessions)
+    .where(and(eq(sessions.subjectType, subjectType), eq(sessions.subjectId, subjectId)));
+  return result.affectedRows;
 }

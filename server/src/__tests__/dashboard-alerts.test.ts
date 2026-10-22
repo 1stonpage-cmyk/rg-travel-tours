@@ -11,7 +11,7 @@
  * which is the only reason a boundary test can sit ON the boundary.
  */
 import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
-import { inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import {
   PAPERS_EXPIRING_DAYS,
   SERVICE_DUE_DAYS,
@@ -217,7 +217,15 @@ describeWithDb('vans', () => {
     created.bookingIds.length = 0;
     for (const id of created.vanIds) await pool.query('DELETE FROM vans WHERE id = ?', [id]);
     created.vanIds.length = 0;
-    for (const id of created.driverIds) await pool.query('DELETE FROM drivers WHERE id = ?', [id]);
+    for (const id of created.driverIds) {
+      // `setActive` audits; the audit rows go with the driver they describe.
+      await pool.query("DELETE FROM audit_log WHERE entity = 'driver' AND entity_id = ?", [id]);
+      await pool.query('DELETE FROM sessions WHERE subject_type = ? AND subject_id = ?', [
+        'driver',
+        id,
+      ]);
+      await pool.query('DELETE FROM drivers WHERE id = ?', [id]);
+    }
     created.driverIds.length = 0;
   });
 
@@ -267,6 +275,107 @@ describeWithDb('vans', () => {
     await makeBooking({ tourDate: plusDays(TODAY, 1), status: 'pending_payment' });
     await makeBooking({ tourDate: plusDays(TODAY, 1), status: 'pending_verification' });
     expect(alertFor(await callAlerts(), 'unassigned_soon').count).toBe(0);
+  });
+
+  /* ---- D4: a deactivated driver's future trips need assigning (2026-10-16) ---- */
+
+  /** Deactivates through the real procedure, so the alert is tested against the real write. */
+  const deactivate = (driverId: number) =>
+    appRouter
+      .createCaller(staffContext(ownerId, 'owner') as never)
+      .admin.drivers.setActive({ id: driverId, isActive: false });
+
+  it('counts an ASSIGNED trip whose driver has been deactivated', async () => {
+    const vanId = await makeVan({});
+    const driverId = await makeDriver();
+    await makeBooking({ tourDate: plusDays(TODAY, 1), status: 'assigned', vanId, driverId });
+    expect(alertFor(await callAlerts(), 'unassigned_soon').count).toBe(0);
+
+    await deactivate(driverId);
+
+    expect(alertFor(await callAlerts(), 'unassigned_soon').count).toBe(1);
+  });
+
+  it('counts a CONFIRMED trip whose driver was deactivated, once and not twice', async () => {
+    // Confirmed with both ids set is not a state assignment produces, but a
+    // hand edit can; it must count once however many terms match.
+    const vanId = await makeVan({});
+    const driverId = await makeDriver({ isActive: false });
+    await makeBooking({ tourDate: plusDays(TODAY, 1), status: 'confirmed', vanId, driverId });
+    expect(alertFor(await callAlerts(), 'unassigned_soon').count).toBe(1);
+  });
+
+  it('keeps bookings.driver_id on deactivation: the alert reads the driver, not the column', async () => {
+    const vanId = await makeVan({});
+    const driverId = await makeDriver();
+    const bookingId = await makeBooking({
+      tourDate: plusDays(TODAY, 1),
+      status: 'assigned',
+      vanId,
+      driverId,
+    });
+    await deactivate(driverId);
+    const [row] = await getDb()
+      .select({ driverId: bookings.driverId, status: bookings.status })
+      .from(bookings)
+      .where(eq(bookings.id, bookingId));
+    expect(row).toEqual({ driverId, status: 'assigned' });
+  });
+
+  it('does NOT count a deactivated driver’s trip that already departed, or lies past 48 hours', async () => {
+    const vanId = await makeVan({});
+    const driverId = await makeDriver({ isActive: false });
+    await makeBooking({ tourDate: plusDays(TODAY, -1), status: 'assigned', vanId, driverId });
+    await makeBooking({ tourDate: plusDays(TODAY, 5), status: 'assigned', vanId, driverId });
+    expect(alertFor(await callAlerts(), 'unassigned_soon').count).toBe(0);
+  });
+
+  it('does NOT count a deactivated driver’s cancelled or unpaid trips', async () => {
+    const vanId = await makeVan({});
+    const driverId = await makeDriver({ isActive: false });
+    // The widening is to `assigned` and nothing else: a trip that is cancelled
+    // or still unpaid is not something a dispatcher can assign.
+    await makeBooking({ tourDate: plusDays(TODAY, 1), status: 'cancelled', vanId, driverId });
+    await makeBooking({ tourDate: plusDays(TODAY, 1), status: 'pending_payment', vanId, driverId });
+    expect(alertFor(await callAlerts(), 'unassigned_soon').count).toBe(0);
+  });
+
+  it('changes NO count on a healthy fleet: widening the status filter only admits the inactive-driver case', async () => {
+    const vanA = await makeVan({});
+    const vanB = await makeVan({});
+    const driverA = await makeDriver();
+    const driverB = await makeDriver();
+    // Fully staffed, both statuses, all with ACTIVE drivers: none may count.
+    await makeBooking({ tourDate: TODAY, status: 'assigned', vanId: vanA, driverId: driverA });
+    await makeBooking({
+      tourDate: plusDays(TODAY, 1),
+      status: 'assigned',
+      vanId: vanB,
+      driverId: driverB,
+    });
+    await makeBooking({
+      tourDate: plusDays(TODAY, 2),
+      status: 'confirmed',
+      vanId: vanA,
+      driverId: driverA,
+    });
+    // ...and the same two original cases still count exactly as before.
+    await makeBooking({ tourDate: TODAY, status: 'confirmed', vanId: vanA, driverId: null });
+    await makeBooking({
+      tourDate: plusDays(TODAY, 1),
+      status: 'confirmed',
+      vanId: null,
+      driverId: driverB,
+    });
+
+    expect(alertFor(await callAlerts(), 'unassigned_soon').count).toBe(2);
+  });
+
+  it('still counts a confirmed trip with NO driver (the left join must not drop it)', async () => {
+    const vanId = await makeVan({});
+    await makeBooking({ tourDate: plusDays(TODAY, 1), status: 'confirmed', vanId, driverId: null });
+    await makeBooking({ tourDate: plusDays(TODAY, 1), status: 'assigned', vanId, driverId: null });
+    expect(alertFor(await callAlerts(), 'unassigned_soon').count).toBe(2);
   });
 
   /* ---- Q7: the boundary, in Manila time (owner-decided 2026-10-14) ---- */

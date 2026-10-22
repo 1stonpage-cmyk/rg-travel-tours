@@ -378,11 +378,28 @@ Every page reads tours, destinations, packages, reviews, FAQs and settings from 
 - **`booking_notes` text is fully visible to drivers.** `driver.trip` returns every note on the
   trip, text only, oldest first. There is no visibility column, so there is no such thing as an
   office-eyes-only note today. Open owner decision.
-- **`requireDriver` reads the session and never re-reads `drivers.is_active`**, and `readSession`'s
-  live-role join is on `users` only — so **a driver deactivated mid-shift keeps up to 12 hours of
-  access** (measured 2026-10-16: `is_active = 0`, same cookie, `driver.trips` still 200). Staff
-  deactivation IS immediate, by contrast. The asymmetry is deliberate-by-default and an open owner
-  decision, not an invariant to build on.
+- **Deactivating a driver ends their sessions** (owner decision 2026-10-16, D4).
+  `admin.drivers.setActive` — an `adminProcedure('vansDrivers')`, so owner and dispatcher — writes
+  `is_active` and DELETES every `sessions` row for that driver (`revokeSessionsForSubject`) in the
+  **same transaction**, then audits `driver.deactivated` / `driver.reactivated` with the count
+  revoked. `requireDriver` still reads the session and never re-reads `drivers.is_active`, and that
+  is now sufficient rather than a gap: a deactivated driver's very next request is `UNAUTHORIZED`
+  (measured over HTTP in `driver-deactivation.test.ts`). Reactivating revokes nothing and does not
+  bring old sessions back — the driver signs in again. **The invariant is "the mutation revokes", not
+  "an inactive driver cannot be authenticated":** a driver switched off by a direct `UPDATE drivers`
+  in SQL, bypassing the mutation, keeps their session until it expires (12 hours). `sessions.subject_id`
+  is polymorphic, so the revoke keys on type AND id — `drivers.id = 7` and `users.id = 7` are
+  different subjects. `drivers.update` deliberately cannot change `is_active`; only `setActive` can.
+- **A deactivated driver's future trips need assigning again.** Deactivation does NOT clear
+  `bookings.driver_id` (the id is the record of who was assigned). The §9 `unassignedSoon` alert
+  reads the driver instead: its status filter is `confirmed` **and** `assigned` (assignment moves a
+  booking to `assigned`, so `confirmed` alone could never see it), it `LEFT JOIN`s `drivers` (an
+  inner join would drop every booking with a null `driver_id`, the alert's original case), and it
+  counts a trip whose driver is inactive as well as one missing a van or a driver. Widening the
+  status adds no count on a healthy fleet — an `assigned` booking has both ids by construction —
+  and a test pins that. Residue: the alert's window is 48 hours of tour days, so a deactivated
+  driver's trip further out surfaces as its date approaches rather than immediately. That is the
+  alert's existing design, not a new gap.
 
 ## Security
 
