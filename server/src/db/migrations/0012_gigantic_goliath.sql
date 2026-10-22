@@ -1,0 +1,1 @@
+ALTER TABLE `booking_notes` ADD `visible_to_driver` boolean DEFAULT false NOT NULL;

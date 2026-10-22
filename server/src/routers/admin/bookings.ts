@@ -41,7 +41,7 @@
  */
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
-import { BOOKING_STATUSES, manilaCivilDate } from '@rg/shared';
+import { BOOKING_STATUSES, addBookingNoteInputSchema, manilaCivilDate } from '@rg/shared';
 import { and, asc, desc, eq, gte, lte, sql } from 'drizzle-orm';
 import { getDb } from '../../db/client';
 import {
@@ -54,6 +54,7 @@ import {
   tours,
   vans,
 } from '../../db/schema';
+import { writeAudit } from '../../services/audit';
 import { notify } from '../../services/notify';
 import {
   CashPaymentNotFoundError,
@@ -422,6 +423,12 @@ export const adminBookingsRouter = router({
         .select({
           id: bookingNotes.id,
           note: bookingNotes.note,
+          /*
+           * Whether the driver on this trip can read it (D6). The admin
+           * needs this per note — it is the only way to tell at a glance
+           * which of the office's words are riding in a van.
+           */
+          visibleToDriver: bookingNotes.visibleToDriver,
           userId: bookingNotes.userId,
           createdAt: bookingNotes.createdAt,
         })
@@ -651,5 +658,62 @@ export const adminBookingsRouter = router({
       } catch (error) {
         throw asTrpcError(error);
       }
+    }),
+
+  /**
+   * Write one office note on a booking, and state whether the driver may
+   * read it (owner decision 2026-10-16, D6).
+   *
+   * **The first writer `booking_notes` has ever had.** The table was built
+   * in Week 1 and read by `detail` and `driver.trip` from Week 4 and 6, but
+   * nothing inserted into it — the office had no way to record anything.
+   *
+   * `adminProcedure('bookingsView')`: `ROLE_MATRIX` transcribes §9's
+   * "Bookings: view, notes" row, which is owner, dispatcher AND finance.
+   * Notes are part of the booking record, not a payment decision, so this
+   * is deliberately not `verifyPayments`.
+   *
+   * One transaction: the booking is checked inside it, the note is inserted
+   * with the author taken from the session (never the payload), and the
+   * audit row commits or rolls back with it. The audit `data` carries the
+   * note's id and its visibility and NOT its text — the text is already
+   * stored, and audit rows are exported in reports.
+   *
+   * `entity: 'bookings'`, plural: the booking detail's trail reads
+   * `entity = 'bookings'`, and a singular here would write a row that
+   * screen can never show.
+   */
+  addNote: adminProcedure('bookingsView')
+    .input(addBookingNoteInputSchema)
+    .mutation(async ({ input, ctx }) => {
+      return getDb().transaction(async (tx) => {
+        const [booking] = await tx
+          .select({ id: bookings.id })
+          .from(bookings)
+          .where(eq(bookings.id, input.bookingId))
+          .limit(1);
+        if (!booking) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'No booking with that id.' });
+        }
+
+        const [inserted] = await tx.insert(bookingNotes).values({
+          bookingId: booking.id,
+          userId: ctx.session.subjectId,
+          note: input.note,
+          visibleToDriver: input.visibleToDriver,
+        });
+        const id = inserted.insertId;
+
+        await writeAudit(tx, {
+          actorType: 'user',
+          actorId: ctx.session.subjectId,
+          action: 'booking.note_added',
+          entity: 'bookings',
+          entityId: booking.id,
+          data: { noteId: id, visibleToDriver: input.visibleToDriver },
+        });
+
+        return { id };
+      });
     }),
 });

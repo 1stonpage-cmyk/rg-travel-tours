@@ -160,3 +160,40 @@ export const priceSnapshotSchema = z.object({
   totalCentavos: z.number().int().nonnegative(),
 });
 export type PriceSnapshot = z.infer<typeof priceSnapshotSchema>;
+
+/**
+ * The longest office note `admin.bookings.addNote` accepts, in characters.
+ *
+ * `booking_notes.note` is `text` (65,535 BYTES), so the column would take far
+ * more; this is the product limit, and it sits well inside the column even
+ * for a note of four-byte characters (2,000 x 4 = 8,000 bytes). A note is an
+ * instruction or a record of a conversation, not a document — and everything
+ * stored here is shown whole on the booking screen.
+ */
+export const BOOKING_NOTE_MAX_LENGTH = 2000;
+
+/**
+ * Input to `admin.bookings.addNote` (owner decision 2026-10-16, D6).
+ *
+ * **`visibleToDriver` is REQUIRED, and has no default.** The caller states the
+ * decision on every note rather than inheriting one: a default of `true`
+ * would put an unflagged note in a van, and a default of `false` would let a
+ * forgotten field read as a considered choice. The database column defaults
+ * to `false` for rows written by anything that does not go through here; this
+ * is the stricter rule for the one thing that does.
+ *
+ * `note` is trimmed before the length check, so a note of spaces is refused
+ * and stored text carries no leading or trailing blanks.
+ */
+export const addBookingNoteInputSchema = z
+  .object({
+    bookingId: z.number().int().positive(),
+    note: z
+      .string()
+      .trim()
+      .min(1, 'Write the note first.')
+      .max(BOOKING_NOTE_MAX_LENGTH, `Keep a note under ${BOOKING_NOTE_MAX_LENGTH} characters.`),
+    visibleToDriver: z.boolean(),
+  })
+  .strict();
+export type AddBookingNoteInput = z.infer<typeof addBookingNoteInputSchema>;

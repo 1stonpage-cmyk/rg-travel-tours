@@ -308,7 +308,19 @@ export async function driverTripDetail(driverId: number, bookingId: number): Pro
   const notes = await db
     .select({ note: bookingNotes.note })
     .from(bookingNotes)
-    .where(eq(bookingNotes.bookingId, bookingId))
+    .where(
+      and(
+        eq(bookingNotes.bookingId, bookingId),
+        /*
+         * §8's "Office notes", and ONLY the ones the office marked for the
+         * driver (owner decision 2026-10-16, D6). The filter is in the
+         * WHERE, not a `.filter()` on the result: a note the driver may not
+         * read must not travel to the browser at all, where it would sit in
+         * a network response and a React cache regardless of what renders.
+         */
+        eq(bookingNotes.visibleToDriver, true),
+      ),
+    )
     .orderBy(asc(bookingNotes.createdAt), asc(bookingNotes.id));
 
   return {

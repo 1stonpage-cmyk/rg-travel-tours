@@ -453,12 +453,16 @@ describeWithDb('driver.trip', () => {
       bookingId: booking.id,
       userId: officeUserId,
       note: 'Guest waiting at the second gate, not the lobby.',
+      // The column defaults to FALSE (D6), so a note the driver is meant to
+      // read has to say so; `booking-notes.test.ts` owns the invisible side.
+      visibleToDriver: true,
       createdAt: new Date('2026-11-01T01:00:00Z'),
     });
     await db.insert(bookingNotes).values({
       bookingId: booking.id,
       userId: officeUserId,
       note: 'One guest is in a wheelchair; front seat.',
+      visibleToDriver: true,
       createdAt: new Date('2026-11-01T02:00:00Z'),
     });
 

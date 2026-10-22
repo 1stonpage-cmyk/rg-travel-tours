@@ -85,6 +85,13 @@
       "when": 1791961889871,
       "tag": "0011_colossal_tomorrow_man",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "5",
+      "when": 1792689041400,
+      "tag": "0012_gigantic_goliath",
+      "breakpoints": true
     }
   ]
 }

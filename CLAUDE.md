@@ -385,9 +385,18 @@ Every page reads tours, destinations, packages, reviews, FAQs and settings from 
   completion if the trip is `completed`, otherwise the most recent standing check-in. Re-recording
   a stop **reactivates its existing row** rather than inserting a second (owner decision Q5): the
   index is what makes the double tap safe and must not be weakened to allow a re-tap.
-- **`booking_notes` text is fully visible to drivers.** `driver.trip` returns every note on the
-  trip, text only, oldest first. There is no visibility column, so there is no such thing as an
-  office-eyes-only note today. Open owner decision.
+- **A `booking_notes` row is office-only unless the office says otherwise** (owner decision
+  2026-10-16, D6). `booking_notes.visible_to_driver` is `NOT NULL DEFAULT 0` in the database, not
+  only in Drizzle, so a note written by anything that forgets the flag (a seed, a hand-written
+  INSERT) is private. `driver.trip` filters on it **in the SQL `WHERE`**, not in JS, so a note the
+  driver may not read never reaches the browser; its `officeNotes` payload is still `string[]`,
+  oldest first. The driver is deliberately **not** told that office-only notes exist. The admin
+  states the decision per note: `admin.bookings.addNote` (`adminProcedure('bookingsView')`, so
+  owner, dispatcher and finance) takes a **required** `visibleToDriver` boolean with no default,
+  and is the **only writer of this table**, since nothing wrote it before. It audits
+  `booking.note_added` on entity `bookings` with `{noteId, visibleToDriver}` and never the note
+  text. `admin.bookings.detail` returns every note with its flag, and the detail screen says
+  "Driver can see this" or "Office only" in words beside each. Migration `0012` adds the column.
 - **Deactivating a driver ends their sessions** (owner decision 2026-10-16, D4).
   `admin.drivers.setActive` — an `adminProcedure('vansDrivers')`, so owner and dispatcher — writes
   `is_active` and DELETES every `sessions` row for that driver (`revokeSessionsForSubject`) in the

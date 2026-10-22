@@ -1122,6 +1122,23 @@ export const bookingNotes = mysqlTable(
       .notNull()
       .references(() => users.id),
     note: text('note').notNull(),
+    /**
+     * Whether the driver on this trip may read this note (owner decision
+     * 2026-10-16, D6).
+     *
+     * **Default FALSE, and that direction is the whole point.** Until this
+     * column existed, `driver.trip` returned every note on the booking —
+     * so the office had nowhere to record "the guest disputed the price"
+     * that the driver would not read at the pickup. A default of `true`
+     * would have made every note written by anything that does not know
+     * about this column (a migration, a seed, a hand-written INSERT)
+     * visible in a van, which is the failure this exists to prevent.
+     *
+     * `NOT NULL` so there is no third state. A nullable flag would make
+     * "nobody decided" indistinguishable from "decided no" in every query,
+     * and the two would drift.
+     */
+    visibleToDriver: boolean('visible_to_driver').notNull().default(false),
     createdAt: datetime('created_at', { mode: 'date' })
       .notNull()
       .$defaultFn(() => new Date()),
