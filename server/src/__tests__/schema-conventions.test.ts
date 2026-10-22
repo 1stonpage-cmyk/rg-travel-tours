@@ -19,11 +19,12 @@
  *     here (BUG-106); cleanup A3 renamed them, so the rule now holds with no
  *     exemptions at all and this guard carries no allow-list to rot.
  *  4. Nothing hard-deletes a booking or a payment.
- *  5. Nothing writes `bookings.amount_paid_centavos` except the payments
- *     service that owns `recordPayment()` (A5b). That column IS the money
- *     the business believes it has received, and the whole "only a verified
- *     webhook or an admin approval marks a booking paid" rule is only as
- *     strong as the number of places that can move it.
+ *  5. Nothing writes `bookings.amount_paid_centavos` except two named
+ *     functions in the payments service (A5b, made function-scoped in M1).
+ *     That column IS the money the business believes it has received, and
+ *     the whole "only a verified webhook or an admin approval marks a
+ *     booking paid" rule is only as strong as the number of places that can
+ *     move it.
  *
  * **The vacuity trap.** A scan that stops matching — a renamed file, a
  * tightened regex, a moved directory — passes on an empty array and reports
@@ -36,6 +37,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, extname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 const serverRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -92,6 +94,141 @@ const SCHEMA = readStripped('src/db/schema.ts');
  */
 function expectPatternIsLive(re: RegExp, knownBad: string, label: string): void {
   expect(re.test(knownBad), `the ${label} pattern no longer matches a known violation`).toBe(true);
+}
+
+/** What `findCreditWrites` reports for one write to `amount_paid_centavos`. */
+interface CreditWrite {
+  /** The enclosing TOP-LEVEL declaration's name; `null` when it has none. */
+  owner: string | null;
+  line: number;
+}
+
+/** What a source file declares at top level, and where it moves the column. */
+interface CreditWriteScan {
+  declared: Set<string>;
+  writes: CreditWrite[];
+}
+
+const RAW_CREDIT_WRITE = /\bamount_paid_centavos\s*=/i;
+const DRIZZLE_CREDIT_KEY = 'amountPaidCentavos';
+
+/** The text of a property name, when it is spelled as a literal. */
+function propertyNameText(name: ts.PropertyName): string | undefined {
+  if (ts.isIdentifier(name) || ts.isStringLiteralLike(name)) return name.text;
+  if (ts.isComputedPropertyName(name) && ts.isStringLiteralLike(name.expression)) {
+    return name.expression.text;
+  }
+  return undefined;
+}
+
+/**
+ * The name of the top-level declaration that `node` sits inside, or `null`
+ * when there is none: module-level code, an expression statement, an
+ * anonymous `export default function () {}`. `null` is never on an
+ * allow-list, so every unnameable position fails closed.
+ */
+function enclosingTopLevelName(node: ts.Node, file: ts.SourceFile): string | null {
+  let top: ts.Node = node;
+  while (top.parent && top.parent !== file) top = top.parent;
+  if (top.parent !== file) return null;
+  if (ts.isVariableStatement(top)) {
+    const declaration = top.declarationList.declarations.find(
+      (d) => d.pos <= node.pos && node.end <= d.end,
+    );
+    return declaration && ts.isIdentifier(declaration.name) ? declaration.name.text : null;
+  }
+  if (ts.isFunctionDeclaration(top) || ts.isClassDeclaration(top)) return top.name?.text ?? null;
+  return null;
+}
+
+/**
+ * Finds every place `source` moves `bookings.amount_paid_centavos`, by
+ * parsing it. The unit is the top-level declaration. Runs over the ORIGINAL
+ * text, never the comment-stripped copy: stripping blanks characters in
+ * place, but a parser should see the file the compiler sees.
+ *
+ * Two write shapes, the same two the regex half of this guard knows:
+ *
+ *  - the Drizzle object key `amountPaidCentavos: ...` (or the shorthand
+ *    `{ amountPaidCentavos }`) in an object literal, i.e. `.set({...})` /
+ *    `.values({...})`. A TYPE annotation is a different syntax node
+ *    (`PropertySignature`, `PropertyDeclaration`, `Parameter`) and is simply
+ *    not visited, and the `schema.ts` column declaration is excluded by
+ *    shape (`int(...)`), as the regex does.
+ *  - the raw-SQL fragment `amount_paid_centavos =` inside any string or
+ *    template literal. Comments are not literals, so prose cannot trip it.
+ */
+function findCreditWrites(source: string, fileName = 'sample.ts'): CreditWriteScan {
+  const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
+  const declared = new Set<string>();
+  const writes: CreditWrite[] = [];
+
+  for (const statement of file.statements) {
+    if (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) {
+      if (statement.name) declared.add(statement.name.text);
+    } else if (ts.isVariableStatement(statement)) {
+      for (const d of statement.declarationList.declarations) {
+        if (ts.isIdentifier(d.name)) declared.add(d.name.text);
+      }
+    }
+  }
+
+  const record = (node: ts.Node) => {
+    writes.push({
+      owner: enclosingTopLevelName(node, file),
+      line: file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1,
+    });
+  };
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isPropertyAssignment(node) && propertyNameText(node.name) === DRIZZLE_CREDIT_KEY) {
+      const init = node.initializer;
+      const isColumnDeclaration =
+        ts.isCallExpression(init) &&
+        ts.isIdentifier(init.expression) &&
+        init.expression.text === 'int';
+      if (!isColumnDeclaration) record(node);
+    } else if (ts.isShorthandPropertyAssignment(node) && node.name.text === DRIZZLE_CREDIT_KEY) {
+      record(node);
+    } else if (
+      (ts.isStringLiteralLike(node) ||
+        ts.isTemplateHead(node) ||
+        ts.isTemplateMiddle(node) ||
+        ts.isTemplateTail(node)) &&
+      RAW_CREDIT_WRITE.test(node.text)
+    ) {
+      record(node);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+
+  return { declared, writes };
+}
+
+/**
+ * The only top-level functions in `record-payment.ts` that may move
+ * `bookings.amount_paid_centavos`, each with the reason it may. Adding an
+ * entry is the legitimate way to add a third crediting function — in the
+ * same commit as the function, so a reviewer sees this diff.
+ */
+const CREDITING_FUNCTIONS: Record<string, string> = {
+  // The webhook / admin-recorded path: the single place a verified PayMongo
+  // payment or an admin-entered payment becomes money the business holds.
+  recordPayment: 'credits a booking for a verified webhook or an admin-recorded payment',
+  // The single credit path for manual evidence. `verifyCashPayment` and
+  // `approveManualReceipt` both delegate to it, so a driver's cash claim or a
+  // guest's receipt is credited here, once, after an owner or finance
+  // approval, under the booking row lock — and nowhere else.
+  verifyPendingManualPayment:
+    'credits a booking when owner/finance approve a pending cash claim or receipt',
+};
+
+/** Writes whose enclosing top-level declaration is not on `allowed`. */
+function unauthorisedCreditWrites(scan: CreditWriteScan, allowed: readonly string[]): string[] {
+  return scan.writes
+    .filter((w) => w.owner === null || !allowed.includes(w.owner))
+    .map((w) => `${w.owner ?? '<no named top-level declaration>'} (line ${w.line})`);
 }
 
 describe('schema conventions, read from the real source', () => {
@@ -199,16 +336,34 @@ describe('schema conventions, read from the real source', () => {
    * a driver service. Either would have been invisible in review a month
    * later. So the rule is written down where it cannot rot.
    *
-   * **The unit is the module, not the function.** A regex over source text
-   * cannot tell which function body a line sits in, and a guard that
-   * pretended otherwise would be lying about what it checks. The file is the
-   * honest boundary: `record-payment.ts` contains `recordPayment()` and
-   * `verifyCashPayment()`, nothing else, and both are reviewed as the money
-   * path. Add a third writer to that file and this guard will not stop you —
-   * the code review is what stops you, and this test is what keeps the
-   * question inside one file where a reviewer will see it.
+   * **The unit is the top-level function (M1).** Until M1 the unit was the
+   * file, and the docblock admitted it: a new function in `record-payment.ts`
+   * could write the column with this guard green (measured twice in Week
+   * 6.5, Task 2). Now the guard PARSES `record-payment.ts` with the
+   * TypeScript compiler, finds the top-level declaration enclosing every
+   * write, and requires its name to be on `CREDITING_FUNCTIONS` below. Two
+   * functions are on it, and nothing else in that file may move the column —
+   * `recordPendingCash`, `rejectCashPayment`, `verifyCashPayment` and
+   * `approveManualReceipt` included. A write at module top level, or inside
+   * a declaration with no name (an anonymous default export), has no name to
+   * be on the list and fails closed. Every OTHER file may not write the
+   * column at all, exactly as before.
+   *
+   * To legitimately add a third crediting function: put its name on
+   * `CREDITING_FUNCTIONS` in the SAME commit as the function, with a
+   * comment saying why it may credit a booking. The reviewer sees the
+   * allow-list diff; that is the review this guard exists to force. And the
+   * list cannot rot: every entry must still exist and still contain a write,
+   * so renaming or emptying one fails here instead of leaving a stale
+   * permission behind.
+   *
+   * What the parser sees is an object key `amountPaidCentavos:` (or its
+   * shorthand) and the raw-SQL fragment `amount_paid_centavos =` in a string
+   * or template literal. It does not see a write built by indirection (a
+   * key assembled at runtime, a helper that takes the column name) — which
+   * the old regex could not see either; review is still what covers that.
    */
-  it('writes amount_paid_centavos from one module only — the one that owns recordPayment()', () => {
+  it('writes amount_paid_centavos from two named functions only — recordPayment() and the manual-verification path', () => {
     /**
      * What this regex actually matches: ANY `amountPaidCentavos:` in the
      * server tree, not specifically Drizzle's write form
@@ -263,7 +418,7 @@ describe('schema conventions, read from the real source', () => {
       'amount_paid_centavos raw SQL write',
     );
 
-    /** The one module allowed to move the column. */
+    /** The one module that contains any crediting function. */
     const OWNER = 'src/services/payments/record-payment.ts';
     // Vacuity, both halves: the tree was scanned, and the owning module is
     // really in it. A renamed or moved `record-payment.ts` must fail here
@@ -275,6 +430,7 @@ describe('schema conventions, read from the real source', () => {
     const owner = readStripped(OWNER);
     expect(drizzleWrite.test(owner) || rawWrite.test(owner)).toBe(true);
 
+    // Half one, unchanged in strictness: no OTHER file may write the column.
     const writers = appFiles.filter(
       (f) => f !== OWNER && (drizzleWrite.test(readStripped(f)) || rawWrite.test(readStripped(f))),
     );
@@ -283,5 +439,91 @@ describe('schema conventions, read from the real source', () => {
       'only the payments service that owns recordPayment() may write ' +
         `bookings.amount_paid_centavos (CLAUDE.md, A5b): ${writers.join(', ')}`,
     ).toEqual([]);
+
+    // Half two (M1): inside the owner, only the allow-listed functions may.
+    const scan = findCreditWrites(readFileSync(join(serverRoot, OWNER), 'utf8'), OWNER);
+    // Vacuity, fail closed: each entry must still exist AND still write.
+    for (const name of Object.keys(CREDITING_FUNCTIONS)) {
+      expect(
+        scan.declared.has(name),
+        `${name} is on the crediting allow-list but ${OWNER} no longer declares it — ` +
+          'remove or rename the entry in the same commit',
+      ).toBe(true);
+      expect(
+        scan.writes.some((w) => w.owner === name),
+        `${name} is on the crediting allow-list but no longer writes amount_paid_centavos — ` +
+          'an allow-list entry that permits nothing is a stale permission; remove it',
+      ).toBe(true);
+    }
+    expect(
+      unauthorisedCreditWrites(scan, Object.keys(CREDITING_FUNCTIONS)),
+      `only ${Object.keys(CREDITING_FUNCTIONS).join(' and ')} may write ` +
+        `bookings.amount_paid_centavos inside ${OWNER} (CLAUDE.md, A5b / M1). ` +
+        'To add a crediting function, add it to CREDITING_FUNCTIONS with a reason',
+    ).toEqual([]);
+  });
+
+  it('proves the per-function detector is live against in-memory samples', () => {
+    const allowed = ['credits'];
+
+    // A write in an allow-listed function: found, and accepted.
+    const ok = findCreditWrites(
+      'async function credits(db) { await db.update(b).set({ amountPaidCentavos: 1 }); }',
+    );
+    expect(ok.writes.map((w) => w.owner)).toEqual(['credits']);
+    expect(unauthorisedCreditWrites(ok, allowed)).toEqual([]);
+
+    // The same write in any other named function: reported by name.
+    const other = findCreditWrites(
+      'export async function sneaky(db) { await db.update(b).set({ amountPaidCentavos: 1 }); }',
+    );
+    expect(unauthorisedCreditWrites(other, allowed)).toEqual([expect.stringMatching(/^sneaky /)]);
+
+    // Arrow function bound to a const is named by the const.
+    const arrow = findCreditWrites(
+      'const quiet = async (db) => db.set({ amountPaidCentavos: 1 });',
+    );
+    expect(unauthorisedCreditWrites(arrow, allowed)).toEqual([expect.stringMatching(/^quiet /)]);
+
+    // A nested closure is attributed to its top-level declaration, so a
+    // helper declared inside an allow-listed function stays that function's.
+    const nested = findCreditWrites(
+      'function credits(db) { const go = () => db.set({ amountPaidCentavos: 1 }); return go(); }',
+    );
+    expect(nested.writes.map((w) => w.owner)).toEqual(['credits']);
+
+    // Top-level (module) code has no function to be on the list: fail closed.
+    const top = findCreditWrites('db.update(b).set({ amountPaidCentavos: 1 });');
+    expect(top.writes.map((w) => w.owner)).toEqual([null]);
+    expect(unauthorisedCreditWrites(top, allowed)).toHaveLength(1);
+
+    // So does a declaration with no name.
+    const anon = findCreditWrites(
+      'export default async function (db) { db.set({ amountPaidCentavos: 1 }); }',
+    );
+    expect(unauthorisedCreditWrites(anon, allowed)).toHaveLength(1);
+
+    // The raw-SQL shapes, in a plain string and in a template literal.
+    const raw = findCreditWrites(
+      "function a(db) { db.execute('UPDATE bookings SET amount_paid_centavos = 0'); }\n" +
+        'function b(db) { db.execute(sql`UPDATE bookings SET amount_paid_centavos = ${n}`); }',
+    );
+    expect(unauthorisedCreditWrites(raw, allowed)).toEqual([
+      expect.stringMatching(/^a /),
+      expect.stringMatching(/^b /),
+    ]);
+
+    // Not writes: type annotations, a read, a comment, the column declaration.
+    const notWrites = findCreditWrites(
+      [
+        'interface Paid { amountPaidCentavos: number }',
+        'class E { constructor(readonly amountPaidCentavos: number) {} }',
+        "const amountPaid = { amountPaidCentavos: int('amount_paid_centavos') };",
+        'function read(b) { return b.amountPaidCentavos + 1; }',
+        '// set({ amountPaidCentavos: 1 }) and amount_paid_centavos = 1 in prose',
+      ].join('\n'),
+    );
+    expect(notWrites.writes).toEqual([]);
+    expect([...notWrites.declared].sort()).toEqual(['E', 'amountPaid', 'read']);
   });
 });
