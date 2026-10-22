@@ -21,9 +21,17 @@
  */
 import { schedule } from 'node-cron';
 import { expireHolds } from './expire-holds';
+import { checkOrphanedVans } from './orphaned-vans';
 
 /** §5 / §13: the hold-expiry sweep runs every minute. */
 const EVERY_MINUTE = '* * * * *';
+
+/**
+ * D5 (2026-10-16): the orphaned-van check, 07:00 Manila — before the first
+ * departures, so a dispatcher starting the day sees it. The zone is passed
+ * to node-cron explicitly below; the server's own zone is not assumed.
+ */
+const DAILY_0700 = '0 7 * * *';
 
 /**
  * Starts every scheduled job. Called once, from the server entrypoint.
@@ -58,5 +66,22 @@ export function startScheduledJobs(): void {
       }
     },
     { name: 'expire-holds', noOverlap: true },
+  );
+
+  /*
+   * A look, never a fix: this job changes no van status (see its header).
+   * Same try/catch as above, for the same reason — a throw into the scheduler
+   * takes the API process down with it.
+   */
+  schedule(
+    DAILY_0700,
+    async () => {
+      try {
+        await checkOrphanedVans(new Date());
+      } catch (error) {
+        console.error('[jobs] orphaned-vans failed', error);
+      }
+    },
+    { name: 'orphaned-vans', timezone: 'Asia/Manila', noOverlap: true },
   );
 }

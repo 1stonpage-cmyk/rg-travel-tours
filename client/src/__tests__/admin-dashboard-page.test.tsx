@@ -1,5 +1,5 @@
 /**
- * Week 5, Task 14: the admin dashboard — five cards, zeroes included.
+ * Week 5, Task 14: the admin dashboard — six cards, zeroes included.
  *
  * Renders through `TrpcProviders` (the page uses a tRPC hook) and a
  * `MemoryRouter`, because each non-zero card links to the screen that
@@ -19,12 +19,15 @@ const alert = (
   examples: DashboardAlert['examples'] = [],
 ): DashboardAlert => ({ kind, count, examples });
 
-const ALL_FIVE_NONZERO: DashboardAlert[] = [
+const ALL_SIX_NONZERO: DashboardAlert[] = [
   alert('payments_to_verify', 2, [{ id: 1, label: 'RG-AAAA11', date: '2026-11-12' }]),
   alert('unassigned_soon', 3, [{ id: 2, label: 'RG-BBBB22 · Kawasan Falls', date: '2026-11-11' }]),
   alert('vans_in_repair', 1, [{ id: 3, label: 'ABC 123 — Clutch', date: null }]),
   alert('service_due', 4, [{ id: 4, label: 'DEF 456', date: '2026-11-20' }]),
   alert('papers_expiring', 2, [{ id: 5, label: 'Maria Santos — licence', date: '2026-12-01' }]),
+  alert('orphaned_on_trip', 1, [
+    { id: 6, label: 'GHI 789 · last trip RG-CCCC33 on 2026-11-09', date: null },
+  ]),
 ];
 
 function renderDashboard(alerts: DashboardAlert[]) {
@@ -50,7 +53,7 @@ afterEach(resetTrpcMock);
 
 describe('AdminDashboardPage', () => {
   it('states each count in words, not as a bare numeral', async () => {
-    renderDashboard(ALL_FIVE_NONZERO);
+    renderDashboard(ALL_SIX_NONZERO);
     expect(await screen.findByText(/2 payments to verify/i)).toBeTruthy();
     expect(screen.getByText(/3 trips within 48 hours have no van or driver/i)).toBeTruthy();
     expect(screen.getByText(/4 vans are due for service within 14 days/i)).toBeTruthy();
@@ -72,13 +75,14 @@ describe('AdminDashboardPage', () => {
     expect(screen.getByText(/all clear/i)).toBeTruthy();
   });
 
-  it('shows all five cards even when four of them are zero', async () => {
+  it('shows all six cards even when five of them are zero', async () => {
     renderDashboard([
       alert('payments_to_verify', 1),
       alert('unassigned_soon', 0),
       alert('vans_in_repair', 0),
       alert('service_due', 0),
       alert('papers_expiring', 0),
+      alert('orphaned_on_trip', 0),
     ]);
     await screen.findByTestId('alert-payments_to_verify');
     for (const kind of [
@@ -87,6 +91,7 @@ describe('AdminDashboardPage', () => {
       'vans_in_repair',
       'service_due',
       'papers_expiring',
+      'orphaned_on_trip',
     ]) {
       expect(screen.getByTestId(`alert-${kind}`)).toBeTruthy();
     }
@@ -113,16 +118,16 @@ describe('AdminDashboardPage', () => {
   });
 
   it('links every non-zero alert to the screen that resolves it', async () => {
-    renderDashboard(ALL_FIVE_NONZERO);
+    renderDashboard(ALL_SIX_NONZERO);
     await screen.findByTestId('alert-payments_to_verify');
     const hrefs = screen.getAllByRole('link').map((a) => a.getAttribute('href'));
     expect(hrefs).toContain('/admin/calendar');
     expect(hrefs.some((h) => h?.startsWith('/admin/bookings'))).toBe(true);
     expect(hrefs).toContain('/admin/vans');
     expect(hrefs).toContain('/admin/drivers');
-    // EXACTLY five links, one per non-zero card — a zero card must not
+    // EXACTLY six links, one per non-zero card — a zero card must not
     // offer an action there is nothing to do.
-    expect(hrefs).toHaveLength(5);
+    expect(hrefs).toHaveLength(6);
   });
 
   it('offers no link on a zero card', async () => {
@@ -132,12 +137,12 @@ describe('AdminDashboardPage', () => {
   });
 
   it('uses ONE status region for the whole set', async () => {
-    renderDashboard(ALL_FIVE_NONZERO);
+    renderDashboard(ALL_SIX_NONZERO);
     await screen.findByTestId('alert-payments_to_verify');
     // Five competing live regions is the named anti-pattern; one sentence
     // tells an operator more than five numbers read in sequence.
     expect(screen.getAllByRole('status')).toHaveLength(1);
-    expect(screen.getByRole('status').textContent).toMatch(/12 things need attention/i);
+    expect(screen.getByRole('status').textContent).toMatch(/13 things need attention/i);
   });
 
   it('says nothing needs attention when every alert is zero', async () => {
@@ -152,6 +157,46 @@ describe('AdminDashboardPage', () => {
     expect(await screen.findByText(/ABC 123 — Clutch/)).toBeTruthy();
   });
 
+  describe('the orphaned-van alert', () => {
+    it('names the plate and says in words that the van is refused on every future date', async () => {
+      renderDashboard([
+        alert('orphaned_on_trip', 1, [
+          { id: 6, label: 'GHI 789 · last trip RG-CCCC33 on 2026-11-09', date: null },
+        ]),
+      ]);
+      const card = await screen.findByTestId('alert-orphaned_on_trip');
+      expect(card.textContent).toMatch(/GHI 789/);
+      expect(card.textContent).toMatch(/1 van is marked on trip, but no trip is running/i);
+      // The consequence and the cure are in the SENTENCE, independent of
+      // the card's colour classes.
+      expect(card.textContent).toMatch(/refused on every future date/i);
+      expect(card.textContent).toMatch(/until someone completes or corrects the trip/i);
+    });
+
+    it('pluralises, and links to the fleet screen', async () => {
+      renderDashboard([alert('orphaned_on_trip', 2)]);
+      expect(await screen.findByText(/2 vans are marked on trip/i)).toBeTruthy();
+      expect(screen.getByRole('link', { name: /open the fleet/i }).getAttribute('href')).toBe(
+        '/admin/vans',
+      );
+    });
+
+    it('is absent as an alarm when the list is empty: all clear, no sentence, no link', async () => {
+      renderDashboard([alert('orphaned_on_trip', 0)]);
+      const card = await screen.findByTestId('alert-orphaned_on_trip');
+      expect(card.textContent).toMatch(/all clear/i);
+      expect(card.textContent).not.toMatch(/refused on every future date/i);
+      expect(screen.queryAllByRole('link')).toEqual([]);
+    });
+
+    it('is painted amber like its siblings', async () => {
+      renderDashboard([alert('orphaned_on_trip', 1)]);
+      const card = await screen.findByTestId('alert-orphaned_on_trip');
+      expect(card.className).toMatch(/border-amber-200/);
+      expect(card.className).toMatch(/bg-amber-50/);
+    });
+  });
+
   it("carries §9's departures board below the cards", async () => {
     /*
      * This test used to assert the line of apology that stood here while
@@ -164,7 +209,7 @@ describe('AdminDashboardPage', () => {
      * busy state — is `departures-board.test.tsx`. This only pins that
      * the dashboard mounts it.
      */
-    renderDashboard(ALL_FIVE_NONZERO);
+    renderDashboard(ALL_SIX_NONZERO);
     expect(await screen.findByTestId('departures-board')).toBeTruthy();
     expect(screen.getByRole('heading', { name: /today's departures/i })).toBeTruthy();
   });
@@ -173,7 +218,7 @@ describe('AdminDashboardPage', () => {
     // The board deliberately adds none: `aria-busy` is an attribute, not
     // an announcement, and a panel that announced itself every fifteen
     // seconds would be worse than the five regions this page avoids.
-    renderDashboard(ALL_FIVE_NONZERO);
+    renderDashboard(ALL_SIX_NONZERO);
     // The board renders synchronously, so its presence is NOT evidence the
     // alerts have landed — wait for a card, or this counts the regions of a
     // half-rendered page and passes for the wrong reason.

@@ -240,9 +240,10 @@ describeWithDb('vans', () => {
     }
   });
 
-  it('always returns all five alerts, including the empty ones', async () => {
+  it('always returns all six alerts, including the empty ones', async () => {
     const alerts = await callAlerts();
     expect(alerts.map((a) => a.kind).sort()).toEqual([
+      'orphaned_on_trip',
       'papers_expiring',
       'payments_to_verify',
       'service_due',
@@ -550,7 +551,7 @@ describeWithDb('vans', () => {
       ['finance', financeId],
     ] as const) {
       const api = appRouter.createCaller(staffContext(id, role) as never);
-      await expect(api.admin.dashboard.alerts()).resolves.toHaveLength(5);
+      await expect(api.admin.dashboard.alerts()).resolves.toHaveLength(6);
     }
   });
 

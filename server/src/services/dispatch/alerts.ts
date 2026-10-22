@@ -1,9 +1,10 @@
 /**
- * Week 5, Task 13: BUILD_SPEC §9's five dashboard alerts.
+ * Week 5, Task 13: BUILD_SPEC §9's five dashboard alerts, plus the sixth
+ * (`orphanedOnTripVans`) that owner decision 2026-10-16 (D5) added.
  *
  * One exported function per alert, so a reviewer can check each against §9
- * line by line and reject one without touching the other four. Five legible
- * queries, deliberately, rather than one clever union.
+ * line by line and reject one without touching the others. Legible queries,
+ * deliberately, rather than one clever union.
  *
  * ## Every function takes an explicit `now`
  *
@@ -14,8 +15,9 @@
  * router passes `new Date()`; the procedure takes no input, so **no browser
  * can move the alert window**.
  *
- * **Two of the five do not take it**, deliberately narrowing Ruling 2:
- * `paymentsToVerify` and `vansInRepair` have no time dependence at all — a
+ * **Three of the six do not take it**, deliberately narrowing Ruling 2:
+ * `paymentsToVerify`, `vansInRepair` and `orphanedOnTripVans` have no time
+ * dependence at all — a
  * pending receipt is pending and a van in repair is in repair, whatever the
  * clock says. Giving them a `now` they never read would tell the next reader
  * the clock matters here, and a parameter that lies about what a function
@@ -36,7 +38,8 @@
  * compile, and converting the threshold to a `Date` to make it compile
  * reintroduces the eight-hour shift this convention exists to avoid.
  */
-import { and, asc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, notExists, or, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/mysql-core';
 import {
   PAPERS_EXPIRING_DAYS,
   SERVICE_DUE_DAYS,
@@ -46,7 +49,7 @@ import {
   type DashboardAlert,
 } from '@rg/shared';
 import type { Transaction } from '../../db/client';
-import { bookings, drivers, payments, tours, vans } from '../../db/schema';
+import { VAN_STATUSES, bookings, drivers, payments, tours, vans } from '../../db/schema';
 
 /** §9: the card shows a secondary line, not a list. */
 const MAX_EXAMPLES = 5;
@@ -294,11 +297,123 @@ export async function papersExpiring(tx: Transaction, now: Date): Promise<Dashbo
 }
 
 /**
- * All five, always — zeroes included.
+ * The status `startTrip` writes and only a completion (or the cancellation of
+ * a running trip) clears — `services/trips/checkins.ts` is its sole writer.
+ * Checked against `VAN_STATUSES` at compile time, so a rename cannot leave
+ * this query asking about a status that no longer exists.
+ *
+ * It is, by definition, one of the statuses `VAN_STATUS_SELLABLE` does NOT
+ * allow; that relationship is the reason this alert exists, not something
+ * to re-derive here.
+ */
+const VAN_STATUS_ON_TRIP = 'on_trip' as const satisfies (typeof VAN_STATUSES)[number];
+
+/**
+ * The sixth dashboard alert, added by owner decision 2026-10-16 (D5) — NOT
+ * from BUILD_SPEC §9: **a van sitting in `on_trip` with no running trip to
+ * explain it.**
+ *
+ * `vans.status` is not date-scoped, so a van left here is refused on every
+ * future date at once (`VAN_STATUS_SELLABLE`, CLAUDE.md's Dispatch section).
+ * Nothing puts it back except a completion or the cancellation of a running
+ * trip. A driver whose phone dies at the last stop therefore removes a van
+ * from sale indefinitely, and the symptom arrives weeks later as "we are
+ * fully booked" on a day with idle vans.
+ *
+ * **This function is an OBSERVATION, and the alert is the whole fix.**
+ * Nothing here or in `jobs/orphaned-vans.ts` writes a van status. That is the
+ * owner's instruction, not an omission: on the one day a trip genuinely
+ * overruns past midnight, an automatic sweep would put a van with guests in
+ * it back on sale. A dispatcher looking at the alert knows which of the two
+ * it is; a cron job never can.
+ *
+ * No `now`, for the reason in the module note: "is there an `in_progress`
+ * booking for this van" is a question about state, not about the clock.
+ *
+ * Soft-deleted vans are left out, like every other van alert here.
+ *
+ * The alert's shape is the existing `DashboardAlert`, not a new one: a van
+ * has no date, so `date` is null; `id` is the van's, and the plate and the
+ * last booking that named it go into `label`. That booking is the most recent
+ * by tour date, whatever its status — a LEAD for the dispatcher's first
+ * question ("which trip was this?"), not a claim that it stranded the van.
+ *
+ * Two statements however many vans match, never one per van: the stranded
+ * vans, then the last booking for the (at most five) vans the card names.
+ * Longest-stranded first (`updated_at` ascending — the status write is what
+ * last touched the row, short of a hand edit).
+ */
+export async function orphanedOnTripVans(tx: Transaction): Promise<DashboardAlert> {
+  const running = alias(bookings, 'running');
+  const rows = await tx
+    .select({ id: vans.id, plate: vans.plate })
+    .from(vans)
+    .where(
+      and(
+        eq(vans.isActive, true),
+        eq(vans.status, VAN_STATUS_ON_TRIP),
+        notExists(
+          tx
+            .select({ one: sql`1` })
+            .from(running)
+            .where(and(sql`${running.vanId} = ${vans.id}`, eq(running.status, 'in_progress'))),
+        ),
+      ),
+    )
+    .orderBy(asc(vans.updatedAt), asc(vans.id));
+
+  const shown = rows.slice(0, MAX_EXAMPLES);
+  const lastByVan = new Map<number, { ref: string; tourDate: Date }>();
+  if (shown.length > 0) {
+    const later = alias(bookings, 'later');
+    const latest = await tx
+      .select({ vanId: bookings.vanId, ref: bookings.ref, tourDate: bookings.tourDate })
+      .from(bookings)
+      .where(
+        and(
+          inArray(
+            bookings.vanId,
+            shown.map((row) => row.id),
+          ),
+          eq(
+            bookings.id,
+            tx
+              .select({ id: later.id })
+              .from(later)
+              .where(sql`${later.vanId} = ${bookings.vanId}`)
+              .orderBy(desc(later.tourDate), desc(later.id))
+              .limit(1),
+          ),
+        ),
+      );
+    for (const row of latest) {
+      if (row.vanId !== null) lastByVan.set(row.vanId, row);
+    }
+  }
+
+  return {
+    kind: 'orphaned_on_trip',
+    count: rows.length,
+    examples: shown.map((row) => {
+      const last = lastByVan.get(row.id);
+      return {
+        id: row.id,
+        label: last
+          ? `${row.plate} · last trip ${last.ref} on ${civilDateFromDate(last.tourDate)}`
+          : row.plate,
+        date: null,
+      };
+    }),
+  };
+}
+
+/**
+ * All six, always — zeroes included.
  *
  * A dashboard that hides its empty alerts teaches an operator that an absent
- * card means "fine", which is indistinguishable from "the query broke". Five
- * cards, every load, each stating its number.
+ * card means "fine", which is indistinguishable from "the query broke". Six
+ * cards, every load, each stating its number. The sixth is LAST, so the
+ * existing five keep their order.
  */
 export async function dashboardAlerts(tx: Transaction, now: Date): Promise<DashboardAlert[]> {
   return [
@@ -307,5 +422,6 @@ export async function dashboardAlerts(tx: Transaction, now: Date): Promise<Dashb
     await vansInRepair(tx),
     await serviceDue(tx, now),
     await papersExpiring(tx, now),
+    await orphanedOnTripVans(tx),
   ];
 }

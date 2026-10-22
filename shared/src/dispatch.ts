@@ -356,13 +356,21 @@ export const SERVICE_DUE_DAYS = 14;
 /** §9 "Driver license, OR/CR, and LTFRB franchise expiring within 30 days". */
 export const PAPERS_EXPIRING_DAYS = 30;
 
-/** The five §9 dashboard alerts. Always all five, zeroes included. */
+/**
+ * The six dashboard alerts. Always all six, zeroes included.
+ *
+ * The first five are BUILD_SPEC §9's. The sixth, `orphaned_on_trip`, is NOT
+ * from §9: it was added by owner decision 2026-10-16 (D5) — a van sitting in
+ * `on_trip` with no running trip to explain it. It is an alert and nothing
+ * else; no code path frees such a van automatically.
+ */
 export const DASHBOARD_ALERT_KINDS = [
   'payments_to_verify',
   'unassigned_soon',
   'vans_in_repair',
   'service_due',
   'papers_expiring',
+  'orphaned_on_trip',
 ] as const;
 
 export type DashboardAlertKind = (typeof DASHBOARD_ALERT_KINDS)[number];

@@ -35,7 +35,7 @@ import type { DashboardAlert } from '@rg/shared';
  */
 const ALERT_COPY: Record<
   DashboardAlert['kind'],
-  { noun: (n: number) => string; href: string; action: string }
+  { noun: (n: number) => string; href: string; action: string; detail?: string }
 > = {
   payments_to_verify: {
     noun: (n) => (n === 1 ? '1 payment to verify' : `${n} payments to verify`),
@@ -71,6 +71,24 @@ const ALERT_COPY: Record<
     href: '/admin/drivers',
     action: 'Open the drivers',
   },
+  /*
+   * Owner decision 2026-10-16 (D5). The `detail` line carries the consequence
+   * in words, because the count alone ("1 van is marked on trip") does not
+   * say why anyone should care: the van is refused on EVERY future date, and
+   * the cure is a person completing or correcting the trip — the system
+   * deliberately frees nothing by itself. Meaning is in the sentence, not in
+   * the amber ground.
+   */
+  orphaned_on_trip: {
+    noun: (n) =>
+      n === 1
+        ? '1 van is marked on trip, but no trip is running'
+        : `${n} vans are marked on trip, but no trip is running`,
+    href: '/admin/vans',
+    action: 'Open the fleet',
+    detail:
+      'A van in this state is refused on every future date until someone completes or corrects the trip.',
+  },
 };
 
 /** The heading each card carries whatever its count. */
@@ -80,6 +98,7 @@ const ALERT_TITLE: Record<DashboardAlert['kind'], string> = {
   vans_in_repair: 'Vans in repair',
   service_due: 'Service due',
   papers_expiring: 'Papers expiring',
+  orphaned_on_trip: 'Vans stuck on a trip',
 };
 
 export default function AlertCard({ alert }: { alert: DashboardAlert }) {
@@ -105,6 +124,7 @@ export default function AlertCard({ alert }: { alert: DashboardAlert }) {
       ) : (
         <>
           <p className="text-brand-blue-900 mt-1 text-sm font-semibold">{copy.noun(alert.count)}</p>
+          {copy.detail ? <p className="text-brand-blue-900 mt-1 text-sm">{copy.detail}</p> : null}
           {alert.examples.length > 0 ? (
             <ul className="text-muted-foreground mt-2 space-y-0.5 text-xs">
               {alert.examples.map((example) => (

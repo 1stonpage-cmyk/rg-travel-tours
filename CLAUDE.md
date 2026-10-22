@@ -262,17 +262,27 @@ Every page reads tours, destinations, packages, reviews, FAQs and settings from 
   deliberately: the write has to be pinned before anything is built on it. But the column only
   proves the write landed, and availability proves dispatch honours it, so a van-status test that
   reads the column ALONE is not a test of this rule.
-- **KNOWN GAP: nothing sweeps a van left `on_trip` by a trip nobody ever completed.** A driver
-  whose phone dies at the last stop, or who simply forgets, leaves that van unsellable
-  indefinitely — and the symptom arrives weeks later as "we're fully booked" on a day with idle
-  vans, with nothing in the logs. The only cures today are the driver completing the trip and a
-  hand-written `UPDATE vans`. Two candidate fixes are on the table, and both need an owner
-  decision because both are new surface area: a `node-cron` job that frees a van whose booking is
-  still `in_progress` past its tour date (a new scheduled job is a new failure mode), or a
-  dispatcher-facing "force complete" on the §9 booking detail, audited like any other status
-  change (no scheduler, but somebody has to notice first). Until one is built the gap is pinned by
-  the last test in `trip-van-status.test.ts` — building the sweep reddens that test, and whoever
-  does should replace it with the sweep's own proof rather than loosen it.
+- **A van left `on_trip` by a trip nobody completed is made VISIBLE, never auto-freed** (owner decision
+  2026-10-16, D5). A driver whose phone dies at the last stop, or who simply forgets, leaves the van
+  `on_trip` — and because `vans.status` is not date-scoped it is refused on every future date at once.
+  Two surfaces now report it: a sixth dashboard alert, `orphaned_on_trip` (`orphanedOnTripVans` in
+  `server/src/services/dispatch/alerts.ts`: an active van in `on_trip` with no `in_progress` booking;
+  not from §9, hence the sixth in `DASHBOARD_ALERT_KINDS`, same `DashboardAlert` shape with
+  `date: null` and the plate and last trip in `label`), and a daily `console.warn` from
+  `server/src/jobs/orphaned-vans.ts` at **07:00 Asia/Manila** (registered in `jobs/index.ts` with the
+  zone passed explicitly; silent when nothing is found). **Neither changes a status, and neither
+  writes an audit row.** That is the owner's instruction, not an omission: on the one day a trip
+  genuinely overruns past midnight, an automatic sweep would put a van with guests in it back on sale,
+  and a dispatcher can tell the two cases apart where a clock cannot. **What is still manual:** a human
+  completes or corrects the trip (or sets the van's status on the fleet screen). Do not "finish" this
+  by adding a sweep without a new owner decision. The no-sweep rule is pinned from two sides:
+  `orphaned-vans.test.ts` ("CHANGES NOTHING" — status, `updated_at` and dispatch availability all
+  unchanged after the job) and the last test in `trip-van-status.test.ts`, which pins the absence of
+  any completion path for an abandoned trip. **Building the alert did not redden that gap test and
+  nothing but a real sweep or a new completion path would**; whoever builds one should replace it with
+  the new behaviour's own proof rather than loosen it. Caveat on that second pin: it never calls the
+  job, so it does not by itself catch the job being changed to write a status — `orphaned-vans.test.ts`
+  is the one that does (measured 2026-10-23).
 - **Lock order for anything that touches a day's capacity is absolute:** `fleet_date_slots(date)`
   → `tour_date_slots(tour_id, date)` → the booking row. `createHold()`, the expiry sweep and
   `assignVanAndDriver()` all take it in that order. Two paths taking the same pair in opposite

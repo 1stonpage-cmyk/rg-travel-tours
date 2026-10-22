@@ -1,15 +1,15 @@
 /**
  * Week 5, Task 14: the admin dashboard (BUILD_SPEC §9 "Dashboard").
  *
- * Five alert cards, always all five, from `admin.dashboard.alerts`. §9 gives
+ * Six alert cards, always all six, from `admin.dashboard.alerts`. §9 gives
  * this screen to all three roles and `ROLE_MATRIX.dashboard` already is that
  * trio, so there is no role gate here — unlike the assign panel, nothing on
  * this page is an action finance cannot take.
  *
  * ## One status region for the whole set
  *
- * Not one per card. Five competing live regions is the named anti-pattern in
- * the `ui-ux-pro-max` live-badge guidance, and a screen reader reading five
+ * Not one per card. Six competing live regions is the named anti-pattern in
+ * the `ui-ux-pro-max` live-badge guidance, and a screen reader reading six
  * numbers in sequence tells an operator less than one sentence does.
  *
  * ## §9's lead panel now exists
@@ -18,7 +18,7 @@
  * departures with stop-by-stop progress bars" belongs — the panel needed
  * `trip_checkpoints` writes, which arrived with 6C. Task 12 replaced that
  * line with `DeparturesBoard`, which owns its own query, its own
- * fifteen-second poll and its own busy state. The five alert cards above it
+ * fifteen-second poll and its own busy state. The six alert cards above it
  * are untouched: they answer "what needs a decision", the board answers
  * "what is happening right now", and they are deliberately not merged into
  * one query.
@@ -36,6 +36,8 @@ const ORDER: Array<DashboardAlert['kind']> = [
   'vans_in_repair',
   'service_due',
   'papers_expiring',
+  // Owner decision 2026-10-16 (D5); last, so the existing five keep their place.
+  'orphaned_on_trip',
 ];
 
 function summarise(alerts: DashboardAlert[]): string {
