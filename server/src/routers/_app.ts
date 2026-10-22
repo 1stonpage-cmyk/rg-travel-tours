@@ -13,6 +13,7 @@ import { adminCalendarRouter } from './admin/calendar';
 import { adminDispatchRouter } from './admin/dispatch';
 import { adminDriversRouter } from './admin/drivers';
 import { adminRefundsRouter } from './admin/refunds';
+import { adminStaffUsersRouter } from './admin/staff-users';
 import { adminVansRouter } from './admin/vans';
 import { staffAuthRouter } from './admin/auth';
 import { portalRouter } from './public/portal';
@@ -99,6 +100,8 @@ export const appRouter = router({
    * is why the sign-in lives at `staffAuth` instead of in here.
    */
   admin: router({
+    /** Staff accounts (owner only; owner decisions 2026-10-23). */
+    staffUsers: adminStaffUsersRouter,
     bookings: adminBookingsRouter,
     dashboard: adminDashboardRouter,
     /*

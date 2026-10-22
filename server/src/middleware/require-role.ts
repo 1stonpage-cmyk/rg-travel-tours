@@ -56,9 +56,17 @@ export const ROLE_MATRIX = {
   reports: ['owner', 'finance'],
   /** Users, settings                  ✅ ❌ ❌ */
   usersSettings: ['owner'],
+  /**
+   * Staff accounts                   ✅ ❌ ❌
+   * Owner decision 2026-10-23: only the owner lists, creates, edits,
+   * deactivates or resets staff logins. A separate area from `usersSettings`
+   * so that row keeps meaning "settings"; finance and dispatcher get no
+   * access here, not even to read.
+   */
+  staffAccounts: ['owner'],
 } as const satisfies Record<string, readonly AdminRole[]>;
 
-/** The ten gated areas of §9's table. */
+/** The gated areas of §9's table. */
 export type AdminArea = keyof typeof ROLE_MATRIX;
 
 /**

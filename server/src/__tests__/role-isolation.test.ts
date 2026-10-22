@@ -1,14 +1,14 @@
 /**
  * Task 17 of the core-schema plan: role isolation, both directions.
  *
- * CLAUDE.md asks for "a test per role per area". Three roles across §9's ten
- * areas is 30 cases, and they are GENERATED from `ROLE_MATRIX` rather than
+ * CLAUDE.md asks for "a test per role per area". Three roles across §9's eleven
+ * areas is 33 cases, and they are GENERATED from `ROLE_MATRIX` rather than
  * hand-written, because the direction that matters is the denial — and the
  * denial is exactly the case a hand-written set forgets. Writing them out by
  * hand also lets a new area arrive with no test at all; generating them means
  * area eleven is covered the moment it is added to the matrix.
  *
- * Three layers, because the generated 30 on their own would prove less than
+ * Three layers, because the generated 33 on their own would prove less than
  * they appear to:
  *
  *  1. **The matrix is checked against the spec, not against a second copy of
@@ -17,7 +17,7 @@
  *     typo, a widened role list, or an edit to the spec table all fail here.
  *     (Same discipline as `no-red.test.ts` and `contrast.test.ts`: read the
  *     real source, never a fixture list.)
- *  2. **The 30 cases run through a real tRPC procedure**, not through a
+ *  2. **The 33 cases run through a real tRPC procedure**, not through a
  *     lookup. The harness below builds a router with one gated procedure per
  *     area — the shape a Week 5 admin procedure will have — and the pass/fail
  *     signal is whether the RESOLVER BODY actually ran, recorded by a
@@ -83,7 +83,7 @@ function gated(area: AdminArea) {
 
 /**
  * Listed one per line rather than generated from `Object.keys`, so that the
- * router is a second, independent statement of the ten areas: a key dropped
+ * router is a second, independent statement of the eleven areas: a key dropped
  * here while the matrix keeps it is caught by `covers every area`, below.
  */
 const adminHarness = router({
@@ -97,6 +97,7 @@ const adminHarness = router({
   reviewsModeration: gated('reviewsModeration'),
   reports: gated('reports'),
   usersSettings: gated('usersSettings'),
+  staffAccounts: gated('staffAccounts'),
 });
 
 /** An authenticated staff session, as the Week 5 session service will build it. */
@@ -136,7 +137,7 @@ async function callArea(area: AdminArea, ctx: unknown) {
  * §9's row labels, mapped to matrix keys. This mapping is the only thing that
  * cannot be derived — the spec writes prose ("Verify payments, record
  * payments"), the code writes an identifier — so it is stated once, here,
- * and the ten labels must match the spec's text exactly or the parse fails.
+ * and the eleven labels must match the spec's text exactly or the parse fails.
  */
 const AREA_LABELS: Record<string, AdminArea> = {
   Dashboard: 'dashboard',
@@ -149,6 +150,7 @@ const AREA_LABELS: Record<string, AdminArea> = {
   'Reviews moderation': 'reviewsModeration',
   'Reports, CSV export': 'reports',
   'Users, settings': 'usersSettings',
+  'Staff accounts': 'staffAccounts',
 };
 
 /** The spec's column order: `| Area | Owner | Dispatcher | Finance |`. */
@@ -187,9 +189,9 @@ function parseSpecMatrix(): Record<string, AdminRole[]> {
 describe('ROLE_MATRIX is BUILD_SPEC §9, transcribed', () => {
   const specMatrix = parseSpecMatrix();
 
-  it('covers the ten areas of §9 and nothing else', () => {
+  it('covers the eleven areas of §9 and nothing else', () => {
     expect(Object.keys(ROLE_MATRIX).sort()).toEqual(Object.keys(specMatrix).sort());
-    expect(Object.keys(ROLE_MATRIX)).toHaveLength(10);
+    expect(Object.keys(ROLE_MATRIX)).toHaveLength(11);
   });
 
   for (const [area, allowed] of Object.entries(ROLE_MATRIX)) {
@@ -199,10 +201,10 @@ describe('ROLE_MATRIX is BUILD_SPEC §9, transcribed', () => {
     });
   }
 
-  it('splits the 30 role/area cases 20 allowed to 10 denied', () => {
+  it('splits the 33 role/area cases 21 allowed to 12 denied', () => {
     const allow = Object.values(ROLE_MATRIX).reduce((sum, roles) => sum + roles.length, 0);
-    expect(allow).toBe(20);
-    expect(ADMIN_ROLES.length * Object.keys(ROLE_MATRIX).length - allow).toBe(10);
+    expect(allow).toBe(21);
+    expect(ADMIN_ROLES.length * Object.keys(ROLE_MATRIX).length - allow).toBe(12);
   });
 
   it('names no role outside ADMIN_ROLES', () => {

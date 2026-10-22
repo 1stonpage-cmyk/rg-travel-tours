@@ -594,6 +594,7 @@ Check-ins update the admin dashboard within ~15 seconds (polling is fine; no web
 | Reviews moderation               | ✅    | ✅         | ❌      |
 | Reports, CSV export              | ✅    | ❌         | ✅      |
 | Users, settings                  | ✅    | ❌         | ❌      |
+| Staff accounts                   | ✅    | ❌         | ❌      |
 
 ### Dashboard
 
