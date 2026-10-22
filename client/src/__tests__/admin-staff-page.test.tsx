@@ -250,3 +250,18 @@ describe('AdminStaffPage', () => {
     expect(screen.queryByText('Dan Dispatcher')).toBeNull();
   });
 });
+
+describe('someone who is not the owner', () => {
+  it('is told so, and is not shown the form or the list', async () => {
+    renderPage({ 'staffAuth.me': { userId: 2, role: 'dispatcher', mustChangePassword: false } });
+    expect(
+      await screen.findByText('Only the owner can manage staff accounts.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add staff member' })).toBeNull();
+    expect(screen.queryByText('Olivia Owner')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Back to the dashboard' })).toHaveAttribute(
+      'href',
+      '/admin',
+    );
+  });
+});

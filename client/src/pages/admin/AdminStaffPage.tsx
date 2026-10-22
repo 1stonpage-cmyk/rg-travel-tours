@@ -30,6 +30,7 @@
  * colour is reinforcement, never the only signal.
  */
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { Link } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { TRPCClientError } from '@trpc/client';
 import {
@@ -514,7 +515,7 @@ function DeactivatePanel({
   );
 }
 
-export default function AdminStaffPage() {
+function StaffAccounts() {
   const utils = trpc.useUtils();
   const list = trpc.admin.staffUsers.list.useQuery(undefined, { retry: false });
   const me = trpc.staffAuth.me.useQuery(undefined, { retry: false });
@@ -710,4 +711,31 @@ export default function AdminStaffPage() {
       )}
     </div>
   );
+}
+
+/**
+ * A convenience, not the control: the server refuses every staffUsers call
+ * from anyone but the owner. This just stops a dispatcher who types the
+ * address from being shown a form that can only be refused.
+ */
+export default function AdminStaffPage() {
+  const me = trpc.staffAuth.me.useQuery(undefined, { retry: false });
+
+  if (me.data && me.data.role !== 'owner') {
+    return (
+      <div className="mx-auto max-w-3xl px-4 py-6">
+        <h1 className="text-brand-blue-900 text-2xl font-bold">Staff accounts</h1>
+        <p role="alert" className={`${NOTICE_CLASS} mt-4`}>
+          Only the owner can manage staff accounts.
+        </p>
+        <Link
+          to="/admin"
+          className="tap-target text-brand-blue-700 mt-4 inline-flex items-center text-sm font-medium underline"
+        >
+          Back to the dashboard
+        </Link>
+      </div>
+    );
+  }
+  return <StaffAccounts />;
 }
