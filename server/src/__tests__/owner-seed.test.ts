@@ -12,7 +12,7 @@
  * the wiring is real rather than the helper being correct in isolation.
  */
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { eq, like } from 'drizzle-orm';
+import { and, eq, inArray, like } from 'drizzle-orm';
 import { getDb } from '../db/client';
 import { users } from '../db/schema';
 import { env } from '../env';
@@ -30,15 +30,35 @@ const STRONG = 'a-long-enough-owner-password';
  */
 const original = { email: env.OWNER_EMAIL, password: env.OWNER_PASSWORD };
 
-beforeEach(() => {
+/**
+ * The seed now creates an owner only when NO active owner exists. `globalSetup`
+ * seeds this database with the machine's real OWNER_* before any file runs, so
+ * on a deployer's machine (or CI) an active owner is already there and every
+ * "creates an owner" case would find nothing. Each test therefore sets any
+ * such owner aside and gets it back afterwards: the tests own their own state.
+ */
+let setAside: number[] = [];
+
+beforeEach(async () => {
   (env as { OWNER_EMAIL?: string }).OWNER_EMAIL = undefined;
   (env as { OWNER_PASSWORD?: string }).OWNER_PASSWORD = undefined;
+  const ambient = await getDb()
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.role, 'owner'), eq(users.isActive, true)));
+  setAside = ambient.map((row) => row.id);
+  if (setAside.length > 0) {
+    await getDb().update(users).set({ isActive: false }).where(inArray(users.id, setAside));
+  }
 });
 
 afterEach(async () => {
   (env as { OWNER_EMAIL?: string }).OWNER_EMAIL = original.email;
   (env as { OWNER_PASSWORD?: string }).OWNER_PASSWORD = original.password;
   await getDb().delete(users).where(like(users.email, 'seeded_owner_%@example.test'));
+  if (setAside.length > 0) {
+    await getDb().update(users).set({ isActive: true }).where(inArray(users.id, setAside));
+  }
 });
 
 describeWithDb('the owner seed', () => {
