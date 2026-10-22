@@ -1162,6 +1162,9 @@ exists (it is part of 2B), but no submission, moderation, admin or export side o
 >    It also means an uptime monitor pointed at `/driver` reports the portal down. These routes
 >    SHOULD be `noindex` — they already get an `X-Robots-Tag` — but `noindex` and `404` are not the
 >    same statement.
+>    **Resolved 2026-10-23 (Week 6.5, Task 9 / C2):** the three surfaces now answer `200` with their
+>    own titles and `noindex,nofollow` (`appSurfaceMeta`). Not resolved: nothing sets `document.title`
+>    client-side, so the injected title does not follow in-app navigation.
 > 9. **Four declared `bookings` columns are never written by anything.** `started_at`,
 >    `completed_at`, `cancelled_at` and `cancel_reason` exist in `schema.ts` and in no write in
 >    `server/src`: `startTrip`, `finishTrip` and `cancelBooking` each set `status` and nothing else

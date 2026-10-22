@@ -26,6 +26,7 @@ import {
 import { getDb } from '../db/client';
 import { destinations, packages, tourImages, tourPriceTiers, tours } from '../db/schema';
 import { env } from '../env';
+import { isPrivatePath, type NOINDEX_PATH_PREFIXES } from '../middleware/robots-header';
 import { realAggregate } from '../services/ratings';
 import { BRAND, LEGAL_OPERATOR } from './brand';
 import {
@@ -369,6 +370,91 @@ export function notFoundMeta(pathname: string): PageMeta {
   };
 }
 
+/**
+ * What each app surface calls itself, keyed by the exact prefixes the
+ * `X-Robots-Tag` middleware treats as private. Typed against that list, so a
+ * surface added there without a title here is a compile error rather than a
+ * crash on a driver's phone.
+ *
+ * Titles name a place, not a status ("Driver portal", not "Please sign in"):
+ * the tab is what a driver looks at for a whole shift, and the page behind it
+ * changes from sign-in to itinerary without the title ever being re-injected.
+ * The brand, not the licensed operator: a tab title is customer-facing copy.
+ */
+const APP_SURFACE_COPY: Record<
+  (typeof NOINDEX_PATH_PREFIXES)[number],
+  { title: string; description: string }
+> = {
+  '/driver': {
+    title: `Driver portal | ${BRAND}`,
+    description: `Sign-in for ${BRAND} drivers. Not a public page.`,
+  },
+  '/admin': {
+    title: `Staff console | ${BRAND}`,
+    description: `Sign-in for ${BRAND} staff. Not a public page.`,
+  },
+  '/portal': {
+    title: `My booking | ${BRAND}`,
+    description: `Manage your ${BRAND} booking. Not a public page.`,
+  },
+};
+
+/**
+ * The three app surfaces: the driver portal, the admin console and the
+ * customer portal. **200, and permanently `noindex`** (owner decision
+ * 2026-10-16, C2).
+ *
+ * They had no case in the route table, so every one of them fell through to
+ * `notFoundMeta` and was served HTTP 404 with the title "Page not found" —
+ * measured 2026-10-16. The SPA booted and rendered correctly regardless (a
+ * browser renders a 404 body), so nothing was broken; what it cost was real
+ * anyway. A driver's tab read "Page not found" for an entire shift, and an
+ * uptime monitor pointed at `/driver` reported the portal down.
+ *
+ * **`noindex` and `404` are not the same statement.** "Do not list this" and
+ * "there is nothing here" are different claims, and only the first is true of
+ * these routes. They already carry an `X-Robots-Tag`
+ * (`middleware/robots-header.ts`); this makes the meta tag agree.
+ *
+ * "Is this an app surface" is `isPrivatePath`, imported from that same
+ * middleware, not a second list of prefixes. Two answers to one question
+ * drift, and the one that drifts is the security-relevant one. It matches
+ * whole first segments (`/drivers` and `/driverfoo` are not the driver portal
+ * and keep 404ing) and is prefix-based rather than a route-table entry because
+ * the table matches on an exact segment count, while these surfaces have
+ * open-ended paths (`/admin/bookings/3`, `/portal/RG-7KQ4M9`).
+ *
+ * Pure and SYNCHRONOUS, deliberately: no settings read, no database. A
+ * crawler hammering `/admin/...` must not cost a query each time, and these
+ * pages must still answer when MySQL is unreachable — which is exactly when
+ * somebody is looking at an uptime monitor. Being synchronous is the proof: a
+ * function that returns the meta itself cannot have awaited a query. That also
+ * means the site-wide noindex gate in `resolvePage` never applies to these:
+ * they are `noindex` unconditionally, which is strictly stronger.
+ */
+export function appSurfaceMeta(pathname: string): PageMeta | null {
+  if (!isPrivatePath(pathname)) return null;
+
+  const path = normalisePath(pathname);
+  const first = path.split('/')[1] ?? '';
+  // `isPrivatePath` has just established that `/${first}` is one of the
+  // prefixes, so this lookup cannot miss.
+  const copy = APP_SURFACE_COPY[`/${first}` as keyof typeof APP_SURFACE_COPY];
+
+  return {
+    title: copy.title,
+    description: copy.description,
+    canonical: absoluteUrl(path),
+    ogImage: null,
+    ogType: 'website',
+    jsonLd: [],
+    // Not content: no hero, no structured data.
+    preload: null,
+    status: 200,
+    robots: 'noindex,nofollow',
+  };
+}
+
 const resolveHome: Resolver = async () => {
   const { siteSeo, hero } = await readSiteBlocks();
   const ogImage = firstImageUrl(siteSeo.ogImage, hero.imagePath);
@@ -654,6 +740,12 @@ export function matchRoute(pathname: string): RouteMatch | null {
  * import-time environment variable no test could vary.
  */
 export async function resolvePage(pathname: string): Promise<PageMeta> {
+  // Before the route table and before any settings read — see
+  // `appSurfaceMeta`. Returning here also bypasses the site-wide noindex gate
+  // below, which these routes do not need: they are noindex always.
+  const appSurface = appSurfaceMeta(pathname);
+  if (appSurface) return appSurface;
+
   const match = matchRoute(pathname);
   if (!match) return notFoundMeta(pathname);
 

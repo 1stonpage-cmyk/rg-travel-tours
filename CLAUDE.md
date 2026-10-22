@@ -355,16 +355,21 @@ Every page reads tours, destinations, packages, reviews, FAQs and settings from 
   is reachable across IPs (one driver's code tried from several phones or networks, which is the
   case the three-lockout rule exists for) and across windows. Both halves are tested independently,
   and neither test proves the other.
-- **Every app-surface route is served HTTP 404 with the "Page not found" title.** `resolvePage`
-  (`server/src/seo/resolvers.ts`) has no case for `/driver`, `/admin` or `/portal`, so they get the
-  not-found shell: `/driver/login` and `/driver/trip/:id` answer `404` with
-  `<title>Page not found | TravelSugbo</title>`, indistinguishable from a junk URL (measured
-  2026-10-16 in dev; `html.ts` shares the resolver, so production matches). **The SPA boots and
-  renders correctly anyway** — a browser renders a 404 body — so this is cosmetic and operational
-  rather than broken: nothing client-side sets `document.title`, so a driver's tab reads "Page not
-  found" for their whole shift, and an uptime monitor pointed at `/driver` reports the portal down.
-  These routes should be `noindex` (they already carry an `X-Robots-Tag`); `noindex` and `404` are
-  not the same statement.
+- **The three app surfaces (`/driver`, `/admin`, `/portal`) are served HTTP 200 with a title of their
+  own and `noindex,nofollow`** (owner decision 2026-10-16, C2; built Task 9). They used to fall through
+  to the not-found shell: `404` and `<title>Page not found | TravelSugbo</title>`, so a driver's tab
+  read "Page not found" for a whole shift and an uptime monitor on `/driver` reported the portal down.
+  Now `appSurfaceMeta` (`server/src/seo/resolvers.ts`) answers them: "Driver portal", "Staff console"
+  and "My booking", each `| TravelSugbo`. It is called first in `resolvePage`, **pure and synchronous
+  with no database read**, so these pages answer when MySQL is down and a crawler costs no query. They
+  are `noindex` unconditionally, not only while `content_unverified` is set (the site-wide gate never
+  runs for them). "Is this an app surface" is `isPrivatePath` from `middleware/robots-header.ts`, the
+  same predicate that sets their `X-Robots-Tag`, imported rather than re-listed: it matches the whole
+  first segment, so `/drivers` and `/driverfoo` still `404`, and a prefix added to
+  `NOINDEX_PATH_PREFIXES` will not compile until it is given a title. **Still true:** nothing sets
+  `document.title` client-side, so the title is the one injected for whatever path the SPA was first
+  loaded at and it does not change as a driver navigates inside the app (sign-in to itinerary keeps
+  "Driver portal"). That smaller gap is open; this change did not close it.
 - **The payment box is computed on the server and the client only renders it.** Three states, and
   the payload carries no totals to re-derive them from. **Server and client now agree on
   `completed`** (owner-decided 2026-10-16, D1): `driver.trip` answers `collect_cash` there,

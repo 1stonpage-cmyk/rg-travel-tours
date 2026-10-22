@@ -428,9 +428,10 @@ describeWithDb('crawl directives through createApp', () => {
       const res = await request(production).get(path);
 
       expect(res.headers['x-robots-tag']).toBe('noindex, nofollow');
-      // These are not SPA routes yet, so the shell answers 404 — stated here
-      // so the header assertion above is read in the right context.
-      expect(res.status).toBe(404);
+      // Task 9 (C2): the shell answers 200 for these, no longer 404 — the
+      // meta tag now agrees with the header, and neither depends on the flag.
+      expect(res.status).toBe(200);
+      expect(res.text).toContain('<meta name="robots" content="noindex,nofollow">');
     },
   );
 

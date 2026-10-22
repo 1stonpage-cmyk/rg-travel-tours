@@ -85,6 +85,25 @@ describeWithDb('Express HTML serving', () => {
     expect(res.text).toContain('content="noindex,nofollow"');
   });
 
+  it.each(['/driver/login', '/driver/trip/7', '/admin', '/admin/bookings/3', '/portal'])(
+    'serves the app surface %s 200 with its own title, not the not-found shell (C2)',
+    async (path) => {
+      const res = await request(app).get(path).set('Accept', 'text/html');
+
+      expect(res.status).toBe(200);
+      expect(res.text).not.toContain('Page not found');
+      expect(res.text.match(/<title>/g)).toHaveLength(1);
+      expect(res.text).toMatch(
+        /<title>(Driver portal|Staff console|My booking) \| TravelSugbo<\/title>/,
+      );
+      expect(res.text).toContain('content="noindex,nofollow"');
+    },
+  );
+
+  it('still 404s a path that only starts with a surface name', async () => {
+    expect((await request(app).get('/driverfoo')).status).toBe(404);
+  });
+
   it('answers an unknown tour slug with 404, not 200', async () => {
     expect((await request(app).get('/tours/no-such-tour')).status).toBe(404);
   });

@@ -1,9 +1,17 @@
 import { HERO_IMAGE_PRELOAD } from '@rg/shared';
 import { eq } from 'drizzle-orm';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { getDb } from '../db/client';
-import { destinations, tourPriceTiers, tours } from '../db/schema';
-import { absoluteUrl, matchRoute, normalisePath, resolvePage } from '../seo/resolvers';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetContentUnverifiedCache } from '../content/settings';
+import { getDb, getPool } from '../db/client';
+import { destinations, settings, tourPriceTiers, tours } from '../db/schema';
+import { NOINDEX_PATH_PREFIXES } from '../middleware/robots-header';
+import {
+  absoluteUrl,
+  appSurfaceMeta,
+  matchRoute,
+  normalisePath,
+  resolvePage,
+} from '../seo/resolvers';
 import { describeWithDb } from './helpers/db';
 
 describe('route matching', () => {
@@ -165,6 +173,144 @@ describeWithDb('page resolution', () => {
     expect((await resolvePage('/tours/oslob-whale-shark-tumalog-falls')).preload).toBeNull();
     expect((await resolvePage('/packages/cebu-highlights-3d2n')).preload).toBeNull();
     expect((await resolvePage('/nope')).preload).toBeNull();
+  });
+});
+
+/**
+ * Task 9 (C2): the driver portal, the admin console and the customer portal
+ * answer 200 with a title of their own and `noindex,nofollow`. They used to
+ * fall through to the not-found shell: HTTP 404, "Page not found".
+ */
+describe('app surfaces (pure)', () => {
+  const cases = [
+    ['/driver', 'Driver portal'],
+    ['/driver/login', 'Driver portal'],
+    ['/driver/trip/7', 'Driver portal'],
+    ['/admin', 'Staff console'],
+    ['/admin/bookings/3', 'Staff console'],
+    ['/portal', 'My booking'],
+    ['/portal/RG-7KQ4M9', 'My booking'],
+    // The same normalisation as every other route: case and trailing slash.
+    ['/Driver/', 'Driver portal'],
+  ] as const;
+
+  it.each(cases)('%s is 200, noindex and titled as its own place', (path, titleStart) => {
+    const meta = appSurfaceMeta(path);
+    expect(meta).not.toBeNull();
+    expect(meta!.status).toBe(200);
+    expect(meta!.robots).toBe('noindex,nofollow');
+    expect(meta!.title.startsWith(titleStart)).toBe(true);
+    // Not the not-found title, which is the whole bug.
+    expect(meta!.title).not.toMatch(/Page not found/);
+    // The brand, never the licensed operator: a tab title is customer copy.
+    expect(meta!.title.endsWith('| TravelSugbo')).toBe(true);
+    // No JSON-LD, no hero preload, no OG image: these pages are not content.
+    expect(meta!.jsonLd).toEqual([]);
+    expect(meta!.preload).toBeNull();
+    expect(meta!.ogImage).toBeNull();
+  });
+
+  it('canonicalises to the requested path, not to the home page', () => {
+    expect(appSurfaceMeta('/driver/trip/7')!.canonical).toBe('http://localhost:5180/driver/trip/7');
+  });
+
+  it('is null for anything that is not an app surface, so the route table runs unchanged', () => {
+    for (const path of ['/', '/tours', '/tours/some-slug', '/privacy', '/nope']) {
+      expect(appSurfaceMeta(path), path).toBeNull();
+    }
+  });
+
+  it('a path that merely STARTS with a surface name is not that surface', () => {
+    for (const path of ['/drivers', '/driverfoo', '/administrator', '/portalx', '/admin-panel']) {
+      expect(appSurfaceMeta(path), path).toBeNull();
+    }
+  });
+
+  it('covers exactly the paths the X-Robots-Tag middleware calls private', () => {
+    // Two answers to one question drift apart, and the one that drifts is
+    // the security-relevant one. The prefix list is imported, not retyped, so
+    // a surface added there but not given a title here fails to compile; and
+    // this fails if it ever stops resolving.
+    expect(NOINDEX_PATH_PREFIXES.length).toBeGreaterThan(0);
+    for (const prefix of NOINDEX_PATH_PREFIXES) {
+      expect(appSurfaceMeta(prefix)?.status, prefix).toBe(200);
+      expect(appSurfaceMeta(`${prefix}/anything/at/all`)?.status, prefix).toBe(200);
+    }
+  });
+
+  it('is synchronous: it returns the meta itself, so it cannot have awaited the database', () => {
+    // A driver's phone on a bad connection must not depend on a settings
+    // read, and an uptime monitor must get an answer when MySQL is down. An
+    // async function returns a Promise whatever it does, so an awaited
+    // database read cannot be added to this one without this going red.
+    const meta = appSurfaceMeta('/driver/login');
+    expect(meta).not.toBeInstanceOf(Promise);
+    expect(typeof (meta as unknown as { then?: unknown }).then).toBe('undefined');
+    expect(meta!.status).toBe(200);
+  });
+});
+
+describeWithDb('app surfaces through resolvePage', () => {
+  async function readFlag(): Promise<unknown> {
+    const [row] = await getDb()
+      .select()
+      .from(settings)
+      .where(eq(settings.key, 'content_unverified'));
+    return row?.value;
+  }
+
+  async function writeFlag(value: unknown): Promise<void> {
+    await getDb().update(settings).set({ value }).where(eq(settings.key, 'content_unverified'));
+    resetContentUnverifiedCache();
+  }
+
+  it.each(['/driver', '/driver/login', '/driver/trip/7', '/admin', '/admin/bookings/3', '/portal'])(
+    '%s resolves 200 and noindex, not the not-found shell',
+    async (path) => {
+      const meta = await resolvePage(path);
+      expect(meta.status).toBe(200);
+      expect(meta.robots).toBe('noindex,nofollow');
+      expect(meta.title).not.toMatch(/Page not found/);
+    },
+  );
+
+  it('noindex here does not depend on the content flag', async () => {
+    // These routes are noindex forever, not only while the site is
+    // unverified — so the assertion must hold with the flag CLEARED.
+    const before = await readFlag();
+    try {
+      await writeFlag(false);
+      expect(await readFlag()).toBe(false); // premise: it really is cleared
+      expect((await resolvePage('/driver')).robots).toBe('noindex,nofollow');
+      expect((await resolvePage('/admin/bookings/3')).robots).toBe('noindex,nofollow');
+    } finally {
+      await writeFlag(before);
+    }
+  });
+
+  it('a path that merely STARTS with a surface name still 404s', async () => {
+    for (const path of ['/drivers', '/driverfoo', '/administrator', '/portalx']) {
+      expect((await resolvePage(path)).status, path).toBe(404);
+    }
+  });
+
+  it('issues no database statement at all', async () => {
+    // The behavioural half of the synchronous check above: a fire-and-forget
+    // read inside a sync function would leave the return type alone. The flag
+    // cache is cleared first so a read could not hide behind it.
+    resetContentUnverifiedCache();
+    const pool = getPool();
+    const query = vi.spyOn(pool, 'query');
+    const execute = vi.spyOn(pool, 'execute');
+    try {
+      for (const path of ['/driver/login', '/admin', '/portal/RG-7KQ4M9']) {
+        await resolvePage(path);
+      }
+      expect(query.mock.calls.length + execute.mock.calls.length).toBe(0);
+    } finally {
+      query.mockRestore();
+      execute.mockRestore();
+    }
   });
 });
 
