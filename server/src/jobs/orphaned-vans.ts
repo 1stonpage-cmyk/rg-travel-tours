@@ -18,8 +18,8 @@
  * the one day a trip genuinely overran past midnight, put a van with guests
  * in it back on sale. A dispatcher can tell the two apart; a clock cannot.
  * It writes no audit row either — an observation is not an event. Both are
- * pinned by `orphaned-vans.test.ts`, and the first by
- * `trip-van-status.test.ts`'s gap test as well.
+ * pinned by `orphaned-vans.test.ts`. (`trip-van-status.test.ts`'s gap test
+ * does not call this job, so it would NOT catch a status write here.)
  *
  * Same discipline as `expire-holds.ts`: the clock is a PARAMETER, the module
  * exports a plain async function, scheduling lives in `./index.ts`, and

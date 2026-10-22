@@ -52,15 +52,14 @@
  * that van unsellable indefinitely — and the only thing that frees it today
  * is a hand-written `UPDATE vans`.
  *
- * Task 7 does not close that, because both candidate fixes are new surface
- * area needing an owner decision (a `node-cron` sweep is a new scheduled
- * job and a new failure mode; a dispatcher-facing "force complete" is a new
- * mutation that moves a booking's status). It is DECLARED instead — in
- * `CLAUDE.md`'s Dispatch section, in `BUILD_SPEC.md`'s Week 7
- * carry-forwards, and by the last test in this file, which pins the current
- * behaviour so the gap is a known quantity with a name rather than a
- * surprise. If somebody builds the sweep, that test is the one that goes
- * red, and reading it tells them what they changed.
+ * The owner decided (D5, 2026-10-16) that this is made VISIBLE rather than
+ * closed: a daily 07:00 Manila check (`jobs/orphaned-vans.ts`) logs it and
+ * raises a dashboard alert, and never changes a status. It is DECLARED in
+ * `CLAUDE.md`'s Dispatch section and by the last test in this file, which
+ * pins the current behaviour — the van really does stay `on_trip`. That test
+ * only reads state after `startTrip`; it never runs the job, so it goes red
+ * only if a completion path is added to the trip flow itself. The job's own
+ * "changes nothing" proof lives in `orphaned-vans.test.ts`.
  *
  * Fixtures are rebuilt per test and deleted in `afterEach`: the test
  * database keeps an EMPTY fleet (`capacity.test.ts` counts the whole
@@ -402,23 +401,15 @@ describeWithDb('a van on a trip', () => {
    * sweep, no timeout and no dispatcher override, so the only thing that
    * returns this van to `available` is somebody completing the trip or
    * somebody writing SQL. A driver whose phone dies at the last stop is
-   * enough to produce it, and the symptom arrives weeks later as "we're
-   * fully booked" with nothing in the logs.
+   * enough to produce it. Since D5 the daily orphaned-van check logs it and
+   * the dashboard alerts on it, but that check deliberately changes nothing.
    *
-   * Both candidate fixes are new surface area that needs an owner decision
-   * (CLAUDE.md: stop and ask) and are recorded in `CLAUDE.md`'s Dispatch
-   * section and `BUILD_SPEC.md`'s Week 7 carry-forwards:
-   *
-   *  - a `node-cron` sweep that returns a van to `available` when its trip
-   *    has been `in_progress` past its tour date — a new scheduled job, and
-   *    so a new failure mode of its own;
-   *  - a dispatcher-facing "force complete" on the §9 booking detail,
-   *    audited like any other status change — no scheduler, but it needs
-   *    somebody to notice first.
-   *
-   * **When one of them is built, THIS TEST is what goes red**, and whoever
-   * reddens it should replace it with the sweep's own proof rather than
-   * loosening it. A green run here means the gap is still open.
+   * A dispatcher-facing "force complete" on the §9 booking detail remains a
+   * candidate fix that needs an owner decision. A change that makes the trip
+   * flow itself free an abandoned van would redden this test; whoever does
+   * that should replace it with the new behaviour's own proof rather than
+   * loosening it. A green run here means the van is still not freed by the
+   * trip flow.
    */
   it('leaves the van unsellable for future dates while a started trip is never completed', async () => {
     const bookingId = await makeBooking();
