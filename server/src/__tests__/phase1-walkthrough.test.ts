@@ -90,6 +90,8 @@ let staffId = 0;
 let tourSlug = '';
 let earliestDate = '';
 let dateCursor = 0;
+/** Every date `nextDate()` handed out, so teardown can release the fleet lock rows they created. */
+const usedDates: string[] = [];
 
 /**
  * A fresh tour date for each booking in the walkthrough.
@@ -104,11 +106,13 @@ function nextDate(): string {
   dateCursor += 1;
   const [year, month, day] = earliestDate.split('-').map(Number) as [number, number, number];
   const moved = new Date(Date.UTC(year, month - 1, day) + dateCursor * 86_400_000);
-  return [
+  const date = [
     moved.getUTCFullYear(),
     String(moved.getUTCMonth() + 1).padStart(2, '0'),
     String(moved.getUTCDate()).padStart(2, '0'),
   ].join('-');
+  usedDates.push(date);
+  return date;
 }
 
 const unique = () => `${Math.floor(Math.random() * 1e9)}${Date.now() % 1_000_000}`;
@@ -304,6 +308,10 @@ afterAll(async () => {
     .where(
       sql`${auditLog.action} IN ('booking.held', 'booking.expired', 'payment.receipt_submitted', 'payment.verified', 'payment.rejected', 'review.submitted', 'auth.login', 'auth.login_failed', 'auth.logout')`,
     );
+
+  for (const date of usedDates) {
+    await pool.query('DELETE FROM fleet_date_slots WHERE date = ?', [date]);
+  }
 
   for (const id of created.tourIds) {
     await db.delete(tourAddons).where(eq(tourAddons.tourId, id));

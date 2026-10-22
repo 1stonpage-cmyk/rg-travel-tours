@@ -23,7 +23,16 @@
  */
 import { fileURLToPath } from 'node:url';
 import { sql } from 'drizzle-orm';
-import { bookings, drivers, payments, sessions, tripCheckpoints, users, vans } from '../db/schema';
+import {
+  bookings,
+  drivers,
+  fleetDateSlots,
+  payments,
+  sessions,
+  tripCheckpoints,
+  users,
+  vans,
+} from '../db/schema';
 import { migrate } from 'drizzle-orm/mysql2/migrator';
 import { assertConnectedDatabase, assertDatabaseName, databaseNameFromUrl } from '../db/guard';
 import { closeDb, getDb } from '../db/client';
@@ -72,6 +81,18 @@ const LEAK_TABLES = [
    * longer have.
    */
   ['trip_checkpoints', tripCheckpoints],
+  /*
+   * Added by owner decision 2026-10-16 (C5). `fleet_date_slots` rows are
+   * lock anchors — `takeSlotLocks()` creates one per date so that two
+   * bookings racing for the last van serialise against a real row — so a
+   * leaked one changes no count and breaks no test today. It is listed
+   * anyway, because the twelve suites that hand-delete these rows in
+   * `afterAll` are currently the only thing keeping the table tidy, and a
+   * thirteenth suite that forgets would leave rows nobody notices for
+   * weeks. The detector is how "somebody forgot" becomes a named failure
+   * in the run that caused it.
+   */
+  ['fleet_date_slots', fleetDateSlots],
 ] as const;
 
 /**

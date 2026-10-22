@@ -1480,6 +1480,9 @@ async function cleanup() {
   // before the guard refuses, inside a transaction that rolls back — but the
   // row can survive if a future change moves the guard. Cheap insurance.
   await pool.query('DELETE FROM fleet_date_slots WHERE date = ?', ['2099-11-30']);
+  // The day-180 test holds a real booking on 2100-05-30, outside DAYS, so its lock row
+  // is created and committed.
+  await pool.query('DELETE FROM fleet_date_slots WHERE date = ?', ['2100-05-30']);
   created.bookingIds = [];
   created.couponIds = [];
   created.tourIds = [];
