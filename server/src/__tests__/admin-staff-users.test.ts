@@ -15,7 +15,7 @@
  * caller's session and the rows, not how the session came to exist.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, notInArray, sql } from 'drizzle-orm';
 import type { AdminRole } from '@rg/shared';
 import { getDb, getPool } from '../db/client';
 import { auditLog, sessions, users } from '../db/schema';
@@ -307,6 +307,32 @@ describeWithDb('admin.staffUsers.create', () => {
 // ---------------------------------------------------------------------------
 
 describeWithDb('admin.staffUsers: the last active owner', () => {
+  // These tests count active owners, so an owner this file did not create (the
+  // one globalSetup seeds when OWNER_* is set on the machine) must not count.
+  let setAside: number[] = [];
+  beforeEach(async () => {
+    const strangers = await getDb()
+      .select({ id: users.id })
+      .from(users)
+      .where(
+        and(
+          eq(users.role, 'owner'),
+          eq(users.isActive, true),
+          notInArray(users.id, [ids.ownerA, ids.ownerB]),
+        ),
+      );
+    setAside = strangers.map((r) => r.id);
+    if (setAside.length > 0) {
+      await getDb().update(users).set({ isActive: false }).where(inArray(users.id, setAside));
+    }
+  });
+  afterEach(async () => {
+    if (setAside.length > 0) {
+      await getDb().update(users).set({ isActive: true }).where(inArray(users.id, setAside));
+    }
+    setAside = [];
+  });
+
   /** B has been switched off, so A is the only active owner. */
   async function onlyOwnerA() {
     await getDb().update(users).set({ isActive: false }).where(eq(users.id, ids.ownerB));
@@ -339,6 +365,46 @@ describeWithDb('admin.staffUsers: the last active owner', () => {
     });
     expect((await row(ids.ownerA)).role).toBe('owner');
   });
+
+  /**
+   * The case the lock exists for, and the only way the rule can be broken by
+   * two genuinely signed-in owners: each switches the other off at the same
+   * moment. Without the row lock both transactions read the other as the
+   * remaining owner and both commit, leaving nobody able to sign in. Repeated
+   * because a race is a probability, not a certainty, on any one attempt.
+   */
+  it('two owners deactivating each other at once leave exactly one active owner', async () => {
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const outcomes = await Promise.allSettled([
+        asOwnerA().admin.staffUsers.setActive({ id: ids.ownerB, isActive: false }),
+        asOwnerB().admin.staffUsers.setActive({ id: ids.ownerA, isActive: false }),
+      ]);
+      expect(
+        outcomes.filter((o) => o.status === 'fulfilled'),
+        `attempt ${attempt}`,
+      ).toHaveLength(1);
+      const [refused] = outcomes.filter((o) => o.status === 'rejected');
+      expect((refused as PromiseRejectedResult).reason).toMatchObject({
+        code: 'CONFLICT',
+        message: 'There must always be at least one active owner.',
+      });
+      const [{ active }] = (await getDb()
+        .select({ active: sql<number>`COUNT(*)` })
+        .from(users)
+        .where(
+          and(
+            eq(users.role, 'owner'),
+            eq(users.isActive, true),
+            sql`${users.id} IN (${ids.ownerA}, ${ids.ownerB})`,
+          ),
+        )) as [{ active: number }];
+      expect(Number(active), `attempt ${attempt}`).toBe(1);
+      await getDb()
+        .update(users)
+        .set({ isActive: true })
+        .where(sql`${users.id} IN (${ids.ownerA}, ${ids.ownerB})`);
+    }
+  }, 60_000);
 
   it('is not a blanket ban: with two active owners one may be deactivated or demoted', async () => {
     await asOwnerA().admin.staffUsers.update({
