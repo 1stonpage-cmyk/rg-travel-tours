@@ -1,5 +1,5 @@
 import { LogOut } from 'lucide-react';
-import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { Link, Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { trpc } from '@/lib/trpc';
 
 /**
@@ -34,6 +34,9 @@ const NAV = [
   { to: '/admin/vans', label: 'Vans', end: false },
   { to: '/admin/drivers', label: 'Drivers', end: false },
 ] as const;
+
+/** Where an account with a temporary password is held until it has chosen its own. */
+const CHANGE_PASSWORD_PATH = '/admin/change-password';
 
 /** `role` as `staffAuth.me` returns it (`ADMIN_ROLES`) — title-cased for display. */
 function roleLabel(role: string): string {
@@ -94,6 +97,18 @@ function StaffIdentity() {
 }
 
 export default function AdminLayout() {
+  const location = useLocation();
+  const me = trpc.staffAuth.me.useQuery(undefined, { retry: false });
+  const mustChange = me.data?.mustChangePassword === true;
+  const isOwner = me.data?.role === 'owner';
+
+  // A convenience, not the control: the server already refuses every admin
+  // procedure while a password change is owed. This just stops the screens
+  // from filling with refusals by sending the person where they can act.
+  if (mustChange && location.pathname !== CHANGE_PASSWORD_PATH) {
+    return <Navigate to={CHANGE_PASSWORD_PATH} replace />;
+  }
+
   return (
     <div className="flex min-h-dvh flex-col">
       <a
@@ -131,43 +146,78 @@ export default function AdminLayout() {
             <StaffIdentity />
           </div>
 
-          <nav
-            aria-label="Admin"
-            className="border-border flex items-center gap-1 border-t py-1 sm:justify-start sm:gap-2"
-          >
-            {NAV.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.end}
-                className={({ isActive }) =>
-                  [
-                    // `border-b-2` is reserved on EVERY item (not just the
-                    // active one) so the border's own width never shifts
-                    // the layout when the active item changes — only its
-                    // colour toggles between transparent and visible.
-                    'tap-target flex flex-1 items-center justify-center rounded-md border-b-2 px-2 text-center text-xs transition-colors sm:flex-none sm:px-3 sm:text-sm',
-                    'hover:bg-brand-blue-50 hover:text-brand-blue-700',
-                    // `NavLink` sets `aria-current="page"` on the active
-                    // link by itself (and nothing on every other one) —
-                    // that is the signal assistive tech reads. For a
-                    // sighted dispatcher, including anyone with a colour
-                    // vision deficiency, the PRIMARY visible signal is the
-                    // border and the weight change: a visible edge and a
-                    // heavier glyph are shape differences that survive
-                    // greyscale, unlike a colour swap. Fix round 2 (F1):
-                    // the colour change below is reinforcement on top of
-                    // that, never the only signal.
-                    isActive
-                      ? 'border-brand-blue-700 text-brand-blue-700 font-semibold'
-                      : 'text-brand-ink/80 border-transparent font-medium',
-                  ].join(' ')
-                }
+          {mustChange ? null : (
+            <>
+              <nav
+                aria-label="Admin"
+                className="border-border flex items-center gap-1 border-t py-1 sm:justify-start sm:gap-2"
               >
-                {item.label}
-              </NavLink>
-            ))}
-          </nav>
+                {NAV.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    end={item.end}
+                    className={({ isActive }) =>
+                      [
+                        // `border-b-2` is reserved on EVERY item (not just the
+                        // active one) so the border's own width never shifts
+                        // the layout when the active item changes — only its
+                        // colour toggles between transparent and visible.
+                        'tap-target flex flex-1 items-center justify-center rounded-md border-b-2 px-2 text-center text-xs transition-colors sm:flex-none sm:px-3 sm:text-sm',
+                        'hover:bg-brand-blue-50 hover:text-brand-blue-700',
+                        // `NavLink` sets `aria-current="page"` on the active
+                        // link by itself (and nothing on every other one) —
+                        // that is the signal assistive tech reads. For a
+                        // sighted dispatcher, including anyone with a colour
+                        // vision deficiency, the PRIMARY visible signal is the
+                        // border and the weight change: a visible edge and a
+                        // heavier glyph are shape differences that survive
+                        // greyscale, unlike a colour swap. Fix round 2 (F1):
+                        // the colour change below is reinforcement on top of
+                        // that, never the only signal.
+                        isActive
+                          ? 'border-brand-blue-700 text-brand-blue-700 font-semibold'
+                          : 'text-brand-ink/80 border-transparent font-medium',
+                      ].join(' ')
+                    }
+                  >
+                    {item.label}
+                  </NavLink>
+                ))}
+              </nav>
+
+              {/*
+               * Account links sit on their own row: a sixth item in the row above would
+               * not fit 360px at a 44px target. "Staff" is the owner's only; the server
+               * refuses everyone else regardless of whether the link is drawn.
+               */}
+              <nav
+                aria-label="Account"
+                className="border-border flex items-center gap-1 border-t py-1 sm:gap-2"
+              >
+                {[
+                  ...(isOwner ? [{ to: '/admin/staff', label: 'Staff' }] : []),
+                  { to: CHANGE_PASSWORD_PATH, label: 'Change password' },
+                ].map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    className={({ isActive }) =>
+                      [
+                        'tap-target flex items-center rounded-md border-b-2 px-3 text-xs transition-colors sm:text-sm',
+                        'hover:bg-brand-blue-50 hover:text-brand-blue-700',
+                        isActive
+                          ? 'border-brand-blue-700 text-brand-blue-700 font-semibold'
+                          : 'text-brand-ink/80 border-transparent font-medium',
+                      ].join(' ')
+                    }
+                  >
+                    {item.label}
+                  </NavLink>
+                ))}
+              </nav>
+            </>
+          )}
         </div>
       </header>
 

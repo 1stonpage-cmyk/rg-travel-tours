@@ -7,6 +7,8 @@ import AdminBookingsPage from '@/pages/admin/AdminBookingsPage';
 import AdminDashboardPage from '@/pages/admin/AdminDashboardPage';
 import AdminCalendarPage from '@/pages/admin/AdminCalendarPage';
 import AdminDriversPage from '@/pages/admin/AdminDriversPage';
+import AdminStaffPage from '@/pages/admin/AdminStaffPage';
+import AdminChangePasswordPage from '@/pages/admin/AdminChangePasswordPage';
 import AdminLoginPage from '@/pages/admin/AdminLoginPage';
 import AdminVansPage from '@/pages/admin/AdminVansPage';
 import DriverLayout from '@/components/layout/DriverLayout';
@@ -88,6 +90,8 @@ export default function App() {
         <Route path="calendar" element={<AdminCalendarPage />} />
         <Route path="vans" element={<AdminVansPage />} />
         <Route path="drivers" element={<AdminDriversPage />} />
+        <Route path="staff" element={<AdminStaffPage />} />
+        <Route path="change-password" element={<AdminChangePasswordPage />} />
       </Route>
 
       {/*

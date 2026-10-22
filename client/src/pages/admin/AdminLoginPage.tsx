@@ -53,7 +53,8 @@ export default function AdminLoginPage() {
   const [revealed, setRevealed] = useState(false);
 
   const login = trpc.staffAuth.login.useMutation({
-    onSuccess: () => navigate('/admin', { replace: true }),
+    onSuccess: (result) =>
+      navigate(result.mustChangePassword ? '/admin/change-password' : '/admin', { replace: true }),
   });
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
