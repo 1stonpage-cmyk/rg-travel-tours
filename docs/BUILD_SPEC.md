@@ -1172,6 +1172,9 @@ exists (it is part of 2B), but no submission, moderation, admin or export side o
 >    The surprising one is `cancel_reason`: `cancelInput` requires it and rejects an empty string, and
 >    it then reaches only the audit payload. Either write the four or drop them; leaving them is how
 >    the first report over `completed_at` comes back empty.
+>    **Resolved 2026-10-23 (Week 6.5, Task 8, owner-decided C1): the four are now written**, each in
+>    the same conditional `UPDATE` as the status change. Bookings that predate the fix still have
+>    nulls; the checkpoints and the audit trail remain the authoritative record.
 > 10. **Seven owner decisions are open**, listed in one place with each one's safe current behaviour
 >     in `docs/superpowers/plans/2026-10-16-week6-walkthrough.md`. Three of them are driver-portal
 >     behaviour an owner can answer in a sentence (the payment box on a `completed` trip; whether a

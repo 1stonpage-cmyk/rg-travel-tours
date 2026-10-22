@@ -529,6 +529,7 @@ export const driverTripsRouter = router({
           await completeTrip(tx, {
             bookingId: input.bookingId,
             driverId: ctx.driver.driverId,
+            now: new Date(),
           }),
       ),
   ),

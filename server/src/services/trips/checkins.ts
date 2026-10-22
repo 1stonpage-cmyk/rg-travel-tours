@@ -523,10 +523,17 @@ async function finishTrip(
   trip: TripRow,
   driverId: number,
   lastStopId: number | null,
+  now: Date,
 ): Promise<BookingStatus> {
+  /*
+   * `completed_at` is written HERE and nowhere else, in the same conditional
+   * UPDATE as the status (Week 6.5, Task 8): a status that moved without its
+   * timestamp, or the reverse, is the drift the column exists to avoid. The
+   * trail stays the record (`trip.completed`); this is the fast read over it.
+   */
   const [header] = await tx
     .update(bookings)
-    .set({ status: 'completed' })
+    .set({ status: 'completed', completedAt: now })
     .where(and(eq(bookings.id, trip.id), eq(bookings.status, 'in_progress')));
 
   if (header.affectedRows === 0) {
@@ -606,9 +613,11 @@ export async function startTrip(
    * It stays an allow-list, so a status added to `BOOKING_STATUSES` later is
    * refused by default rather than started by accident.
    */
+  // `started_at` has no other writer (Week 6.5, Task 8), and it rides in this
+  // same conditional UPDATE so it can never move without the status.
   const [header] = await tx
     .update(bookings)
-    .set({ status: 'in_progress' })
+    .set({ status: 'in_progress', startedAt: now })
     .where(and(eq(bookings.id, bookingId), inArray(bookings.status, [...STARTABLE_STATUSES])));
 
   if (header.affectedRows === 0) {
@@ -748,7 +757,7 @@ export async function checkInStop(
   if (standing < progress.total) return { ok: true, progress: { ...progress, done: standing } };
 
   // §8 item 3 — the last stop frees the van.
-  const status = await finishTrip(tx, trip, driverId, stopId);
+  const status = await finishTrip(tx, trip, driverId, stopId, now);
   /*
    * `done` and `status` come from the authoritative sources (the locking
    * count, and the write we just made or the locking re-read behind it).
@@ -773,25 +782,22 @@ export async function checkInStop(
  * recorded, which is a shrug and not an error. Anything else — not started,
  * cancelled, expired — is `trip_not_started`.
  *
- * **No `now`.** The plan's signature named one; this writes no timestamp of
- * its own (`bookings.updated_at` is the column's `$onUpdateFn`, and no
- * checkpoint row is created), and an unused `now` parameter would be a lie
- * about what the answer depends on — the ruling `tripProgress` and
- * `driverTripDetail` already carry. Nothing here is bucketed or compared
- * against a clock.
+ * **`now` is the instant stamped on `bookings.completed_at`** (Week 6.5, Task 8),
+ * read once at the request boundary like the other three mutations. It used to
+ * be absent because nothing here wrote a timestamp; `finishTrip` now does.
  */
 export async function completeTrip(
   tx: Transaction,
-  input: { bookingId: number; driverId: number },
+  input: { bookingId: number; driverId: number; now: Date },
 ): Promise<CheckInResult> {
-  const { bookingId, driverId } = input;
+  const { bookingId, driverId, now } = input;
 
   const trip = await readTrip(tx, bookingId, driverId, true);
   if (!trip) return refuse('not_your_trip');
   if (trip.status === 'completed') return refuse('already_checked_in');
   if (trip.status !== 'in_progress') return refuse('trip_not_started');
 
-  const status = await finishTrip(tx, trip, driverId, null);
+  const status = await finishTrip(tx, trip, driverId, null, now);
   /*
    * `readTrip`'s `FOR UPDATE` is a LOCKING read, which does not pin the
    * REPEATABLE READ snapshot — so `tripProgress` below is this
@@ -901,9 +907,13 @@ export async function undoLastCheckIn(
      * lock stands; it is here so the undo fails closed if it ever does not,
      * rather than auditing a reversal that did not happen.
      */
+    // `completedAt: null` in the SAME UPDATE (Week 6.5, Task 8): undo restores
+    // the previous state exactly (owner decision Q4), and a trip reading
+    // `in_progress` with a completion timestamp on it is not that. `started_at`
+    // is deliberately untouched - the trip did start, and still has.
     const [header] = await tx
       .update(bookings)
-      .set({ status: 'in_progress' })
+      .set({ status: 'in_progress', completedAt: null })
       .where(and(eq(bookings.id, bookingId), eq(bookings.status, 'completed')));
     if (header.affectedRows === 0) return refuse('nothing_to_undo');
 

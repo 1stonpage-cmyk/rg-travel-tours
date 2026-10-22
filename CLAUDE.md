@@ -90,14 +90,21 @@ There is no `tailwind.config.js`.
   extends to "a refund is never a subtraction from what was paid".
 - **Time:** store **UTC**; display and compute business dates in **Asia/Manila**.
 - **IDs:** auto-increment internally. Public booking refs are random and non-sequential (`RG-7KQ4M9`).
-- **A booking's lifecycle instants live in `trip_checkpoints` and `audit_log`, not on the booking.**
-  `bookings.started_at`, `completed_at`, `cancelled_at` and `cancel_reason` are declared in
-  `schema.ts` and **written by nothing** — `startTrip`, `finishTrip` and `cancelBooking` each set
-  `status` and nothing else. The start time is the `stop_key = 0` checkpoint, the completion time is
-  the `trip.completed` audit row, and the cancel time and reason are the cancel audit row (the reason
-  is required and validated at the input boundary, then reaches only that payload). Nothing is lost,
-  but do not read those four columns expecting a value, and do not add a report over `completed_at`
-  without filling it first.
+- **A booking's lifecycle instants are on the booking, but the record is `trip_checkpoints` and
+  `audit_log`.** `bookings.started_at`, `completed_at`, `cancelled_at` and `cancel_reason` are each
+  written by the ONE path that owns the event, in the same conditional `UPDATE` as the status
+  change (owner decision 2026-10-16, C1): `startTrip` sets `started_at`; `finishTrip` (the
+  Complete tap and the last-stop check-in alike) sets `completed_at`; the completion undo clears
+  `completed_at` back to null in the `UPDATE` that restores `in_progress`, while `started_at` stays
+  (undoing a check-in never touches it); `cancelBooking` sets `cancelled_at` and `cancel_reason`. A
+  refused transition matches nothing and stores nothing. Every instant is a `now` read once at the
+  request boundary, never inside the service (`cancelBooking`'s `now` is required). The columns are
+  a fast read over the record, not a replacement for it: the start time is still the `stop_key = 0`
+  checkpoint, the completion is the `trip.completed` audit row, and the cancel is the cancel audit
+  row. **Rows that predate this change have nulls**, so a report over `completed_at` or
+  `cancelled_at` must tolerate them (fall back to the checkpoint or audit row). `writeAudit` stamps
+  its own `created_at` from the real clock, so an audit row's time and the column's can differ
+  wherever a caller injects a `now`.
 - **Soft deletes:** use `is_active` / status fields for tours, vans, drivers, users.
   **Never hard-delete bookings or payments.**
 - **Audit:** every payment, refund, status change, and assignment writes to `audit_log`.

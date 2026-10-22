@@ -66,7 +66,13 @@ import {
 import { generateBookingRef } from '../services/booking-ref';
 import { assessCapacity, takeSlotLocks } from '../services/capacity';
 import { vansFreeOn } from '../services/dispatch/availability';
-import { checkInStop, runCheckIn, startTrip, undoLastCheckIn } from '../services/trips/checkins';
+import {
+  checkInStop,
+  completeTrip,
+  runCheckIn,
+  startTrip,
+  undoLastCheckIn,
+} from '../services/trips/checkins';
 import { driverCaller } from './helpers/ctx';
 import { describeWithDb } from './helpers/db';
 
@@ -1645,5 +1651,145 @@ describeWithDb('driver check-ins', () => {
     expect(await bookingStatus(booking.id), 'the reopened trip closed itself again').toBe(
       'in_progress',
     );
+  });
+
+  /* ---------------------------------------------------------------- *
+   * Week 6.5, Task 8 (C1) — the lifecycle columns on `bookings`.
+   *
+   * `started_at` / `completed_at` are written in the SAME conditional UPDATE
+   * as the status (`startTrip`, `finishTrip`), and the completion undo
+   * clears `completed_at` in the UPDATE that restores `in_progress`. The
+   * checkpoints and the audit trail remain the authoritative record; these
+   * columns are a fast read over them.
+   *
+   * Whole-second instants: the columns are `datetime`, which has no
+   * sub-second part.
+   *
+   * What is deliberately NOT asserted: that the `trip.completed` audit row's
+   * `created_at` equals `completed_at`. `writeAudit` stamps `new Date()`
+   * from the real clock, so the two differ by however far the injected
+   * instant is from now. The shared transaction is the property.
+   * ---------------------------------------------------------------- */
+
+  const AT_NOON = new Date('2026-03-04T04:00:00.000Z');
+  const AT_TWO = new Date('2026-03-04T06:00:00.000Z');
+  const AT_THREE = new Date('2026-03-04T07:00:00.000Z');
+
+  async function lifecycleOf(bookingId: number) {
+    const [row] = await getDb()
+      .select({
+        status: bookings.status,
+        startedAt: bookings.startedAt,
+        completedAt: bookings.completedAt,
+      })
+      .from(bookings)
+      .where(eq(bookings.id, bookingId))
+      .limit(1);
+    return row as NonNullable<typeof row>;
+  }
+
+  const start = (bookingId: number, now: Date) =>
+    runCheckIn((tx) => startTrip(tx, { bookingId, driverId: driverA, now }));
+  const complete = (bookingId: number, now: Date) =>
+    runCheckIn((tx) => completeTrip(tx, { bookingId, driverId: driverA, now }));
+
+  it('startTrip stamps started_at with the instant it was given', async () => {
+    const booking = await makeBooking({ driverId: driverA });
+    expect((await lifecycleOf(booking.id)).startedAt).toBeNull();
+
+    await start(booking.id, AT_NOON);
+
+    const row = await lifecycleOf(booking.id);
+    expect(row.status).toBe('in_progress');
+    expect(row.startedAt).toEqual(AT_NOON);
+    expect(row.completedAt).toBeNull();
+  });
+
+  it('a refused start stamps nothing', async () => {
+    const booking = await makeBooking({ driverId: driverA, status: 'cancelled' });
+    expect(await start(booking.id, AT_NOON)).toEqual({ ok: false, reason: 'trip_not_startable' });
+    expect((await lifecycleOf(booking.id)).startedAt).toBeNull();
+  });
+
+  it('completeTrip stamps completed_at, and leaves started_at alone', async () => {
+    const booking = await makeBooking({ driverId: driverA });
+    await start(booking.id, AT_NOON);
+    await complete(booking.id, AT_TWO);
+
+    const row = await lifecycleOf(booking.id);
+    expect(row.status).toBe('completed');
+    expect(row.completedAt).toEqual(AT_TWO);
+    expect(row.startedAt).toEqual(AT_NOON);
+  });
+
+  it('the last-stop check-in stamps completed_at too (the other road into finishTrip)', async () => {
+    const booking = await makeBooking({ driverId: driverA });
+    await start(booking.id, AT_NOON);
+    for (const stopId of stopIds) {
+      await runCheckIn((tx) =>
+        checkInStop(tx, { bookingId: booking.id, driverId: driverA, stopId, now: AT_TWO }),
+      );
+    }
+
+    const row = await lifecycleOf(booking.id);
+    expect(row.status).toBe('completed');
+    expect(row.completedAt).toEqual(AT_TWO);
+  });
+
+  it('a second Complete tap does not restamp completed_at', async () => {
+    const booking = await makeBooking({ driverId: driverA });
+    await start(booking.id, AT_NOON);
+    await complete(booking.id, AT_TWO);
+    expect(await complete(booking.id, AT_THREE)).toEqual({
+      ok: false,
+      reason: 'already_checked_in',
+    });
+    expect((await lifecycleOf(booking.id)).completedAt).toEqual(AT_TWO);
+  });
+
+  it('undoing a completion clears completed_at, exactly as it restores the status', async () => {
+    const booking = await makeBooking({ driverId: driverA });
+    await start(booking.id, AT_NOON);
+    await complete(booking.id, AT_TWO);
+    expect((await lifecycleOf(booking.id)).completedAt).not.toBeNull();
+
+    await runCheckIn((tx) =>
+      undoLastCheckIn(tx, {
+        bookingId: booking.id,
+        driverId: driverA,
+        reason: 'Completed by mistake.',
+        now: AT_THREE,
+      }),
+    );
+
+    const row = await lifecycleOf(booking.id);
+    expect(row.status).toBe('in_progress');
+    // Owner decision Q4: undo restores the previous state EXACTLY. A trip
+    // reading in_progress with a completion timestamp on it is not that.
+    expect(row.completedAt).toBeNull();
+    // And started_at is untouched: the trip did start, and still has.
+    expect(row.startedAt).toEqual(AT_NOON);
+  });
+
+  it('undoing a plain check-in leaves started_at where it was', async () => {
+    const booking = await makeBooking({ driverId: driverA });
+    await start(booking.id, AT_NOON);
+    await runCheckIn((tx) =>
+      checkInStop(tx, {
+        bookingId: booking.id,
+        driverId: driverA,
+        stopId: stopIds[0] as number,
+        now: AT_TWO,
+      }),
+    );
+    await runCheckIn((tx) =>
+      undoLastCheckIn(tx, {
+        bookingId: booking.id,
+        driverId: driverA,
+        reason: 'Mis-tap.',
+        now: AT_THREE,
+      }),
+    );
+    expect((await lifecycleOf(booking.id)).startedAt).toEqual(AT_NOON);
   });
 });

@@ -115,6 +115,13 @@ const cancelBookingInputSchema = z.object({
   reason: z.string().trim().min(1).max(400),
   /** `users.id` of the owner or finance user doing this. */
   actorUserId: z.number().int().positive(),
+  /**
+   * The instant stamped on `bookings.cancelled_at`, read ONCE at the request
+   * boundary. Required rather than defaulted: a service that read its own
+   * clock could not be tested at a boundary, and an optional one that a
+   * caller forgot would store a timestamp that looks fine and is wrong.
+   */
+  now: z.date(),
 });
 
 export type CancelBookingInput = z.input<typeof cancelBookingInputSchema>;
@@ -221,9 +228,16 @@ export async function cancelBooking(input: CancelBookingInput): Promise<CancelBo
      * already `cancelled` matches nothing in the allow-list, so a second
      * cancel is refused rather than writing a second audit row.
      */
+    /*
+     * `cancelled_at` and `cancel_reason` have no other writer (Week 6.5,
+     * Task 8), and they ride in this SAME conditional UPDATE: a refused
+     * cancel matches nothing and stores neither, and a status can never move
+     * without its timestamp. The audit row below still carries the reason -
+     * the trail is the record, these columns are the fast read over it.
+     */
     const [result] = await tx
       .update(bookings)
-      .set({ status: 'cancelled' })
+      .set({ status: 'cancelled', cancelledAt: parsed.now, cancelReason: parsed.reason })
       .where(
         and(eq(bookings.id, parsed.bookingId), inArray(bookings.status, [...CANCELLABLE_STATUSES])),
       );

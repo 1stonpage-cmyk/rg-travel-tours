@@ -1329,6 +1329,7 @@ describeWithDb('admin.refunds — cancelling a booking and sending money back', 
       bookingId: booking.id,
       reason: 'Guest cancelled.',
       actorUserId: owner,
+      now: new Date(),
     });
 
     expect(result.couponReleased).toBe(true);
@@ -1347,9 +1348,14 @@ describeWithDb('admin.refunds — cancelling a booking and sending money back', 
     await makePaidBooking('paymongo', { couponId: coupon.id });
     expect(await couponUsedCount(coupon.id)).toBe(2);
 
-    await cancelBooking({ bookingId: booking.id, reason: 'One.', actorUserId: owner });
+    await cancelBooking({
+      bookingId: booking.id,
+      reason: 'One.',
+      actorUserId: owner,
+      now: new Date(),
+    });
     await expect(
-      cancelBooking({ bookingId: booking.id, reason: 'Two.', actorUserId: owner }),
+      cancelBooking({ bookingId: booking.id, reason: 'Two.', actorUserId: owner, now: new Date() }),
     ).rejects.toBeInstanceOf(BookingNotCancellableError);
     expect(await couponUsedCount(coupon.id)).toBe(1);
   });
@@ -1363,6 +1369,7 @@ describeWithDb('admin.refunds — cancelling a booking and sending money back', 
       bookingId: booking.id,
       reason: 'No coupon here.',
       actorUserId: owner,
+      now: new Date(),
     });
 
     expect(result.couponReleased).toBe(false);
@@ -1374,7 +1381,12 @@ describeWithDb('admin.refunds — cancelling a booking and sending money back', 
     const coupon = await makeCoupon(5);
     const booking = await makePaidBooking('paymongo', { couponId: coupon.id });
 
-    await cancelBooking({ bookingId: booking.id, reason: 'Guest cancelled.', actorUserId: owner });
+    await cancelBooking({
+      bookingId: booking.id,
+      reason: 'Guest cancelled.',
+      actorUserId: owner,
+      now: new Date(),
+    });
 
     const cancelRows = (await auditRows('bookings', booking.id)).filter(
       (row) => row.action === 'booking.cancelled',
@@ -1385,6 +1397,79 @@ describeWithDb('admin.refunds — cancelling a booking and sending money back', 
       couponReleased: true,
       reason: 'Guest cancelled.',
     });
+  });
+
+  /**
+   * 11c. Week 6.5, Task 8 (C1): the cancel's own columns. `cancel_reason` was
+   * REQUIRED at the input boundary and then reached only the audit payload; it
+   * and `cancelled_at` are now written in the conditional UPDATE that moves
+   * the status. The audit row stays the record - the columns are the fast read.
+   */
+  async function cancelColumns(bookingId: number) {
+    const [row] = await rows<{ cancelled_at: Date | null; cancel_reason: string | null }>(
+      'SELECT cancelled_at, cancel_reason FROM bookings WHERE id = ?',
+      [bookingId],
+    );
+    if (!row) throw new Error(`no booking ${bookingId}`);
+    return row;
+  }
+
+  it('cancelBooking stores the reason it already required, and the instant', async () => {
+    const booking = await makePaidBooking('paymongo');
+    const now = new Date('2026-03-04T04:00:00.000Z');
+    expect(await cancelColumns(booking.id)).toEqual({ cancelled_at: null, cancel_reason: null });
+
+    const result = await cancelBooking({
+      bookingId: booking.id,
+      reason: 'Guest cancelled - typhoon.',
+      actorUserId: owner,
+      now,
+    });
+
+    const row = await cancelColumns(booking.id);
+    expect(row.cancelled_at).toEqual(now);
+    expect(row.cancel_reason).toBe('Guest cancelled - typhoon.');
+    // Unchanged: the audit row still carries it too. The column is the fast
+    // read; the trail is the record.
+    expect(result.ref).toBeDefined();
+    const audit = (await auditRows('bookings', booking.id)).find(
+      (candidate) => candidate.action === 'booking.cancelled',
+    );
+    expect(JSON.stringify(audit?.data)).toContain('Guest cancelled - typhoon.');
+  });
+
+  it('the router stores the trimmed reason and a server-read instant', async () => {
+    const booking = await makePaidBooking('paymongo');
+    const before = Date.now() - 2000;
+    await apiFor(owner, 'owner').admin.refunds.cancelBooking({
+      bookingId: booking.id,
+      reason: '  Office error.  ',
+    });
+    const row = await cancelColumns(booking.id);
+    expect(row.cancel_reason).toBe('Office error.');
+    expect(row.cancelled_at!.getTime()).toBeGreaterThanOrEqual(before);
+    expect(row.cancelled_at!.getTime()).toBeLessThanOrEqual(Date.now() + 2000);
+  });
+
+  it('a refused cancel stores neither', async () => {
+    const booking = await makePaidBooking('paymongo', { status: 'completed' });
+    await expect(
+      cancelBooking({
+        bookingId: booking.id,
+        reason: 'x',
+        actorUserId: owner,
+        now: new Date('2026-03-04T04:00:00.000Z'),
+      }),
+    ).rejects.toBeInstanceOf(BookingNotCancellableError);
+    expect(await cancelColumns(booking.id)).toEqual({ cancelled_at: null, cancel_reason: null });
+  });
+
+  it('cancelBooking refuses a call that carries no instant', async () => {
+    const booking = await makePaidBooking('paymongo');
+    await expect(
+      cancelBooking({ bookingId: booking.id, reason: 'x', actorUserId: owner } as never),
+    ).rejects.toThrow();
+    expect(await bookingMoney(booking.id)).toMatchObject({ status: 'confirmed' });
   });
 
   /**
@@ -1407,7 +1492,7 @@ describeWithDb('admin.refunds — cancelling a booking and sending money back', 
     fault.auditFailsFor = booking.id;
 
     await expect(
-      cancelBooking({ bookingId: booking.id, reason: 'x', actorUserId: owner }),
+      cancelBooking({ bookingId: booking.id, reason: 'x', actorUserId: owner, now: new Date() }),
     ).rejects.toThrow('the audit write failed');
 
     expect(await couponUsedCount(coupon.id)).toBe(1);
@@ -1421,7 +1506,7 @@ describeWithDb('admin.refunds — cancelling a booking and sending money back', 
     fault.releaseFails = true;
 
     await expect(
-      cancelBooking({ bookingId: booking.id, reason: 'x', actorUserId: owner }),
+      cancelBooking({ bookingId: booking.id, reason: 'x', actorUserId: owner, now: new Date() }),
     ).rejects.toThrow('the coupon release failed');
 
     expect(await bookingMoney(booking.id)).toMatchObject({ status: 'confirmed' });
