@@ -23,7 +23,7 @@
  */
 import { fileURLToPath } from 'node:url';
 import { sql } from 'drizzle-orm';
-import { bookings, drivers, payments, tripCheckpoints, users, vans } from '../db/schema';
+import { bookings, drivers, payments, sessions, tripCheckpoints, users, vans } from '../db/schema';
 import { migrate } from 'drizzle-orm/mysql2/migrator';
 import { assertConnectedDatabase, assertDatabaseName, databaseNameFromUrl } from '../db/guard';
 import { closeDb, getDb } from '../db/client';
@@ -47,6 +47,13 @@ const MIGRATIONS_FOLDER = fileURLToPath(new URL('../db/migrations', import.meta.
  * `audit_log` is deliberately absent: it is append-only by design, dozens
  * of tests write to it legitimately, and nothing counts it to make a
  * decision.
+ *
+ * `sessions` is absent for the same reason, and the teardown below EMPTIES it
+ * instead (Task 10 / C3). Dozens of tests create sessions legitimately within
+ * a run, so a detector on this table would fire on every run, which is the
+ * opposite of what this check is for: it exists for rows that change another
+ * file's answer, and nothing counts sessions to make a decision. What the
+ * table needed was a reset, not a tripwire.
  */
 const LEAK_TABLES = [
   ['bookings', bookings],
@@ -124,6 +131,16 @@ export default async function setup(): Promise<() => Promise<void>> {
   return async function teardown(): Promise<void> {
     await assertConnectedDatabase('test');
     const after = await countRows();
+    /*
+     * Task 10 (C3): return `sessions` to its baseline. Nothing in the suite
+     * expires these rows and `rg_travel_test` had grown to 678 of them. The
+     * post-seed baseline is ZERO (`seed()` creates an owner user, not a
+     * session; measured with COUNT(*) straight after `seed('test')`), so this
+     * restores the starting state rather than an arbitrary one. The connection
+     * was proven to be `rg_travel_test` by `assertConnectedDatabase` above, and
+     * this runs before the leak check can throw so a failing run still cleans up.
+     */
+    await getDb().delete(sessions);
     const leaks = LEAK_TABLES.map(([name]) => name)
       .filter((name) => (after[name] ?? 0) > (baseline[name] ?? 0))
       .map(

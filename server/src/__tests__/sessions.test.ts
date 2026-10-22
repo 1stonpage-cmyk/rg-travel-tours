@@ -19,12 +19,18 @@
  * read back through the pool on a different connection in places, so an
  * uncommitted transaction would hide them.
  */
-import { afterEach, expect, it } from 'vitest';
-import { createHash } from 'node:crypto';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createHash, randomBytes } from 'node:crypto';
 import { eq, inArray } from 'drizzle-orm';
 import { getDb, getPool } from '../db/client';
 import { sessions, users } from '../db/schema';
-import { createSession, readSession, revokeSession } from '../services/sessions';
+import {
+  createSession,
+  deleteExpiredSessions,
+  readSession,
+  revokeSession,
+} from '../services/sessions';
+import { pruneSessions } from '../jobs/prune-sessions';
 import { describeWithDb } from './helpers/db';
 
 /** A fixed instant, so the expiry assertions are exact. */
@@ -33,6 +39,51 @@ const NOW = new Date('2026-10-13T04:00:00Z');
 /** Subject ids this file invents. No `users`/`bookings` row needs to exist:
  * `sessions.subject_id` is polymorphic and carries no foreign key. */
 const SUBJECT = { customer: 920_001, staff: 920_002, driver: 920_003 };
+
+/** Well before `NOW` plus any session lifetime, so a session minted here is lapsed. */
+const LONG_AGO = new Date(NOW.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+const SUBJECT_ID_BY_TYPE = {
+  user: SUBJECT.staff,
+  customer: SUBJECT.customer,
+  driver: SUBJECT.driver,
+} as const;
+
+/**
+ * Inserts a session that expires at exactly `expiresAt` and returns its id.
+ * `createSession` cannot do this — the lifetime comes from the subject map
+ * and there is deliberately no override — so the sweep's boundary is set up
+ * with a direct row. The subject ids are this file's invented ones, so
+ * `cleanup` removes these rows too.
+ */
+async function sessionExpiringAt(
+  expiresAt: Date,
+  subject: 'user' | 'customer' | 'driver' = 'driver',
+): Promise<number> {
+  const [row] = await getDb()
+    .insert(sessions)
+    .values({
+      subjectType: subject,
+      subjectId: SUBJECT_ID_BY_TYPE[subject],
+      tokenHash: createHash('sha256').update(randomBytes(32)).digest('hex'),
+      expiresAt,
+      createdAt: LONG_AGO,
+    });
+  return row.insertId;
+}
+
+async function sessionRowById(id: number) {
+  const [row] = await getDb().select().from(sessions).where(eq(sessions.id, id));
+  return row;
+}
+
+async function sessionRowByToken(token: string) {
+  const [row] = await getDb()
+    .select()
+    .from(sessions)
+    .where(eq(sessions.tokenHash, createHash('sha256').update(token).digest('hex')));
+  return row;
+}
 
 const staffIds: number[] = [];
 
@@ -246,5 +297,72 @@ describeWithDb('sessions', () => {
       .from(sessions)
       .where(inArray(sessions.subjectId, [SUBJECT.customer, SUBJECT.staff, SUBJECT.driver]));
     expect(rows).toHaveLength(1);
+  });
+
+  /**
+   * Task 10 (C3): the sweep. The table holds whatever earlier files left in
+   * it, and these tests assert exact counts, so each starts from an empty
+   * `sessions` table. That is safe here and only here: this is the test
+   * database, files run serially (`fileParallelism: false`), and the
+   * teardown empties the table at the end of every run anyway.
+   */
+  describe('the expiry sweep', () => {
+    beforeEach(async () => {
+      await getPool().query('DELETE FROM sessions');
+    });
+
+    it('deletes expired sessions and keeps live ones', async () => {
+      const live = await createSession('driver', SUBJECT.driver, NOW);
+      const expired = await createSession('driver', SUBJECT.driver, LONG_AGO);
+
+      expect(await deleteExpiredSessions(NOW)).toBe(1);
+      expect(await readSession(live.token, NOW)).not.toBeNull();
+      expect(await sessionRowByToken(expired.token)).toBeUndefined();
+    });
+
+    it('is exact at the boundary: a session expiring at `now` is gone, one expiring a second later stays', async () => {
+      // `readSession` refuses a session AT its expiry, so the sweep must agree
+      // — a row the reader calls dead and the sweep calls live is a row that
+      // lives forever.
+      //
+      // A SECOND later, not a millisecond: `expires_at` is a `DATETIME` with no
+      // fractional seconds, so MySQL rounds `NOW + 1ms` back down to `NOW` and
+      // that row would be (correctly) swept. One second is the smallest step the
+      // column can tell apart.
+      const atNow = await sessionExpiringAt(NOW);
+      const aSecondLater = await sessionExpiringAt(new Date(NOW.getTime() + 1000));
+
+      await deleteExpiredSessions(NOW);
+      expect(await sessionRowById(atNow)).toBeUndefined();
+      expect(await sessionRowById(aSecondLater)).toBeDefined();
+    });
+
+    it('sweeps every subject type, not only drivers', async () => {
+      for (const subject of ['user', 'customer', 'driver'] as const) {
+        await sessionExpiringAt(LONG_AGO, subject);
+      }
+      expect(await deleteExpiredSessions(NOW)).toBe(3);
+    });
+
+    it('is a no-op on a clean table and says nothing', async () => {
+      const logged = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        expect(await pruneSessions(NOW)).toEqual({ deleted: 0 });
+        expect(logged).not.toHaveBeenCalled();
+      } finally {
+        logged.mockRestore();
+      }
+    });
+
+    it('logs one line when it deleted something', async () => {
+      await sessionExpiringAt(LONG_AGO);
+      const logged = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        expect(await pruneSessions(NOW)).toEqual({ deleted: 1 });
+        expect(logged).toHaveBeenCalledTimes(1);
+      } finally {
+        logged.mockRestore();
+      }
+    });
   });
 });

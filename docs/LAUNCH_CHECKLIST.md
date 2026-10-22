@@ -170,6 +170,16 @@ config changes.
       load by the worker count, and any future job that is _not_ idempotent would do real
       damage. A shared store does **not** fix this one: the schedule has to be owned by
       exactly one process.
+- [ ] **The scheduled jobs are registered** — three, all in `server/src/jobs/index.ts`.
+      Nothing to configure; check them against `pm2 logs` after the first day in production.
+      `expire-holds` runs every minute and moves lapsed, unpaid holds to `expired`.
+      `orphaned-vans` runs daily at 07:00 Asia/Manila and logs a warning about a van left
+      `on_trip` by a trip nobody completed (it changes nothing). `prune-sessions` runs daily
+      at 03:30 Asia/Manila and deletes `sessions` rows whose `expires_at` has passed (silent
+      when there is nothing to delete). The two daily jobs pass `timezone: 'Asia/Manila'` to
+      `node-cron` explicitly, so the server's own zone is never assumed. **All three are
+      idempotent**, so a double run under cluster mode would be wasteful rather than wrong —
+      the same reasoning as Reason 2 above, and no reason to relax fork mode.
 
 ---
 

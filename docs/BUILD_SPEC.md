@@ -1129,6 +1129,8 @@ exists (it is part of 2B), but no submission, moderation, admin or export side o
 >    next suite inherits the same line.
 > 3. **`sessions` rows accumulate unbounded in `rg_travel_test`** — 675 as of 2026-10-16. Nothing
 >    truncates them between runs and nothing expires them. Harmless until it is not.
+>    **Resolved in Week 6.5 Task 10:** a daily `prune-sessions` job now deletes expired rows, and the
+>    test-database teardown empties the table.
 > 4. **The duplicate-key walk has three implementations**: the shared
 >    `server/src/db/duplicate-key.ts`, plus private copies in
 >    `server/src/routers/public/newsletter.ts` and `server/src/services/booking-ref.ts`. The shared

@@ -36,7 +36,7 @@
  * table is worth a query per request.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { and, eq, gt } from 'drizzle-orm';
+import { and, eq, gt, lte } from 'drizzle-orm';
 import { getDb, type Transaction } from '../db/client';
 import { sessions, users } from '../db/schema';
 
@@ -223,4 +223,41 @@ export async function revokeSessionsForSubject(
     .delete(sessions)
     .where(and(eq(sessions.subjectType, subjectType), eq(sessions.subjectId, subjectId)));
   return result.affectedRows;
+}
+
+/**
+ * Deletes every session whose `expires_at` has passed, and returns how many.
+ * Its own transaction — nothing else needs to commit with it. The daily
+ * `prune-sessions` job (`jobs/prune-sessions.ts`) is the only caller.
+ *
+ * Until this existed nothing deleted an expired row: `revokeSession` removes
+ * one on sign-out, and a session that simply lapsed stayed forever, harmless
+ * (`readSession` refuses it) and permanent. This is the sweep the schema was
+ * written expecting — `sessions_expiry_idx` is documented there as "The sweep
+ * that deletes expired rows (a §13 cron job)", so the delete is an index range
+ * scan rather than a table scan.
+ *
+ * **`lte`, not `lt`, and the reason is `readSession`.** It resolves a session
+ * with `gt(expiresAt, now)` and its note says the expiry instant itself is
+ * already past ("`gt(expiresAt, now)` is strict, so the expiry instant itself
+ * is already expired"). The sweep must agree to the instant: with `lt` a row
+ * expiring exactly at `now` would be dead to the reader and live to the sweep,
+ * and a row both of them disagree about is a row nobody ever removes.
+ *
+ * **Deleting here is not a soft-delete violation.** The standing rule
+ * ("never hard-delete bookings or payments") names records. A session is a
+ * credential whose whole purpose has ended; keeping it is a liability, not a
+ * record. The trail of who signed in, and when, lives in `audit_log` and this
+ * touches none of it. Every subject type is swept — `user`, `customer` and
+ * `driver` alike — because the condition is the clock and nothing else.
+ *
+ * Idempotent: a second run, or two overlapping runs, find nothing new to
+ * delete. (A DELETE's `affectedRows` is a true count; `CLIENT_FOUND_ROWS`
+ * only changes what an UPDATE reports — see `revokeSessionsForSubject`.)
+ */
+export async function deleteExpiredSessions(now: Date): Promise<number> {
+  return getDb().transaction(async (tx) => {
+    const [result] = await tx.delete(sessions).where(lte(sessions.expiresAt, now));
+    return result.affectedRows;
+  });
 }

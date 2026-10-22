@@ -22,6 +22,7 @@
 import { schedule } from 'node-cron';
 import { expireHolds } from './expire-holds';
 import { checkOrphanedVans } from './orphaned-vans';
+import { pruneSessions } from './prune-sessions';
 
 /** §5 / §13: the hold-expiry sweep runs every minute. */
 const EVERY_MINUTE = '* * * * *';
@@ -32,6 +33,12 @@ const EVERY_MINUTE = '* * * * *';
  * to node-cron explicitly below; the server's own zone is not assumed.
  */
 const DAILY_0700 = '0 7 * * *';
+
+/**
+ * C3 (2026-10-16): the expired-session sweep, 03:30 Manila — off-peak, the
+ * quietest hour for a day-tour operator. Zone passed explicitly below, as above.
+ */
+const DAILY_0330 = '30 3 * * *';
 
 /**
  * Starts every scheduled job. Called once, from the server entrypoint.
@@ -83,5 +90,23 @@ export function startScheduledJobs(): void {
       }
     },
     { name: 'orphaned-vans', timezone: 'Asia/Manila', noOverlap: true },
+  );
+
+  /*
+   * Deletes lapsed `sessions` rows (see `deleteExpiredSessions`). Same
+   * try/catch as the jobs above, for the same reason — a throw into the
+   * scheduler takes the API process down, and a missed night is harmless:
+   * tomorrow's run deletes everything this one would have.
+   */
+  schedule(
+    DAILY_0330,
+    async () => {
+      try {
+        await pruneSessions(new Date());
+      } catch (error) {
+        console.error('[jobs] prune-sessions failed', error);
+      }
+    },
+    { name: 'prune-sessions', timezone: 'Asia/Manila', noOverlap: true },
   );
 }
