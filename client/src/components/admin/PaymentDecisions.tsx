@@ -32,9 +32,13 @@ import { findPendingCash, findPendingReceipt, type DecidablePayment } from './pe
 
 const PANEL = 'border-brand-blue-200 flex flex-col gap-4 rounded-[14px] border bg-white p-5';
 const ALERT =
-  'border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-lg border p-3 text-sm font-medium';
+  'border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-xl border p-3 text-sm font-medium';
 const TEXTAREA =
-  'border-input bg-background focus-visible:ring-brand-blue-600 w-full rounded-md border p-3 text-sm transition-shadow focus-visible:outline-none focus-visible:ring-2';
+  'border-brand-blue-200 focus-visible:ring-brand-blue-600 w-full rounded-[10px] border bg-white p-3 text-sm transition-shadow focus-visible:outline-none focus-visible:ring-2';
+const PRIMARY_BUTTON =
+  'tap-target bg-brand-blue-700 hover:bg-brand-blue-800 w-full rounded-[10px] font-semibold text-white transition-colors';
+const OUTLINE_BUTTON =
+  'tap-target border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 hover:text-brand-blue-800 w-full rounded-[10px] font-semibold transition-colors';
 
 export default function PaymentDecisions({
   payments,
@@ -98,7 +102,7 @@ export default function PaymentDecisions({
 
           <Button
             type="button"
-            className="tap-target w-full"
+            className={PRIMARY_BUTTON}
             disabled={approve.isPending}
             onClick={() => approve.mutate({ paymentId: pendingReceipt.id })}
           >
@@ -123,7 +127,7 @@ export default function PaymentDecisions({
             <Button
               type="button"
               variant="outline"
-              className="tap-target w-full"
+              className={OUTLINE_BUTTON}
               disabled={reject.isPending || reason.trim().length === 0}
               onClick={() => reject.mutate({ paymentId: pendingReceipt.id, reason: reason.trim() })}
             >
@@ -167,7 +171,7 @@ export default function PaymentDecisions({
 
           <Button
             type="button"
-            className="tap-target w-full"
+            className={PRIMARY_BUTTON}
             disabled={approveCash.isPending}
             onClick={() => approveCash.mutate({ paymentId: claim.id })}
           >
@@ -207,7 +211,7 @@ export default function PaymentDecisions({
             <Button
               type="button"
               variant="outline"
-              className="tap-target w-full"
+              className={OUTLINE_BUTTON}
               disabled={rejectCash.isPending || (cashReasons[claim.id] ?? '').trim().length === 0}
               onClick={() =>
                 rejectCash.mutate({

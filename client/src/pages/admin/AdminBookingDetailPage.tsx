@@ -51,17 +51,14 @@ import { trpc } from '@/lib/trpc';
 import AssignPanel from '@/components/admin/AssignPanel';
 import CancelRefundPanel from '@/components/admin/CancelRefundPanel';
 import PaymentDecisions from '@/components/admin/PaymentDecisions';
+import BookingStatusPill from '@/components/admin/BookingStatusPill';
 
-const STATUS_LABELS: Record<string, string> = {
-  pending_payment: 'Awaiting payment',
-  pending_verification: 'Checking receipt',
-  confirmed: 'Confirmed',
-  assigned: 'Driver assigned',
-  in_progress: 'On tour',
-  completed: 'Completed',
-  cancelled: 'Cancelled',
-  expired: 'Expired',
-};
+const CARD = 'border-brand-blue-100 rounded-[14px] border bg-white p-5 text-sm';
+const HEADING = 'text-brand-ink text-lg font-bold';
+const PRIMARY_BUTTON =
+  'tap-target bg-brand-blue-700 hover:bg-brand-blue-800 rounded-[10px] font-semibold text-white transition-colors';
+const OUTLINE_BUTTON =
+  'tap-target border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 hover:text-brand-blue-800 rounded-[10px] font-semibold transition-colors';
 
 /** §9: verify payments is owner and finance. The server enforces it. */
 const MAY_VERIFY = ['owner', 'finance'];
@@ -97,8 +94,8 @@ export default function AdminBookingDetailPage() {
 
   if (query.isPending) {
     return (
-      <div className="max-w-3xl">
-        <p className="text-muted-foreground flex items-center gap-2 text-sm">
+      <div>
+        <p className="text-brand-error flex items-center gap-2 text-sm">
           <Loader2 className="size-4 animate-spin" aria-hidden="true" />
           Loading booking…
         </p>
@@ -108,12 +105,12 @@ export default function AdminBookingDetailPage() {
 
   if (query.isError || !query.data) {
     return (
-      <div className="max-w-3xl">
-        <h1 className="text-brand-blue-900 text-xl font-bold">Booking not available</h1>
-        <p className="text-muted-foreground mt-2 text-sm">
+      <div className="flex flex-col items-start gap-3">
+        <h1 className="text-brand-ink text-2xl font-bold">Booking not available</h1>
+        <p className="text-brand-error text-sm">
           That reference does not match a booking, or your session has ended.
         </p>
-        <Button asChild variant="outline" className="tap-target mt-4">
+        <Button asChild variant="outline" className={OUTLINE_BUTTON}>
           <Link to="/admin/bookings">Back to bookings</Link>
         </Button>
       </div>
@@ -126,38 +123,44 @@ export default function AdminBookingDetailPage() {
   const noteIsEmpty = noteText.trim() === '';
 
   return (
-    <div className="max-w-3xl">
-      <Link to="/admin/bookings" className="text-brand-blue-700 text-sm underline">
+    <div className="flex flex-col gap-6">
+      <Link
+        to="/admin/bookings"
+        className="text-brand-blue-700 hover:text-brand-blue-900 tap-target -mb-3 inline-flex w-fit items-center text-sm font-semibold underline underline-offset-4 transition-colors"
+      >
         ← Bookings
       </Link>
 
-      <header className="mt-4">
-        <h1 className="text-brand-blue-900 font-mono text-2xl font-bold">{booking.ref}</h1>
-        <p className="text-brand-blue-900 mt-1 font-medium">{booking.tourTitle}</p>
-        <p className="text-muted-foreground text-sm">
-          {booking.tourDate} · {booking.pax} pax · {STATUS_LABELS[booking.status] ?? booking.status}
+      <header className="flex flex-col gap-1">
+        <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.08em]">
+          Booking
+        </p>
+        <h1 className="text-brand-ink font-mono text-2xl font-bold sm:text-3xl">{booking.ref}</h1>
+        <p className="text-brand-ink font-semibold">{booking.tourTitle}</p>
+        <p className="text-brand-error flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+          <span>
+            {booking.tourDate} · {booking.pax} pax
+          </span>
+          <BookingStatusPill status={booking.status} />
         </p>
       </header>
 
-      <section
-        aria-labelledby="guest-heading"
-        className="border-border bg-background mt-6 rounded-2xl border p-5 text-sm"
-      >
-        <h2 id="guest-heading" className="text-brand-blue-900 text-base font-semibold">
+      <section aria-labelledby="guest-heading" className={CARD}>
+        <h2 id="guest-heading" className={HEADING}>
           Guest
         </h2>
         <dl className="mt-3 space-y-1">
           <div className="flex gap-2">
-            <dt className="text-muted-foreground w-24">Name</dt>
-            <dd className="text-brand-blue-900">{booking.leadName}</dd>
+            <dt className="text-brand-error w-24 shrink-0">Name</dt>
+            <dd className="text-brand-ink font-medium">{booking.leadName}</dd>
           </div>
           <div className="flex gap-2">
-            <dt className="text-muted-foreground w-24">Email</dt>
-            <dd className="text-brand-blue-900 break-all">{booking.leadEmail}</dd>
+            <dt className="text-brand-error w-24 shrink-0">Email</dt>
+            <dd className="text-brand-ink break-all">{booking.leadEmail}</dd>
           </div>
           <div className="flex gap-2">
-            <dt className="text-muted-foreground w-24">Phone</dt>
-            <dd className="text-brand-blue-900">{booking.leadPhone}</dd>
+            <dt className="text-brand-error w-24 shrink-0">Phone</dt>
+            <dd className="text-brand-ink">{booking.leadPhone}</dd>
           </div>
         </dl>
       </section>
@@ -168,11 +171,8 @@ export default function AdminBookingDetailPage() {
         nothing for finance, who can read this page (`bookingsView`) but
         cannot assign (`assignVanDriver`).
       */}
-      <section
-        aria-labelledby="assign-heading"
-        className="border-border mt-6 rounded-2xl border p-5"
-      >
-        <h2 id="assign-heading" className="text-brand-blue-900 text-base font-semibold">
+      <section aria-labelledby="assign-heading" className={CARD}>
+        <h2 id="assign-heading" className={HEADING}>
           Dispatch
         </h2>
         <AssignPanel
@@ -187,21 +187,21 @@ export default function AdminBookingDetailPage() {
 
       <section
         aria-labelledby="money-heading"
-        className="border-brand-blue-200 bg-brand-blue-50 mt-6 rounded-2xl border p-5 text-sm"
+        className="border-brand-blue-200 bg-brand-blue-50 rounded-[14px] border p-5 text-sm"
       >
-        <h2 id="money-heading" className="text-brand-blue-900 text-base font-semibold">
+        <h2 id="money-heading" className={HEADING}>
           Money
         </h2>
         <dl className="mt-3 space-y-1">
           <div className="flex justify-between">
-            <dt className="text-muted-foreground">Total</dt>
-            <dd className="text-brand-blue-900 font-semibold tabular-nums">
+            <dt className="text-brand-error">Total</dt>
+            <dd className="text-brand-ink text-base font-bold tabular-nums">
               {formatPeso(booking.totalCentavos)}
             </dd>
           </div>
           <div className="flex justify-between">
-            <dt className="text-muted-foreground">Paid</dt>
-            <dd className="text-brand-blue-900 font-semibold tabular-nums">
+            <dt className="text-brand-error">Paid</dt>
+            <dd className="text-brand-ink text-base font-bold tabular-nums">
               {formatPeso(booking.paidCentavos)}
             </dd>
           </div>
@@ -209,13 +209,13 @@ export default function AdminBookingDetailPage() {
         {booking.paymentReviewRequired ? (
           <p
             role="status"
-            className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 mt-3 rounded-lg border p-3 font-medium"
+            className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 mt-3 rounded-xl border p-3 font-medium"
           >
             Flagged for payment review: money arrived on a booking that could not accept it.
           </p>
         ) : null}
         {booking.addons.length > 0 ? (
-          <ul className="text-muted-foreground mt-3 space-y-1">
+          <ul className="text-brand-error mt-3 space-y-1">
             {booking.addons.map((addon) => (
               <li key={addon.id}>
                 {addon.qty} × {addon.name} ({formatPeso(addon.priceCentavos)}
@@ -226,25 +226,25 @@ export default function AdminBookingDetailPage() {
         ) : null}
       </section>
 
-      <section
-        aria-labelledby="payments-heading"
-        className="border-border bg-background mt-6 rounded-2xl border p-5 text-sm"
-      >
-        <h2 id="payments-heading" className="text-brand-blue-900 text-base font-semibold">
+      <section aria-labelledby="payments-heading" className={CARD}>
+        <h2 id="payments-heading" className={HEADING}>
           Payments
         </h2>
         {booking.payments.length === 0 ? (
-          <p className="text-muted-foreground mt-2">Nothing recorded yet.</p>
+          <p className="text-brand-error mt-2">Nothing recorded yet.</p>
         ) : (
           <ul className="mt-3 space-y-3">
             {booking.payments.map((payment) => (
-              <li key={payment.id} className="border-b pb-3 last:border-0 last:pb-0">
-                <p className="text-brand-blue-900 font-medium">
+              <li
+                key={payment.id}
+                className="border-brand-blue-100 border-b pb-3 last:border-0 last:pb-0"
+              >
+                <p className="text-brand-ink font-semibold">
                   {formatPeso(payment.amountCentavos)} · {payment.provider} / {payment.method} ·{' '}
                   {payment.status}
                 </p>
                 {payment.txnRef ? (
-                  <p className="text-muted-foreground font-mono text-xs">Ref {payment.txnRef}</p>
+                  <p className="text-brand-error font-mono text-xs">Ref {payment.txnRef}</p>
                 ) : null}
                 {/*
                   Who says they took this money. On the trail as well as in
@@ -256,9 +256,7 @@ export default function AdminBookingDetailPage() {
                   <p className="text-brand-gold-800">Rejected: {payment.rejectReason}</p>
                 ) : null}
                 {payment.collectedByDriverName ? (
-                  <p className="text-muted-foreground">
-                    Collected by {payment.collectedByDriverName}
-                  </p>
+                  <p className="text-brand-error">Collected by {payment.collectedByDriverName}</p>
                 ) : null}
                 {payment.receiptPath ? (
                   <a
@@ -286,7 +284,6 @@ export default function AdminBookingDetailPage() {
         payments={booking.payments}
         mayVerify={mayVerify}
         onChanged={() => void query.refetch()}
-        className="mt-6"
       />
 
       {/*
@@ -309,23 +306,23 @@ export default function AdminBookingDetailPage() {
       />
 
       {booking.notes.length > 0 || mayWriteNotes ? (
-        <section
-          aria-labelledby="notes-heading"
-          className="border-border bg-background mt-6 rounded-2xl border p-5 text-sm"
-        >
-          <h2 id="notes-heading" className="text-brand-blue-900 text-base font-semibold">
+        <section aria-labelledby="notes-heading" className={CARD}>
+          <h2 id="notes-heading" className={HEADING}>
             Staff notes
           </h2>
           {booking.notes.length > 0 ? (
             <ul className="mt-3 space-y-3">
               {booking.notes.map((note) => (
-                <li key={note.id} className="text-brand-blue-900">
+                <li
+                  key={note.id}
+                  className="text-brand-ink border-brand-blue-100 border-b pb-3 last:border-0 last:pb-0"
+                >
                   <p>{note.note}</p>
                   {/*
                    * Visibility in WORDS (WCAG 1.4.1): which notes the driver
                    * is reading must not depend on a colour or an icon.
                    */}
-                  <p className="text-muted-foreground mt-0.5 text-xs font-medium">
+                  <p className="text-brand-error mt-0.5 text-xs font-medium">
                     {note.visibleToDriver ? 'Driver can see this' : 'Office only'}
                   </p>
                 </li>
@@ -354,7 +351,7 @@ export default function AdminBookingDetailPage() {
                   maxLength={BOOKING_NOTE_MAX_LENGTH}
                   rows={3}
                   onChange={(event) => setNoteText(event.target.value)}
-                  className="border-input bg-background focus-visible:ring-ring min-h-24 w-full rounded-md border px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2"
+                  className="border-brand-blue-200 focus-visible:ring-brand-blue-600 min-h-24 w-full rounded-[10px] border bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2"
                 />
               </div>
 
@@ -373,7 +370,7 @@ export default function AdminBookingDetailPage() {
                   />
                   Show this note to the driver
                 </label>
-                <p id="booking-note-driver-help" className="text-muted-foreground text-xs">
+                <p id="booking-note-driver-help" className="text-brand-error text-xs">
                   Notes are office-only unless this is ticked. The driver is not told that
                   office-only notes exist.
                 </p>
@@ -382,7 +379,7 @@ export default function AdminBookingDetailPage() {
               {addNote.isError ? (
                 <p
                   role="alert"
-                  className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-lg border p-3 text-sm font-medium"
+                  className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-xl border p-3 text-sm font-medium"
                 >
                   {addNote.error.message}
                 </p>
@@ -390,7 +387,7 @@ export default function AdminBookingDetailPage() {
 
               <Button
                 type="submit"
-                className="tap-target"
+                className={PRIMARY_BUTTON}
                 disabled={noteIsEmpty || addNote.isPending}
               >
                 {addNote.isPending ? (
@@ -407,19 +404,16 @@ export default function AdminBookingDetailPage() {
         </section>
       ) : null}
 
-      <section
-        aria-labelledby="audit-heading"
-        className="border-border bg-background mt-6 rounded-2xl border p-5 text-sm"
-      >
-        <h2 id="audit-heading" className="text-brand-blue-900 text-base font-semibold">
+      <section aria-labelledby="audit-heading" className={CARD}>
+        <h2 id="audit-heading" className={HEADING}>
           Audit trail
         </h2>
         {booking.audit.length === 0 ? (
-          <p className="text-muted-foreground mt-2">Nothing recorded yet.</p>
+          <p className="text-brand-error mt-2">Nothing recorded yet.</p>
         ) : (
           <ul className="mt-3 space-y-1">
             {booking.audit.map((entry) => (
-              <li key={entry.id} className="text-muted-foreground font-mono text-xs">
+              <li key={entry.id} className="text-brand-error font-mono text-xs">
                 {entry.action} · {entry.actorType}
                 {entry.actorId === null ? '' : ` #${entry.actorId}`}
               </li>

@@ -28,8 +28,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { trpc } from '@/lib/trpc';
+import BookingStatusPill from '@/components/admin/BookingStatusPill';
 
 const PAGE_SIZE = 25;
+
+const CARD = 'border-brand-blue-100 rounded-[14px] border bg-white';
+const FIELD = 'tap-target border-brand-blue-200 rounded-[10px] bg-white';
+const OUTLINE_BUTTON =
+  'tap-target border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 hover:text-brand-blue-800 rounded-[10px] font-semibold transition-colors';
 
 /** The statuses, in the order §5 lists them, with readable labels. */
 const STATUS_LABELS: Record<string, string> = {
@@ -69,12 +75,18 @@ export default function AdminBookingsPage() {
   }
 
   return (
-    <div>
-      <h1 className="text-brand-blue-900 text-2xl font-bold">Bookings</h1>
+    <div className="flex flex-col gap-6">
+      <header className="flex flex-col gap-1">
+        <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.08em]">
+          Operations
+        </p>
+        <h1 className="text-brand-ink text-2xl font-bold sm:text-3xl">Bookings</h1>
+        <p className="text-brand-error text-sm">Soonest tour first. Open a booking to act on it.</p>
+      </header>
 
       <form
         aria-label="Filter bookings"
-        className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
+        className={`${CARD} grid gap-4 p-4 sm:grid-cols-2 lg:grid-cols-4`}
         onSubmit={(event) => event.preventDefault()}
       >
         <div className="space-y-1.5">
@@ -83,7 +95,7 @@ export default function AdminBookingsPage() {
             id="filter-status"
             value={status}
             onChange={(event) => change(() => setStatus(event.target.value))}
-            className="border-input bg-background tap-target w-full rounded-md border px-3 text-sm"
+            className={`${FIELD} focus-visible:ring-brand-blue-600 w-full border px-3 text-sm focus-visible:outline-none focus-visible:ring-2`}
           >
             <option value="">Any status</option>
             {BOOKING_STATUSES.map((value) => (
@@ -101,7 +113,7 @@ export default function AdminBookingsPage() {
             type="date"
             value={from}
             onChange={(event) => change(() => setFrom(event.target.value))}
-            className="tap-target"
+            className={FIELD}
           />
         </div>
 
@@ -112,7 +124,7 @@ export default function AdminBookingsPage() {
             type="date"
             value={to}
             onChange={(event) => change(() => setTo(event.target.value))}
-            className="tap-target"
+            className={FIELD}
           />
         </div>
 
@@ -122,7 +134,7 @@ export default function AdminBookingsPage() {
               type="checkbox"
               checked={awaiting}
               onChange={(event) => change(() => setAwaiting(event.target.checked))}
-              className="size-4"
+              className="accent-brand-blue-600 size-5 shrink-0"
             />
             Waiting for verification
           </label>
@@ -130,43 +142,38 @@ export default function AdminBookingsPage() {
       </form>
 
       {query.isPending ? (
-        <p className="text-muted-foreground mt-8 flex items-center gap-2 text-sm">
+        <p className="text-brand-error flex items-center gap-2 text-sm">
           <Loader2 className="size-4 animate-spin" aria-hidden="true" />
           Loading bookings…
         </p>
       ) : query.isError || !query.data ? (
         <p
           role="alert"
-          className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 mt-8 rounded-lg border p-3 text-sm font-medium"
+          className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-xl border p-3 text-sm font-medium"
         >
           We could not load the bookings. Sign in again, or try once more in a moment.
         </p>
       ) : query.data.items.length === 0 ? (
-        <p className="text-muted-foreground mt-8 text-sm">No bookings match those filters.</p>
+        <p className={`${CARD} text-brand-error p-5 text-sm`}>No bookings match those filters.</p>
       ) : (
         <>
           {/* Phone: one card per booking. */}
-          <ul className="mt-6 space-y-3 md:hidden">
+          <ul className="space-y-3 md:hidden">
             {query.data.items.map((booking) => (
-              <li
-                key={booking.ref}
-                className="border-border bg-background rounded-xl border p-4 text-sm"
-              >
+              <li key={booking.ref} className={`${CARD} p-4 text-sm`}>
                 <Link
                   to={`/admin/bookings/${booking.ref}`}
-                  className="text-brand-blue-900 font-mono font-semibold underline"
+                  className="text-brand-blue-700 hover:text-brand-blue-900 tap-target inline-flex items-center font-mono font-semibold underline underline-offset-4 transition-colors"
                 >
                   {booking.ref}
                 </Link>
-                <p className="text-brand-blue-900 mt-1 font-medium">{booking.tourTitle}</p>
-                <p className="text-muted-foreground">
+                <p className="text-brand-ink font-semibold">{booking.tourTitle}</p>
+                <p className="text-brand-error">
                   {booking.tourDate} · {booking.pax} pax · {booking.leadName}
                 </p>
-                <p className="mt-2 flex justify-between">
-                  <span className="text-brand-blue-900 font-semibold">
-                    {STATUS_LABELS[booking.status] ?? booking.status}
-                  </span>
-                  <span className="tabular-nums">
+                <p className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                  <BookingStatusPill status={booking.status} />
+                  <span className="text-brand-ink font-medium tabular-nums">
                     {formatPeso(booking.paidCentavos)} / {formatPeso(booking.totalCentavos)}
                   </span>
                 </p>
@@ -175,54 +182,61 @@ export default function AdminBookingsPage() {
           </ul>
 
           {/* Laptop: the table. */}
-          <table className="mt-6 hidden w-full text-left text-sm md:table">
-            <thead className="text-muted-foreground border-b">
-              <tr>
-                <th scope="col" className="py-2 pr-3 font-medium">
-                  Reference
-                </th>
-                <th scope="col" className="py-2 pr-3 font-medium">
-                  Tour
-                </th>
-                <th scope="col" className="py-2 pr-3 font-medium">
-                  Date
-                </th>
-                <th scope="col" className="py-2 pr-3 font-medium">
-                  Guest
-                </th>
-                <th scope="col" className="py-2 pr-3 font-medium">
-                  Status
-                </th>
-                <th scope="col" className="py-2 text-right font-medium">
-                  Paid / total
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {query.data.items.map((booking) => (
-                <tr key={booking.ref} className="border-b last:border-0">
-                  <td className="py-3 pr-3">
-                    <Link
-                      to={`/admin/bookings/${booking.ref}`}
-                      className="text-brand-blue-700 hover:text-brand-blue-900 font-mono font-semibold underline transition-colors"
-                    >
-                      {booking.ref}
-                    </Link>
-                  </td>
-                  <td className="text-brand-blue-900 py-3 pr-3">{booking.tourTitle}</td>
-                  <td className="py-3 pr-3 tabular-nums">{booking.tourDate}</td>
-                  <td className="py-3 pr-3">{booking.leadName}</td>
-                  <td className="py-3 pr-3">{STATUS_LABELS[booking.status] ?? booking.status}</td>
-                  <td className="py-3 text-right tabular-nums">
-                    {formatPeso(booking.paidCentavos)} / {formatPeso(booking.totalCentavos)}
-                  </td>
+          <div className={`${CARD} hidden overflow-x-auto md:block`}>
+            <table className="w-full text-left text-sm">
+              <thead className="bg-brand-blue-50 text-brand-error border-brand-blue-100 border-b text-xs uppercase tracking-[0.06em]">
+                <tr>
+                  <th scope="col" className="px-4 py-3 font-semibold">
+                    Reference
+                  </th>
+                  <th scope="col" className="px-4 py-3 font-semibold">
+                    Tour
+                  </th>
+                  <th scope="col" className="px-4 py-3 font-semibold">
+                    Date
+                  </th>
+                  <th scope="col" className="px-4 py-3 font-semibold">
+                    Guest
+                  </th>
+                  <th scope="col" className="px-4 py-3 font-semibold">
+                    Status
+                  </th>
+                  <th scope="col" className="px-4 py-3 text-right font-semibold">
+                    Paid / total
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {query.data.items.map((booking) => (
+                  <tr
+                    key={booking.ref}
+                    className="border-brand-blue-100 hover:bg-brand-blue-50/50 border-b transition-colors last:border-0"
+                  >
+                    <td className="px-4 py-3">
+                      <Link
+                        to={`/admin/bookings/${booking.ref}`}
+                        className="text-brand-blue-700 hover:text-brand-blue-900 font-mono font-semibold underline underline-offset-4 transition-colors"
+                      >
+                        {booking.ref}
+                      </Link>
+                    </td>
+                    <td className="text-brand-ink px-4 py-3 font-medium">{booking.tourTitle}</td>
+                    <td className="text-brand-ink px-4 py-3 tabular-nums">{booking.tourDate}</td>
+                    <td className="text-brand-ink px-4 py-3">{booking.leadName}</td>
+                    <td className="px-4 py-3">
+                      <BookingStatusPill status={booking.status} />
+                    </td>
+                    <td className="text-brand-ink px-4 py-3 text-right tabular-nums">
+                      {formatPeso(booking.paidCentavos)} / {formatPeso(booking.totalCentavos)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
 
-          <div className="mt-6 flex items-center justify-between gap-4">
-            <p className="text-muted-foreground text-sm" role="status">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <p className="text-brand-error text-sm" role="status">
               Showing {query.data.offset + 1}–{query.data.offset + query.data.items.length} of{' '}
               {query.data.total}
             </p>
@@ -230,7 +244,7 @@ export default function AdminBookingsPage() {
               <Button
                 type="button"
                 variant="outline"
-                className="tap-target"
+                className={OUTLINE_BUTTON}
                 disabled={offset === 0}
                 onClick={() => setOffset(Math.max(offset - PAGE_SIZE, 0))}
               >
@@ -239,7 +253,7 @@ export default function AdminBookingsPage() {
               <Button
                 type="button"
                 variant="outline"
-                className="tap-target"
+                className={OUTLINE_BUTTON}
                 disabled={query.data.offset + query.data.items.length >= query.data.total}
                 onClick={() => setOffset(offset + PAGE_SIZE)}
               >

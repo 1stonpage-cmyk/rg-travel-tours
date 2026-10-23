@@ -123,10 +123,15 @@ interface CancelRefundPanelProps {
 }
 
 const WARNING_BOX =
-  'border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-lg border p-3 text-sm font-medium';
+  'border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-xl border p-3 text-sm font-medium';
 
 const FIELD =
-  'border-input bg-background focus-visible:ring-brand-blue-600 w-full rounded-md border p-3 text-sm focus-visible:outline-none focus-visible:ring-2';
+  'border-brand-blue-200 bg-white focus-visible:ring-brand-blue-600 w-full rounded-[10px] border p-3 text-sm focus-visible:outline-none focus-visible:ring-2';
+
+const PRIMARY_BUTTON =
+  'tap-target bg-brand-blue-700 hover:bg-brand-blue-800 w-full rounded-[10px] font-semibold text-white transition-colors';
+const OUTLINE_BUTTON =
+  'tap-target border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 hover:text-brand-blue-800 w-full rounded-[10px] font-semibold transition-colors';
 
 export default function CancelRefundPanel({
   bookingId,
@@ -183,13 +188,13 @@ export default function CancelRefundPanel({
   return (
     <section
       aria-labelledby="cancel-refund-heading"
-      className="border-brand-blue-200 bg-background mt-6 space-y-5 rounded-2xl border p-5"
+      className="border-brand-blue-100 space-y-5 rounded-[14px] border bg-white p-5"
     >
       <div>
-        <h2 id="cancel-refund-heading" className="text-brand-blue-900 text-base font-semibold">
+        <h2 id="cancel-refund-heading" className="text-brand-ink text-lg font-bold">
           Cancel or refund
         </h2>
-        <p className="text-muted-foreground mt-1 text-sm">
+        <p className="text-brand-error mt-1 text-sm">
           Paid {formatPeso(paidCentavos)} · already refunded {formatPeso(refunded)} · can still go
           back {formatPeso(remaining)}. These are a guide — the server checks the figures again
           before any money moves.
@@ -197,8 +202,8 @@ export default function CancelRefundPanel({
       </div>
 
       {/* ------------------------------ cancel ------------------------------ */}
-      <div className="border-brand-blue-200 space-y-3 border-t pt-5">
-        <h3 className="text-brand-blue-900 text-sm font-semibold">Cancel this booking</h3>
+      <div className="border-brand-blue-100 space-y-3 border-t pt-5">
+        <h3 className="text-brand-ink text-sm font-bold">Cancel this booking</h3>
 
         {CANCELLABLE.includes(status) ? (
           <>
@@ -230,17 +235,17 @@ export default function CancelRefundPanel({
                * wrong here is cancelling the booking next to the one they
                * meant — and because cancelling sends nothing back on its own.
                */
-              <div className="border-brand-blue-200 space-y-3 border-t pt-4">
-                <p className="text-brand-blue-900 text-sm font-semibold">
+              <div className="border-brand-blue-100 space-y-3 border-t pt-4">
+                <p className="text-brand-ink text-sm font-semibold">
                   Cancel {bookingRef}? The seats go back on sale immediately.
                 </p>
-                <p className="text-brand-blue-900 text-sm">
+                <p className="text-brand-ink text-sm">
                   {formatPeso(paidCentavos)} has been paid on it — {pesosInWords(paidCentavos)}.
                   Cancelling does <strong>not</strong> send that back; record the refund below.
                 </p>
                 <Button
                   type="button"
-                  className="tap-target w-full"
+                  className={PRIMARY_BUTTON}
                   disabled={cancel.isPending}
                   onClick={() => cancel.mutate({ bookingId, reason: cancelReason.trim() })}
                 >
@@ -256,7 +261,7 @@ export default function CancelRefundPanel({
                 <Button
                   type="button"
                   variant="outline"
-                  className="tap-target text-brand-blue-900 w-full"
+                  className={OUTLINE_BUTTON}
                   disabled={cancel.isPending}
                   onClick={() => setConfirmingCancel(false)}
                 >
@@ -267,7 +272,7 @@ export default function CancelRefundPanel({
               <Button
                 type="button"
                 variant="outline"
-                className="tap-target text-brand-blue-900 w-full"
+                className={OUTLINE_BUTTON}
                 disabled={cancelReason.trim().length === 0}
                 onClick={() => setConfirmingCancel(true)}
               >
@@ -276,7 +281,7 @@ export default function CancelRefundPanel({
             )}
           </>
         ) : (
-          <p className="text-muted-foreground text-sm">
+          <p className="text-brand-error text-sm">
             This booking cannot be cancelled from here — a trip that has finished, or one already
             cancelled, stays as it is. Money can still go back below.
           </p>
@@ -284,11 +289,11 @@ export default function CancelRefundPanel({
       </div>
 
       {/* ------------------------------ refund ------------------------------ */}
-      <div className="border-brand-blue-200 space-y-3 border-t pt-5">
-        <h3 className="text-brand-blue-900 text-sm font-semibold">Send money back</h3>
+      <div className="border-brand-blue-100 space-y-3 border-t pt-5">
+        <h3 className="text-brand-ink text-sm font-bold">Send money back</h3>
 
         {sources.length === 0 ? (
-          <p className="text-muted-foreground text-sm">
+          <p className="text-brand-error text-sm">
             No money has arrived on this booking, so there is nothing to refund.
           </p>
         ) : (
@@ -325,12 +330,12 @@ export default function CancelRefundPanel({
               <div
                 key={source.id}
                 data-testid={`refund-source-${source.id}`}
-                className="border-brand-blue-200 space-y-3 rounded-xl border p-4"
+                className="border-brand-blue-100 bg-brand-blue-50/40 space-y-3 rounded-xl border p-4"
               >
-                <p className="text-brand-blue-900 text-sm font-medium">
+                <p className="text-brand-ink text-sm font-semibold">
                   {formatPeso(source.amountCentavos)} came in · {source.provider} / {source.method}
                 </p>
-                <p className="text-muted-foreground text-sm">
+                <p className="text-brand-error text-sm">
                   {manual
                     ? 'Taken by hand, so there is no gateway to call: send the money back yourself, then record how and its reference.'
                     : 'It goes back through the same gateway that took it.'}
@@ -414,21 +419,21 @@ export default function CancelRefundPanel({
                    * point of it: a refund cannot be taken back, and a
                    * mistyped zero is the mistake this catches.
                    */
-                  <div className="border-brand-blue-200 space-y-3 border-t pt-4">
-                    <p className="text-brand-blue-900 text-sm font-semibold">
+                  <div className="border-brand-blue-100 space-y-3 border-t pt-4">
+                    <p className="text-brand-ink text-sm font-semibold">
                       Send {formatPeso(requestedCentavos)} back from {bookingRef}?
                     </p>
-                    <p className="text-brand-blue-900 text-sm font-semibold">
+                    <p className="text-brand-ink text-sm font-semibold">
                       {pesosInWords(requestedCentavos)}.
                     </p>
-                    <p className="text-muted-foreground text-sm">
+                    <p className="text-brand-error text-sm">
                       {manual
                         ? 'This records a refund you have already sent. It cannot be undone here.'
                         : 'This asks the gateway to pay the guest. It cannot be undone here.'}
                     </p>
                     <Button
                       type="button"
-                      className="tap-target w-full"
+                      className={PRIMARY_BUTTON}
                       disabled={refund.isPending}
                       onClick={() =>
                         refund.mutate({
@@ -455,7 +460,7 @@ export default function CancelRefundPanel({
                     <Button
                       type="button"
                       variant="outline"
-                      className="tap-target text-brand-blue-900 w-full"
+                      className={OUTLINE_BUTTON}
                       disabled={refund.isPending}
                       onClick={() => setConfirmingRefundId(null)}
                     >
@@ -465,7 +470,7 @@ export default function CancelRefundPanel({
                 ) : (
                   <Button
                     type="button"
-                    className="tap-target w-full"
+                    className={PRIMARY_BUTTON}
                     disabled={!ready}
                     onClick={() => setConfirmingRefundId(source.id)}
                   >

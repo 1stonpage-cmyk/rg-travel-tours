@@ -231,6 +231,18 @@ describe('AdminBookingsPage', () => {
     expect(sent.at(-1)).toMatchObject({ offset: 25 });
   });
 
+  it('states every booking’s status in words, on the card and in the table', async () => {
+    mockTrpc({ 'admin.bookings.list': LIST });
+    renderList();
+    await screen.findByRole('table');
+
+    // The filter's own <option>s carry the same words, so look inside the rows.
+    for (const rows of [screen.getByRole('table'), screen.getByRole('list')]) {
+      expect(within(rows).getByText('Checking receipt')).toBeInTheDocument();
+      expect(within(rows).getByText('Confirmed')).toBeInTheDocument();
+    }
+  });
+
   it('says so plainly when nothing matches', async () => {
     mockTrpc({ 'admin.bookings.list': { items: [], total: 0, limit: 25, offset: 0 } });
     renderList();
@@ -259,6 +271,14 @@ describe('AdminBookingDetailPage', () => {
     expect(screen.getByText(/2 × snorkel set/i)).toBeInTheDocument();
     expect(screen.getByText(/early pickup/i)).toBeInTheDocument();
     expect(screen.getByText(/payment.receipt_submitted/)).toBeInTheDocument();
+  });
+
+  it('states the booking’s status in words under its reference', async () => {
+    mockTrpc({ 'admin.bookings.detail': DETAIL, 'staffAuth.me': { userId: 1, role: 'owner' } });
+    renderDetail();
+
+    await screen.findByRole('heading', { name: 'RG-AAAAA1' });
+    expect(screen.getByText('Checking receipt')).toBeInTheDocument();
   });
 
   /** The receipt opens through the authenticated route, in its own tab. */
