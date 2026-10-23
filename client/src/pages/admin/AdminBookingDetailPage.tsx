@@ -24,7 +24,9 @@
  * `/api/receipts/<name>` is authenticated and answers bytes; an `<img>`
  * would work, but a verifier needs to zoom into a blurry screenshot, so a
  * link that opens the file in its own tab is the better tool. Either way
- * the route is what checks the session.
+ * the route is what checks the session — and since 2026-10-23 (Q2) it
+ * admits only owner and finance, so the link is drawn for `mayVerify` and
+ * a dispatcher gets the payment line without it.
  *
  * ## Two things wait in this queue, and they ask different questions
  *
@@ -258,7 +260,17 @@ export default function AdminBookingDetailPage() {
                 {payment.collectedByDriverName ? (
                   <p className="text-brand-error">Collected by {payment.collectedByDriverName}</p>
                 ) : null}
-                {payment.receiptPath ? (
+                {/*
+                  A receipt is payment data, so only an owner or a finance
+                  user is offered it (owner decision 2026-10-23, Q2) — the
+                  same `mayVerify` that draws the decision buttons. COSMETIC,
+                  like every other gate on this screen: `/api/receipts/:name`
+                  answers a dispatcher the same 404 it answers a stranger,
+                  and `server/src/__tests__/receipts-route.test.ts` is where
+                  that is proved. A dispatcher still sees the payment line —
+                  §9 gives them the booking view — just not the file.
+                */}
+                {payment.receiptPath && mayVerify ? (
                   <a
                     href={`/api/receipts/${payment.receiptPath}`}
                     target="_blank"

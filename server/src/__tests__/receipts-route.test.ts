@@ -103,8 +103,13 @@ const staffIds: number[] = [];
  * (Week 4, Task 5), so an invented subject id no longer resolves at all —
  * which is the deactivation guarantee working, and the reason these tests
  * create an actual staff member instead of a number.
+ *
+ * The ROLE is a parameter because this route is no longer open to every
+ * staff role (owner decision 2026-10-23, Q2): `finance` is the default so
+ * the tests written before that decision still describe someone who may
+ * read a receipt, and the role-by-role tests below pass their own.
  */
-async function makeStaff() {
+async function makeStaff(role: 'owner' | 'dispatcher' | 'finance' = 'finance') {
   const unique = `${Math.floor(Math.random() * 1e9)}_${Date.now()}`;
   const [row] = await getDb()
     .insert(users)
@@ -112,7 +117,7 @@ async function makeStaff() {
       name: `Receipt Staff ${unique}`,
       email: `receipt_staff_${unique}@example.test`,
       passwordHash: '__receipt_fixture_not_a_hash__',
-      role: 'finance',
+      role,
       isActive: true,
     });
   staffIds.push(row.insertId);
@@ -160,13 +165,78 @@ describeWithDb('GET /api/receipts/:name', () => {
     expect(Buffer.from(res.body as Buffer)).toEqual(JPEG);
   });
 
-  it('serves it to a STAFF session too — verifying a receipt is the admin job', async () => {
-    const { path } = await makeBookingWithReceipt();
-    const { token } = await createSession('user', await makeStaff(), new Date());
+  /* ====================================================================
+   * Who, among staff, may read one (owner decision 2026-10-23, Q2).
+   *
+   * **It is not "any staff session" any more.** A receipt is payment data,
+   * and §9's "Verify payments, record payments ✅ ❌ ✅" row gives payment
+   * data to the owner and to finance. A dispatcher runs the day; nothing in
+   * it needs a guest's bank transfer screenshot, and a guest disputing a
+   * transfer at the office is handled by finance or the owner.
+   *
+   * The dispatcher's refusal is asserted against a STRANGER'S refusal, byte
+   * for byte, because the narrowing must not open the oracle this route
+   * exists to keep shut: "403" or any distinguishable body would tell a
+   * dispatcher that the file is real and belongs to someone.
+   * ==================================================================== */
 
-    expect(
-      (await request(createApp()).get(`/api/receipts/${path}`).set('Cookie', cookie(token))).status,
-    ).toBe(200);
+  it('serves a receipt to an OWNER session', async () => {
+    const { path } = await makeBookingWithReceipt();
+    const { token } = await createSession('user', await makeStaff('owner'), new Date());
+
+    const res = await request(createApp())
+      .get(`/api/receipts/${path}`)
+      .set('Cookie', cookie(token));
+    expect(res.status, 'an owner cannot read a receipt').toBe(200);
+    expect(res.headers['content-type']).toBe('image/jpeg');
+  });
+
+  it('serves a receipt to a FINANCE session — verifying one is their job', async () => {
+    const { path } = await makeBookingWithReceipt();
+    const { token } = await createSession('user', await makeStaff('finance'), new Date());
+
+    const res = await request(createApp())
+      .get(`/api/receipts/${path}`)
+      .set('Cookie', cookie(token));
+    expect(res.status, 'finance cannot read the receipt they must verify').toBe(200);
+    expect(res.headers['content-type']).toBe('image/jpeg');
+  });
+
+  /**
+   * **The load-bearing test of this narrowing.** Not "a dispatcher gets a
+   * 404" — a 404 with a different body, or with a `WWW-Authenticate`, or
+   * with anything else that varies by reason, would still be an oracle. The
+   * dispatcher's whole answer is compared with the answer given to a caller
+   * with no session at all.
+   */
+  it('REFUSES a DISPATCHER session with the SAME 404 as a stranger', async () => {
+    const { path } = await makeBookingWithReceipt();
+    const { token } = await createSession('user', await makeStaff('dispatcher'), new Date());
+    const app = createApp();
+
+    const dispatcher = await request(app).get(`/api/receipts/${path}`).set('Cookie', cookie(token));
+    const stranger = await request(app).get(`/api/receipts/${path}`);
+
+    expect(dispatcher.status, 'a dispatcher was served a guest’s bank receipt').toBe(404);
+    expect(dispatcher.body).toEqual({ error: 'Not found' });
+    // Byte for byte the stranger's refusal, so the status is not the only
+    // thing the two have in common.
+    expect(stranger.status).toBe(404);
+    expect(dispatcher.status).toBe(stranger.status);
+    expect(dispatcher.body).toEqual(stranger.body);
+    expect(dispatcher.text).toBe(stranger.text);
+  });
+
+  /** §8 needs no bank receipt, and this did not change with Q2. */
+  it('REFUSES a DRIVER session', async () => {
+    const { path } = await makeBookingWithReceipt();
+    const { token } = await createSession('driver', 7, new Date());
+
+    const res = await request(createApp())
+      .get(`/api/receipts/${path}`)
+      .set('Cookie', cookie(token));
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: 'Not found' });
   });
 
   /**
@@ -303,11 +373,14 @@ describeWithDb('GET /api/receipts/:name', () => {
    *
    * A second upload does not delete the first — it marks it `superseded`
    * and keeps the file, so a disputed transfer can still be examined. The
-   * access rule narrows with it: the older file is **staff only**, because
-   * the guest has already moved on to the receipt that replaced it.
+   * access rule narrows with it: the older file is for **the people who
+   * verify payments** and nobody else, because the guest has already moved
+   * on to the receipt that replaced it. (Those people were "any staff" when
+   * this was written and are owner and finance since Q2, 2026-10-23; the
+   * fixture's default role is one of them, so the rule tested is unchanged.)
    * ==================================================================== */
 
-  it('serves a SUPERSEDED receipt to staff', async () => {
+  it('serves a SUPERSEDED receipt to a verifier', async () => {
     const { bookingId, path: first } = await makeBookingWithReceipt();
     const second = await storeReceipt({
       buffer: JPEG,
@@ -327,7 +400,7 @@ describeWithDb('GET /api/receipts/:name', () => {
     expect(
       (await request(createApp()).get(`/api/receipts/${first}`).set('Cookie', cookie(token)))
         .status,
-      'staff cannot read the receipt they are being asked to compare against',
+      'a verifier cannot read the receipt they are being asked to compare against',
     ).toBe(200);
   });
 

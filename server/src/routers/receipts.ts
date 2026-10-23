@@ -28,16 +28,29 @@
  *
  *  - the **customer session for that booking** — `subject_id` is the
  *    booking id, so this is an equality check and cannot widen;
- *  - any **staff session** (`subject_type = 'user'`), because verifying a
- *    receipt is the admin's job and §9 gives them the bookings area.
+ *  - an **owner or finance staff session** — the roles in
+ *    `ROLE_MATRIX.verifyPayments`, imported rather than re-listed.
  *
- * A driver session may not. Nothing in §8 needs a guest's bank receipt, and
- * the one thing worse than a receipt nobody can read is one everybody can.
+ * **Owner and finance, NOT any staff session** (owner decision 2026-10-23,
+ * Q2). It used to be every `subject_type = 'user'` session, reasoning from
+ * §9's "Bookings: view, notes ✅ ✅ ✅" row — but a bank transfer screenshot
+ * is payment data, and the row that governs payment data is "Verify
+ * payments, record payments ✅ ❌ ✅", which is owner and finance. A
+ * dispatcher runs the day and never has to decide that money arrived; a
+ * guest disputing a transfer at the office is handled by finance or the
+ * owner. The dispatcher's refusal is the SAME 404 as a stranger's — see
+ * above: narrowing who is admitted must not change what a refusal looks
+ * like, or the route becomes the oracle this file exists to keep shut.
  *
- * **A SUPERSEDED receipt is staff-only** (owner decision 2026-10-14, Q6).
- * It is kept so a disputed transfer can still be examined, and the guest
- * has already moved on to the receipt that replaced it — so the older file
- * stays reachable for the people who verify payments and for nobody else.
+ * A driver session may not either. Nothing in §8 needs a guest's bank
+ * receipt, and the one thing worse than a receipt nobody can read is one
+ * everybody can.
+ *
+ * **A SUPERSEDED receipt is for those same two roles only** (owner decision
+ * 2026-10-14, Q6). It is kept so a disputed transfer can still be examined,
+ * and the guest has already moved on to the receipt that replaced it — so
+ * the older file stays reachable for the people who verify payments and for
+ * nobody else.
  *
  * ## They are Express routes rather than tRPC procedures
  *
@@ -59,6 +72,7 @@ import { manilaCivilDate, uploadReceiptMetaSchema } from '@rg/shared';
 import { readSettingBlock } from '../content/settings';
 import { getDb } from '../db/client';
 import { bookings, payments, tours } from '../db/schema';
+import { ROLE_MATRIX } from '../middleware/require-role';
 import { SESSION_COOKIE } from '../middleware/session-cookie';
 import { createReceiptUploadLimiter } from '../middleware/rate-limit';
 import { notify } from '../services/notify';
@@ -225,14 +239,33 @@ export function createReceiptRouter(): Router {
       .limit(1);
     if (!payment) return refuse();
 
-    // A staff member still on a temporary password has not finished signing in.
-    const isStaff = session.subjectType === 'user' && session.mustChangePassword !== true;
+    /*
+     * Owner and finance only, from `ROLE_MATRIX.verifyPayments` rather than
+     * a role list written out here — §9's table has one transcription in
+     * this codebase and a second copy is how the two drift apart.
+     *
+     * `some(=== role)` rather than `includes`: `ResolvedSession.role` is a
+     * `string | undefined` read live from `users`, and an equality sweep
+     * over the allow-list refuses `undefined`, an unrecognised role and
+     * `'__proto__'` alike, with no cast asserting what the value is.
+     *
+     * A staff member still on a temporary password has not finished signing
+     * in, so the flag keeps its own clause.
+     *
+     * Named `isVerifier` and no longer `isStaff`, deliberately: a dispatcher
+     * IS staff and this is now false for them, and a flag whose name
+     * contradicts its value is the next reader's trap.
+     */
+    const isVerifier =
+      session.subjectType === 'user' &&
+      session.mustChangePassword !== true &&
+      ROLE_MATRIX.verifyPayments.some((allowed) => allowed === session.role);
     const isOwner = session.subjectType === 'customer' && session.subjectId === payment.bookingId;
     // A superseded receipt is kept for the people who verify payments. The
     // guest has the one that replaced it; the same 404 as any other
     // stranger's file, so this does not announce that the file exists.
     const ownerMayRead = isOwner && payment.status !== 'superseded';
-    if (!isStaff && !ownerMayRead) return refuse();
+    if (!isVerifier && !ownerMayRead) return refuse();
 
     const file = join(receiptStorageDir(), name);
     try {

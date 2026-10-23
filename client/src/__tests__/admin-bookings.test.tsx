@@ -291,6 +291,35 @@ describe('AdminBookingDetailPage', () => {
     expect(link).toHaveAttribute('target', '_blank');
   });
 
+  it('links it for a finance user too', async () => {
+    mockTrpc({ 'admin.bookings.detail': DETAIL, 'staffAuth.me': { userId: 2, role: 'finance' } });
+    renderDetail();
+
+    expect(await screen.findByRole('link', { name: /open receipt/i })).toHaveAttribute(
+      'href',
+      '/api/receipts/a1b2c3d4e5f60718293a4b5c6d7e8f90.jpg',
+    );
+  });
+
+  /**
+   * **A receipt is payment data** (owner decision 2026-10-23, Q2), so a
+   * dispatcher is not offered it — the route refuses them a 404 either way,
+   * and `receipts-route.test.ts` is where that is proved. This only asserts
+   * the UI does not dangle a link that cannot work: the payment line itself
+   * is still there, because §9 gives a dispatcher the booking view.
+   */
+  it('offers a dispatcher the payment line but NO receipt link', async () => {
+    mockTrpc({
+      'admin.bookings.detail': DETAIL,
+      'staffAuth.me': { userId: 3, role: 'dispatcher' },
+    });
+    renderDetail();
+
+    await screen.findByRole('heading', { name: 'RG-AAAAA1' });
+    expect(screen.getByText(/gcash/i), 'the dispatcher lost the payment trail').toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /open receipt/i })).not.toBeInTheDocument();
+  });
+
   it('offers approve and reject to an owner', async () => {
     mockTrpc({ 'admin.bookings.detail': DETAIL, 'staffAuth.me': { userId: 1, role: 'owner' } });
     renderDetail();
