@@ -86,6 +86,15 @@ const STATUS_LABELS: Record<BookingStatus, string> = {
   expired: 'Expired',
 };
 
+/** The status pill: words always, tone only to help the eye. */
+function statusPillClass(status: BookingStatus): string {
+  if (status === 'in_progress') return 'bg-brand-blue-100 text-brand-blue-800';
+  if (status === 'completed' || status === 'cancelled' || status === 'expired') {
+    return 'bg-slate-100 text-brand-error';
+  }
+  return 'border-brand-blue-200 text-brand-blue-800 border bg-white';
+}
+
 /** A check-in is DONE only when it happened and was not retracted. */
 function isDone(stop: TripProgressStop): boolean {
   return stop.checkedAt !== null && !stop.undone;
@@ -124,27 +133,34 @@ function DepartureRow({ departure }: { departure: TodayDeparture }) {
   return (
     <li
       data-testid={`departure-${departure.ref}`}
-      className="border-border bg-background rounded-2xl border p-4"
+      className="border-brand-blue-100 border-t px-5 py-4 first:border-t-0"
     >
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-        <p className="text-brand-blue-900 font-mono text-base font-bold">{departure.ref}</p>
-        <p className="text-brand-blue-900 text-sm font-medium">{STATUS_LABELS[departure.status]}</p>
+        <p className="text-brand-ink font-mono text-sm font-bold">{departure.ref}</p>
+        <p
+          className={[
+            'rounded-full px-2.5 py-1 text-xs font-semibold',
+            statusPillClass(departure.status),
+          ].join(' ')}
+        >
+          {STATUS_LABELS[departure.status]}
+        </p>
       </div>
 
-      <p className="text-brand-blue-900 mt-1 text-sm font-medium">{departure.tourTitle}</p>
+      <p className="text-brand-ink mt-1 text-base font-semibold">{departure.tourTitle}</p>
 
-      <p className="text-muted-foreground mt-0.5 text-sm">
+      <p className="text-brand-error mt-0.5 text-sm">
         {departure.driverName ?? 'No driver yet'} · {departure.vanPlate ?? 'No van yet'}
       </p>
 
       {missing.length > 0 ? (
-        <p className="text-brand-blue-900 mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium">
+        <p className="text-brand-ink mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium">
           Departing today with no {missing.join(' and no ')} assigned.
         </p>
       ) : null}
 
       {/* The numbers, in words. The bar below only repeats them. */}
-      <p className="text-brand-blue-900 mt-3 text-base font-semibold">
+      <p className="text-brand-ink mt-3 text-sm font-semibold">
         {progress.done} of {progress.total} stops
       </p>
       <div
@@ -166,7 +182,7 @@ function DepartureRow({ departure }: { departure: TodayDeparture }) {
         />
       </div>
 
-      <p className="text-muted-foreground mt-1 text-sm">
+      <p className="text-brand-error mt-1 text-sm">
         {reached === null
           ? 'Not started — the van has not left yet.'
           : reached.name === TRIP_START_STOP_NAME
@@ -212,33 +228,33 @@ export default function DeparturesBoard({ pollMs = DEPARTURES_POLL_MS }: Departu
        */
       aria-busy={query.isFetching}
       data-testid="departures-board"
-      className="mt-8"
+      className="border-brand-blue-100 overflow-hidden rounded-[14px] border bg-white"
     >
-      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-        <h2 id="departures-heading" className="text-brand-blue-900 text-lg font-bold">
-          Today's departures
+      <div className="border-brand-blue-100 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b px-5 py-4">
+        <h2 id="departures-heading" className="text-brand-ink text-lg font-bold">
+          Leaving today
         </h2>
-        <p className="text-muted-foreground text-xs">Updates every 15 seconds.</p>
+        <p className="text-brand-error text-xs">Updates every 15 seconds.</p>
       </div>
 
       {query.isPending ? (
-        <p className="text-muted-foreground mt-2 text-sm">Loading today's departures…</p>
+        <p className="text-brand-error px-5 py-4 text-sm">Loading today's departures…</p>
       ) : null}
 
       {query.isError ? (
-        <p role="alert" className="text-brand-error mt-2 text-sm">
+        <p role="alert" className="text-brand-error px-5 py-4 text-sm">
           Today's departures could not load. Reload the page to try again.
         </p>
       ) : null}
 
       {!query.isPending && !query.isError && departures.length === 0 ? (
-        <p className="text-muted-foreground mt-2 text-sm">
+        <p className="text-brand-error px-5 py-4 text-sm">
           No departures today. Trips appear here on their tour date.
         </p>
       ) : null}
 
       {departures.length > 0 ? (
-        <ul className="mt-3 grid gap-3 lg:grid-cols-2">
+        <ul>
           {departures.map((departure) => (
             <DepartureRow key={departure.bookingId} departure={departure} />
           ))}

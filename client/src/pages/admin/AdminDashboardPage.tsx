@@ -24,6 +24,7 @@
  * one query.
  */
 import { Loader2 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import type { DashboardAlert } from '@rg/shared';
 import AlertCard from '@/components/admin/AlertCard';
 import DeparturesBoard from '@/components/admin/DeparturesBoard';
@@ -49,6 +50,16 @@ function summarise(alerts: DashboardAlert[]): string {
   }.`;
 }
 
+/** "Friday, 23 October" in Manila, whatever zone this browser is set to. */
+function manilaToday(): string {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Manila',
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  }).format(new Date());
+}
+
 export default function AdminDashboardPage() {
   const query = trpc.admin.dashboard.alerts.useQuery(undefined, { retry: false });
 
@@ -58,38 +69,57 @@ export default function AdminDashboardPage() {
   );
 
   return (
-    <div>
-      <h1 className="text-brand-blue-900 text-2xl font-bold">Dashboard</h1>
-
-      {query.isPending ? (
-        <p className="text-muted-foreground mt-4 flex items-center gap-2 text-sm">
-          <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-          Loading alerts…
-        </p>
-      ) : null}
-
-      {query.isError ? (
-        <p role="alert" className="text-brand-error mt-4 text-sm">
-          The alerts could not load. Reload the page to try again.
-        </p>
-      ) : null}
-
-      {ordered.length > 0 ? (
-        <>
-          {/* ONE status region for the set, announced as a sentence. */}
-          <p role="status" aria-atomic="true" className="text-muted-foreground mt-2 text-sm">
-            {summarise(ordered)}
+    <div className="flex flex-col gap-6">
+      <header className="flex flex-wrap items-end justify-between gap-4">
+        <div className="flex flex-col gap-1">
+          <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.08em]">
+            {manilaToday()} · Manila time
           </p>
+          <h1 className="text-brand-ink text-2xl font-bold sm:text-3xl">Dashboard</h1>
+        </div>
+        <Link
+          to="/admin/bookings"
+          className="bg-brand-blue-700 hover:bg-brand-blue-800 tap-target inline-flex items-center rounded-[10px] px-5 text-sm font-semibold text-white transition-colors"
+        >
+          Find a booking
+        </Link>
+      </header>
 
-          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {ordered.map((alert) => (
-              <AlertCard key={alert.kind} alert={alert} />
-            ))}
-          </div>
-        </>
-      ) : null}
+      <section aria-labelledby="needs-attention-heading" className="flex flex-col gap-3">
+        <h2 id="needs-attention-heading" className="text-brand-ink text-lg font-bold">
+          Needs attention
+        </h2>
 
-      {/* §9's lead panel. Its own query, its own poll — see the module note. */}
+        {query.isPending ? (
+          <p className="text-brand-error flex items-center gap-2 text-sm">
+            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+            Loading alerts…
+          </p>
+        ) : null}
+
+        {query.isError ? (
+          <p role="alert" className="text-brand-error text-sm">
+            The alerts could not load. Reload the page to try again.
+          </p>
+        ) : null}
+
+        {ordered.length > 0 ? (
+          <>
+            {/* ONE status region for the set, announced as a sentence. */}
+            <p role="status" aria-atomic="true" className="text-brand-error text-sm">
+              {summarise(ordered)}
+            </p>
+
+            <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(220px,1fr))]">
+              {ordered.map((alert) => (
+                <AlertCard key={alert.kind} alert={alert} />
+              ))}
+            </div>
+          </>
+        ) : null}
+      </section>
+
+      {/* §9's lead panel. Its own query, its own poll - see the module note. */}
       <DeparturesBoard />
     </div>
   );

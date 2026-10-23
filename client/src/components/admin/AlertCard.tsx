@@ -101,32 +101,76 @@ const ALERT_TITLE: Record<DashboardAlert['kind'], string> = {
   orphaned_on_trip: 'Vans stuck on a trip',
 };
 
+/**
+ * The small label above each card: which part of the business owns it.
+ * Words, never colour alone - the amber one also says "Within 48 hours".
+ */
+const ALERT_PILL: Record<
+  DashboardAlert['kind'],
+  { text: string; tone: 'amber' | 'blue' | 'grey' }
+> = {
+  payments_to_verify: { text: 'Finance', tone: 'blue' },
+  unassigned_soon: { text: 'Within 48 hours', tone: 'amber' },
+  vans_in_repair: { text: 'Fleet', tone: 'grey' },
+  service_due: { text: 'Fleet', tone: 'grey' },
+  papers_expiring: { text: 'Drivers', tone: 'grey' },
+  orphaned_on_trip: { text: 'Fleet', tone: 'grey' },
+};
+
+const PILL_TONE = {
+  amber: 'border-brand-gold-300 bg-brand-gold-50 text-brand-gold-700 border',
+  blue: 'bg-brand-blue-100 text-brand-blue-800',
+  grey: 'bg-slate-100 text-brand-error',
+} as const;
+
 export default function AlertCard({ alert }: { alert: DashboardAlert }) {
   const copy = ALERT_COPY[alert.kind];
+  const pill = ALERT_PILL[alert.kind];
   const clear = alert.count === 0;
 
   return (
     <article
       data-testid={`alert-${alert.kind}`}
       className={[
-        'rounded-2xl border p-4',
+        // The whole card is the click target (a stretched link below), so the
+        // focus ring is drawn on the card when that link takes focus.
+        'has-[a:focus-visible]:ring-brand-gold-500 relative flex flex-col gap-1 rounded-[14px] border bg-white p-5 transition-shadow has-[a:focus-visible]:ring-[3px] has-[a:focus-visible]:ring-offset-2',
         clear
-          ? 'border-border bg-background'
-          : // Amber ground for anything needing attention. Never red —
+          ? 'border-brand-blue-100'
+          : // Amber edge for anything needing attention. Never red -
             // not even for an expired franchise.
-            'border-amber-200 bg-amber-50',
+            'hover:shadow-brand-blue-900/10 border-amber-200 hover:shadow-md',
       ].join(' ')}
     >
-      <h3 className="text-brand-blue-900 text-sm font-semibold">{ALERT_TITLE[alert.kind]}</h3>
+      <span
+        className={[
+          'inline-flex w-fit items-center rounded-full px-2.5 py-1 text-xs font-semibold',
+          PILL_TONE[pill.tone],
+        ].join(' ')}
+      >
+        {pill.text}
+      </span>
+
+      <h3 className="text-brand-ink mt-2 text-sm font-semibold">{ALERT_TITLE[alert.kind]}</h3>
 
       {clear ? (
-        <p className="text-muted-foreground mt-1 text-sm">All clear</p>
+        <>
+          <p aria-hidden="true" className="text-brand-blue-900/40 text-4xl font-bold">
+            0
+          </p>
+          <p className="text-brand-error text-sm">All clear</p>
+        </>
       ) : (
         <>
-          <p className="text-brand-blue-900 mt-1 text-sm font-semibold">{copy.noun(alert.count)}</p>
-          {copy.detail ? <p className="text-brand-blue-900 mt-1 text-sm">{copy.detail}</p> : null}
+          {/* The sentence below says the number in words; this is the same
+              figure at a glance, so screen readers skip it. */}
+          <p aria-hidden="true" className="text-brand-ink text-4xl font-bold">
+            {alert.count}
+          </p>
+          <p className="text-brand-error text-sm font-medium">{copy.noun(alert.count)}</p>
+          {copy.detail ? <p className="text-brand-error mt-1 text-sm">{copy.detail}</p> : null}
           {alert.examples.length > 0 ? (
-            <ul className="text-muted-foreground mt-2 space-y-0.5 text-xs">
+            <ul className="text-brand-error mt-2 space-y-0.5 text-xs">
               {alert.examples.map((example) => (
                 <li key={`${alert.kind}-${example.id}`}>
                   {example.label}
@@ -137,7 +181,7 @@ export default function AlertCard({ alert }: { alert: DashboardAlert }) {
           ) : null}
           <Link
             to={copy.href}
-            className="text-brand-blue-700 tap-target mt-2 inline-flex items-center text-sm font-medium underline-offset-4 hover:underline"
+            className="text-brand-blue-700 tap-target mt-2 inline-flex items-center text-sm font-semibold underline-offset-4 outline-none after:absolute after:inset-0 after:rounded-[14px] hover:underline"
           >
             {copy.action}
           </Link>

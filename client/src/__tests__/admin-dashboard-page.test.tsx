@@ -5,7 +5,7 @@
  * `MemoryRouter`, because each non-zero card links to the screen that
  * resolves it.
  */
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { DashboardAlert } from '@rg/shared';
@@ -114,13 +114,20 @@ describe('AdminDashboardPage', () => {
     renderDashboard([alert('service_due', 3)]);
     const card = await screen.findByTestId('alert-service_due');
     expect(card.className).toMatch(/border-amber-200/);
-    expect(card.className).toMatch(/bg-amber-50/);
+    // The restyle puts the amber on the card's edge over a white ground, as
+    // in the approved mockup, instead of tinting the whole card.
+    expect(card.className).toMatch(/bg-white/);
   });
 
   it('links every non-zero alert to the screen that resolves it', async () => {
     renderDashboard(ALL_SIX_NONZERO);
     await screen.findByTestId('alert-payments_to_verify');
-    const hrefs = screen.getAllByRole('link').map((a) => a.getAttribute('href'));
+    // Counted inside the cards: the page header now also carries a "Find a
+    // booking" link, which is not an alert action.
+    const hrefs = screen
+      .getAllByTestId(/^alert-/)
+      .flatMap((card) => within(card).queryAllByRole('link'))
+      .map((a) => a.getAttribute('href'));
     expect(hrefs).toContain('/admin/calendar');
     expect(hrefs.some((h) => h?.startsWith('/admin/bookings'))).toBe(true);
     expect(hrefs).toContain('/admin/vans');
@@ -132,8 +139,8 @@ describe('AdminDashboardPage', () => {
 
   it('offers no link on a zero card', async () => {
     renderDashboard([alert('vans_in_repair', 0)]);
-    await screen.findByTestId('alert-vans_in_repair');
-    expect(screen.queryAllByRole('link')).toEqual([]);
+    const card = await screen.findByTestId('alert-vans_in_repair');
+    expect(within(card).queryAllByRole('link')).toEqual([]);
   });
 
   it('uses ONE status region for the whole set', async () => {
@@ -186,14 +193,14 @@ describe('AdminDashboardPage', () => {
       const card = await screen.findByTestId('alert-orphaned_on_trip');
       expect(card.textContent).toMatch(/all clear/i);
       expect(card.textContent).not.toMatch(/refused on every future date/i);
-      expect(screen.queryAllByRole('link')).toEqual([]);
+      expect(within(card).queryAllByRole('link')).toEqual([]);
     });
 
     it('is painted amber like its siblings', async () => {
       renderDashboard([alert('orphaned_on_trip', 1)]);
       const card = await screen.findByTestId('alert-orphaned_on_trip');
       expect(card.className).toMatch(/border-amber-200/);
-      expect(card.className).toMatch(/bg-amber-50/);
+      expect(card.className).toMatch(/bg-white/);
     });
   });
 
@@ -211,7 +218,7 @@ describe('AdminDashboardPage', () => {
      */
     renderDashboard(ALL_SIX_NONZERO);
     expect(await screen.findByTestId('departures-board')).toBeTruthy();
-    expect(screen.getByRole('heading', { name: /today's departures/i })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: /leaving today/i })).toBeTruthy();
   });
 
   it('still keeps ONE status region with the board mounted', async () => {
