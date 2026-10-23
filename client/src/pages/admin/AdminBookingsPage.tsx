@@ -212,10 +212,10 @@ export default function AdminBookingsPage() {
                     key={booking.ref}
                     className="border-brand-blue-100 hover:bg-brand-blue-50/50 border-b transition-colors last:border-0"
                   >
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-1">
                       <Link
                         to={`/admin/bookings/${booking.ref}`}
-                        className="text-brand-blue-700 hover:text-brand-blue-900 font-mono font-semibold underline underline-offset-4 transition-colors"
+                        className="text-brand-blue-700 hover:text-brand-blue-900 tap-target inline-flex items-center font-mono font-semibold underline underline-offset-4 transition-colors"
                       >
                         {booking.ref}
                       </Link>
