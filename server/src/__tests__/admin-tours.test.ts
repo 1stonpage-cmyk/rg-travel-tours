@@ -21,20 +21,25 @@
  * tour nothing tracked, and `public-queries.test.ts` asserts the catalog holds
  * exactly six tours.
  */
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { and, asc, eq, inArray, like } from 'drizzle-orm';
+import type { PriceSnapshot } from '@rg/shared';
 import { appRouter } from '../routers/_app';
 import { getDb, getPool } from '../db/client';
 import {
   auditLog,
+  bookingAddons,
+  bookings,
   destinations,
   tourAddons,
   tourImages,
   tourItineraryStops,
   tourPriceTiers,
   tours,
+  tripCheckpoints,
   users,
 } from '../db/schema';
+import { generateBookingRef } from '../services/booking-ref';
 import { upsertTourContent } from '../services/tours/upsert';
 import { staffContext, testContext } from './helpers/ctx';
 import { describeWithDb } from './helpers/db';
@@ -52,6 +57,8 @@ const created = {
   userIds: [] as number[],
   tourIds: [] as number[],
   destinationIds: [] as number[],
+  /** Bookings the history block below makes, so its FK rows can be unwound. */
+  bookingIds: [] as number[],
 };
 
 /** Slug-safe: digits and hyphens, so it can be pasted into a tour slug. */
@@ -162,6 +169,65 @@ async function auditRowsForTour(tourId: number) {
     .orderBy(asc(auditLog.id));
 }
 
+async function addonRowsFor(tourId: number) {
+  return getDb()
+    .select({
+      id: tourAddons.id,
+      name: tourAddons.name,
+      priceCentavos: tourAddons.priceCentavos,
+      isActive: tourAddons.isActive,
+    })
+    .from(tourAddons)
+    .where(eq(tourAddons.tourId, tourId))
+    .orderBy(asc(tourAddons.id));
+}
+
+async function stopRowsFor(tourId: number) {
+  return getDb()
+    .select({
+      id: tourItineraryStops.id,
+      sortOrder: tourItineraryStops.sortOrder,
+      name: tourItineraryStops.name,
+    })
+    .from(tourItineraryStops)
+    .where(eq(tourItineraryStops.tourId, tourId))
+    .orderBy(asc(tourItineraryStops.sortOrder), asc(tourItineraryStops.id));
+}
+
+/** The minimum snapshot `bookings.price_snapshot` accepts. No test reads it. */
+const SNAPSHOT: PriceSnapshot = {
+  tier: { tierId: 1, minPax: 1, maxPax: 12, pricePerPersonCentavos: 100_000 },
+  addons: [],
+  coupon: null,
+  depositPercent: 30,
+  freeCancelHours: 48,
+  subtotalCentavos: 100_000,
+  discountCentavos: 0,
+  totalCentavos: 100_000,
+};
+
+/** A committed booking on `tourId`, so its FK rows have something to hang on. */
+async function makeBooking(tourId: number) {
+  const [row] = await getDb()
+    .insert(bookings)
+    .values({
+      ref: generateBookingRef(),
+      tourId,
+      tourDate: new Date('2026-12-05T00:00:00Z'),
+      pax: 2,
+      leadName: 'Tours Fixture',
+      leadEmail: 'fixture@example.test',
+      leadPhone: '09170000000',
+      status: 'confirmed',
+      payMode: 'full',
+      priceSnapshot: SNAPSHOT,
+      subtotalCentavos: 100_000,
+      totalCentavos: 100_000,
+    });
+  created.bookingIds.push(row.insertId);
+  return row.insertId;
+}
+
 beforeAll(async () => {
   ownerId = await makeStaff('owner');
   dispatcherId = await makeStaff('dispatcher');
@@ -187,6 +253,27 @@ afterAll(async () => {
     .from(tours)
     .where(like(tours.slug, `${SLUG_PREFIX}%`));
   const tourIds = [...new Set([...created.tourIds, ...swept.map((row) => row.id)])];
+
+  /*
+   * The FK rows FIRST, and in this order: `booking_addons.addon_id` and
+   * `trip_checkpoints.stop_id` are the very RESTRICT constraints this suite
+   * exists to exercise, so the tour's add-ons and stops cannot be removed while
+   * they stand — and `bookings` cannot go until both are gone either.
+   *
+   * `bookings` and `trip_checkpoints` are both in the leak detector's
+   * `LEAK_TABLES`, so a miss here fails the run by name rather than quietly.
+   */
+  if (created.bookingIds.length > 0) {
+    await db.delete(bookingAddons).where(inArray(bookingAddons.bookingId, created.bookingIds));
+    await db.delete(tripCheckpoints).where(inArray(tripCheckpoints.bookingId, created.bookingIds));
+    const pool = getPool();
+    for (const id of created.bookingIds) {
+      // Raw parameterized SQL, not `db.delete(bookings)` — `schema-conventions
+      // .test.ts` scans the whole server tree for the Drizzle form of a
+      // bookings hard-delete and exempts only the raw form in a test file.
+      await pool.query('DELETE FROM bookings WHERE id = ?', [id]);
+    }
+  }
 
   if (tourIds.length > 0) {
     await db.delete(tourPriceTiers).where(inArray(tourPriceTiers.tourId, tourIds));
@@ -419,10 +506,23 @@ describeWithDb('admin.tours', () => {
   });
 
   /* ------------------------------------------------------------------ *
-   * Update — children replaced wholesale, inside one transaction
+   * Update — a save states the whole set, inside one transaction
    * ------------------------------------------------------------------ */
 
-  it('REPLACES the children wholesale rather than appending to them', async () => {
+  /**
+   * A save states the whole set rather than patching it, and **how that set is
+   * applied differs per table** (review fix, 2026-10-24). This test owns the
+   * two tables nothing references, which really are replaced wholesale; the
+   * `with bookings and check-ins already attached` block below owns the two
+   * that cannot be.
+   *
+   * An earlier version of this test also asserted `detail.addons` became `[]`,
+   * which is no longer the contract: a dropped add-on is DEACTIVATED, because a
+   * guest may already have bought it. That half moved to the block below, which
+   * asserts the stronger thing — the row survives, switched off, with the id
+   * `booking_addons` points at.
+   */
+  it('REPLACES tiers and images wholesale rather than appending to them', async () => {
     const { id, input } = await createTour();
 
     await expect(
@@ -441,8 +541,15 @@ describeWithDb('admin.tours', () => {
     expect(detail.title).toBe('Renamed by the update');
     expect(detail.priceTiers.map((t) => t.pricePerPersonCentavos)).toEqual([199_900]);
     expect(detail.images).toEqual([]);
+    // Both original stops were dropped and neither had a check-in, so they are
+    // really gone and the one new stop is all that is left.
     expect(detail.itinerary.map((s) => s.name)).toEqual(['Only stop']);
-    expect(detail.addons).toEqual([]);
+    // The add-on is off, not gone — and `detail` still returns it, which is
+    // what lets the screen switch it back on.
+    expect(detail.addons.map((a) => a.isActive)).toEqual([false]);
+    // Which is what the PUBLIC route cares about: nothing left to sell.
+    const published = await publicApi().tours.bySlug({ slug: input.slug });
+    expect(published.addons).toEqual([]);
   });
 
   /**
@@ -622,5 +729,266 @@ describeWithDb('admin.tours', () => {
       code: 'BAD_REQUEST',
     });
     expect(await tourIdBySlug(input.slug)).toBeUndefined();
+  });
+
+  /* ------------------------------------------------------------------ *
+   * A tour that has HISTORY — the RESTRICT foreign keys
+   * (review finding, 2026-10-24)
+   * ------------------------------------------------------------------ */
+
+  /**
+   * Every test above builds a brand-new tour, and the test database ships no
+   * itinerary stops and no bookings — so every one of them exercised a tour
+   * with **no history**, and all of them passed while
+   * `admin.tours.update` was a permanent 500 for any tour a guest or a driver
+   * had actually touched.
+   *
+   * Two rows elsewhere in the schema reference the tour's children, both
+   * `ON DELETE RESTRICT` (verified against the live schema):
+   *
+   * ```
+   * booking_addons.addon_id  -> tour_addons.id
+   * trip_checkpoints.stop_id -> tour_itinerary_stops.id
+   * ```
+   *
+   * So the wholesale `DELETE FROM tour_addons WHERE tour_id = ?` failed with
+   * `ER_ROW_IS_REFERENCED_2` (errno 1451) the first time anyone bought an
+   * add-on, and the stops delete failed the first time a driver checked in.
+   * Neither is an `ER_DUP_ENTRY`, so it was rethrown raw as an
+   * `INTERNAL_SERVER_ERROR`.
+   *
+   * This block is the fixture that was missing. The first two tests fail
+   * against the pre-fix code with that exact MySQL error, which is what makes
+   * them a proof rather than a restatement.
+   */
+  describe('with bookings and check-ins already attached', () => {
+    /** A tour with one add-on a guest has bought, and no itinerary stops. */
+    async function tourWithSoldAddon() {
+      const { id } = await createTour({ itinerary: [] });
+      const detail = await ownerApi().admin.tours.detail({ id });
+      const addonId = detail.addons[0]!.id;
+      const bookingId = await makeBooking(id);
+      await getDb().insert(bookingAddons).values({
+        bookingId,
+        addonId,
+        // The snapshot columns §5 requires: the add-on may be renamed later.
+        name: 'Packed lunch',
+        priceCentavos: 50_000,
+        perPerson: true,
+        qty: 2,
+      });
+      return { id, detail, addonId, bookingId };
+    }
+
+    /** A tour whose FIRST stop a driver has checked in at. */
+    async function tourWithCheckIn() {
+      const { id } = await createTour();
+      const detail = await ownerApi().admin.tours.detail({ id });
+      const stopId = detail.itinerary[0]!.id;
+      const bookingId = await makeBooking(id);
+      await getDb()
+        .insert(tripCheckpoints)
+        .values({ bookingId, stopId, checkedAt: new Date('2026-12-05T01:00:00Z') });
+      return { id, detail, stopId, bookingId };
+    }
+
+    /** The input shape that keeps every stop `detail` returned, ids and all. */
+    const keepStops = (detail: { itinerary: { id: number; sortOrder: number; name: string }[] }) =>
+      detail.itinerary.map((stop) => ({
+        id: stop.id,
+        sortOrder: stop.sortOrder,
+        name: stop.name,
+        description: null,
+      }));
+
+    it('DEACTIVATES an add-on a guest already bought, instead of failing on the foreign key', async () => {
+      const { id, detail, addonId, bookingId } = await tourWithSoldAddon();
+
+      // Dropping the add-on from the save. Before the fix this was
+      // `DELETE FROM tour_addons WHERE tour_id = ?` → ER_ROW_IS_REFERENCED_2.
+      await expect(
+        ownerApi().admin.tours.update({
+          ...tourInput({ slug: detail.slug, itinerary: [], addons: [] }),
+          id,
+        } as never),
+      ).resolves.toEqual({ ok: true });
+
+      // The row is still there, same id, switched off — never deleted.
+      const rows = await addonRowsFor(id);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ id: addonId, isActive: false });
+
+      // And the guest's line still resolves to it: that is what the FK was for.
+      const lines = await getDb()
+        .select({ addonId: bookingAddons.addonId, name: bookingAddons.name })
+        .from(bookingAddons)
+        .where(eq(bookingAddons.bookingId, bookingId));
+      expect(lines).toEqual([{ addonId, name: 'Packed lunch' }]);
+
+      // It is off the public tour too — `tours.bySlug` filters on `is_active`,
+      // so "deactivated" really does mean "no longer sold".
+      const published = await publicApi().tours.bySlug({ slug: detail.slug });
+      expect(published.addons).toEqual([]);
+
+      // The save says what it did to history, in the audit row.
+      const audit = await auditRowsForTour(id);
+      expect(audit.at(-1)).toMatchObject({
+        action: 'tour.updated',
+        data: { addonsDeactivated: 1, stopsRemoved: 0 },
+      });
+    });
+
+    it('REVIVES a deactivated add-on when it is posted back by id', async () => {
+      const { id, detail, addonId } = await tourWithSoldAddon();
+      await ownerApi().admin.tours.update({
+        ...tourInput({ slug: detail.slug, itinerary: [], addons: [] }),
+        id,
+      } as never);
+      expect((await addonRowsFor(id))[0]).toMatchObject({ isActive: false });
+
+      await ownerApi().admin.tours.update({
+        ...tourInput({
+          slug: detail.slug,
+          itinerary: [],
+          addons: [
+            {
+              id: addonId,
+              name: 'Packed lunch',
+              priceCentavos: 60_000,
+              perPerson: true,
+              isActive: true,
+            },
+          ],
+        }),
+        id,
+      } as never);
+
+      // The SAME row, revived and repriced — not a second one beside it.
+      const rows = await addonRowsFor(id);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ id: addonId, isActive: true, priceCentavos: 60_000 });
+    });
+
+    it('REFUSES to remove a stop a trip has checked in at, and writes NOTHING', async () => {
+      const { id, detail, stopId } = await tourWithCheckIn();
+      const stopsBefore = await stopRowsFor(id);
+      const tiersBefore = await tierRowsFor(id);
+      const auditBefore = await auditRowsForTour(id);
+
+      // `itinerary: []` drops every stop, including the checked-in one. Before
+      // the fix this was ER_ROW_IS_REFERENCED_2 on
+      // `DELETE FROM tour_itinerary_stops WHERE tour_id = ?` — a raw 500.
+      const refused = (await ownerApi()
+        .admin.tours.update({
+          ...tourInput({ slug: detail.slug, itinerary: [] }),
+          id,
+        } as never)
+        .catch((error: unknown) => error)) as { code?: string; message?: string };
+
+      expect(refused.code, 'a foreign-key 500 is not a refusal').toBe('CONFLICT');
+      // Named, so the owner knows which row to keep rather than guessing.
+      expect(refused.message).toContain('Hotel pickup');
+      expect(refused.message).toMatch(/checked in/i);
+
+      // Nothing at all: not the stops, not the tiers the save would have
+      // replaced first, not the title, and not an audit row.
+      expect(await stopRowsFor(id)).toEqual(stopsBefore);
+      expect(await tierRowsFor(id)).toEqual(tiersBefore);
+      expect(await auditRowsForTour(id)).toEqual(auditBefore);
+      expect((await ownerApi().admin.tours.detail({ id })).title).toBe(detail.title);
+
+      // And the check-in itself is untouched — the driver's record stands.
+      const checkpoints = await getDb()
+        .select({ stopId: tripCheckpoints.stopId })
+        .from(tripCheckpoints)
+        .where(eq(tripCheckpoints.stopId, stopId));
+      expect(checkpoints).toHaveLength(1);
+    });
+
+    /**
+     * The half that must keep working. A refusal that fired for every dropped
+     * stop would make the itinerary editor unusable, and nothing else in this
+     * file would notice.
+     */
+    it('still DELETES a stop no trip has checked in at', async () => {
+      const { id, detail } = await tourWithCheckIn();
+      // Keep the checked-in stop (by id), drop the second one.
+      const keep = keepStops(detail).filter((stop) => stop.name === 'Hotel pickup');
+      expect(keep).toHaveLength(1);
+
+      await expect(
+        ownerApi().admin.tours.update({
+          ...tourInput({ slug: detail.slug, itinerary: keep }),
+          id,
+        } as never),
+      ).resolves.toEqual({ ok: true });
+
+      expect((await stopRowsFor(id)).map((row) => row.name)).toEqual(['Hotel pickup']);
+      expect((await auditRowsForTour(id)).at(-1)).toMatchObject({
+        data: { stopsRemoved: 1 },
+      });
+    });
+
+    it('EDITS a checked-in stop in place, keeping the id the checkpoint points at', async () => {
+      const { id, detail, stopId } = await tourWithCheckIn();
+
+      await expect(
+        ownerApi().admin.tours.update({
+          ...tourInput({
+            slug: detail.slug,
+            itinerary: [
+              { id: stopId, sortOrder: 0, name: 'Hotel pickup (renamed)', description: 'Lobby.' },
+            ],
+          }),
+          id,
+        } as never),
+      ).resolves.toEqual({ ok: true });
+
+      // Renamed, same row — so the driver's existing checkpoint still refers to
+      // the stop it was taken at rather than dangling or pointing somewhere new.
+      const rows = await stopRowsFor(id);
+      expect(rows).toEqual([{ id: stopId, sortOrder: 0, name: 'Hotel pickup (renamed)' }]);
+    });
+
+    /**
+     * An id belonging to ANOTHER tour must not be reachable through this tour's
+     * save: `planChildUpsert` only matches ids the tour already owns, and the
+     * writes are scoped by `tour_id` as well. The worst a caller achieves is
+     * adding a row to their own tour.
+     */
+    it('treats another tour add-on id as a NEW row, never updating across tours', async () => {
+      const victim = await createTour();
+      const victimAddonId = (await ownerApi().admin.tours.detail({ id: victim.id })).addons[0]!.id;
+      const { id, input } = await createTour();
+
+      await ownerApi().admin.tours.update({
+        ...input,
+        id,
+        addons: [
+          {
+            id: victimAddonId,
+            name: 'Smuggled rename',
+            priceCentavos: 1,
+            perPerson: false,
+            isActive: true,
+          },
+        ],
+      } as never);
+
+      // The other tour's add-on is exactly as it was.
+      const victimRows = await addonRowsFor(victim.id);
+      expect(victimRows).toHaveLength(1);
+      expect(victimRows[0]).toMatchObject({
+        id: victimAddonId,
+        name: 'Packed lunch',
+        priceCentavos: 50_000,
+        isActive: true,
+      });
+
+      // And this tour got a NEW row, with an id of its own.
+      const mine = await addonRowsFor(id);
+      expect(mine.filter((row) => row.isActive)).toHaveLength(1);
+      expect(mine.find((row) => row.name === 'Smuggled rename')?.id).not.toBe(victimAddonId);
+    });
   });
 });

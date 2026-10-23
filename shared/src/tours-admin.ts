@@ -22,13 +22,23 @@
  *    It stays NULL until real bookings can supply it (D8); a field an admin
  *    could type into is the fake social proof CLAUDE.md forbids.
  *
- * **Children are replaced WHOLESALE, so they are REQUIRED on both inputs.**
- * `upsertTourContent` deletes a tour's tiers, images, stops and add-ons and
- * re-inserts what it was given. That makes an OMITTED array ambiguous — "leave
- * them alone" or "delete them all" — and the wrong reading of an omitted
- * `priceTiers` is a tour with no prices, which cannot be quoted at all. So
- * there are no defaults: the editing screen loads the detail and posts the
- * whole set back, every time, and `[]` means empty on purpose.
+ * **All four child arrays are REQUIRED on both inputs**, because a save states
+ * the whole set rather than patching it. That is what makes an OMITTED array
+ * dangerous — "leave them alone" or "delete them all" — and the wrong reading
+ * of an omitted `priceTiers` is a tour with no prices, which `checkout.quote`
+ * cannot quote at all. So there are no defaults: the editing screen loads the
+ * detail and posts the whole set back, every time, and `[]` means empty on
+ * purpose.
+ *
+ * **How "the whole set" is applied differs per table, and the difference is a
+ * foreign key, not a preference** (review fix, 2026-10-24):
+ *
+ *  - `priceTiers` and `images` — nothing references them, so they are deleted
+ *    and re-inserted wholesale, and their inputs carry no `id`.
+ *  - `itinerary` and `addons` — `trip_checkpoints.stop_id` and
+ *    `booking_addons.addon_id` reference them `ON DELETE RESTRICT`, so they are
+ *    matched BY ID and never bulk-deleted. See `childIdSchema` below and
+ *    `services/tours/upsert.ts` for what dropping one of each now means.
  */
 import { z } from 'zod';
 
@@ -89,13 +99,34 @@ export const tourImageInputSchema = z
 export type TourImageInput = z.infer<typeof tourImageInputSchema>;
 
 /**
+ * The id of a child row being EDITED rather than added (review fix,
+ * 2026-10-24).
+ *
+ * Only `itinerary` and `addons` carry it, and only because those two tables are
+ * REFERENCED by rows that record history — `trip_checkpoints.stop_id` and
+ * `booking_addons.addon_id`, both `ON DELETE RESTRICT`. They cannot be replaced
+ * wholesale (see `services/tours/upsert.ts`), so a save has to be able to say
+ * "this is the same stop, edited" instead of "delete everything and re-add".
+ * Omit it for a brand-new row.
+ *
+ * **`priceTiers` and `images` deliberately do NOT take an id.** Nothing
+ * references those two tables, so they really are replaced wholesale, and
+ * `.strict()` means posting an id on one is a refusal rather than a value
+ * silently ignored. A screen that round-trips `admin.tours.detail` therefore
+ * strips `id` from tiers and images, and keeps it on stops and add-ons.
+ */
+const childIdSchema = z.number().int().positive().optional();
+
+/**
  * One itinerary stop. These are the rows the driver's check-in screen counts a
  * trip's progress against (`services/trips/progress.ts`), so editing them
  * changes what "0 of 4 stops" means on the departures board — not only what a
- * guest reads.
+ * guest reads. And once a driver has checked in at one, `trip_checkpoints`
+ * points at it for good: removing it is refused, not cascaded.
  */
 export const tourItineraryStopInputSchema = z
   .object({
+    id: childIdSchema,
     sortOrder: sortOrderSchema,
     name: z.string().trim().min(1).max(200),
     description: z.string().trim().max(4_000).nullable(),
@@ -107,9 +138,14 @@ export type TourItineraryStopInput = z.infer<typeof tourItineraryStopInputSchema
  * One add-on. `isActive` IS editable here, unlike the tour's own flag: an
  * add-on is a line on this tour's form rather than a catalog entry of its own,
  * the public detail route already filters on it, and nothing else writes it.
+ *
+ * It is also how an add-on is RETIRED. Dropping one from the input deactivates
+ * the row rather than deleting it, because a guest may already have bought it
+ * (`booking_addons.addon_id`); posting it back with `isActive: true` revives it.
  */
 export const tourAddonInputSchema = z
   .object({
+    id: childIdSchema,
     name: z.string().trim().min(1).max(200),
     priceCentavos: centavosSchema,
     perPerson: z.boolean(),
@@ -187,11 +223,18 @@ export const tourActiveInput = z
   .strict();
 export type TourActiveInput = z.infer<typeof tourActiveInput>;
 
-/** A saved child row — its input shape plus the id the admin screen keys on. */
+/**
+ * A saved child row — its input shape with the id made REQUIRED.
+ *
+ * Tiers and images have no `id` on their input, so the intersection adds it.
+ * Stops and add-ons already carry an optional one, which `Omit` + an explicit
+ * `id: number` narrows to required: a row that came back from `detail` always
+ * has an id, even though a row being posted need not.
+ */
 export type TourPriceTierRow = TourPriceTierInput & { id: number };
 export type TourImageRow = TourImageInput & { id: number };
-export type TourItineraryStopRow = TourItineraryStopInput & { id: number };
-export type TourAddonRow = TourAddonInput & { id: number };
+export type TourItineraryStopRow = Omit<TourItineraryStopInput, 'id'> & { id: number };
+export type TourAddonRow = Omit<TourAddonInput, 'id'> & { id: number };
 
 /**
  * One row of `admin.tours.list`.

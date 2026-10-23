@@ -15,11 +15,18 @@
  * review attached to it. A tour that was hard-deleted would take its bookings'
  * `tour_id` with it.
  *
- * `services/tours/upsert.ts` owns the four child tables and the price-tier
- * overlap refusal; this file owns the transaction, the audit row and the
- * reads. One transaction per mutation, opened here, with the audit write inside
- * it — an audit row that survives a rollback claims a price change that never
- * happened.
+ * `services/tours/upsert.ts` owns the four child tables and both refusals (the
+ * price-tier overlap, and removing a stop a trip has already checked in at);
+ * this file owns the transaction, the audit row and the reads. One transaction
+ * per mutation, opened here, with the audit write inside it — an audit row that
+ * survives a rollback claims a price change that never happened.
+ *
+ * **`detail` returns DEACTIVATED add-ons** (there is no `is_active` filter on
+ * that read, unlike the public `tours.bySlug`). That is deliberate and it is
+ * what makes the soft delete reversible: dropping an add-on from a save
+ * deactivates it rather than deleting it, because a guest may already have
+ * bought one, so the editing screen has to be able to see it and post it back
+ * with `isActive: true` to revive it.
  */
 import { TRPCError } from '@trpc/server';
 import {
@@ -42,7 +49,7 @@ import {
   tours,
 } from '../../db/schema';
 import { writeAudit } from '../../services/audit';
-import { upsertTourContent } from '../../services/tours/upsert';
+import { upsertTourContent, type UpsertTourResult } from '../../services/tours/upsert';
 import { adminProcedure, router } from '../../trpc';
 
 /** The one message for a slug another tour already holds. */
@@ -62,20 +69,30 @@ function asStringArray(value: unknown): string[] | null {
 }
 
 /**
- * The audit payload for a save: identifiers, and the money.
+ * The audit payload for a save: identifiers, the money, and what the save did
+ * to the two child tables that hold history.
  *
  * The price tiers are included in full and the tour's prose (`about`, the SEO
  * fields, the summary) is not. A price edit nobody can trace is the one change
  * this log exists for, and three to five tier rows is small; a dump of the
  * whole tour would bury them.
+ *
+ * `addonsDeactivated` and `stopsRemoved` come from the save's own result rather
+ * than from the input, because the input cannot say them: dropping an add-on
+ * deactivates a row the input no longer mentions, and dropping a stop deletes
+ * one. "Three add-ons were retired by this save" is exactly the kind of fact a
+ * log is read for months later.
  */
-function auditDataFor(input: {
-  slug: string;
-  priceTiers: readonly { minPax: number; maxPax: number; pricePerPersonCentavos: number }[];
-  images: readonly unknown[];
-  itinerary: readonly unknown[];
-  addons: readonly { name: string; priceCentavos: number }[];
-}) {
+function auditDataFor(
+  input: {
+    slug: string;
+    priceTiers: readonly { minPax: number; maxPax: number; pricePerPersonCentavos: number }[];
+    images: readonly unknown[];
+    itinerary: readonly unknown[];
+    addons: readonly { name: string; priceCentavos: number }[];
+  },
+  result: UpsertTourResult,
+) {
   return {
     slug: input.slug,
     priceTiers: input.priceTiers.map((tier) => ({
@@ -89,6 +106,8 @@ function auditDataFor(input: {
     })),
     imageCount: input.images.length,
     stopCount: input.itinerary.length,
+    addonsDeactivated: result.addonsDeactivated,
+    stopsRemoved: result.stopsRemoved,
   };
 }
 
@@ -274,16 +293,16 @@ export const adminToursRouter = router({
     .mutation(async ({ input, ctx }) => {
       try {
         const id = await getDb().transaction(async (tx) => {
-          const { id } = await upsertTourContent(tx, input);
+          const result = await upsertTourContent(tx, input);
           await writeAudit(tx, {
             actorType: 'user',
             actorId: ctx.session.subjectId,
             action: 'tour.created',
             entity: 'tour',
-            entityId: id,
-            data: auditDataFor(input),
+            entityId: result.id,
+            data: auditDataFor(input, result),
           });
-          return id;
+          return result.id;
         });
         return { id };
       } catch (error) {
@@ -296,14 +315,14 @@ export const adminToursRouter = router({
     .mutation(async ({ input, ctx }) => {
       try {
         await getDb().transaction(async (tx) => {
-          await upsertTourContent(tx, input);
+          const result = await upsertTourContent(tx, input);
           await writeAudit(tx, {
             actorType: 'user',
             actorId: ctx.session.subjectId,
             action: 'tour.updated',
             entity: 'tour',
             entityId: input.id,
-            data: auditDataFor(input),
+            data: auditDataFor(input, result),
           });
         });
         return { ok: true as const };
