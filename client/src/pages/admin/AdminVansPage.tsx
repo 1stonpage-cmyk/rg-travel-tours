@@ -343,7 +343,7 @@ export default function AdminVansPage() {
   const vans = list.data ?? [];
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-8">
+    <div>
       <h1 className="text-brand-blue-900 text-2xl font-bold">Vans</h1>
       <p className="text-muted-foreground mt-1 text-sm">
         The fleet. Plate, model and seats are what every other screen needs; service dates, papers
@@ -533,6 +533,6 @@ export default function AdminVansPage() {
           </div>
         </>
       )}
-    </main>
+    </div>
   );
 }

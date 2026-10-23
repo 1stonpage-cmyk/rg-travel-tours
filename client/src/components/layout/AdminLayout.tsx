@@ -1,64 +1,64 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { LogOut } from 'lucide-react';
+import { LogOut, Menu, X } from 'lucide-react';
+import { useState } from 'react';
 import { Link, Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { trpc } from '@/lib/trpc';
+import { navFor } from './admin-nav';
 
 /**
- * The shell every admin/dispatch screen (Week 5, Tasks 5/7/9/14) and the
- * two existing Week 4 bookings screens hang off. Follows `PublicLayout.tsx`
- * for the house conventions: a skip link first in the DOM, a `<header>`
- * carrying the nav, and a `<main>` holding `<Outlet/>` — but this header is
- * NOT sticky (see the comment on the `<header>` below for why) and there is
+ * The shell every admin/dispatch screen hangs off: a dark sidebar from `lg`
+ * up, and on a phone a dark top bar with a menu button plus a bottom bar of
+ * quick links. Follows `PublicLayout.tsx` for the house conventions - a skip
+ * link first in the DOM and ONE `<main>` holding `<Outlet/>` - but there is
  * no footer or WhatsApp bubble: this is a staff workspace, never a page a
  * guest sees.
  *
- * `admin/login` (Week 4 Task 5) stays OUTSIDE this layout — see `App.tsx`
- * — because a sign-in screen must not render a nav that assumes a session
- * already exists.
+ * `admin/login` stays OUTSIDE this layout (see `App.tsx`) because a sign-in
+ * screen must not render a nav that assumes a session already exists.
+ *
+ * Which links are drawn depends on the signed-in role (`admin-nav.ts`). That
+ * is cosmetic: the server refuses every procedure a role may not call.
  */
-
-/**
- * Five destinations, which is also the bottom-nav ceiling the UX guidance
- * names ("bottom nav limit") — so the same five links can become a mobile
- * bottom bar later without needing a "more" menu. `/admin` is the
- * dashboard (Task 14, not yet built — see the index route in `App.tsx`);
- * `/admin/bookings` exists today (Week 4); `/admin/calendar`, `/admin/vans`
- * and `/admin/drivers` belong to Tasks 9, 5 and 7 and do not exist yet.
- * These links point at them anyway — a 404 on one of those three before
- * its task lands is the router's ordinary, existing behaviour, not
- * something this layout works around.
- */
-const NAV = [
-  { to: '/admin', label: 'Dashboard', end: true },
-  { to: '/admin/bookings', label: 'Bookings', end: false },
-  { to: '/admin/calendar', label: 'Calendar', end: false },
-  { to: '/admin/vans', label: 'Vans', end: false },
-  { to: '/admin/drivers', label: 'Drivers', end: false },
-] as const;
 
 /** Where an account with a temporary password is held until it has chosen its own. */
 const CHANGE_PASSWORD_PATH = '/admin/change-password';
 
-/** `role` as `staffAuth.me` returns it (`ADMIN_ROLES`) — title-cased for display. */
+/** `role` as `staffAuth.me` returns it (`ADMIN_ROLES`) - title-cased for display. */
 function roleLabel(role: string): string {
   return role.charAt(0).toUpperCase() + role.slice(1);
 }
 
+function BrandMark({ size }: { size: 'sm' | 'md' }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={[
+        'bg-brand-gold-500 text-brand-ink flex shrink-0 items-center justify-center font-bold',
+        size === 'md' ? 'size-10 rounded-[10px] text-[15px]' : 'size-9 rounded-[9px] text-sm',
+      ].join(' ')}
+    >
+      TS
+    </span>
+  );
+}
+
+const SIDE_LINK =
+  'tap-target flex items-center justify-between gap-2 rounded-lg px-3 text-sm transition-colors';
+
 /**
- * The signed-in operator's role, and the control that ends their session.
+ * The signed-in operator's role, the control that ends their session, and
+ * the change-password link.
  *
- * `trpc.staffAuth.me` needs a tRPC Provider above it in the tree — `main.tsx`
- * always supplies one, so this is never conditional in the real app. It IS
- * conditional in a test, and in a real session that has gone stale (an
- * expired cookie, a 500, a network blip): the query can be pending or can
- * fail. Neither state is allowed to take the sign-out button down with it —
- * an operator on a shared office machine who cannot sign out because a
- * `me` lookup failed is a security problem, not a cosmetic one. So the
- * button below is unconditional; only the identity slot above it (a
- * skeleton while loading, a short notice on failure, the role once it
+ * `trpc.staffAuth.me` needs a tRPC Provider above it in the tree - `main.tsx`
+ * always supplies one. The query can be pending or can fail (an expired
+ * cookie, a 500, a network blip); neither state is allowed to take the
+ * sign-out button down with it. An operator on a shared office machine who
+ * cannot sign out because a `me` lookup failed is a security problem, not a
+ * cosmetic one. So the button is unconditional; only the identity slot above
+ * it (a skeleton while loading, a short notice on failure, the role once it
  * resolves) changes with the query state.
  */
-function StaffIdentity() {
+function SidebarFooter({ showAccountLink }: { showAccountLink: boolean }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const me = trpc.staffAuth.me.useQuery(undefined, { retry: false });
@@ -71,29 +71,40 @@ function StaffIdentity() {
   });
 
   return (
-    <div className="flex items-center gap-3">
+    <div className="border-brand-blue-800 mt-auto flex flex-col gap-1 border-t px-2 pt-4">
       {me.isPending ? (
-        <span
-          aria-hidden="true"
-          className="bg-muted hidden h-4 w-14 animate-pulse rounded sm:inline-block"
-        />
+        <span aria-hidden="true" className="bg-brand-blue-800 h-4 w-16 animate-pulse rounded" />
       ) : me.isError ? (
-        // Dark blue/grey, never red (CLAUDE.md) — and the sign-out button
+        // Dark blue/grey, never red (CLAUDE.md) - and the sign-out button
         // below stays reachable regardless, which is the point.
-        <span role="alert" className="text-brand-error text-xs font-medium">
+        <span role="alert" className="text-brand-blue-100 text-xs font-medium">
           Could not confirm your session.
         </span>
       ) : me.data ? (
-        // Always visible, down to 360px (fix round 2, N1) — on a shared
-        // office machine, which role is signed in is the one piece of
-        // identity that matters, so it cannot be a desktop-only extra.
-        <span className="text-muted-foreground text-xs sm:text-sm">{roleLabel(me.data.role)}</span>
+        <span className="text-brand-blue-100 text-sm font-semibold">{roleLabel(me.data.role)}</span>
       ) : null}
+
+      {showAccountLink ? (
+        <nav aria-label="Account">
+          <NavLink
+            to={CHANGE_PASSWORD_PATH}
+            className={({ isActive }) =>
+              [
+                'tap-target text-brand-gold-200 hover:text-brand-gold-50 -mx-1 flex items-center rounded-md px-1 text-[13px] underline-offset-4 transition-colors hover:underline',
+                isActive ? 'font-semibold underline' : '',
+              ].join(' ')
+            }
+          >
+            Change password
+          </NavLink>
+        </nav>
+      ) : null}
+
       <button
         type="button"
         onClick={() => logout.mutate()}
         disabled={logout.isPending}
-        className="tap-target text-brand-ink/80 hover:text-brand-blue-700 flex items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors disabled:opacity-50"
+        className="tap-target text-brand-blue-100 hover:bg-brand-blue-900 -mx-1 flex items-center gap-2 rounded-md px-1 text-[13px] font-medium transition-colors hover:text-white disabled:opacity-50"
       >
         <LogOut className="size-4" aria-hidden="true" />
         Sign out
@@ -106,7 +117,16 @@ export default function AdminLayout() {
   const location = useLocation();
   const me = trpc.staffAuth.me.useQuery(undefined, { retry: false });
   const mustChange = me.data?.mustChangePassword === true;
-  const isOwner = me.data?.role === 'owner';
+  const role = me.data?.role;
+  const nav = navFor(role);
+
+  // The phone menu is open for the page it was opened on and closes when the
+  // route changes, with no effect needed to reset it.
+  const [menuPath, setMenuPath] = useState<string | null>(null);
+  const menuOpen = menuPath === location.pathname;
+  // Held open while a password change is owed or the identity lookup failed,
+  // so a phone user can always reach Sign out.
+  const drawerOpen = menuOpen || mustChange || me.isError;
 
   // A convenience, not the control: the server already refuses every admin
   // procedure while a password change is owed. This just stops the screens
@@ -115,8 +135,10 @@ export default function AdminLayout() {
     return <Navigate to={CHANGE_PASSWORD_PATH} replace />;
   }
 
+  const quick = nav.filter((item) => item.quick);
+
   return (
-    <div className="flex min-h-dvh flex-col">
+    <div className="bg-brand-blue-50 text-brand-ink min-h-dvh lg:flex">
       <a
         href="#admin-main"
         className="bg-brand-blue-700 focus:ring-brand-gold-400 sr-only inline-flex min-h-11 items-center rounded-md px-4 py-2 text-white focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50 focus:ring-2"
@@ -124,112 +146,110 @@ export default function AdminLayout() {
         Skip to main content
       </a>
 
-      {/*
-       * Two rows, not one — five text labels plus the brand mark and the
-       * sign-out control do not fit a single `h-14` row at 360px without
-       * either shrinking the tap targets below 44px or introducing a
-       * horizontal scrollbar (both ruled out: the former breaks the tap
-       * target floor, the latter is the `ui-ux-pro-max` "avoid horizontal
-       * scrolling" guidance this task ran). Splitting the identity row from
-       * the nav row, with the nav items sharing the full width evenly
-       * (`flex-1` below `sm`), fits all five comfortably at 360px with room
-       * to spare — and is also plainly why this header is NOT `sticky`
-       * (unlike `SiteHeader`): a sticky two-row header of unpredictable
-       * total height would need `main` below to carry matching top padding
-       * (the "sticky nav overlap content" guidance this task also ran), and
-       * nothing here needs to be pinned yet.
-       */}
-      <header className="border-border bg-background border-b">
-        <div className="mx-auto max-w-6xl px-4">
-          <div className="flex h-14 items-center justify-between gap-4">
-            <Link
-              to="/admin"
-              className="tap-target text-brand-blue-900 flex items-center text-sm font-bold"
-            >
-              Dispatch
-            </Link>
-
-            <StaffIdentity />
-          </div>
-
-          {mustChange ? null : (
-            <>
-              <nav
-                aria-label="Admin"
-                className="border-border flex items-center gap-1 border-t py-1 sm:justify-start sm:gap-2"
-              >
-                {NAV.map((item) => (
-                  <NavLink
-                    key={item.to}
-                    to={item.to}
-                    end={item.end}
-                    className={({ isActive }) =>
-                      [
-                        // `border-b-2` is reserved on EVERY item (not just the
-                        // active one) so the border's own width never shifts
-                        // the layout when the active item changes — only its
-                        // colour toggles between transparent and visible.
-                        'tap-target flex flex-1 items-center justify-center rounded-md border-b-2 px-2 text-center text-xs transition-colors sm:flex-none sm:px-3 sm:text-sm',
-                        'hover:bg-brand-blue-50 hover:text-brand-blue-700',
-                        // `NavLink` sets `aria-current="page"` on the active
-                        // link by itself (and nothing on every other one) —
-                        // that is the signal assistive tech reads. For a
-                        // sighted dispatcher, including anyone with a colour
-                        // vision deficiency, the PRIMARY visible signal is the
-                        // border and the weight change: a visible edge and a
-                        // heavier glyph are shape differences that survive
-                        // greyscale, unlike a colour swap. Fix round 2 (F1):
-                        // the colour change below is reinforcement on top of
-                        // that, never the only signal.
-                        isActive
-                          ? 'border-brand-blue-700 text-brand-blue-700 font-semibold'
-                          : 'text-brand-ink/80 border-transparent font-medium',
-                      ].join(' ')
-                    }
-                  >
-                    {item.label}
-                  </NavLink>
-                ))}
-              </nav>
-
-              {/*
-               * Account links sit on their own row: a sixth item in the row above would
-               * not fit 360px at a 44px target. "Staff" is the owner's only; the server
-               * refuses everyone else regardless of whether the link is drawn.
-               */}
-              <nav
-                aria-label="Account"
-                className="border-border flex items-center gap-1 border-t py-1 sm:gap-2"
-              >
-                {[
-                  ...(isOwner ? [{ to: '/admin/staff', label: 'Staff' }] : []),
-                  { to: CHANGE_PASSWORD_PATH, label: 'Change password' },
-                ].map((item) => (
-                  <NavLink
-                    key={item.to}
-                    to={item.to}
-                    className={({ isActive }) =>
-                      [
-                        'tap-target flex items-center rounded-md border-b-2 px-3 text-xs transition-colors sm:text-sm',
-                        'hover:bg-brand-blue-50 hover:text-brand-blue-700',
-                        isActive
-                          ? 'border-brand-blue-700 text-brand-blue-700 font-semibold'
-                          : 'text-brand-ink/80 border-transparent font-medium',
-                      ].join(' ')
-                    }
-                  >
-                    {item.label}
-                  </NavLink>
-                ))}
-              </nav>
-            </>
+      {/* Phone top bar. From `lg` the sidebar's own brand block takes over. */}
+      <header className="bg-brand-ink sticky top-0 z-40 flex items-center justify-between px-4 py-3 text-white lg:hidden">
+        <Link to="/admin" className="tap-target flex items-center gap-2.5 rounded-md">
+          <BrandMark size="sm" />
+          <span className="text-base font-bold">Staff console</span>
+        </Link>
+        <button
+          type="button"
+          aria-label={drawerOpen ? 'Close menu' : 'Open menu'}
+          aria-expanded={drawerOpen}
+          aria-controls="admin-sidebar"
+          onClick={() => setMenuPath(menuOpen ? null : location.pathname)}
+          className="border-brand-blue-800 hover:bg-brand-blue-900 flex size-11 items-center justify-center rounded-[10px] border transition-colors"
+        >
+          {drawerOpen ? (
+            <X className="size-5" aria-hidden="true" />
+          ) : (
+            <Menu className="size-5" aria-hidden="true" />
           )}
-        </div>
+        </button>
       </header>
 
-      <main id="admin-main" className="flex-1">
-        <Outlet />
-      </main>
+      <aside
+        id="admin-sidebar"
+        className={[
+          'bg-brand-ink flex-col gap-6 px-4 py-6 text-white',
+          'lg:sticky lg:top-0 lg:flex lg:h-dvh lg:w-60 lg:shrink-0 lg:overflow-y-auto',
+          drawerOpen ? 'flex' : 'hidden',
+        ].join(' ')}
+      >
+        <Link
+          to="/admin"
+          className="tap-target hidden items-center gap-3 rounded-md px-2 lg:flex"
+          aria-label="TravelSugbo staff console, dashboard"
+        >
+          <BrandMark size="md" />
+          <span className="flex flex-col">
+            <span className="text-base font-bold">TravelSugbo</span>
+            <span className="text-brand-blue-200 text-xs">Staff console</span>
+          </span>
+        </Link>
+
+        {mustChange ? null : (
+          <nav aria-label="Admin" className="flex flex-col gap-1">
+            {nav.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.end}
+                className={({ isActive }) =>
+                  [
+                    SIDE_LINK,
+                    // `NavLink` sets `aria-current="page"` on the active link
+                    // by itself. For a sighted operator, including anyone with
+                    // a colour vision deficiency, the weight change and the
+                    // filled bar are shape differences that survive greyscale.
+                    isActive
+                      ? 'bg-brand-blue-700 font-semibold text-white'
+                      : 'text-brand-blue-100 hover:bg-brand-blue-900 font-medium hover:text-white',
+                  ].join(' ')
+                }
+              >
+                {item.label}
+              </NavLink>
+            ))}
+          </nav>
+        )}
+
+        <SidebarFooter showAccountLink={!mustChange} />
+      </aside>
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <main id="admin-main" className="flex-1 pb-24 lg:pb-0">
+          <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+            <Outlet />
+          </div>
+        </main>
+
+        {mustChange || quick.length === 0 ? null : (
+          <nav
+            aria-label="Quick links"
+            style={{ gridTemplateColumns: `repeat(${quick.length}, minmax(0, 1fr))` }}
+            className="border-brand-blue-100 fixed inset-x-0 bottom-0 z-30 grid border-t bg-white pb-[env(safe-area-inset-bottom)] lg:hidden"
+          >
+            {quick.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.end}
+                className={({ isActive }) =>
+                  [
+                    'tap-target flex min-h-[60px] items-center justify-center px-1 text-xs transition-colors',
+                    isActive
+                      ? 'text-brand-blue-700 border-brand-gold-500 border-t-2 font-bold'
+                      : 'text-brand-ink/80 hover:text-brand-blue-700 border-t-2 border-transparent',
+                  ].join(' ')
+                }
+              >
+                {item.quick?.label}
+              </NavLink>
+            ))}
+          </nav>
+        )}
+      </div>
     </div>
   );
 }

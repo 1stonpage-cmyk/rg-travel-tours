@@ -579,7 +579,7 @@ export default function AdminDriversPage() {
   const drivers = list.data ?? [];
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-8">
+    <div>
       <h1 className="text-brand-blue-900 text-2xl font-bold">Drivers</h1>
       <p className="text-muted-foreground mt-1 text-sm">
         Everyone who drives for us. PIN resets and leave come straight from here.
@@ -964,6 +964,6 @@ export default function AdminDriversPage() {
           })}
         </ul>
       )}
-    </main>
+    </div>
   );
 }

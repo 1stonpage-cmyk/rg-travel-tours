@@ -69,7 +69,7 @@ export default function AdminBookingsPage() {
   }
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-8">
+    <div>
       <h1 className="text-brand-blue-900 text-2xl font-bold">Bookings</h1>
 
       <form
@@ -249,6 +249,6 @@ export default function AdminBookingsPage() {
           </div>
         </>
       )}
-    </main>
+    </div>
   );
 }

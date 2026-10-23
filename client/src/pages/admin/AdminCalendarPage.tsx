@@ -104,7 +104,7 @@ export default function AdminCalendarPage() {
   const selectedDay = selected ? days.find((d) => d.date === selected) : undefined;
 
   return (
-    <main className="mx-auto max-w-3xl px-4 py-8">
+    <div className="max-w-3xl">
       <h1 className="text-brand-blue-900 text-2xl font-bold">Calendar</h1>
       <p className="text-muted-foreground mt-1 text-sm">
         What is running this month, and what still needs a van and a driver.
@@ -217,6 +217,6 @@ export default function AdminCalendarPage() {
           )}
         </section>
       ) : null}
-    </main>
+    </div>
   );
 }

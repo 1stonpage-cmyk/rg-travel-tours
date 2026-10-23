@@ -1,4 +1,5 @@
 import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it } from 'vitest';
 import AdminLayout from '@/components/layout/AdminLayout';
@@ -55,10 +56,10 @@ describe('AdminLayout', () => {
    * (`font-semibold`, a weight change that survives greyscale) — on the
    * active link, and their absence on every other one.
    */
-  it('marks the current section with aria-current AND a non-colour marker, not colour alone', () => {
+  it('marks the current section with aria-current AND a non-colour marker, not colour alone', async () => {
     renderAt('/admin/vans');
     const nav = screen.getByRole('navigation', { name: /admin/i });
-    const current = within(nav).getByRole('link', { name: /vans/i });
+    const current = await within(nav).findByRole('link', { name: /vans/i });
     expect(current.getAttribute('aria-current')).toBe('page');
     expect(current.className).toMatch(/font-semibold/);
 
@@ -72,8 +73,9 @@ describe('AdminLayout', () => {
     }
   });
 
-  it('gives every nav link a 44px tap target', () => {
+  it('gives every nav link a 44px tap target', async () => {
     renderAt('/admin');
+    await screen.findByRole('link', { name: 'Vans' });
     for (const link of screen.getAllByRole('link')) {
       if (/skip to main/i.test(link.textContent ?? '')) continue;
       expect(link.className).toMatch(/tap-target/);
@@ -95,5 +97,60 @@ describe('AdminLayout', () => {
     // let this assertion pass vacuously before the error ever resolved).
     await screen.findByRole('alert');
     expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument();
+  });
+
+  /**
+   * Restyle 2B: the nav is drawn per role. This is cosmetic - the server is
+   * the guard - so the test pins only what is DRAWN, and that the owner-only
+   * and finance-only links appear for the right people.
+   */
+  describe('links drawn per role', () => {
+    function names(): string[] {
+      const nav = screen.getByRole('navigation', { name: /^admin$/i });
+      return within(nav)
+        .getAllByRole('link')
+        .map((a) => a.textContent ?? '');
+    }
+
+    it('draws Vans, Drivers and Staff for an owner', async () => {
+      renderAt('/admin');
+      await screen.findByRole('link', { name: 'Staff' });
+      expect(names()).toEqual(['Dashboard', 'Bookings', 'Dispatch', 'Vans', 'Drivers', 'Staff']);
+    });
+
+    it('does not draw Staff for a dispatcher, who keeps Vans and Drivers', async () => {
+      mockTrpc({ 'staffAuth.me': { userId: 2, role: 'dispatcher', mustChangePassword: false } });
+      renderAt('/admin');
+      await screen.findByRole('link', { name: 'Vans' });
+      expect(names()).toEqual(['Dashboard', 'Bookings', 'Dispatch', 'Vans', 'Drivers']);
+    });
+
+    it('draws neither Vans, Drivers nor Staff for finance', async () => {
+      mockTrpc({ 'staffAuth.me': { userId: 3, role: 'finance', mustChangePassword: false } });
+      renderAt('/admin');
+      await screen.findByText('Finance');
+      expect(names()).toEqual(['Dashboard', 'Bookings', 'Dispatch']);
+    });
+  });
+
+  it('has exactly one main region, with the phone quick links outside it', async () => {
+    renderAt('/admin');
+    await screen.findByRole('link', { name: 'Vans' });
+    expect(screen.getAllByRole('main')).toHaveLength(1);
+    const quick = screen.getByRole('navigation', { name: /quick links/i });
+    expect(screen.getByRole('main').contains(quick)).toBe(false);
+    expect(within(quick).getByRole('link', { name: 'Home' })).toBeInTheDocument();
+  });
+
+  it('opens and closes the phone menu with a labelled, 44px button that reports its state', async () => {
+    renderAt('/admin');
+    const button = screen.getByRole('button', { name: /open menu/i });
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    expect(button.getAttribute('aria-controls')).toBe('admin-sidebar');
+    expect(button.className).toMatch(/size-11/);
+    await userEvent.click(button);
+    expect(screen.getByRole('button', { name: /close menu/i }).getAttribute('aria-expanded')).toBe(
+      'true',
+    );
   });
 });

@@ -128,18 +128,18 @@ export default function AdminBookingDetailPage() {
 
   if (query.isPending) {
     return (
-      <main className="mx-auto max-w-3xl px-4 py-10">
+      <div className="max-w-3xl">
         <p className="text-muted-foreground flex items-center gap-2 text-sm">
           <Loader2 className="size-4 animate-spin" aria-hidden="true" />
           Loading booking…
         </p>
-      </main>
+      </div>
     );
   }
 
   if (query.isError || !query.data) {
     return (
-      <main className="mx-auto max-w-3xl px-4 py-10">
+      <div className="max-w-3xl">
         <h1 className="text-brand-blue-900 text-xl font-bold">Booking not available</h1>
         <p className="text-muted-foreground mt-2 text-sm">
           That reference does not match a booking, or your session has ended.
@@ -147,7 +147,7 @@ export default function AdminBookingDetailPage() {
         <Button asChild variant="outline" className="tap-target mt-4">
           <Link to="/admin/bookings">Back to bookings</Link>
         </Button>
-      </main>
+      </div>
     );
   }
 
@@ -190,7 +190,7 @@ export default function AdminBookingDetailPage() {
   const decisionError = approve.error?.message ?? reject.error?.message ?? null;
 
   return (
-    <main className="mx-auto max-w-3xl px-4 py-8">
+    <div className="max-w-3xl">
       <Link to="/admin/bookings" className="text-brand-blue-700 text-sm underline">
         ← Bookings
       </Link>
@@ -677,6 +677,6 @@ export default function AdminBookingDetailPage() {
           </ul>
         )}
       </section>
-    </main>
+    </div>
   );
 }
