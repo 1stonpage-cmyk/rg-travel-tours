@@ -15,9 +15,9 @@
  *    pages you are asking to have indexed; listing a page you then refuse to
  *    let be indexed is a contradiction crawlers report as an error. So the
  *    detail URLs are collected, filtered and sorted here (`detailUrls()`),
- *    split by kind (`buildTourDetailUrls`/`buildPackageDetailUrls`), and only
- *    the tour half is emitted — the package half waits on its own detail
- *    page (Task 3) — see `collectSitemapUrls`.
+ *    split by kind (`buildTourDetailUrls`/`buildPackageDetailUrls`), and both
+ *    halves are emitted (Week 7 plan, Tasks 2 and 3) — see
+ *    `collectSitemapUrls`.
  *  - **`lastmod` is read, never invented.** Every date below comes from an
  *    `updated_at` column. A sitemap that claims today's date for every URL on
  *    every fetch trains crawlers to ignore the field.
@@ -130,12 +130,11 @@ function settingUpdatedAt(rows: SitemapRows['settingRows'], key: string): Date |
  * `/tours/:slug` and `/packages/:slug`, already filtered by `is_active` and
  * sorted by slug.
  *
- * Exported and tested. The tour half is now in the sitemap (Task 2 of the
- * Week 7 plan, 2D): `/tours/:slug` renders and `resolveTour` answers
- * `index,follow`, so `collectSitemapUrls` appends `buildTourDetailUrls`
- * below. The package half is still withheld — `/packages/:slug` has no page
- * yet and `resolvePackage` still answers `noindex,nofollow` (plan decision
- * D5) — see `collectSitemapUrls` for the one-line change Task 3 makes.
+ * Exported and tested. Both halves are now in the sitemap (Week 7 plan,
+ * Tasks 2 and 3): `/tours/:slug` and `/packages/:slug` both render, and
+ * `resolveTour`/`resolvePackage` both answer `index,follow`, so
+ * `collectSitemapUrls` appends `buildTourDetailUrls` and
+ * `buildPackageDetailUrls` below.
  */
 export async function detailUrls(): Promise<SitemapEntry[]> {
   const rows = await loadSitemapRows();
@@ -187,11 +186,11 @@ export async function collectSitemapUrls(): Promise<SitemapEntry[]> {
     // sides and sorts by slug, so there is nothing else to write here.
     ...buildTourDetailUrls(rows),
 
-    // The package half is a SEPARATE, LATER task (Task 3): `/packages/:slug`
-    // has no page yet and `resolvePackage` still answers
-    // `noindex,nofollow`, so `buildPackageDetailUrls(rows)` stays out of
-    // this array until that page exists and the same robots line is deleted
-    // from `resolvePackage`. (BUILD_SPEC 2D.)
+    // Package detail pages render now too (Task 3, Week 7 plan) and
+    // `resolvePackage` answers `index,follow` — same reasoning as the tour
+    // half above, shipped in the same commit as that page and that robots
+    // line's deletion.
+    ...buildPackageDetailUrls(rows),
   ];
 }
 

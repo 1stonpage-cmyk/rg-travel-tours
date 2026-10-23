@@ -17,6 +17,10 @@ export const toursBySlugInput = z.object({
   slug: z.string().min(1),
 });
 
+export const packagesBySlugInput = z.object({
+  slug: z.string().min(1),
+});
+
 export const reviewsPublishedInput = z.object({
   /** Default 6, max 50 — a review list is never an unbounded feed. */
   limit: z.number().int().min(1).max(50).default(6),
@@ -58,6 +62,7 @@ export const newsletterInput = z.object({
 
 export type ToursListInput = z.infer<typeof toursListInput>;
 export type ToursBySlugInput = z.infer<typeof toursBySlugInput>;
+export type PackagesBySlugInput = z.infer<typeof packagesBySlugInput>;
 export type ReviewsPublishedInput = z.infer<typeof reviewsPublishedInput>;
 export type InquiryInput = z.infer<typeof inquiryInput>;
 export type NewsletterInput = z.infer<typeof newsletterInput>;

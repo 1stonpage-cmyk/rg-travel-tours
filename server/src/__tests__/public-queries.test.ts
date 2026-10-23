@@ -4,6 +4,7 @@ import { afterEach, beforeAll, expect, it } from 'vitest';
 import { getDb } from '../db/client';
 import {
   destinations,
+  packages as packagesTable,
   reviews as reviewsTable,
   settings as settingsTable,
   tours as toursTable,
@@ -244,6 +245,31 @@ describeWithDb('public queries', () => {
     } finally {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (pool as any).query = originalQuery;
+    }
+  });
+
+  // Week 7 plan, Task 3: `packages.bySlug` backs `/packages/:slug`. Same
+  // row shape as one entry of `packages.list` — no joins, because the
+  // `packages` table has no child tables.
+  it('packages.bySlug returns the package by slug, same shape as one row of list', async () => {
+    const [fromList] = await caller.packages.list();
+    const detail = await caller.packages.bySlug({ slug: fromList!.slug });
+    expect(detail).toEqual(fromList);
+  });
+
+  it('packages.bySlug throws NOT_FOUND for an unknown slug', async () => {
+    await expect(caller.packages.bySlug({ slug: 'no-such-package' })).rejects.toThrow(/NOT_FOUND/);
+  });
+
+  it('packages.bySlug throws NOT_FOUND for a soft-deleted package', async () => {
+    const db = getDb();
+    const slug = 'cebu-highlights-3d2n';
+    await db.update(packagesTable).set({ isActive: false }).where(eq(packagesTable.slug, slug));
+
+    try {
+      await expect(caller.packages.bySlug({ slug })).rejects.toThrow(/NOT_FOUND/);
+    } finally {
+      await db.update(packagesTable).set({ isActive: true }).where(eq(packagesTable.slug, slug));
     }
   });
 

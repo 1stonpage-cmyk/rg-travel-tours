@@ -23,6 +23,7 @@ import PortalLoginPage from '@/pages/portal/PortalLoginPage';
 import BookingStatusPage from '@/pages/public/BookingStatusPage';
 import CheckoutPage from '@/pages/public/CheckoutPage';
 import HomePage from '@/pages/public/HomePage';
+import PackageDetailPage from '@/pages/public/PackageDetailPage';
 import PrivacyPage from '@/pages/public/PrivacyPage';
 import TermsPage from '@/pages/public/TermsPage';
 import TourDetailPage from '@/pages/public/TourDetailPage';
@@ -61,6 +62,12 @@ export default function App() {
          * CheckoutPage.tsx's module note.
          */}
         <Route path="checkout/:tourSlug" element={<CheckoutPage />} />
+        {/*
+         * The package detail page (Week 7 plan, Task 3) — `/packages/:slug`
+         * now renders, which is what lets `resolvePackage` (seo/resolvers.ts)
+         * drop its own `noindex` line and the sitemap list these URLs too.
+         */}
+        <Route path="packages/:slug" element={<PackageDetailPage />} />
         {/*
          * Task 9, week 3 checkout plan — the payment-redirect / booking-
          * status page. Mounted at `bookingStatusPath` (derived from

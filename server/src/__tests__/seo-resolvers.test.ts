@@ -134,9 +134,8 @@ describeWithDb('page resolution', () => {
   /**
    * Week 7 plan, Task 2 (2D): `/tours/:slug` now renders — the detail page
    * built in this task — so it is released from D5's `noindex` and answers
-   * `index,follow`. `/packages/:slug` has no page yet, so it stays exactly
-   * as D5 left it until Task 3 builds that page and makes the same edit to
-   * `resolvePackage`.
+   * `index,follow`. Task 3 makes the same edit to `resolvePackage` once
+   * `/packages/:slug` renders too — see the next test.
    *
    * `content_unverified` has to be false for this: the seeded default is
    * true, and `resolvePage`'s site-wide gate (task 4.3) forces EVERY route
@@ -162,8 +161,26 @@ describeWithDb('page resolution', () => {
     }
   });
 
-  it('keeps /packages/:slug out of the index while no page renders it (D5)', async () => {
-    expect((await resolvePage('/packages/cebu-highlights-3d2n')).robots).toBe('noindex,nofollow');
+  /**
+   * Week 7 plan, Task 3: `/packages/:slug` now renders too, so `resolvePackage`
+   * is released from D5's `noindex` the same way `resolveTour` was in Task 2
+   * above — same reasoning, same content_unverified-false requirement.
+   */
+  it('releases /packages/:slug from D5 — it now answers index,follow', async () => {
+    await getDb()
+      .update(settings)
+      .set({ value: false })
+      .where(eq(settings.key, 'content_unverified'));
+    resetContentUnverifiedCache();
+    try {
+      expect((await resolvePage('/packages/cebu-highlights-3d2n')).robots).toBe('index,follow');
+    } finally {
+      await getDb()
+        .update(settings)
+        .set({ value: true })
+        .where(eq(settings.key, 'content_unverified'));
+      resetContentUnverifiedCache();
+    }
   });
 
   it('builds package meta from its days, discounted price and description', async () => {

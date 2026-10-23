@@ -633,8 +633,7 @@ const resolvePackage: Resolver = async (params) => {
     ],
     preload: null,
     status: 200,
-    // D5, same as /tours/:slug above. WEEK 2D: delete this line.
-    robots: 'noindex,nofollow',
+    robots: 'index,follow',
   };
 };
 
