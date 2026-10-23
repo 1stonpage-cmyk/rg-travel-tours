@@ -239,7 +239,7 @@ export default function MonthGrid({ days, selected, onSelect }: MonthGridProps) 
             <th
               key={weekday.full}
               scope="col"
-              className="text-muted-foreground pb-2 text-xs font-medium"
+              className="text-brand-error pb-2 text-xs font-medium"
             >
               <abbr title={weekday.full} className="no-underline">
                 {weekday.abbr}
@@ -312,7 +312,7 @@ export default function MonthGrid({ days, selected, onSelect }: MonthGridProps) 
                     {tripCount > 0 ? (
                       <span
                         aria-hidden="true"
-                        className="text-muted-foreground text-[11px] tabular-nums"
+                        className="text-brand-error text-[11px] tabular-nums"
                       >
                         {' '}
                         {tripCount}

@@ -75,8 +75,8 @@ export default function AdminLoginPage() {
           <span className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.18em]">
             {SITE.legalOperator}
           </span>
-          <h1 className="text-brand-blue-900 mt-2 text-2xl font-bold">Staff sign-in</h1>
-          <p className="text-muted-foreground mt-1 text-sm">
+          <h1 className="text-brand-ink mt-2 text-2xl font-bold">Staff sign-in</h1>
+          <p className="text-brand-error mt-1 text-sm">
             For {SITE.name} staff only. Guests can track a booking from the link in their
             confirmation.
           </p>
@@ -85,7 +85,7 @@ export default function AdminLoginPage() {
         <form
           onSubmit={onSubmit}
           aria-labelledby="staff-login-heading"
-          className="border-border bg-background space-y-5 rounded-xl border p-5 shadow-sm sm:p-6"
+          className="border-brand-blue-100 space-y-5 rounded-[14px] border bg-white p-5 sm:p-6"
           noValidate
         >
           <h2 id="staff-login-heading" className="sr-only">
@@ -118,7 +118,7 @@ export default function AdminLoginPage() {
               value={email}
               onChange={(event) => setEmail(event.target.value)}
               aria-describedby={login.isError ? ERROR_ID : undefined}
-              className="tap-target"
+              className="tap-target border-brand-blue-200 rounded-[10px] bg-white"
             />
           </div>
 
@@ -134,7 +134,7 @@ export default function AdminLoginPage() {
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 aria-describedby={login.isError ? ERROR_ID : undefined}
-                className="tap-target pr-12"
+                className="tap-target border-brand-blue-200 rounded-[10px] bg-white pr-12"
               />
               {/*
                * Icon-only, so it carries an `aria-label` that changes with the
@@ -146,7 +146,7 @@ export default function AdminLoginPage() {
                 onClick={() => setRevealed((shown) => !shown)}
                 aria-label={revealed ? 'Hide password' : 'Show password'}
                 aria-pressed={revealed}
-                className="text-muted-foreground hover:text-brand-blue-700 focus-visible:ring-brand-blue-600 absolute inset-y-0 right-0 flex w-12 items-center justify-center rounded-r-md transition-colors focus-visible:outline-none focus-visible:ring-2"
+                className="text-brand-error hover:text-brand-blue-700 focus-visible:ring-brand-blue-600 absolute inset-y-0 right-0 flex w-12 items-center justify-center rounded-r-md transition-colors focus-visible:outline-none focus-visible:ring-2"
               >
                 {revealed ? (
                   <EyeOff className="size-5" aria-hidden="true" />
@@ -157,7 +157,11 @@ export default function AdminLoginPage() {
             </div>
           </div>
 
-          <Button type="submit" disabled={login.isPending} className="tap-target w-full">
+          <Button
+            type="submit"
+            disabled={login.isPending}
+            className="tap-target bg-brand-blue-700 hover:bg-brand-blue-800 w-full rounded-[10px] font-semibold text-white transition-colors"
+          >
             {login.isPending ? (
               <>
                 <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />
@@ -172,7 +176,7 @@ export default function AdminLoginPage() {
           </Button>
         </form>
 
-        <p className="text-muted-foreground mt-4 text-center text-xs">
+        <p className="text-brand-error mt-4 text-center text-xs">
           Repeated failed attempts are temporarily blocked.
         </p>
       </div>

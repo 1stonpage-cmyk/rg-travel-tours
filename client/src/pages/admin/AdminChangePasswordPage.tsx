@@ -27,7 +27,7 @@ import { Button } from '@/components/ui/button';
 import { trpc } from '@/lib/trpc';
 
 const NOTICE_CLASS =
-  'border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-lg border p-3 text-sm font-medium';
+  'border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-xl border p-3 text-sm font-medium';
 
 function describeChangeError(error: unknown): string {
   if (error instanceof TRPCClientError) {
@@ -94,26 +94,35 @@ export default function AdminChangePasswordPage() {
   }
 
   return (
-    <div className="mx-auto max-w-md px-4 py-6">
-      <h1 className="text-brand-blue-900 text-2xl font-bold">
-        {forced ? 'Set a new password' : 'Change password'}
-      </h1>
-      <p className="text-muted-foreground mt-1 text-sm">
-        {forced
-          ? 'You signed in with a temporary password. Choose your own to continue — nothing else is available until you do.'
-          : 'Choose a new password. Any other device you are signed in on will be signed out.'}
-      </p>
+    <div className="flex max-w-md flex-col gap-6">
+      <header className="flex flex-col gap-1">
+        <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.08em]">
+          Your account
+        </p>
+        <h1 className="text-brand-ink text-2xl font-bold sm:text-3xl">
+          {forced ? 'Set a new password' : 'Change password'}
+        </h1>
+        <p className="text-brand-error text-sm">
+          {forced
+            ? 'You signed in with a temporary password. Choose your own to continue — nothing else is available until you do.'
+            : 'Choose a new password. Any other device you are signed in on will be signed out.'}
+        </p>
+      </header>
 
       {done ? (
         <p
           role="status"
-          className="bg-brand-blue-50 text-brand-blue-900 mt-4 rounded-lg p-3 text-sm font-medium"
+          className="bg-brand-blue-50 text-brand-blue-900 border-brand-blue-200 rounded-xl border p-3 text-sm font-medium"
         >
           Your password was changed. Your other sign-ins were ended.
         </p>
       ) : null}
 
-      <form onSubmit={onSubmit} noValidate className="mt-6 space-y-5">
+      <form
+        onSubmit={onSubmit}
+        noValidate
+        className="border-brand-blue-100 space-y-5 rounded-[14px] border bg-white p-5"
+      >
         {banner ? (
           <p role="alert" className={NOTICE_CLASS}>
             {banner}
@@ -143,7 +152,11 @@ export default function AdminChangePasswordPage() {
           error={errors.confirmPassword}
         />
 
-        <Button type="submit" disabled={change.isPending} className="tap-target w-full">
+        <Button
+          type="submit"
+          disabled={change.isPending}
+          className="tap-target bg-brand-blue-700 hover:bg-brand-blue-800 w-full rounded-[10px] font-semibold text-white transition-colors"
+        >
           {change.isPending ? (
             <>
               <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />
