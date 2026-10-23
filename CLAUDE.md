@@ -397,10 +397,18 @@ Every page reads tours, destinations, packages, reviews, FAQs and settings from 
   relative to the dashboard's `now`), puts a locked driver in front of the office instead of waiting
   for them to ring — and links to `/admin/drivers`. **Still manual, and deliberately:** nothing
   unlocks a driver automatically, because the clock already does that.
-  **Known gap:** `unlock` has **no UI caller yet**. The drivers screen offers Reset PIN and not
-  Unlock, because surfacing a driver's locked state there needs a new `DriverRow` field
-  (`lockedUntil`), which is outside the task that added this. The alert names the locked drivers and
-  the mutation is reachable by API; a follow-up task should add the button.
+  **The UI caller landed in Task 5b** (owner decision 2026-10-24), closing the gap this entry used
+  to record: `/admin/drivers` now carries an **Unlock** button beside Reset PIN, with the same inline
+  two-step confirm, shown only while that row is locked. What the row carries is
+  `DriverRow.isLockedOut` — a **boolean the server derives** in `admin.drivers.list` against the one
+  `now` the request reads, mirroring the alert's own question — and **never `locked_until` itself**:
+  the browser compares no clocks, and no unlock time, tier or attempt count is on the wire for any
+  surface. `unlock`'s row lock also filters on `is_active` now, so an inactive driver's id is refused
+  with the **same `NOT_FOUND` message an unissued id gets** (a distinguishable refusal would make a
+  numeric id an oracle for which drivers exist). And the driver sign-in screen's `locked` sentence
+  stopped naming a duration in the same change: "15 minutes, longer if it keeps happening today" was
+  the first tier quoted at a driver who might be on their third, so the copy now says waiting works
+  and points at the office, which finally has a button behind it.
 - **§8's third limit is 10 `driver.login` attempts per IP per 15 minutes, which is fewer than the
   fifteen counted failures three lockouts cost — so a single IP cannot reach the third backoff tier
   inside one limiter window without the limiter firing first** (measured 2026-10-16 and pinned:

@@ -249,26 +249,35 @@ describe('AdminDashboardPage', () => {
     });
 
     /**
-     * Review finding, 2026-10-24. The card links to `/admin/drivers`, which
-     * today offers **Reset PIN and no Unlock** — `admin.drivers.unlock` exists
-     * as a procedure, but surfacing a driver's locked state on that screen
-     * needs a `lockedUntil` on `DriverRow` that no task has added yet. So the
-     * copy must not instruct an action the destination cannot perform; the
-     * wording shipped on 2026-10-23 said "Unlock it only if the driver is due
-     * out before then — it does not change their PIN", and it did.
+     * REPLACES `'instructs no on-screen action the drivers screen cannot yet
+     * perform'` (Week 7 Task 5b, owner decision 2026-10-24, point 1).
      *
-     * This test is what stops that sentence drifting back in ahead of the
-     * button. **Delete it in the same change that ships the button**, not
-     * before: it guards a gap, not a principle.
+     * That test asserted the card's copy contained no `unlock` at all, and it
+     * was right to while it was true: `admin.drivers.unlock` existed as a
+     * procedure, the drivers screen offered Reset PIN only, and a card telling
+     * an operator to do something the page it links to cannot do is worse than
+     * one that only reports. Its own note said to delete it in the change that
+     * ships the button — **the button now exists on `/admin/drivers`** (this
+     * task), so the fact it guarded is gone and the assertion inverts rather
+     * than loosens: the card must now NAME where the action lives.
+     *
+     * What it still holds, and why the order is asserted rather than described:
+     * the self-clearing fact comes FIRST, so the card reads as information with
+     * an option, not as a job. "Unlock it" as an opener would make a dispatcher
+     * think a lockout needs clearing by hand, which is exactly what the backoff
+     * removed.
      */
-    it('instructs no on-screen action the drivers screen cannot yet perform', async () => {
+    it('points at the Unlock control the drivers screen now has, after the fact that it clears itself', async () => {
       renderDashboard([
         alert('driver_locked', 1, [{ id: 7, label: 'Joselito Reyes', date: null }]),
       ]);
       const card = await screen.findByTestId('alert-driver_locked');
-      expect(card.textContent ?? '').not.toMatch(/\bunlock\b/i);
-      // The only action it offers is the link, which goes to a screen that
-      // does exist and does list the driver.
+      const text = card.textContent ?? '';
+      expect(text).toMatch(/unlock on the drivers screen/i);
+      // Order, not just presence: the self-clearing fact leads.
+      expect(text.search(/clears itself/i)).toBeLessThan(text.search(/unlock/i));
+      // Still exactly one action link, to the screen that now carries the
+      // button the sentence names.
       const links = within(card).getAllByRole('link');
       expect(links).toHaveLength(1);
       expect(links[0]!.getAttribute('href')).toBe('/admin/drivers');

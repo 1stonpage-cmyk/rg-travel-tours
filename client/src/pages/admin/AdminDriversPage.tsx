@@ -63,14 +63,35 @@
  * is no local cache and no test-only seam: every leave shown here, and
  * every id `removeLeave` is called with, came from the server.
  *
- * ## No lockout state shown
+ * ## The lockout, and the Unlock button (Week 7 Task 5b)
  *
- * `list`'s projection has no lockout columns either (by Task 6's own
- * design), so this screen cannot show "locked out" truthfully and does not
- * try to. The PIN panel still says a reset clears any lockout — that is a
- * true statement about what the action DOES, not a fabricated prior-state
- * badge, so it does not run afoul of "never convey meaning by colour
- * alone" or invented state.
+ * This screen showed no lockout state at all until 2026-10-24, because
+ * `list`'s projection carried no lockout column — so `admin.drivers.unlock`
+ * (Task 5) had no caller, the dashboard's `driver_locked` alert linked here
+ * and found nothing to do, and the driver sign-in screen told a locked-out
+ * driver to ring an office that had no button.
+ *
+ * What arrived instead of a timestamp is `DriverRow.isLockedOut`, a boolean
+ * the SERVER derives against the one `now` the request reads. This page
+ * compares no clocks, and shows no unlock time, no tier and no attempt
+ * count — none of the three is on the wire, which is deliberate (owner
+ * decision 2026-10-24, and Q1 before it).
+ *
+ * The control is the same inline two-step confirm Reset PIN uses — "Unlock"
+ * becomes `Unlock ${name}?` plus a Cancel — and it appears ONLY while the
+ * server says that row is locked. On success the page invalidates `list` and
+ * renders what comes back, so the button goes because the server now says
+ * the driver is unlocked, never because the page assumed it. A refusal (an
+ * expired session, a driver deactivated meanwhile, a lockout that lapsed
+ * between the render and the tap) shows the server's own sentence in the
+ * page's amber banner and leaves the row exactly as it was.
+ *
+ * Unlock is `brand-blue`, not a destructive colour, and it is not the PIN
+ * reset: it clears the lockout and leaves the driver's PIN alone, which is
+ * the whole reason it exists beside Reset PIN rather than instead of it.
+ *
+ * The PIN panel still says a reset clears any lockout — a true statement
+ * about what that action DOES, not a fabricated prior-state badge.
  *
  * ## Personal data
  *
@@ -386,6 +407,7 @@ export default function AdminDriversPage() {
     pin: string;
   } | null>(null);
   const [confirmResetId, setConfirmResetId] = useState<number | null>(null);
+  const [confirmUnlockId, setConfirmUnlockId] = useState<number | null>(null);
   const [confirmDeactivateId, setConfirmDeactivateId] = useState<number | null>(null);
   const [activeBanner, setActiveBanner] = useState<string | null>(null);
   const [activeNotice, setActiveNotice] = useState<string | null>(null);
@@ -402,6 +424,7 @@ export default function AdminDriversPage() {
   useEffect(() => {
     setPinPanel(null);
     setConfirmResetId(null);
+    setConfirmUnlockId(null);
     setConfirmDeactivateId(null);
   }, [location.pathname]);
 
@@ -456,6 +479,35 @@ export default function AdminDriversPage() {
       const driver = (list.data ?? []).find((candidate) => candidate.id === variables.id);
       setPinPanel({ kind: 'reset', name: driver?.name ?? 'this driver', pin: data.pin });
       setConfirmResetId(null);
+    },
+  });
+
+  /**
+   * Lifts a live PIN lockout and nothing else (Task 5b). It does NOT touch
+   * the PIN, so there is no reveal panel to show — and any PIN left on screen
+   * from an earlier reset is taken down, like every other mutation here.
+   *
+   * It reports through the page's single notice/alert pair rather than adding
+   * a second live region to the roster, the same way `setActive` does.
+   */
+  const unlock = trpc.admin.drivers.unlock.useMutation({
+    onMutate: () => {
+      setActiveBanner(null);
+      setActiveNotice(null);
+    },
+    onSuccess: (_data, variables) => {
+      const driver = (list.data ?? []).find((candidate) => candidate.id === variables.id);
+      const name = driver?.name ?? 'This driver';
+      setPinPanel(null);
+      setConfirmUnlockId(null);
+      setActiveNotice(`${name} can sign in again now, with the PIN they already have.`);
+      // The button disappears because the re-fetched row says the lockout is
+      // gone — not because this page decided it was.
+      void utils.admin.drivers.list.invalidate();
+    },
+    onError: (error) => {
+      setConfirmUnlockId(null);
+      setActiveBanner(errorMessage(error, 'Could not unlock this driver. Nothing was changed.'));
     },
   });
 
@@ -750,6 +802,7 @@ export default function AdminDriversPage() {
             const leaveMutationPending =
               addLeave.isPending && addLeave.variables?.driverId === driver.id;
             const resettingThisDriver = resetPin.isPending && resetPin.variables?.id === driver.id;
+            const unlockingThisDriver = unlock.isPending && unlock.variables?.id === driver.id;
             const changingThisDriver = setActive.isPending && setActive.variables?.id === driver.id;
 
             return (
@@ -821,6 +874,51 @@ export default function AdminDriversPage() {
                           Reset PIN
                         </Button>
                       )}
+
+                      {/*
+                       * Only while the SERVER says this row is locked out
+                       * (Task 5b). Same confirm-then-commit shape as Reset
+                       * PIN, and a separate confirm id so one open question
+                       * never answers the other.
+                       */}
+                      {driver.isLockedOut ? (
+                        confirmUnlockId === driver.id ? (
+                          <>
+                            <Button
+                              type="button"
+                              size="sm"
+                              className={PRIMARY_BUTTON}
+                              disabled={unlock.isPending}
+                              onClick={() => unlock.mutate({ id: driver.id })}
+                            >
+                              {unlockingThisDriver ? 'Unlocking…' : `Unlock ${driver.name}?`}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className={OUTLINE_BUTTON}
+                              disabled={unlock.isPending}
+                              onClick={() => setConfirmUnlockId(null)}
+                            >
+                              Cancel
+                            </Button>
+                          </>
+                        ) : (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className={OUTLINE_BUTTON}
+                            onClick={() => {
+                              setActiveNotice(null);
+                              setConfirmUnlockId(driver.id);
+                            }}
+                          >
+                            Unlock
+                          </Button>
+                        )
+                      ) : null}
 
                       {driver.isActive ? (
                         <Button

@@ -117,6 +117,25 @@ export interface DriverRow {
   status: string;
   isActive: boolean;
   /**
+   * Whether this driver's PIN lockout is live right now (owner decision
+   * 2026-10-24, point 1) — the signal the drivers screen gates its Unlock
+   * button on.
+   *
+   * **Computed on the server**, in `admin.drivers.list`, against the one
+   * `now` that request reads: `locked_until IS NOT NULL AND locked_until >
+   * now`. The same question the dashboard's `driverLocked` alert asks
+   * (`services/dispatch/alerts.ts`), so the card and the button cannot
+   * disagree about who is locked.
+   *
+   * A boolean, and deliberately NOT the raw `lockedUntil` timestamp: the
+   * browser compares no clocks and no timezones to decide whether to offer
+   * the control, and nothing on the admin screen needs the exact unlock
+   * instant — which is the same reason the driver's own screen is never told
+   * its tier, its banked count or its unlock time (Q1, a different surface,
+   * the same principle).
+   */
+  isLockedOut: boolean;
+  /**
    * The derived guide rating, or `null` when the driver has fewer than
    * {@link DRIVER_RATING_MIN_RATINGS} real ratings (owner-decided
    * 2026-10-15). Never a fabricated or defaulted number — see

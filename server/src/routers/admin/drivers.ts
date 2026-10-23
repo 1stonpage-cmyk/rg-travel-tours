@@ -69,6 +69,7 @@ type DriverSelect = {
   emergencyContact: string | null;
   status: string;
   isActive: boolean;
+  lockedUntil: Date | null;
 };
 /** The driver row shape Drizzle's `.values()` / `.set()` want. */
 type DriverInsert = typeof drivers.$inferInsert;
@@ -78,8 +79,19 @@ function toDbDate(value: string | null): Date | null {
   return value === null ? null : new Date(`${value}T00:00:00Z`);
 }
 
+/**
+ * `now` is a PARAMETER, not a clock read in here (owner decision 2026-10-24,
+ * point 1): `isLockedOut` is a time-dependent answer, and this codebase reads
+ * the instant once at the request boundary so every row in one response is
+ * judged against the same moment — and so a boundary is testable without
+ * faking timers.
+ *
+ * `lockedUntil` is consumed here and never copied into the returned row: the
+ * raw instant does not go on the wire (see `DriverRow.isLockedOut`).
+ */
 function toDriverRow(
   row: DriverSelect,
+  now: Date,
   leaves: DriverLeaveRow[] = [],
   rating: DriverRating | null = null,
 ): DriverRow {
@@ -94,6 +106,7 @@ function toDriverRow(
     emergencyContact: row.emergencyContact,
     status: row.status,
     isActive: row.isActive,
+    isLockedOut: row.lockedUntil !== null && row.lockedUntil.getTime() > now.getTime(),
     rating,
     leaves,
   };
@@ -175,6 +188,11 @@ const idInput = z.object({ id: z.number().int().positive() }).strict();
 
 export const adminDriversRouter = router({
   list: adminProcedure('vansDrivers').query(async () => {
+    /*
+     * One clock read for the whole response: `isLockedOut` below is derived
+     * against this instant for every row, rather than once per row.
+     */
+    const now = new Date();
     const rows = await getDb()
       .select({
         id: drivers.id,
@@ -187,6 +205,12 @@ export const adminDriversRouter = router({
         emergencyContact: drivers.emergencyContact,
         status: drivers.status,
         isActive: drivers.isActive,
+        /*
+         * Read so `toDriverRow` can DERIVE `isLockedOut` — the column itself
+         * is not in the response. `pin_hash` is still absent from this
+         * projection, and still the reason the projection is explicit.
+         */
+        lockedUntil: drivers.lockedUntil,
       })
       .from(drivers)
       .orderBy(asc(drivers.name));
@@ -274,7 +298,7 @@ export const adminDriversRouter = router({
     }
 
     return rows.map((row) =>
-      toDriverRow(row, byDriver.get(row.id) ?? [], ratingByDriver.get(row.id) ?? null),
+      toDriverRow(row, now, byDriver.get(row.id) ?? [], ratingByDriver.get(row.id) ?? null),
     );
   }),
 
@@ -522,6 +546,16 @@ export const adminDriversRouter = router({
    * account), and would put a `driver.unlocked` row in the log for an unlock
    * that did not happen.
    *
+   * And an INACTIVE driver is refused as an unknown id is (owner decision
+   * 2026-10-24, point 3) — see the `where` clause for both halves of why.
+   *
+   * ## Who calls it
+   *
+   * The Unlock button on `/admin/drivers`, shown only while that row's
+   * server-computed `isLockedOut` is true (Task 5b). Until then this mutation
+   * was reachable by API only, which is what made the dashboard alert's copy
+   * a promise with nothing behind it.
+   *
    * `adminProcedure('vansDrivers')` — owner and dispatcher, the same §9 area
    * `resetPin` uses, never finance. The audit row names the actor and the
    * driver; `data` carries the lockout it lifted and the count it left
@@ -546,7 +580,22 @@ export const adminDriversRouter = router({
             lockoutCount: drivers.lockoutCount,
           })
           .from(drivers)
-          .where(eq(drivers.id, input.id))
+          /*
+           * `is_active` is part of the WHERE, not a check afterwards (owner
+           * decision 2026-10-24, point 3) — the same question the dashboard's
+           * `driverLocked` alert asks, so the alert, the button and this
+           * mutation cannot disagree about who can be unlocked. A driver off
+           * the roster cannot sign in at all, so there is nothing an unlock
+           * would give them; they come back by being reactivated.
+           *
+           * The refusal is then the EXISTING `NOT_FOUND` below, word for word
+           * the answer an id that was never issued gets. Nothing on this
+           * screen needs to distinguish "no such driver" from "exists but is
+           * off the roster", and a distinguishable refusal would make a
+           * numeric id an oracle for which drivers exist — the same reasoning
+           * `driverProcedure`'s booking lookup already follows.
+           */
+          .where(and(eq(drivers.id, input.id), eq(drivers.isActive, true)))
           // The row lock: two dispatchers clicking at once must not both
           // write, and must not both audit an unlock.
           .for('update')

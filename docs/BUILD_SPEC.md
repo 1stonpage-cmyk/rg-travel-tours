@@ -1184,6 +1184,8 @@ exists (it is part of 2B), but no submission, moderation, admin or export side o
 >    single IP can never reach it" holds only inside one limiter window, since a patient IP that
 >    waits out each 15-minute lockout never trips the limiter. The per-IP limit also depends on
 >    `trust proxy` being set at deploy (`LAUNCH_CHECKLIST.md`).
+>    **Superseded 2026-10-23 by the backoff policy (Week 7 Task 5) — see `CLAUDE.md`'s driver-portal
+>    section.**
 > 8. **Every app-surface route is served HTTP 404 with the "Page not found" title.** `resolvePage`
 >    has no case for `/driver`, `/admin` or `/portal`, so the shell they get is the not-found one:
 >    `/driver/login`, `/driver/trip/:id`, `/admin` and `/portal` all answer `404` with

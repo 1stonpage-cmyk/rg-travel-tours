@@ -348,6 +348,46 @@ describeWithDb('drivers', () => {
     await expect(verifyPassword(pin, row.pinHash)).resolves.toBe(true);
   });
 
+  /**
+   * `list`'s locked-out signal (owner decision 2026-10-24, point 1) — the
+   * field the Unlock button is gated on.
+   *
+   * It is a BOOLEAN derived on the server, against the one `now` the request
+   * reads, and the raw `locked_until` instant deliberately never reaches the
+   * response: the browser compares no clocks and no timezones to decide
+   * whether to offer the button, and nothing on the admin screen needs the
+   * exact unlock time (the same principle as Q1's "no tier, no banked count
+   * and no `locked_until` instant" on the driver's own screen, a different
+   * surface).
+   */
+  it('derives isLockedOut server-side — a live lockout only, never the raw instant', async () => {
+    const lockedId = await makeDriver();
+    const lapsedId = await makeDriver();
+    const neverLockedId = await makeDriver();
+    const db = getDb();
+    await db
+      .update(drivers)
+      .set({ failedAttempts: 5, lockedUntil: new Date(Date.now() + 30 * 60_000) })
+      .where(eq(drivers.id, lockedId));
+    // Five minutes in the PAST: `failed_attempts` still standing, but the
+    // driver can sign in, so the screen must not offer to unlock them.
+    await db
+      .update(drivers)
+      .set({ failedAttempts: 5, lockedUntil: new Date(Date.now() - 5 * 60_000) })
+      .where(eq(drivers.id, lapsedId));
+
+    const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
+    const rows = await api.admin.drivers.list();
+    const flagFor = (id: number) => rows.find((row) => row.id === id)?.isLockedOut;
+    expect(flagFor(lockedId)).toBe(true);
+    expect(flagFor(lapsedId)).toBe(false);
+    expect(flagFor(neverLockedId)).toBe(false);
+
+    // The timestamp itself is not on the wire — not "present but unused".
+    expect(rows.find((row) => row.id === lockedId)).not.toHaveProperty('lockedUntil');
+    expect(JSON.stringify(rows)).not.toContain('lockedUntil');
+  });
+
   /* ------------------------------------------------------------------ *
    * `unlock` — the lockout half without the PIN half
    * (owner decision 2026-10-23, Q1, option C+E)
@@ -445,6 +485,42 @@ describeWithDb('drivers', () => {
       await expect(api.admin.drivers.unlock({ id: 2_000_000_000 })).rejects.toMatchObject({
         code: 'NOT_FOUND',
       });
+    });
+
+    /**
+     * Owner decision 2026-10-24, point 3: the row lock filters on
+     * `is_active` too, so `unlock` asks the same question the dashboard's
+     * `driverLocked` alert asks — a driver off the roster is not a driver the
+     * office unlocks; they sign in again by being reactivated.
+     *
+     * The refusal is the EXISTING `NOT_FOUND`, byte for byte, rather than a
+     * distinguishable "exists but is inactive". There is no legitimate reason
+     * for this screen to turn a numeric id into an oracle for which drivers
+     * exist, and the same reasoning already governs `driverProcedure`'s
+     * booking lookup (`CLAUDE.md`, driver portal): one `WHERE`, never a check
+     * afterwards.
+     */
+    it('REFUSES an inactive driver with the SAME refusal an unknown id gets, and changes nothing', async () => {
+      const id = await makeDriver();
+      await lockOutNow(id);
+      await getDb().update(drivers).set({ isActive: false }).where(eq(drivers.id, id));
+
+      const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
+      const refused = (await api.admin.drivers.unlock({ id }).catch((error: unknown) => error)) as {
+        code?: string;
+        message?: string;
+      };
+      const unknown = (await api.admin.drivers
+        .unlock({ id: 2_000_000_001 })
+        .catch((error: unknown) => error)) as { code?: string; message?: string };
+
+      expect(refused).toMatchObject({ code: 'NOT_FOUND', message: 'No driver with that id.' });
+      expect(refused.code).toBe(unknown.code);
+      expect(refused.message).toBe(unknown.message);
+
+      // Fails closed: the lockout stands and nothing is logged.
+      expect((await lockoutColumns(id)).lockedUntil).not.toBeNull();
+      expect(await auditRowsFor('driver', id)).toEqual([]);
     });
 
     it('writes exactly ONE audit row, naming the staff actor and never a PIN', async () => {

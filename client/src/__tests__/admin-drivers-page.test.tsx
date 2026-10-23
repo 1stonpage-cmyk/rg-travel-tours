@@ -56,6 +56,10 @@ const DRIVER = {
   emergencyContact: 'Juan Santos 09179876543',
   status: 'available',
   isActive: true,
+  // Server-derived (`admin.drivers.list` computes it against one `now`), and
+  // the only thing the Unlock button is gated on — there is no `lockedUntil`
+  // on the wire for this page to compare against its own clock.
+  isLockedOut: false,
   rating: null as { average: number; count: number } | null,
   // The real shape `admin.drivers.list` now sends (fix round 1,
   // 2026-10-14) — a driver with no leaves gets `[]`, never `undefined`.
@@ -65,12 +69,16 @@ const DRIVER = {
 interface RenderOverrides {
   /** Soft-delete flag — an inactive driver must look different. */
   isActive?: boolean;
+  /** The server's locked-out signal — the Unlock button's only gate. */
+  isLockedOut?: boolean;
   /** The derived guide rating, or null below the threshold. */
   rating?: { average: number; count: number } | null;
   onResetPin?: (input: unknown) => void;
   onRemoveLeave?: (input: unknown) => void;
   /** Records what `setActive` was called with. */
   onSetActive?: (input: unknown) => void;
+  /** Records what `unlock` was called with. */
+  onUnlock?: (input: unknown) => void;
   leaves?: Array<{ id: number; startDate: string; endDate: string; reason: string | null }>;
   addLeaveError?: string;
 }
@@ -91,17 +99,26 @@ function renderPage(overrides: RenderOverrides = {}) {
     ...DRIVER,
     ...(overrides.leaves ? { leaves: overrides.leaves } : {}),
     ...(overrides.isActive === undefined ? {} : { isActive: overrides.isActive }),
+    ...(overrides.isLockedOut === undefined ? {} : { isLockedOut: overrides.isLockedOut }),
     ...(overrides.rating === undefined ? {} : { rating: overrides.rating }),
   };
-  // `list` answers from a variable `setActive` flips, as the real server
-  // does, so a test can see the page re-render what the server now says
-  // rather than what the page assumed.
+  // `list` answers from variables `setActive` and `unlock` flip, as the real
+  // server does, so a test can see the page re-render what the server now
+  // says rather than what the page assumed.
   let serverIsActive = driver.isActive;
+  let serverIsLockedOut = driver.isLockedOut;
   mockTrpc({
-    'admin.drivers.list': () => [{ ...driver, isActive: serverIsActive }],
+    'admin.drivers.list': () => [
+      { ...driver, isActive: serverIsActive, isLockedOut: serverIsLockedOut },
+    ],
     'admin.drivers.setActive': (input: unknown) => {
       overrides.onSetActive?.(input);
       serverIsActive = (input as { isActive: boolean }).isActive;
+      return { ok: true };
+    },
+    'admin.drivers.unlock': (input: unknown) => {
+      overrides.onUnlock?.(input);
+      serverIsLockedOut = false;
       return { ok: true };
     },
     'admin.drivers.create': () => ({ id: 2, pin: '654321' }),
@@ -251,6 +268,77 @@ describe('AdminDriversPage', () => {
     });
     await user.click(await screen.findByRole('button', { name: /remove/i }));
     expect(calls).toEqual([{ id: 42 }]);
+  });
+
+  /*
+   * Week 7 Task 5b (owner decision 2026-10-24, point 1): the Unlock button.
+   *
+   * `admin.drivers.unlock` shipped with Task 5 and had no caller — the office
+   * could lift a lockout only by API, while the dashboard alert pointed at
+   * this screen. The server half (what it clears, what it leaves, and that it
+   * never touches `pin_hash`) is `admin-drivers.test.ts`; this is the screen's
+   * half: the button appears only for a driver the SERVER says is locked, the
+   * confirm gates the call, and the button goes when the re-fetched row says
+   * the lockout is gone.
+   */
+  describe('unlocking a locked-out driver', () => {
+    it('offers no Unlock on a driver the server does not report as locked out', async () => {
+      renderPage({ isLockedOut: false });
+      // The roster has rendered — so the absence below is an absence, not a
+      // page that has not loaded yet.
+      expect(await screen.findByRole('button', { name: /reset pin/i })).toBeTruthy();
+      expect(screen.queryByRole('button', { name: /^unlock$/i })).toBeNull();
+    });
+
+    it('offers Unlock while the server reports a lockout, and asks before calling it', async () => {
+      const calls: unknown[] = [];
+      renderPage({ isLockedOut: true, onUnlock: (v) => calls.push(v) });
+
+      await user.click(await screen.findByRole('button', { name: /^unlock$/i }));
+      // The confirm step is the question and the commit in one button, the
+      // same shape Reset PIN uses on this screen.
+      expect(await screen.findByRole('button', { name: /^unlock maria santos\?$/i })).toBeTruthy();
+      expect(calls).toEqual([]);
+    });
+
+    it('cancelling unlocks nothing and puts the question away', async () => {
+      const calls: unknown[] = [];
+      renderPage({ isLockedOut: true, onUnlock: (v) => calls.push(v) });
+
+      await user.click(await screen.findByRole('button', { name: /^unlock$/i }));
+      await user.click(screen.getByRole('button', { name: /^cancel$/i }));
+
+      expect(screen.queryByRole('button', { name: /^unlock maria santos\?$/i })).toBeNull();
+      expect(await screen.findByRole('button', { name: /^unlock$/i })).toBeTruthy();
+      expect(calls).toEqual([]);
+    });
+
+    it('sends the real id on confirm, and the button goes once the server says they are unlocked', async () => {
+      const calls: unknown[] = [];
+      renderPage({ isLockedOut: true, onUnlock: (v) => calls.push(v) });
+
+      await user.click(await screen.findByRole('button', { name: /^unlock$/i }));
+      await user.click(screen.getByRole('button', { name: /^unlock maria santos\?$/i }));
+
+      expect(calls).toEqual([{ id: 1 }]);
+      // The row re-fetches and `isLockedOut` is false, so neither the confirm
+      // nor the resting button is left on screen. The page never flipped
+      // anything optimistically: this is what the server now says.
+      await waitFor(() => expect(screen.queryByRole('button', { name: /^unlock$/i })).toBeNull());
+      expect(screen.queryByRole('button', { name: /^unlock maria santos\?$/i })).toBeNull();
+    });
+
+    it('shows the server refusal and leaves the driver locked', async () => {
+      renderPage({ isLockedOut: true });
+      mockTrpcError('admin.drivers.unlock', 'NOT_FOUND', 'No driver with that id.');
+
+      await user.click(await screen.findByRole('button', { name: /^unlock$/i }));
+      await user.click(screen.getByRole('button', { name: /^unlock maria santos\?$/i }));
+
+      expect((await screen.findByRole('alert')).textContent).toMatch(/no driver with that id/i);
+      // Still locked, because the server said no.
+      expect(await screen.findByRole('button', { name: /^unlock$/i })).toBeTruthy();
+    });
   });
 
   /*

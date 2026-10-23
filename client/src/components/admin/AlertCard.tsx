@@ -95,22 +95,26 @@ const ALERT_COPY: Record<
    * is information rather than a job — unless the driver is due out before it
    * does.
    *
-   * **It deliberately names no on-screen action** (review finding,
-   * 2026-10-24). An earlier wording read "Unlock it only if the driver is due
-   * out before then — it does not change their PIN", which promised a button
-   * `/admin/drivers` does not have: `admin.drivers.unlock` exists as a
-   * procedure, but the drivers screen offers Reset PIN only, because surfacing
-   * a driver's locked state there needs a `lockedUntil` on `DriverRow` that no
-   * task has added yet. A card that tells an operator to do something the page
-   * it links to cannot do is worse than one that only reports. Put the
-   * instruction back when the button exists, not before.
+   * **It now names the action, because the action exists** (owner decision
+   * 2026-10-24, point 1; Week 7 Task 5b). The wording shipped on 2026-10-23
+   * read "Unlock it only if the driver is due out before then — it does not
+   * change their PIN", and a review took it out: `admin.drivers.unlock`
+   * existed as a procedure, but `/admin/drivers` offered Reset PIN and no
+   * Unlock, so the card instructed an action its own destination could not
+   * perform. That screen now carries the button, gated on a server-computed
+   * `isLockedOut`, so the sentence points at it again.
+   *
+   * The ORDER is the part to keep: the self-clearing fact first, the control
+   * second. "Unlock it" as an opener makes a lockout read as a job, which is
+   * what the backoff removed; "unlock on the Drivers screen" after "nothing
+   * here needs doing unless" reads as the option it is.
    */
   driver_locked: {
     noun: (n) => (n === 1 ? '1 driver is locked out' : `${n} drivers are locked out`),
     href: '/admin/drivers',
     action: 'Open the drivers',
     detail:
-      'A lockout clears itself within the hour, and the driver signs in afterwards with the PIN they already have. Nothing here needs doing unless they are due out before then.',
+      'A lockout clears itself within the hour, and the driver signs in afterwards with the PIN they already have. Nothing here needs doing unless they are due out before then — unlock on the Drivers screen.',
   },
 };
 

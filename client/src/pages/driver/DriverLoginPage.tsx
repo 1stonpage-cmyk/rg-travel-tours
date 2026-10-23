@@ -28,18 +28,17 @@
  *     (driver codes are short and printed on a van, so the PIN is the only
  *     half that is hard to get). A sentence saying which half was wrong
  *     would hand back in the browser the oracle the server withholds.
- *  2. **`locked` promises the schedule, never a single number and never the
- *     driver's place in it** (rewritten for owner decision 2026-10-23, Q1).
- *     This rule used to read "`locked` and `needs_admin_unlock` stay two
- *     sentences" — one clearing in fifteen minutes and the other never — and
- *     the second sentence is gone with the refusal it belonged to: a lockout
- *     is never terminal now, so waiting is always the driver's next action.
- *     What replaced it is a narrower rule. The lockout lengthens inside a day
- *     (15 → 30 → 60 minutes), the server sends no tier and no unlock time, so
- *     the sentence says "15 minutes, longer if it keeps happening today" and
- *     the screen never pretends to know which. Still amber, because waiting is
- *     still the cure — and the words carry it, because colour alone is a
- *     WCAG 1.4.1 failure.
+ *  2. **`locked` names no duration at all** (owner decision 2026-10-24,
+ *     point 2 — tightening 2026-10-23's Q1). This rule once read "`locked`
+ *     and `needs_admin_unlock` stay two sentences", one clearing in fifteen
+ *     minutes and the other never; the second went with the refusal it
+ *     belonged to when the lockout stopped being terminal. The survivor then
+ *     described the schedule ("15 minutes, longer if it keeps happening
+ *     today"), and that number is gone too: the lockout lengthens inside a
+ *     day (15 → 30 → 60 minutes) and the server sends no tier, no count and
+ *     no unlock time, so the only honest sentence says waiting works and
+ *     points at the office. Still amber, because waiting is still the cure —
+ *     and the words carry it, because colour alone is a WCAG 1.4.1 failure.
  *  3. **The attempt count is never rendered.** "2 tries left" tells a
  *     shoulder-surfer how much room they have and tells the driver nothing
  *     they can act on. §8's policy (5 failures → a lockout of 15, 30 or 60
@@ -88,22 +87,29 @@ const REFUSAL_COPY: Record<DriverLoginRefusal, Refusal> = {
     text: 'We could not sign you in. Check what you typed and try again.',
   },
   /*
-   * REWRITTEN for owner decision 2026-10-23 (Q1). It used to promise exactly
-   * fifteen minutes, which was true of the old policy's only lockout length.
-   * The lockout now backs off — 15, then 30, then up to an hour inside the
-   * same day — so a flat promise of fifteen would have a driver trying again
-   * at minute sixteen, being refused, and concluding the portal is broken.
+   * REWRITTEN AGAIN for owner decision 2026-10-24 (point 2), and the second
+   * rewrite is the interesting one.
    *
-   * It names the SCHEDULE, not the driver's place in it. The server sends no
-   * tier, no count and no unlock time (`asTrpcError`, and that is deliberate),
-   * so this screen genuinely does not know which it is and must not guess.
-   * Still amber, because waiting is still what fixes it; and it offers the
-   * office as the shortcut it now really is — they can unlock the account
-   * without changing the PIN.
+   * Version one promised exactly fifteen minutes — true of the old policy's
+   * only lockout length, and wrong the moment the lockout started backing off
+   * (15, then 30, then up to an hour inside the same day). Version two tried
+   * to describe the schedule instead: "15 minutes, longer if it keeps
+   * happening today". The owner's ruling is that the number itself was the
+   * mistake — fifteen is the FIRST TIER, so the driver it is wrong for is
+   * exactly the driver on their second lockout, and the server deliberately
+   * sends no tier, no count and no unlock instant (`asTrpcError`). A screen
+   * that cannot know must not imply. **No number, no tier, no time** — and
+   * `driver-login.test.tsx` now asserts the absence, not just the presence.
+   *
+   * The other half it was faulted for: "ring the office" was technically true
+   * (the office could always call `admin.drivers.unlock` by API) but read as a
+   * promise with nothing behind it. Since Task 5b there is a real Unlock
+   * button on `/admin/drivers`, so the offer is an offer. Still amber, because
+   * the driver's own patience fixes it without anyone.
    */
   locked: {
     tone: 'wait',
-    text: 'Too many wrong PINs, so sign-in is locked for a while — 15 minutes, longer if it keeps happening today. Try again later, or ring the office if you are due out now: they can unlock it without changing your PIN.',
+    text: 'Too many wrong PINs, so sign-in is locked for a while. Wait and try again, or ask the office to unlock you — they can do that without changing your PIN.',
   },
 };
 

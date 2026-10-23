@@ -9,12 +9,16 @@
  * what it proves is words, because on this screen the words are the feature:
  *
  *  - one generic sentence for a refused pair, naming neither half;
- *  - ONE sentence for a lockout, naming the schedule rather than a single
- *    number and offering the office as the shortcut it now is. Until
- *    2026-10-23 there were TWO — "Locked for 15 minutes" and "Ask the office
- *    to reset your PIN" — because a lockout could be terminal; it cannot be
- *    now, so waiting is always the driver's next action and the second
- *    sentence went with the refusal it belonged to;
+ *  - ONE sentence for a lockout, naming NO duration at all and offering the
+ *    office as the shortcut it now really is (owner decision 2026-10-24).
+ *    Until 2026-10-23 there were TWO — "Locked for 15 minutes" and "Ask the
+ *    office to reset your PIN" — because a lockout could be terminal; it
+ *    cannot be now, so waiting is always the driver's next action and the
+ *    second sentence went with the refusal it belonged to. The surviving
+ *    sentence briefly described the schedule ("15 minutes, longer if it keeps
+ *    happening today"); the owner removed the number too, because fifteen is
+ *    only the first tier and the screen is never told which tier it is
+ *    looking at;
  *  - no attempt count, ever.
  *
  * ## What jsdom cannot see, and this file therefore does not claim
@@ -190,16 +194,22 @@ describe('DriverLoginPage — what a refusal is allowed to say', () => {
   });
 
   /**
-   * REWRITTEN for owner decision 2026-10-23 (Q1). It used to assert the
-   * sentence read `locked for 15 minutes` — true while fifteen was the only
-   * lockout length there was. The lockout now backs off (15 → 30 → 60 minutes
-   * inside a day), so a flat promise of fifteen has a driver trying again at
-   * minute sixteen, being refused, and deciding the portal is broken.
+   * REWRITTEN AGAIN for owner decision 2026-10-24 (point 2). The version this
+   * replaces asserted the sentence said `15 minutes` and `longer if it keeps
+   * happening` — Task 5's own attempt to describe the backoff honestly, and
+   * the owner's ruling is that describing it at all is the mistake: fifteen is
+   * the FIRST TIER, so a driver on their second lockout that day reads a
+   * number that is wrong for them, and the one number the screen can state is
+   * the one the server deliberately never sends. "Never show the exact unlock
+   * time, tier or count" (same decision) is now asserted as a negative over
+   * the whole sentence rather than trusted to review.
    *
-   * What the sentence must do now: name the schedule, offer the office, and
-   * stay amber, because waiting is still what fixes it.
+   * What the sentence must do: say waiting works, and send the driver to the
+   * office — which is a real offer since this task, because the office has a
+   * button on `/admin/drivers` that lifts a lockout without touching the PIN.
+   * Still amber, because the driver's own patience fixes it.
    */
-  it('tells a locked-out driver the lockout can be longer than fifteen minutes, in amber', async () => {
+  it('tells a locked-out driver to wait or ask the office, with no number, tier or unlock time, in amber', async () => {
     mockTrpcError('driver.login', 'FORBIDDEN', 'locked');
     const user = userEvent.setup();
     renderLogin();
@@ -207,13 +217,21 @@ describe('DriverLoginPage — what a refusal is allowed to say', () => {
 
     const alert = await screen.findByRole('alert');
     const text = alert.textContent ?? '';
-    expect(text).toMatch(/15 minutes/i);
-    // The half that would be missing from a copy of the OLD sentence: it can
-    // be longer, and a driver who only reads "15 minutes" is misled.
-    expect(text).toMatch(/longer if it keeps happening/i);
-    // The office can now help without costing the driver their PIN, which is
-    // the fact `admin.drivers.unlock` was added for.
+    expect(text).toMatch(/too many/i);
+    expect(text).toMatch(/try again/i);
+    // The office is now an offer with a control behind it, not a hope.
+    expect(text).toMatch(/ask the office to unlock you/i);
+    // And the useful half of the old sentence survives: a lockout does not
+    // cost the driver the PIN they have memorised.
     expect(text).toMatch(/without changing your PIN/i);
+    /*
+     * The binding half of the decision. No digit anywhere (so no "15
+     * minutes", no "third try", no clock time) and no duration word either —
+     * the server sends no tier, no count and no unlock instant, so the screen
+     * cannot know which lockout this is and must not imply it does.
+     */
+    expect(text).not.toMatch(/\d/);
+    expect(text).not.toMatch(/\b(?:minutes?|hours?)\b/i);
     // Amber, because it clears by itself (CLAUDE.md: warnings are amber).
     expect(alert.className).toMatch(/\bbg-amber-50\b/);
     expect(alert.className).toMatch(/\btext-amber-900\b/);
