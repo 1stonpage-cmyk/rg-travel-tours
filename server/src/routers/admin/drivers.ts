@@ -88,6 +88,13 @@ function toDbDate(value: string | null): Date | null {
  *
  * `lockedUntil` is consumed here and never copied into the returned row: the
  * raw instant does not go on the wire (see `DriverRow.isLockedOut`).
+ *
+ * **`isActive` is part of the derivation** (review finding, 2026-10-24), not
+ * only of the clock comparison: the dashboard's `driverLocked` alert asks
+ * `and(eq(drivers.isActive, true), gt(drivers.lockedUntil, now))` and `unlock`
+ * refuses an inactive driver, so a flag computed from the clock alone would
+ * offer an Unlock button on the one row where the card is silent and the
+ * mutation answers NOT_FOUND. The three surfaces ask one question.
  */
 function toDriverRow(
   row: DriverSelect,
@@ -106,7 +113,8 @@ function toDriverRow(
     emergencyContact: row.emergencyContact,
     status: row.status,
     isActive: row.isActive,
-    isLockedOut: row.lockedUntil !== null && row.lockedUntil.getTime() > now.getTime(),
+    isLockedOut:
+      row.lockedUntil !== null && row.lockedUntil.getTime() > now.getTime() && row.isActive,
     rating,
     leaves,
   };

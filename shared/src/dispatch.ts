@@ -122,10 +122,13 @@ export interface DriverRow {
    * button on.
    *
    * **Computed on the server**, in `admin.drivers.list`, against the one
-   * `now` that request reads: `locked_until IS NOT NULL AND locked_until >
-   * now`. The same question the dashboard's `driverLocked` alert asks
-   * (`services/dispatch/alerts.ts`), so the card and the button cannot
-   * disagree about who is locked.
+   * `now` that request reads: `is_active AND locked_until IS NOT NULL AND
+   * locked_until > now`. The same question the dashboard's `driverLocked`
+   * alert asks (`services/dispatch/alerts.ts`), `is_active` included, so the
+   * card, the button and `unlock`'s own refusal cannot disagree about who is
+   * locked — the `is_active` half was missing until a review on 2026-10-24
+   * found the three surfaces giving three answers for a driver who was locked
+   * and then deactivated.
    *
    * A boolean, and deliberately NOT the raw `lockedUntil` timestamp: the
    * browser compares no clocks and no timezones to decide whether to offer

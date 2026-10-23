@@ -364,6 +364,7 @@ describeWithDb('drivers', () => {
     const lockedId = await makeDriver();
     const lapsedId = await makeDriver();
     const neverLockedId = await makeDriver();
+    const lockedInactiveId = await makeDriver();
     const db = getDb();
     await db
       .update(drivers)
@@ -375,6 +376,22 @@ describeWithDb('drivers', () => {
       .update(drivers)
       .set({ failedAttempts: 5, lockedUntil: new Date(Date.now() - 5 * 60_000) })
       .where(eq(drivers.id, lapsedId));
+    /*
+     * Locked AND off the roster (review finding, 2026-10-24). The dashboard's
+     * `driverLocked` alert filters these out (`and(eq(drivers.isActive, true),
+     * gt(drivers.lockedUntil, now))`), and `unlock` refuses them, so a flag
+     * that said `true` here would put an Unlock button on the one row where
+     * the card is silent and the mutation answers NOT_FOUND — three surfaces,
+     * three answers. The flag asks the alert's question, whole.
+     */
+    await db
+      .update(drivers)
+      .set({
+        failedAttempts: 5,
+        lockedUntil: new Date(Date.now() + 30 * 60_000),
+        isActive: false,
+      })
+      .where(eq(drivers.id, lockedInactiveId));
 
     const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
     const rows = await api.admin.drivers.list();
@@ -382,6 +399,10 @@ describeWithDb('drivers', () => {
     expect(flagFor(lockedId)).toBe(true);
     expect(flagFor(lapsedId)).toBe(false);
     expect(flagFor(neverLockedId)).toBe(false);
+    expect(flagFor(lockedInactiveId)).toBe(false);
+    // And the row IS in the response — this is a false flag on a listed
+    // driver, not a driver the projection dropped.
+    expect(rows.some((row) => row.id === lockedInactiveId)).toBe(true);
 
     // The timestamp itself is not on the wire — not "present but unused".
     expect(rows.find((row) => row.id === lockedId)).not.toHaveProperty('lockedUntil');
