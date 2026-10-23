@@ -520,12 +520,32 @@ two paths allowed to mark a booking paid.
 
 **Login:** driver selects name (or enters driver code) + 6-digit PIN.
 
-- PIN hashed, never stored or logged raw. **Three limits stack** (owner decision 2026-10-11):
+- PIN hashed, never stored or logged raw. **Three limits stack** (owner decision 2026-10-11;
+  the second one **superseded 2026-10-23** — see below):
   - **Per driver:** 5 consecutive failed attempts → 15-minute lockout.
-  - **Per driver, escalating:** 3 lockouts inside 24 hours → locked until an **admin** resets it.
-    A correct PIN does **not** clear this; only an admin action does.
+  - **Per driver, backing off:** each further lockout inside 24 hours lasts
+    longer — 15 minutes, then 30, then 60 for the third and every one after, capped there.
+    **Never terminal.** The window is still anchored at the first lockout in it; a correct PIN
+    still clears `failed_attempts` and `locked_until` and still leaves `lockout_count` alone,
+    so the next lockout today keeps its place in the schedule.
   - **Per IP:** 10 attempts per 15 minutes.
-  - Every lockout and every admin reset writes to `audit_log`.
+  - Every lockout, every admin unlock and every admin PIN reset writes to `audit_log`.
+  - **`admin.drivers.unlock`** (owner + dispatcher) clears a live lockout **without issuing a
+    new PIN**, and refuses if the driver is not currently locked. `admin.drivers.resetPin`
+    still does both. A `driver_locked` dashboard alert names every active driver whose lockout
+    is still running, and links to the screen that unlocks them.
+  - **What 2026-10-23 (Q1, option C+E) superseded, and why.** The 2026-10-11 rule read:
+    _"**Per driver, escalating:** 3 lockouts inside 24 hours → locked until an **admin**
+    resets it. A correct PIN does **not** clear this; only an admin action does."_ The
+    argument for it was that a policy an attacker can reset by eventually guessing right is
+    not a policy. In practice it was a better weapon than a defence: a driver code is short,
+    printed inside the van and shared with guests on a manifest, so **anyone** could spend
+    fifteen wrong PINs and park a driver out of the portal until a dispatcher was awake to
+    reset their PIN — and a 5am pickup is exactly when none is. The backoff keeps the cost of
+    guessing (one code is held to 130 attempts per 24 hours, before the per-IP limit is even
+    consulted) while leaving the driver a way back in that needs no human. The old terminal
+    column, `requires_admin_unlock`, remains in the schema and is **read by nothing**; no
+    migration was taken.
 - Session lasts 12 hours. Drivers see **only their own trips**.
 
 ### Views

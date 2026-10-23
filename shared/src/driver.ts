@@ -5,8 +5,10 @@
  * file** (pre-flight ruling, 2026-10-15). Task 9's login screen builds a
  * compiler-exhaustive `Record<DriverLoginRefusal, string>` copy map, exactly
  * as Week 5's `AssignRefusal` / `REFUSAL_COPY` pair does — so the day a
- * sixth refusal is added, the build fails on the screen that has no words
- * for it rather than falling through to generic copy. The client cannot
+ * further refusal is added, the build fails on the screen that has no words
+ * for it rather than falling through to generic copy, and the day one is
+ * REMOVED (2026-10-23) the same map refuses to compile with a key for a
+ * refusal that no longer exists. The client cannot
  * import from `server/`, so the union has to live here for that to work.
  *
  * `shared/src/dispatch.ts` is the pattern this follows.
@@ -65,12 +67,24 @@ export const DRIVER_SESSION_HOURS = 12;
  * to make a screen more helpful: the screen has nothing helpful to say that
  * would not also be said to an attacker.
  *
- * `locked` and `needs_admin_unlock` are separate because the driver's next
- * action differs: wait fifteen minutes, or ring the office. Telling someone
- * to wait when only a dispatcher can help them is how a van leaves without
- * its manifest.
+ * **`needs_admin_unlock` is RETIRED** (owner decision 2026-10-23, Q1, option
+ * C+E), superseding the 2026-10-16 note that used to stand here: *"`locked`
+ * and `needs_admin_unlock` are separate because the driver's next action
+ * differs: wait fifteen minutes, or ring the office."* That was true of the
+ * old policy, in which three lockouts inside 24 hours needed a dispatcher and
+ * a new PIN. The lockout now backs off (15 → 30 → 60 minutes, capped) and is
+ * never terminal, so **waiting is ALWAYS the driver's next action** and there
+ * is no second sentence for a screen to pick. Nothing can produce the reason
+ * any more — `LockoutOutcome` in `server/src/services/driver-lockout.ts` does
+ * not contain it either — so it is gone from the union rather than left as a
+ * member no path returns.
+ *
+ * `locked` keeps its own reason string and its own 403, distinct from
+ * `wrong_credentials`'s 401, for the reason it always had: the two are
+ * different facts with different remedies, and the body carries no count, no
+ * tier and no unlock timestamp in either case.
  */
-export type DriverLoginRefusal = 'wrong_credentials' | 'locked' | 'needs_admin_unlock';
+export type DriverLoginRefusal = 'wrong_credentials' | 'locked';
 
 /* ------------------------------------------------------------------ *
  * The driver's trip list (Week 6 plan, Task 2 — BUILD_SPEC §8)

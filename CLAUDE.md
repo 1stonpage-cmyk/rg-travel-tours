@@ -341,10 +341,17 @@ Every page reads tours, destinations, packages, reviews, FAQs and settings from 
   not exist**. A 403 would confirm the booking exists, and over a numeric id that is a tool for
   walking the whole table towards a guest's phone number (RA 10173). Both halves are one
   `WHERE id = ? AND driver_id = ?`, never a check afterwards.
-- **Every login refusal's `message` IS the reason string** (`wrong_credentials`, `locked`,
-  `needs_admin_unlock`), so the login screen matches the reason rather than parsing prose.
-  `wrong_credentials` is `401`; the other two are `403`. A per-driver lockout is never `429` — that
-  status belongs to the per-IP limiter and the client reads it as "slow down".
+- **Every login refusal's `message` IS the reason string** (`wrong_credentials`, `locked`), so the
+  login screen matches the reason rather than parsing prose.
+  `wrong_credentials` is `401`; `locked` is `403`. A per-driver lockout is never `429` — that
+  status belongs to the per-IP limiter and the client reads it as "slow down". There were three
+  refusals until 2026-10-23; `needs_admin_unlock` went with the terminal lockout (see below), and
+  it is gone from `DriverLoginRefusal` rather than left as a member no path returns.
+  **A refused login's body is the bare reason string and nothing else**, and the backoff did not
+  change that: the tier, the banked lockout count and the exact `locked_until` instant are all
+  known to the server and **none of them is in the response**. Each would tell someone probing a
+  code how much pressure they have already applied, and a driver can act on none of them beyond
+  "try again later".
   **A deactivated driver is `wrong_credentials` too** (owner decision 2026-10-16, D3): same 401, same
   body byte for byte, and the PIN hash is paid on that path as on every other, so the timing says
   nothing either. There is deliberately no `driver_inactive` reason; the real one is the
@@ -352,23 +359,65 @@ Every page reads tours, destinations, packages, reviews, FAQs and settings from 
   counter. **Known residual:** active codes lock after repeated wrong PINs and an inactive one never
   does, so a patient attacker can still tell them apart by hammering until `locked` appears
   (bounded by the per-IP limiter, 10 attempts per 15 minutes).
-- **§8's third limit is 10 `driver.login` attempts per IP per 15 minutes, and the three-lockout
-  escalation needs fifteen counted failures — so a single IP cannot reach `requires_admin_unlock`
-  inside one limiter window without the limiter firing first** (measured 2026-10-16 and now pinned:
+- **The PIN lockout BACKS OFF and is never terminal** (owner decision 2026-10-23, Q1, option C+E),
+  **superseding the terminal escalation that stood here from 2026-10-11 Q9 and was defended as
+  deliberate on 2026-10-16.** Five consecutive wrong PINs still lock a driver; what changed is what
+  the 24-hour window's `lockout_count` is FOR. It now picks the LENGTH from
+  `LOCKOUT_SCHEDULE_MINUTES` (`server/src/services/driver-lockout.ts`) — 15 minutes, then 30, then
+  **60 for the third and every one after, capped there** — instead of ending the policy at three.
+  `MAX_LOCKOUTS_PER_WINDOW`, the `LockoutState.requiresAdminUnlock` field, the
+  `LockoutOutcome` member `'needs_admin_unlock'` and the audit action `driver.unlock_required` are
+  all **removed from the types**, not set to false: a type that cannot express the terminal state is
+  the proof it is gone, and `attemptDriverLogin`'s exhaustive `switch` plus `asTrpcError`'s mean a
+  reintroduction cannot compile quietly. `requires_admin_unlock` survives as a **column nothing
+  reads** (no migration was taken); the login path writes `false` to it on every attempt as a
+  cleanup, and `resetPin` still zeroes it.
+  **Why it was superseded, which matters more than that it was.** The old rule's argument was that a
+  policy an attacker can reset by eventually guessing right is not a policy — true, and it made the
+  control a better weapon than a defence. A driver code is short, printed inside the van and shared
+  with guests on a manifest, so **anyone at all could spend fifteen wrong PINs and park a driver out
+  of the portal** until a dispatcher was awake to reset their PIN; a 5am pickup is exactly when none
+  is. The backoff keeps the guessing cost (130 attempts per 24 hours against one code, computed from
+  the policy by a test, before the per-IP limit is even consulted) while leaving the driver a way
+  back in that needs no human. **Do not reintroduce a terminal state, an uncapped backoff, or a
+  lockout longer than the last tier without a new owner decision** — an unbounded backoff is the
+  terminal state again wearing a clock.
+- **`admin.drivers.unlock` is the office's shortcut, and it never touches the PIN**
+  (same decision). `adminProcedure('vansDrivers')` — owner and dispatcher, the same area `resetPin`
+  uses. It clears `failed_attempts` and `locked_until` **only**: `lockout_count` and
+  `lockout_window_started_at` are left standing, so the driver's next lockout today keeps its place
+  in the schedule — an admin intervening is not the same event as a correct PIN, and clearing the
+  count would hand an attacker a free reset for every helpful dispatcher. It **refuses with
+  `BAD_REQUEST` when the driver is not currently locked** (null or past `locked_until`) rather than
+  succeeding quietly, takes the row lock, and audits `driver.unlocked` with the lockout it lifted,
+  the count it left and `pinReset: false` — never a PIN or a hash. `resetPin` still does both halves,
+  for the case it was written for: a PIN nobody can remember.
+  A seventh dashboard alert, **`driver_locked`** (`driverLocked` in
+  `server/src/services/dispatch/alerts.ts`: an active driver whose `locked_until` is in the future,
+  relative to the dashboard's `now`), puts a locked driver in front of the office instead of waiting
+  for them to ring — and links to `/admin/drivers`. **Still manual, and deliberately:** nothing
+  unlocks a driver automatically, because the clock already does that.
+  **Known gap:** `unlock` has **no UI caller yet**. The drivers screen offers Reset PIN and not
+  Unlock, because surfacing a driver's locked state there needs a new `DriverRow` field
+  (`lockedUntil`), which is outside the task that added this. The alert names the locked drivers and
+  the mutation is reachable by API; a follow-up task should add the button.
+- **§8's third limit is 10 `driver.login` attempts per IP per 15 minutes, which is fewer than the
+  fifteen counted failures three lockouts cost — so a single IP cannot reach the third backoff tier
+  inside one limiter window without the limiter firing first** (measured 2026-10-16 and pinned:
   HTTP 429 on the 11th attempt, with the driver still at `lockout_count = 1`). Correct for an
-  attacker, and the reason any walkthrough of the escalation has to stage the counters and say so. It
-  also means several drivers behind one office NAT share that budget. **Do NOT conclude the escalation
-  code is unreachable and delete it** — it is reachable across IPs (one driver's code tried from
-  several phones or networks, which is the case the three-lockout rule exists for) and across windows
-  (a patient single IP that waits out each 15-minute lockout never trips the limiter at all). That is
-  tested, not reasoned, in the C7 block of `server/src/__tests__/driver-lockout.test.ts`, three
-  tests that each own one layer: **one IP** through the real limiter gets ten attempts and a 429 on
-  the eleventh, the driver locked once and never escalated; **three IPs** through the same limiter
-  send fifteen attempts with no 429, because each address has its own budget; and
-  `attemptDriverLogin` driven directly with an advancing `now` reaches `needs_admin_unlock` on the
-  third lockout, which a correct PIN does not clear. No single test claims both halves, because a
-  request cannot inject `now` and a locked driver's attempts count toward nothing; the clock is why
-  the escalation test has no IP. **Deployment dependency:** the per-IP limit is only per-IP when
+  attacker, and the reason any walkthrough of the backoff has to stage the counters or move the clock
+  and say so. It also means several drivers behind one office NAT share that budget. **Do NOT
+  conclude the later tiers are unreachable and flatten the schedule** — they are reachable across IPs
+  (one driver's code tried from several phones or networks) and across windows (a patient single IP
+  that waits out each lockout never trips the limiter at all). That is tested, not reasoned, in the
+  C7 block of `server/src/__tests__/driver-lockout.test.ts`, three tests that each own one layer:
+  **one IP** through the real limiter gets ten attempts and a 429 on the eleventh, the driver locked
+  exactly once; **three IPs** through the same limiter send fifteen attempts with no 429, because
+  each address has its own budget; and `attemptDriverLogin` driven directly with an advancing `now`
+  lengthens `locked_until` 15 → 30 → 60 minutes in the column and then **lets the driver in with
+  their own PIN**. No single test claims both halves, because a request cannot inject `now` and a
+  locked driver's attempts count toward nothing; the clock is why the backoff test has no IP.
+  **Deployment dependency:** the per-IP limit is only per-IP when
   `trust proxy` is set (`docs/LAUNCH_CHECKLIST.md` carries it as a launch item; `app.ts` does not set
   it), and without it all three limits collapse onto one key — measured by removing it from the test
   app: the three-IP test fails with 429s, so one attacker could lock every driver's login out of

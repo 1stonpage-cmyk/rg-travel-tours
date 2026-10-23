@@ -1,15 +1,15 @@
 /**
  * Week 5, Task 14: the admin dashboard (BUILD_SPEC §9 "Dashboard").
  *
- * Six alert cards, always all six, from `admin.dashboard.alerts`. §9 gives
+ * Seven alert cards, always all seven, from `admin.dashboard.alerts`. §9 gives
  * this screen to all three roles and `ROLE_MATRIX.dashboard` already is that
  * trio, so there is no role gate here — unlike the assign panel, nothing on
  * this page is an action finance cannot take.
  *
  * ## One status region for the whole set
  *
- * Not one per card. Six competing live regions is the named anti-pattern in
- * the `ui-ux-pro-max` live-badge guidance, and a screen reader reading six
+ * Not one per card. Seven competing live regions is the named anti-pattern in
+ * the `ui-ux-pro-max` live-badge guidance, and a screen reader reading seven
  * numbers in sequence tells an operator less than one sentence does.
  *
  * ## §9's lead panel now exists
@@ -18,7 +18,7 @@
  * departures with stop-by-stop progress bars" belongs — the panel needed
  * `trip_checkpoints` writes, which arrived with 6C. Task 12 replaced that
  * line with `DeparturesBoard`, which owns its own query, its own
- * fifteen-second poll and its own busy state. The six alert cards above it
+ * fifteen-second poll and its own busy state. The alert cards above it
  * are untouched: they answer "what needs a decision", the board answers
  * "what is happening right now", and they are deliberately not merged into
  * one query.
@@ -30,15 +30,26 @@ import AlertCard from '@/components/admin/AlertCard';
 import DeparturesBoard from '@/components/admin/DeparturesBoard';
 import { trpc } from '@/lib/trpc';
 
-/** The order the cards read in: money first, then today's operations, then upkeep. */
+/**
+ * The order the cards read in: money first, then today's operations, then
+ * upkeep.
+ *
+ * **Unlike `AlertCard`'s copy maps, this array is NOT compiler-checked** — it
+ * is a list of kinds, so a kind missing from it typechecks fine and silently
+ * drops that card off the page. `admin-dashboard-page.test.tsx` enumerates the
+ * kinds by hand for exactly that reason; keep it doing so rather than mapping
+ * `DASHBOARD_ALERT_KINDS`, or nothing guards this list at all.
+ */
 const ORDER: Array<DashboardAlert['kind']> = [
   'payments_to_verify',
   'unassigned_soon',
   'vans_in_repair',
   'service_due',
   'papers_expiring',
-  // Owner decision 2026-10-16 (D5); last, so the existing five keep their place.
+  // Owner decision 2026-10-16 (D5); after the §9 five, so they keep their place.
   'orphaned_on_trip',
+  // Owner decision 2026-10-23 (Q1), beside the backing-off PIN lockout.
+  'driver_locked',
 ];
 
 function summarise(alerts: DashboardAlert[]): string {

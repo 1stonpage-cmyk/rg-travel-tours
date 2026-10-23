@@ -1,11 +1,15 @@
 /**
- * Week 5 plan, Task 6 — `admin.drivers.*`: CRUD, leaves and PIN reset
- * (BUILD_SPEC §9 "Drivers" / §5B, server half).
+ * Week 5 plan, Task 6 — `admin.drivers.*`: CRUD, leaves, PIN reset and
+ * (since 2026-10-23) unlock (BUILD_SPEC §9 "Drivers" / §5B, server half).
  *
- * `resetPin` is the one procedure here that touches a credential, so most of
+ * `resetPin` is the one procedure here that touches a credential, so much of
  * this file is about it: the owner's instruction (2026-10-14) that a reset
- * IS the admin unlock from the Q9 lockout policy, and must clear all five
- * lockout columns in the same transaction as the new hash.
+ * must clear all five lockout columns in the same transaction as the new hash.
+ *
+ * **`unlock` is the lockout half on its own** (owner decision 2026-10-23, Q1,
+ * option C+E), and its block below is about the one thing that separates the
+ * two: it must NEVER touch `pin_hash`, and it must refuse rather than succeed
+ * quietly on a driver who is not locked.
  *
  * **Test 1, and what it does and does not prove (controller ruling,
  * 2026-10-14).** "Can sign in with the new PIN immediately" has no login
@@ -15,8 +19,10 @@
  * composition at the layer that actually exists: put the row into the fully
  * locked state, call `resetPin`, read the row back and assert the five
  * lockout fields are cleared, then feed that state into `evaluatePinAttempt`
- * and assert the outcome is `'ok'` (not `'needs_admin_unlock'`, not
- * `'locked'`), and assert the new PIN verifies against the stored hash. That
+ * and assert the outcome is `'ok'` (not `'locked'` — `'needs_admin_unlock'`
+ * was the third possibility until owner decision 2026-10-23 retired it from
+ * `LockoutOutcome` entirely), and assert the new PIN verifies against the
+ * stored hash. That
  * proves the POLICY (the function Week 6's login will sit behind admits the
  * driver) and the CREDENTIAL (the new PIN verifies) — it does not prove an
  * end-to-end login, because nothing can this week. "The old PIN no longer
@@ -291,6 +297,13 @@ describeWithDb('drivers', () => {
     await expect(verifyPassword(first.pin, hash)).resolves.toBe(false);
   });
 
+  /**
+   * CHANGED 2026-10-23 (owner decision Q1): the staged row still sets the
+   * retired `requires_admin_unlock` flag — deliberately, because `resetPin`
+   * still zeroes all five columns and this is what proves it — but the policy
+   * state fed into `evaluatePinAttempt` no longer carries it, since
+   * `LockoutState` no longer has the field. What the test proves is unchanged.
+   */
   it('clears the lockout so a locked-out driver can sign in again', async () => {
     const db = getDb();
     await db
@@ -327,7 +340,6 @@ describeWithDb('drivers', () => {
         lockedUntil: row.lockedUntil,
         lockoutCount: row.lockoutCount,
         lockoutWindowStartedAt: row.lockoutWindowStartedAt,
-        requiresAdminUnlock: row.requiresAdminUnlock,
       },
       new Date(),
       true,
@@ -336,14 +348,149 @@ describeWithDb('drivers', () => {
     await expect(verifyPassword(pin, row.pinHash)).resolves.toBe(true);
   });
 
+  /* ------------------------------------------------------------------ *
+   * `unlock` — the lockout half without the PIN half
+   * (owner decision 2026-10-23, Q1, option C+E)
+   * ------------------------------------------------------------------ */
+
+  describe('unlock', () => {
+    /** A live lockout against the REAL clock: `unlock` reads `new Date()`. */
+    async function lockOutNow(id: number, minutesLeft = 60) {
+      await getDb()
+        .update(drivers)
+        .set({
+          failedAttempts: 5,
+          lockedUntil: new Date(Date.now() + minutesLeft * 60_000),
+          lockoutCount: 3,
+          lockoutWindowStartedAt: new Date(Date.now() - 2 * 3_600_000),
+        })
+        .where(eq(drivers.id, id));
+    }
+
+    async function lockoutColumns(id: number) {
+      const [row] = await getDb()
+        .select({
+          failedAttempts: drivers.failedAttempts,
+          lockedUntil: drivers.lockedUntil,
+          lockoutCount: drivers.lockoutCount,
+          lockoutWindowStartedAt: drivers.lockoutWindowStartedAt,
+        })
+        .from(drivers)
+        .where(eq(drivers.id, id));
+      if (!row) throw new Error(`no driver ${id}`);
+      return row;
+    }
+
+    /**
+     * THE TEST THIS MUTATION EXISTS FOR. `resetPin` already cleared a lockout;
+     * what it could not do was leave the driver's PIN alone, which is the whole
+     * reason a dispatcher ringing a driver at 5am was a bad experience.
+     */
+    it('clears the lockout and does NOT touch the PIN hash', async () => {
+      const id = await makeDriver();
+      const before = await pinHashFor(id);
+      await lockOutNow(id);
+
+      const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
+      await expect(api.admin.drivers.unlock({ id })).resolves.toEqual({ ok: true });
+
+      const row = await lockoutColumns(id);
+      expect(row.failedAttempts).toBe(0);
+      expect(row.lockedUntil).toBeNull();
+      expect(await pinHashFor(id), 'unlock changed the PIN hash').toBe(before);
+    });
+
+    /**
+     * The counters are a fact about the day, not about who ended the lockout.
+     * Clearing them would hand an attacker a free reset of the backoff every
+     * time a helpful dispatcher unlocked the driver they had just pranked.
+     */
+    it('leaves the window counters standing, so the backoff keeps its place', async () => {
+      const id = await makeDriver();
+      await lockOutNow(id);
+      const before = await lockoutColumns(id);
+
+      const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
+      await api.admin.drivers.unlock({ id });
+
+      const after = await lockoutColumns(id);
+      expect(after.lockoutCount).toBe(before.lockoutCount);
+      expect(after.lockoutWindowStartedAt).toEqual(before.lockoutWindowStartedAt);
+    });
+
+    it('REFUSES a driver who is not locked, and changes nothing', async () => {
+      const id = await makeDriver();
+      const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
+      await expect(api.admin.drivers.unlock({ id })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+      });
+      // No audit row for an unlock that did not happen.
+      expect(await auditRowsFor('driver', id)).toEqual([]);
+    });
+
+    it('REFUSES a driver whose lockout has already lapsed', async () => {
+      const id = await makeDriver();
+      // Five minutes in the past: the row still carries `failed_attempts = 5`,
+      // but the driver can already sign in, so there is nothing to unlock.
+      await lockOutNow(id, -5);
+      const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
+      await expect(api.admin.drivers.unlock({ id })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+      });
+      expect((await lockoutColumns(id)).failedAttempts).toBe(5);
+    });
+
+    it('answers an unknown id with NOT_FOUND', async () => {
+      const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
+      await expect(api.admin.drivers.unlock({ id: 2_000_000_000 })).rejects.toMatchObject({
+        code: 'NOT_FOUND',
+      });
+    });
+
+    it('writes exactly ONE audit row, naming the staff actor and never a PIN', async () => {
+      const id = await makeDriver();
+      const hash = await pinHashFor(id);
+      await lockOutNow(id);
+
+      const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
+      await api.admin.drivers.unlock({ id });
+
+      const rows = await auditRowsFor('driver', id);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        action: 'driver.unlocked',
+        actorType: 'user',
+        actorId: ownerId,
+      });
+      // `pinReset: false` is the fact that separates this row from
+      // `driver_pin_reset` at a glance in the log.
+      expect(rows[0]!.data).toMatchObject({ pinReset: false, lockoutCount: 3 });
+      const json = JSON.stringify(rows);
+      expect(json, 'the audit row carries the PIN hash').not.toContain(hash);
+      expect(json).not.toContain('pinHash');
+    });
+
+    it('is allowed to a DISPATCHER, like the rest of the vansDrivers area', async () => {
+      const id = await makeDriver();
+      await lockOutNow(id);
+      const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+      await expect(api.admin.drivers.unlock({ id })).resolves.toEqual({ ok: true });
+    });
+  });
+
   /**
-   * ALL SIX procedures, live. An earlier version of this test called three
+   * ALL procedures, live. An earlier version of this test called three
    * of them while being named "every drivers procedure" — the gate was
    * still proven generically by `procedure-role-metadata.test.ts` and
    * `role-isolation.test.ts`, so nothing was unguarded, but the name
    * claimed coverage the body did not have. §9's matrix is a security
    * boundary and `CLAUDE.md` asks for a test per role per area, so the
    * body now matches the name.
+   *
+   * CHANGED 2026-10-23: `unlock` is the eighth, and it is in here rather than
+   * only in `procedure-role-metadata.test.ts` because it clears part of an
+   * authentication control — finance must be refused by the gate, not by the
+   * resolver finding nothing to do.
    *
    * None of the ids or payloads has to be valid: `requireRole` runs before
    * the resolver, so a finance session is refused before any of these ever
@@ -368,13 +515,14 @@ describeWithDb('drivers', () => {
         .update({ id: driverId, patch: { name: 'Finance Should Not Reach This' } })
         .catch((e: unknown) => e),
       api.admin.drivers.resetPin({ id: driverId }).catch((e: unknown) => e),
+      api.admin.drivers.unlock({ id: driverId }).catch((e: unknown) => e),
       api.admin.drivers.setActive({ id: driverId, isActive: false }).catch((e: unknown) => e),
       api.admin.drivers.addLeave(VALID_LEAVE).catch((e: unknown) => e),
       api.admin.drivers.removeLeave({ id: 1 }).catch((e: unknown) => e),
     ]);
 
-    // Exactly seven, every one FORBIDDEN — not "at least one refusal".
-    expect(refusals).toHaveLength(7);
+    // Exactly eight, every one FORBIDDEN — not "at least one refusal".
+    expect(refusals).toHaveLength(8);
     for (const refusal of refusals) {
       expect(refusal).toMatchObject({ code: 'FORBIDDEN' });
     }

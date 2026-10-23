@@ -1,5 +1,7 @@
 /**
- * Week 5, Task 13: BUILD_SPEC §9's five dashboard alerts.
+ * Week 5, Task 13: BUILD_SPEC §9's five dashboard alerts, plus the two the
+ * owner added later — `orphaned_on_trip` (2026-10-16, D5) and `driver_locked`
+ * (2026-10-23, Q1).
  *
  * The owner named the 48-hour boundary tests (Q7, 2026-10-14) and the reason
  * they are named is that a timezone slip here is invisible: every assertion
@@ -111,17 +113,26 @@ async function makeVan(opts: {
   return van.insertId;
 }
 
-async function makeDriver(opts: { licenseExpiry?: string | null; isActive?: boolean } = {}) {
+async function makeDriver(
+  opts: {
+    licenseExpiry?: string | null;
+    isActive?: boolean;
+    /** A real `datetime`, not a civil date — the lockout ends at an instant. */
+    lockedUntil?: Date | null;
+    name?: string;
+  } = {},
+) {
   const suffix = unique();
   const [driver] = await getDb()
     .insert(drivers)
     .values({
-      name: `Dash Driver ${suffix}`,
+      name: opts.name ?? `Dash Driver ${suffix}`,
       code: `DSH${suffix}`.slice(0, 20),
       phone: '09170000000',
       pinHash: '__dash_fixture_not_a_pin_hash__',
       isActive: opts.isActive ?? true,
       licenseExpiry: opts.licenseExpiry ? asDate(opts.licenseExpiry) : null,
+      lockedUntil: opts.lockedUntil ?? null,
     });
   created.driverIds.push(driver.insertId);
   return driver.insertId;
@@ -240,9 +251,15 @@ describeWithDb('vans', () => {
     }
   });
 
-  it('always returns all six alerts, including the empty ones', async () => {
+  /**
+   * CHANGED 2026-10-23: seven, not six. `driver_locked` was added by owner
+   * decision Q1 alongside the backing-off lockout, so the office can see a
+   * driver who cannot sign in without that driver ringing to say so.
+   */
+  it('always returns all seven alerts, including the empty ones', async () => {
     const alerts = await callAlerts();
     expect(alerts.map((a) => a.kind).sort()).toEqual([
+      'driver_locked',
       'orphaned_on_trip',
       'papers_expiring',
       'payments_to_verify',
@@ -536,6 +553,60 @@ describeWithDb('vans', () => {
     expect(alertFor(await callAlerts(), 'payments_to_verify').count).toBe(1);
   });
 
+  /* ---- the locked-driver alert (owner decision 2026-10-23, Q1) ---- */
+
+  /**
+   * `NOW` here is a fixed Manila instant in November 2026, not the suite's
+   * clock — so a lockout is staged relative to THAT, and `callAlerts()` is
+   * given the same instant. A test that staged `Date.now() + 1h` would pass
+   * for the wrong reason: it would be comparing against the real clock, and
+   * the whole point of `now` being a parameter is that it is not.
+   */
+  const lockedUntil = (minutesFromNow: number) => new Date(NOW.getTime() + minutesFromNow * 60_000);
+
+  it('counts an active driver whose lockout is still running, and names them', async () => {
+    await makeDriver({ name: 'Locked Out Larry', lockedUntil: lockedUntil(45) });
+    const alert = alertFor(await callAlerts(), 'driver_locked');
+    expect(alert.count).toBe(1);
+    expect(alert.examples).toHaveLength(1);
+    expect(alert.examples[0]!.label).toBe('Locked Out Larry');
+    // A lockout ends at a time of day, not on a civil date — see the query.
+    expect(alert.examples[0]!.date).toBeNull();
+  });
+
+  it('does NOT count a lockout that has already lapsed', async () => {
+    // One minute in the past: that driver can sign in, so it is not news.
+    await makeDriver({ lockedUntil: lockedUntil(-1) });
+    expect(alertFor(await callAlerts(), 'driver_locked').count).toBe(0);
+  });
+
+  it('does NOT count a driver who was never locked', async () => {
+    await makeDriver({});
+    expect(alertFor(await callAlerts(), 'driver_locked').count).toBe(0);
+  });
+
+  it('does NOT count a DEACTIVATED driver, however locked', async () => {
+    // A soft-deleted driver cannot sign in regardless, so unlocking them
+    // would be work with no effect.
+    await makeDriver({ isActive: false, lockedUntil: lockedUntil(45) });
+    expect(alertFor(await callAlerts(), 'driver_locked').count).toBe(0);
+  });
+
+  it('is a quiet zero when nobody is locked out', async () => {
+    const alert = alertFor(await callAlerts(), 'driver_locked');
+    expect(alert.count).toBe(0);
+    // Present with an empty list, never absent: the card renders "All clear"
+    // and the dashboard never hides a zero.
+    expect(alert.examples).toEqual([]);
+  });
+
+  it('counts every locked driver and caps the names at five', async () => {
+    for (let i = 0; i < 7; i += 1) await makeDriver({ lockedUntil: lockedUntil(10 + i) });
+    const alert = alertFor(await callAlerts(), 'driver_locked');
+    expect(alert.count).toBe(7);
+    expect(alert.examples).toHaveLength(5);
+  });
+
   /* ---- the thresholds, and the roles ---- */
 
   it('reads its thresholds from /shared, so the screen cannot disagree', () => {
@@ -551,7 +622,8 @@ describeWithDb('vans', () => {
       ['finance', financeId],
     ] as const) {
       const api = appRouter.createCaller(staffContext(id, role) as never);
-      await expect(api.admin.dashboard.alerts()).resolves.toHaveLength(6);
+      // Seven since 2026-10-23 (`driver_locked`).
+      await expect(api.admin.dashboard.alerts()).resolves.toHaveLength(7);
     }
   });
 

@@ -43,11 +43,7 @@ import { getDb, getPool } from '../db/client';
 import { auditLog, drivers, sessions, users } from '../db/schema';
 import * as driverAuthService from '../services/driver-auth';
 import { attemptDriverLogin } from '../services/driver-auth';
-import {
-  LOCKOUT_MINUTES,
-  MAX_FAILED_ATTEMPTS,
-  MAX_LOCKOUTS_PER_WINDOW,
-} from '../services/driver-lockout';
+import { LOCKOUT_SCHEDULE_MINUTES, MAX_FAILED_ATTEMPTS } from '../services/driver-lockout';
 import { hashPassword } from '../services/password';
 import { SESSION_TTL_MS_BY_SUBJECT, createSession, readSession } from '../services/sessions';
 import { SESSION_COOKIE } from '../middleware/session-cookie';
@@ -121,7 +117,13 @@ async function makeStaff(role: 'owner' = 'owner') {
   return row.insertId;
 }
 
-/** The five lockout columns, as the policy sees them. */
+/**
+ * The lockout columns, as the policy sees them.
+ *
+ * `requires_admin_unlock` is no longer among them (owner decision 2026-10-23):
+ * the column still exists, and nothing — this file included — reads it to
+ * decide anything.
+ */
 async function driverRow(driverId: number) {
   const [row] = await getDb()
     .select({
@@ -129,7 +131,6 @@ async function driverRow(driverId: number) {
       lockedUntil: drivers.lockedUntil,
       lockoutCount: drivers.lockoutCount,
       lockoutWindowStartedAt: drivers.lockoutWindowStartedAt,
-      requiresAdminUnlock: drivers.requiresAdminUnlock,
     })
     .from(drivers)
     .where(eq(drivers.id, driverId));
@@ -137,16 +138,18 @@ async function driverRow(driverId: number) {
   return row;
 }
 
-/** Puts a driver into a live 15-minute lockout, counted from `now`. */
+/** The first tier of the backoff schedule — a FIRST lockout's length. */
+const FIRST_LOCKOUT_MINUTES = LOCKOUT_SCHEDULE_MINUTES[0];
+
+/** Puts a driver into a live FIRST lockout (15 minutes), counted from `now`. */
 async function lockOut(driverId: number, now: Date) {
   await getDb()
     .update(drivers)
     .set({
       failedAttempts: MAX_FAILED_ATTEMPTS,
-      lockedUntil: new Date(now.getTime() + LOCKOUT_MINUTES * 60_000),
+      lockedUntil: new Date(now.getTime() + FIRST_LOCKOUT_MINUTES * 60_000),
       lockoutCount: 1,
       lockoutWindowStartedAt: now,
-      requiresAdminUnlock: false,
     })
     .where(eq(drivers.id, driverId));
 }
@@ -288,22 +291,54 @@ describeWithDb('attemptDriverLogin', () => {
   it('lets a correct PIN in once the fifteen minutes have passed', async () => {
     const { code, pin, driverId } = await makeDriverWithPin();
     await lockOut(driverId, NOW);
-    const after = new Date(NOW.getTime() + LOCKOUT_MINUTES * 60_000 + 1_000);
+    const after = new Date(NOW.getTime() + FIRST_LOCKOUT_MINUTES * 60_000 + 1_000);
     expect(await attemptDriverLogin({ code, pin, now: after })).toMatchObject({ ok: true });
   }, 30_000);
 
-  it('needs an admin after three lockouts in twenty-four hours, and a correct PIN does NOT clear it', async () => {
+  /**
+   * REPLACES `'needs an admin after three lockouts in twenty-four hours, and a
+   * correct PIN does NOT clear it'` (owner decision 2026-10-23, Q1). That test
+   * staged `requires_admin_unlock = true` with three banked lockouts and
+   * asserted a correct PIN was still refused with `'needs_admin_unlock'`.
+   * There is no such refusal any more, and a correct PIN after the lockout
+   * lapses is now exactly what gets a driver in — whatever their count says.
+   *
+   * Staged the same way (counters written directly), so this still proves the
+   * login path reads the row rather than only the policy: three lockouts
+   * banked today, and a dead `requires_admin_unlock = 1` left behind by a
+   * login from before the deploy. The flag must change nothing.
+   */
+  it('lets a driver with three banked lockouts in, once the lockout has lapsed', async () => {
     const { code, pin, driverId } = await makeDriverWithPin();
     await getDb()
       .update(drivers)
-      .set({ requiresAdminUnlock: true, lockoutCount: MAX_LOCKOUTS_PER_WINDOW })
+      .set({
+        failedAttempts: MAX_FAILED_ATTEMPTS,
+        lockedUntil: new Date(NOW.getTime() + 60 * 60_000),
+        lockoutCount: 3,
+        lockoutWindowStartedAt: NOW,
+        // The retired column, deliberately left SET: a row written by the old
+        // policy must not be able to refuse anyone.
+        requiresAdminUnlock: true,
+      })
       .where(eq(drivers.id, driverId));
-    expect(await attemptDriverLogin({ code, pin, now: NOW })).toMatchObject({
-      reason: 'needs_admin_unlock',
+
+    // Still inside the hour: refused, and refused as an ordinary lockout.
+    expect(await attemptDriverLogin({ code, pin, now: NOW })).toEqual({
+      ok: false,
+      reason: 'locked',
     });
-    // Still set — only an admin clears it.
-    expect((await driverRow(driverId)).requiresAdminUnlock).toBe(true);
-  }, 30_000);
+
+    // The hour passes. No admin, no new PIN.
+    const after = new Date(NOW.getTime() + 60 * 60_000 + 1_000);
+    expect(await attemptDriverLogin({ code, pin, now: after })).toMatchObject({ ok: true });
+
+    const row = await driverRow(driverId);
+    expect(row.lockedUntil).toBeNull();
+    expect(row.failedAttempts).toBe(0);
+    // Three lockouts in a day are still three lockouts in a day.
+    expect(row.lockoutCount).toBe(3);
+  }, 60_000);
 
   /**
    * THE CARRY-FORWARD from Week 5, which could not be written then because
@@ -311,6 +346,10 @@ describeWithDb('attemptDriverLogin', () => {
    * in IMMEDIATELY after an admin resets their PIN. Week 5 proved the policy
    * function and the credential; this proves the thing a dispatcher actually
    * needs at 5am.
+   *
+   * CHANGED 2026-10-23: the staged state no longer sets the retired
+   * `requires_admin_unlock` flag or reaches for a now-deleted escalation
+   * constant. What it proves is unchanged.
    */
   it('signs in immediately after an admin PIN reset, with no waiting', async () => {
     const { code, driverId } = await makeDriverWithPin();
@@ -318,9 +357,8 @@ describeWithDb('attemptDriverLogin', () => {
       .update(drivers)
       .set({
         failedAttempts: MAX_FAILED_ATTEMPTS,
-        lockedUntil: new Date(NOW.getTime() + LOCKOUT_MINUTES * 60_000),
-        lockoutCount: MAX_LOCKOUTS_PER_WINDOW,
-        requiresAdminUnlock: true,
+        lockedUntil: new Date(NOW.getTime() + FIRST_LOCKOUT_MINUTES * 60_000),
+        lockoutCount: 3,
       })
       .where(eq(drivers.id, driverId));
 
@@ -331,6 +369,36 @@ describeWithDb('attemptDriverLogin', () => {
     expect(await attemptDriverLogin({ code, pin: newPin, now: NOW })).toMatchObject({
       ok: true,
     });
+  }, 60_000);
+
+  /**
+   * The new cure (owner decision 2026-10-23, Q1): the office lifts the lockout
+   * and the driver signs in with **the PIN they already know**. The whole
+   * point of `unlock` existing beside `resetPin` is that nobody has to read a
+   * new six-digit number down a phone line at 5am, so the assertion that
+   * matters is that the ORIGINAL pin works immediately afterwards.
+   */
+  it('signs in immediately after an admin UNLOCK, with the SAME PIN', async () => {
+    const { code, pin, driverId } = await makeDriverWithPin();
+    /*
+     * The REAL clock, uniquely in this file. `admin.drivers.unlock` reads
+     * `new Date()` at the request boundary — as `admin.dashboard.alerts` does,
+     * and as it must, since its input is `{ id }` and a client that could send
+     * a time could ask for a lockout to be judged against yesterday. So the
+     * lockout this stages has to be live NOW rather than live at this file's
+     * fixed `NOW`, which is nine days in the past.
+     */
+    const realNow = new Date();
+    await lockOut(driverId, realNow);
+    expect(await attemptDriverLogin({ code, pin, now: realNow })).toMatchObject({
+      reason: 'locked',
+    });
+
+    const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
+    await api.admin.drivers.unlock({ id: driverId });
+
+    // Same instant, same PIN, no waiting.
+    expect(await attemptDriverLogin({ code, pin, now: realNow })).toMatchObject({ ok: true });
   }, 60_000);
 
   it('counts two simultaneous wrong PINs as TWO failures', async () => {
@@ -489,7 +557,7 @@ describeWithDb('attemptDriverLogin', () => {
     for (let i = 0; i < MAX_FAILED_ATTEMPTS; i += 1) {
       await attemptDriverLogin({ code, pin: attempted, now: NOW });
     }
-    const after = new Date(NOW.getTime() + LOCKOUT_MINUTES * 60_000 + 1_000);
+    const after = new Date(NOW.getTime() + FIRST_LOCKOUT_MINUTES * 60_000 + 1_000);
     expect(await attemptDriverLogin({ code, pin, now: after })).toMatchObject({ ok: true });
 
     const rows = await auditRowsFor('driver', driverId);

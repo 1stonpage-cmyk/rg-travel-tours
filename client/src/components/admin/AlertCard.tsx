@@ -29,7 +29,7 @@ import type { DashboardAlert } from '@rg/shared';
  * The words for each alert, and the screen that resolves it.
  *
  * Typed `Record<DashboardAlert['kind'], …>` so the COMPILER refuses a build
- * where a sixth alert has no copy and no destination — the same guard the
+ * where a further alert has no copy and no destination — the same guard the
  * assign panel's refusal map uses. An alert with no route to its fix is a
  * nag, so every entry names where to go.
  */
@@ -89,6 +89,21 @@ const ALERT_COPY: Record<
     detail:
       'A van in this state is refused on every future date until someone completes or corrects the trip.',
   },
+  /*
+   * Owner decision 2026-10-23 (Q1). The `detail` line says the thing a
+   * dispatcher needs to decide with: the lockout ends by itself, so this card
+   * is information rather than a job — unless the driver is due out now, which
+   * is the one case worth clicking for. It names the remedy as an unlock
+   * rather than a PIN reset, because reading a new PIN down a phone line at
+   * dawn is what `admin.drivers.unlock` exists to avoid.
+   */
+  driver_locked: {
+    noun: (n) => (n === 1 ? '1 driver is locked out' : `${n} drivers are locked out`),
+    href: '/admin/drivers',
+    action: 'Open the drivers',
+    detail:
+      'A lockout clears itself within the hour. Unlock it only if the driver is due out before then — it does not change their PIN.',
+  },
 };
 
 /** The heading each card carries whatever its count. */
@@ -99,6 +114,7 @@ const ALERT_TITLE: Record<DashboardAlert['kind'], string> = {
   service_due: 'Service due',
   papers_expiring: 'Papers expiring',
   orphaned_on_trip: 'Vans stuck on a trip',
+  driver_locked: 'Drivers locked out',
 };
 
 /**
@@ -115,6 +131,9 @@ const ALERT_PILL: Record<
   service_due: { text: 'Fleet', tone: 'grey' },
   papers_expiring: { text: 'Drivers', tone: 'grey' },
   orphaned_on_trip: { text: 'Fleet', tone: 'grey' },
+  // Grey, like its sibling on the drivers screen: a lockout that clears itself
+  // within the hour is not the amber "Within 48 hours" kind of urgency.
+  driver_locked: { text: 'Drivers', tone: 'grey' },
 };
 
 const PILL_TONE = {

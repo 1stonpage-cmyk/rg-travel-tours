@@ -357,12 +357,21 @@ export const SERVICE_DUE_DAYS = 14;
 export const PAPERS_EXPIRING_DAYS = 30;
 
 /**
- * The six dashboard alerts. Always all six, zeroes included.
+ * The seven dashboard alerts. Always all seven, zeroes included.
  *
- * The first five are BUILD_SPEC §9's. The sixth, `orphaned_on_trip`, is NOT
- * from §9: it was added by owner decision 2026-10-16 (D5) — a van sitting in
- * `on_trip` with no running trip to explain it. It is an alert and nothing
- * else; no code path frees such a van automatically.
+ * The first five are BUILD_SPEC §9's. The last two are not:
+ *
+ *  - `orphaned_on_trip` — owner decision 2026-10-16 (D5): a van sitting in
+ *    `on_trip` with no running trip to explain it. An alert and nothing else;
+ *    no code path frees such a van automatically.
+ *  - `driver_locked` — owner decision 2026-10-23 (Q1): an active driver whose
+ *    PIN lockout is still running. Added with the backing-off lockout, so the
+ *    office SEES a driver who cannot sign in instead of waiting for them to
+ *    ring — and, unlike the van above, there is a one-click cure where the
+ *    card sends you (`admin.drivers.unlock`).
+ *
+ * Both are appended rather than inserted, so the five §9 cards keep their
+ * order on the dashboard.
  */
 export const DASHBOARD_ALERT_KINDS = [
   'payments_to_verify',
@@ -371,6 +380,7 @@ export const DASHBOARD_ALERT_KINDS = [
   'service_due',
   'papers_expiring',
   'orphaned_on_trip',
+  'driver_locked',
 ] as const;
 
 export type DashboardAlertKind = (typeof DASHBOARD_ALERT_KINDS)[number];

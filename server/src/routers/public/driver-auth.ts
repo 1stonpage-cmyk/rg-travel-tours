@@ -48,24 +48,36 @@ import { publicProcedure, router } from '../../trpc';
  *    code from a wrong PIN here, because the service does not distinguish
  *    them either.
  *  - `FORBIDDEN` — the credential may well be right, and the account is
- *    closed to them anyway: locked for fifteen minutes, or needing a
- *    dispatcher. (A deactivated driver is NOT here: they are answered as
- *    `wrong_credentials`, owner decision D3.)
+ *    closed to them anyway: the lockout is running. (A deactivated driver is
+ *    NOT here: they are answered as `wrong_credentials`, owner decision D3.)
  *
  * Deliberately NOT `TOO_MANY_REQUESTS` for `locked`: 429 is what the per-IP
  * limiter answers, and `client/src/lib/mutation-errors.ts` reads that status
  * as "the network told you to slow down". A per-driver lockout is a
  * different fact with a different remedy.
+ *
+ * ## What a refused login does NOT carry, before and after 2026-10-23
+ *
+ * `needs_admin_unlock` was the third case here until the lockout stopped
+ * being terminal (owner decision 2026-10-23, Q1); it shared this `FORBIDDEN`
+ * branch and is simply gone, leaving `locked` on its own.
+ *
+ * What did NOT change, and must not: a refusal's body is the bare reason
+ * string and nothing else. The backoff schedule gave the server three new
+ * facts about a locked driver — which tier they are on, how many lockouts they
+ * have banked today, and the exact instant `locked_until` falls — and **none
+ * of the three is in the response.** Each would tell an attacker probing a
+ * code how much pressure they have already applied, and a driver can act on
+ * none of them beyond "try again later", which the screen says already.
  */
 function asTrpcError(reason: DriverLoginRefusal): TRPCError {
   switch (reason) {
     case 'wrong_credentials':
       return new TRPCError({ code: 'UNAUTHORIZED', message: reason });
     case 'locked':
-    case 'needs_admin_unlock':
       return new TRPCError({ code: 'FORBIDDEN', message: reason });
     default: {
-      // Exhaustiveness: a fourth refusal with no case here fails
+      // Exhaustiveness: a third refusal with no case here fails
       // `pnpm typecheck` instead of surfacing as an unexplained 500.
       const unreachable: never = reason;
       throw new Error(`Unhandled DriverLoginRefusal: ${String(unreachable)}`);

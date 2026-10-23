@@ -8,16 +8,23 @@
  * (CLAUDE.md, "Never hard-delete"). `removeLeave` is a real delete because a
  * leave row is a schedule entry, not an audited financial or booking record.
  *
- * **`resetPin` is the one procedure here that touches a credential**, and it
- * is also the admin unlock from the Q9 lockout policy (owner instruction,
- * 2026-10-14): in the same transaction as minting the new hash it clears all
- * five lockout columns — `failed_attempts`, `locked_until`, `lockout_count`,
- * `lockout_window_started_at`, `requires_admin_unlock` — because
- * `requires_admin_unlock` is the terminal flag `evaluatePinAttempt()`
- * (`services/driver-lockout.ts`) checks before anything else, and nothing
- * but an admin action ever clears it. The PIN is generated server-side with
+ * **`resetPin` is the one procedure here that touches a credential.** In the
+ * same transaction as minting the new hash it clears all five lockout columns
+ * — `failed_attempts`, `locked_until`, `lockout_count`,
+ * `lockout_window_started_at`, `requires_admin_unlock` — so a dispatcher who
+ * resets a PIN does not hand back a driver who still cannot sign in (owner
+ * instruction, 2026-10-14). The PIN is generated server-side with
  * `crypto.randomInt`, returned exactly once in the mutation's response, and
  * never appears in `list`, in the audit row, or in any log line.
+ *
+ * **`unlock` (owner decision 2026-10-23, Q1) is the lockout half on its own**,
+ * and the reason `resetPin` is no longer described here as "the admin unlock":
+ * it clears `failed_attempts` / `locked_until` and never touches `pin_hash`,
+ * so the office can get a driver into the van at 5am without reading a new PIN
+ * down a phone line. Since the same decision retired the terminal
+ * `requires_admin_unlock` state, a lockout also now lifts itself by the clock
+ * (15 → 30 → 60 minutes, capped) — `unlock` is the shortcut, not the only way
+ * back.
  *
  * `create` also mints a PIN, because `drivers.pin_hash` is `NOT NULL` — a new
  * driver has to start with *something* hashed, and the owner's instruction
@@ -479,12 +486,120 @@ export const adminDriversRouter = router({
     }),
 
   /**
-   * The admin unlock from the Q9 lockout policy (owner instruction,
-   * 2026-10-14). A PIN reset clears, in the SAME transaction as the new
-   * hash, all five lockout columns — not a subset. `requires_admin_unlock`
-   * is the terminal flag `evaluatePinAttempt()` checks before anything else
-   * and that nothing but this action ever clears; leaving it set would hand
-   * the dispatcher a driver who still cannot sign in.
+   * **Lifts a live lockout and nothing else** (owner decision 2026-10-23, Q1,
+   * option C+E). The office's answer to a driver standing at a van at 5am who
+   * has burned five wrong PINs, or whose code a prankster burned for them.
+   *
+   * ## Why this exists beside `resetPin`
+   *
+   * `resetPin` was the ONLY cure for a lockout until today, and it costs the
+   * driver their PIN: a dispatcher reads a new six-digit number down a phone
+   * line at dawn, the driver writes it on their hand, and the PIN they had
+   * memorised is gone. That is a heavy price for "wait fifteen minutes is too
+   * long this once". So the two acts are now separate — this one clears the
+   * lockout and **never touches `pin_hash`**, and `resetPin` still does both
+   * for the case it was written for (a PIN nobody can remember).
+   *
+   * ## What it clears, and what it deliberately leaves
+   *
+   * `failed_attempts` and `locked_until` only. `lockout_count` and
+   * `lockout_window_started_at` are left exactly as they are, so the driver's
+   * NEXT lockout today still serves its place in the backoff schedule. An
+   * admin intervening is not the same event as a correct PIN: the count is a
+   * fact about the day, not about who ended the lockout, and clearing it would
+   * hand an attacker a free reset for every helpful dispatcher.
+   *
+   * It does not touch `requires_admin_unlock` either. That column is retired
+   * (2026-10-23) and read by nothing; `resetPin` still zeroes it, and the
+   * login path writes `false` on every attempt.
+   *
+   * ## It refuses when there is nothing to unlock
+   *
+   * A driver with `locked_until` null, or already in the past, is not locked —
+   * so this answers `BAD_REQUEST` rather than succeeding quietly. A silent
+   * success would tell a dispatcher "unlocked" about a driver whose real
+   * problem is something else entirely (a forgotten PIN, a deactivated
+   * account), and would put a `driver.unlocked` row in the log for an unlock
+   * that did not happen.
+   *
+   * `adminProcedure('vansDrivers')` — owner and dispatcher, the same §9 area
+   * `resetPin` uses, never finance. The audit row names the actor and the
+   * driver; `data` carries the lockout it lifted and the count it left
+   * standing, and **never a PIN or anything derived from one** — this mutation
+   * does not so much as read `pin_hash`.
+   */
+  unlock: adminProcedure('vansDrivers')
+    .input(idInput)
+    .mutation(async ({ input, ctx }) => {
+      /*
+       * `now` is read once, here at the request boundary, like every other
+       * time-based decision in this codebase — and never inside the
+       * transaction, so "was this driver locked" is answered against one
+       * instant rather than one per statement.
+       */
+      const now = new Date();
+      return await getDb().transaction(async (tx) => {
+        const [row] = await tx
+          .select({
+            code: drivers.code,
+            lockedUntil: drivers.lockedUntil,
+            lockoutCount: drivers.lockoutCount,
+          })
+          .from(drivers)
+          .where(eq(drivers.id, input.id))
+          // The row lock: two dispatchers clicking at once must not both
+          // write, and must not both audit an unlock.
+          .for('update')
+          .limit(1);
+        if (!row) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'No driver with that id.' });
+        }
+        if (row.lockedUntil === null || row.lockedUntil.getTime() <= now.getTime()) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'That driver is not locked out, so there is nothing to unlock.',
+          });
+        }
+
+        await tx
+          .update(drivers)
+          .set({ failedAttempts: 0, lockedUntil: null })
+          .where(eq(drivers.id, input.id));
+
+        await writeAudit(tx, {
+          actorType: 'user',
+          actorId: ctx.session.subjectId,
+          action: 'driver.unlocked',
+          entity: 'driver',
+          entityId: input.id,
+          data: {
+            code: row.code,
+            // The lockout that was lifted, and the count that was NOT.
+            lockedUntil: row.lockedUntil.toISOString(),
+            lockoutCount: row.lockoutCount,
+            pinReset: false,
+          },
+        });
+
+        return { ok: true as const };
+      });
+    }),
+
+  /**
+   * A new PIN, **and** the lockout cleared with it (owner instruction,
+   * 2026-10-14; narrowed 2026-10-23).
+   *
+   * It is no longer the only way out of a lockout — `unlock` above lifts one
+   * without costing the driver their PIN, and since 2026-10-23 a lockout also
+   * lifts itself by the clock. `resetPin` remains the act for a PIN nobody can
+   * remember, and it still clears all five lockout columns in the SAME
+   * transaction as the new hash, not a subset: a reset that left
+   * `locked_until` standing would hand the dispatcher a driver who still
+   * cannot sign in, which is exactly the failure this behaviour was added for.
+   *
+   * `requires_admin_unlock` is among the five it zeroes. The column is retired
+   * (2026-10-23) and nothing reads it; zeroing it here is tidiness, not a
+   * cure.
    *
    * The audit row names the actor, the driver and the timestamp
    * (`writeAudit` stamps `created_at`) — `data: { clearedLockout: true }`,

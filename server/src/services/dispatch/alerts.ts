@@ -1,6 +1,7 @@
 /**
  * Week 5, Task 13: BUILD_SPEC §9's five dashboard alerts, plus the sixth
- * (`orphanedOnTripVans`) that owner decision 2026-10-16 (D5) added.
+ * (`orphanedOnTripVans`, owner decision 2026-10-16 D5) and the seventh
+ * (`driverLocked`, owner decision 2026-10-23 Q1).
  *
  * One exported function per alert, so a reviewer can check each against §9
  * line by line and reject one without touching the others. Legible queries,
@@ -15,13 +16,15 @@
  * router passes `new Date()`; the procedure takes no input, so **no browser
  * can move the alert window**.
  *
- * **Three of the six do not take it**, deliberately narrowing Ruling 2:
+ * **Three of the seven do not take it**, deliberately narrowing Ruling 2:
  * `paymentsToVerify`, `vansInRepair` and `orphanedOnTripVans` have no time
  * dependence at all — a
  * pending receipt is pending and a van in repair is in repair, whatever the
  * clock says. Giving them a `now` they never read would tell the next reader
  * the clock matters here, and a parameter that lies about what a function
- * depends on is worse than an inconsistent signature.
+ * depends on is worse than an inconsistent signature. `driverLocked` is on
+ * the other side of that line for the same reason: a lockout has an instant
+ * it ends at, and whether it has passed is the whole question.
  *
  * Same discipline as `isDriverVisible(status, tourDate, now)` and
  * `bookableDateRange(settings, now)` in `/shared`.
@@ -38,7 +41,7 @@
  * compile, and converting the threshold to a `Date` to make it compile
  * reintroduces the eight-hour shift this convention exists to avoid.
  */
-import { and, asc, desc, eq, inArray, isNull, notExists, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull, notExists, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/mysql-core';
 import {
   PAPERS_EXPIRING_DAYS,
@@ -408,12 +411,59 @@ export async function orphanedOnTripVans(tx: Transaction): Promise<DashboardAler
 }
 
 /**
- * All six, always — zeroes included.
+ * The seventh dashboard alert, added by owner decision 2026-10-23 (Q1, option
+ * C+E) — NOT from BUILD_SPEC §9: **an active driver whose PIN lockout is still
+ * running.**
+ *
+ * It ships with the backing-off lockout for a reason the decision is explicit
+ * about: the lockout now lifts itself by the clock, so the office does not
+ * HAVE to act — but it should be able to see that a driver cannot sign in
+ * without that driver ringing to say so, because the person this most often
+ * happens to is standing at a van before dawn. The card links to
+ * `/admin/drivers`, where `admin.drivers.unlock` lifts it immediately and
+ * without issuing a new PIN.
+ *
+ * Unlike `orphanedOnTripVans` this one DOES take `now`: "is the lockout still
+ * running" is a question about the clock, compared against the same instant as
+ * every other time-aware alert on the board. A lapsed lockout is not news.
+ *
+ * `is_active` only, like every other driver and van alert here — a
+ * soft-deleted driver cannot sign in regardless, and saying so would send a
+ * dispatcher to unlock an account nobody is using.
+ *
+ * `locked_until` is a real `datetime`, not one of this file's civil-date
+ * columns, so it is compared with `gt()` against a `Date` — no `sql` template
+ * and no `manilaDatePlusDays` here. Longest-locked first, so the driver who
+ * has been stuck the longest is the one named on a card that shows five.
+ */
+export async function driverLocked(tx: Transaction, now: Date): Promise<DashboardAlert> {
+  const rows = await tx
+    .select({ id: drivers.id, name: drivers.name, lockedUntil: drivers.lockedUntil })
+    .from(drivers)
+    .where(and(eq(drivers.isActive, true), gt(drivers.lockedUntil, now)))
+    .orderBy(asc(drivers.lockedUntil), asc(drivers.id));
+
+  return {
+    kind: 'driver_locked',
+    count: rows.length,
+    examples: rows.slice(0, MAX_EXAMPLES).map((row) => ({
+      id: row.id,
+      label: row.name,
+      // Deliberately null, like `vansInRepair`'s: `DashboardAlert.date` is a
+      // civil DATE and this is a time of day an hour from now. Putting a
+      // truncated date here would read as "locked until the 24th".
+      date: null,
+    })),
+  };
+}
+
+/**
+ * All seven, always — zeroes included.
  *
  * A dashboard that hides its empty alerts teaches an operator that an absent
- * card means "fine", which is indistinguishable from "the query broke". Six
- * cards, every load, each stating its number. The sixth is LAST, so the
- * existing five keep their order.
+ * card means "fine", which is indistinguishable from "the query broke". Seven
+ * cards, every load, each stating its number. The sixth and seventh are LAST,
+ * in the order they were added, so the existing five keep theirs.
  */
 export async function dashboardAlerts(tx: Transaction, now: Date): Promise<DashboardAlert[]> {
   return [
@@ -423,5 +473,6 @@ export async function dashboardAlerts(tx: Transaction, now: Date): Promise<Dashb
     await serviceDue(tx, now),
     await papersExpiring(tx, now),
     await orphanedOnTripVans(tx),
+    await driverLocked(tx, now),
   ];
 }

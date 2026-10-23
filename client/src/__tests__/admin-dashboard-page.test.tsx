@@ -1,5 +1,12 @@
 /**
- * Week 5, Task 14: the admin dashboard — six cards, zeroes included.
+ * Week 5, Task 14: the admin dashboard — seven cards, zeroes included.
+ *
+ * Six until 2026-10-23, when owner decision Q1 added `driver_locked` beside
+ * the backing-off PIN lockout. Every enumeration in this file names the kinds
+ * explicitly rather than mapping `DASHBOARD_ALERT_KINDS`, deliberately: a kind
+ * added to the union without copy in `AlertCard` fails to COMPILE, and a kind
+ * added without a card on the PAGE has to fail here, which it cannot do if
+ * this file follows the union automatically.
  *
  * Renders through `TrpcProviders` (the page uses a tRPC hook) and a
  * `MemoryRouter`, because each non-zero card links to the screen that
@@ -19,7 +26,7 @@ const alert = (
   examples: DashboardAlert['examples'] = [],
 ): DashboardAlert => ({ kind, count, examples });
 
-const ALL_SIX_NONZERO: DashboardAlert[] = [
+const ALL_SEVEN_NONZERO: DashboardAlert[] = [
   alert('payments_to_verify', 2, [{ id: 1, label: 'RG-AAAA11', date: '2026-11-12' }]),
   alert('unassigned_soon', 3, [{ id: 2, label: 'RG-BBBB22 · Kawasan Falls', date: '2026-11-11' }]),
   alert('vans_in_repair', 1, [{ id: 3, label: 'ABC 123 — Clutch', date: null }]),
@@ -28,6 +35,7 @@ const ALL_SIX_NONZERO: DashboardAlert[] = [
   alert('orphaned_on_trip', 1, [
     { id: 6, label: 'GHI 789 · last trip RG-CCCC33 on 2026-11-09', date: null },
   ]),
+  alert('driver_locked', 1, [{ id: 7, label: 'Joselito Reyes', date: null }]),
 ];
 
 function renderDashboard(alerts: DashboardAlert[]) {
@@ -53,13 +61,13 @@ afterEach(resetTrpcMock);
 
 describe('AdminDashboardPage', () => {
   it('links the departures panel to the departures board screen', async () => {
-    renderDashboard(ALL_SIX_NONZERO);
+    renderDashboard(ALL_SEVEN_NONZERO);
     const link = await screen.findByRole('link', { name: 'Departures board' });
     expect(link).toHaveAttribute('href', '/admin/departures');
   });
 
   it('states each count in words, not as a bare numeral', async () => {
-    renderDashboard(ALL_SIX_NONZERO);
+    renderDashboard(ALL_SEVEN_NONZERO);
     expect(await screen.findByText(/2 payments to verify/i)).toBeTruthy();
     expect(screen.getByText(/3 trips within 48 hours have no van or driver/i)).toBeTruthy();
     expect(screen.getByText(/4 vans are due for service within 14 days/i)).toBeTruthy();
@@ -81,7 +89,7 @@ describe('AdminDashboardPage', () => {
     expect(screen.getByText(/all clear/i)).toBeTruthy();
   });
 
-  it('shows all six cards even when five of them are zero', async () => {
+  it('shows all seven cards even when six of them are zero', async () => {
     renderDashboard([
       alert('payments_to_verify', 1),
       alert('unassigned_soon', 0),
@@ -89,6 +97,7 @@ describe('AdminDashboardPage', () => {
       alert('service_due', 0),
       alert('papers_expiring', 0),
       alert('orphaned_on_trip', 0),
+      alert('driver_locked', 0),
     ]);
     await screen.findByTestId('alert-payments_to_verify');
     for (const kind of [
@@ -98,6 +107,7 @@ describe('AdminDashboardPage', () => {
       'service_due',
       'papers_expiring',
       'orphaned_on_trip',
+      'driver_locked',
     ]) {
       expect(screen.getByTestId(`alert-${kind}`)).toBeTruthy();
     }
@@ -126,7 +136,7 @@ describe('AdminDashboardPage', () => {
   });
 
   it('links every non-zero alert to the screen that resolves it', async () => {
-    renderDashboard(ALL_SIX_NONZERO);
+    renderDashboard(ALL_SEVEN_NONZERO);
     await screen.findByTestId('alert-payments_to_verify');
     // Counted inside the cards: the page header now also carries a "Find a
     // booking" link, which is not an alert action.
@@ -138,9 +148,9 @@ describe('AdminDashboardPage', () => {
     expect(hrefs).toContain('/admin/payments');
     expect(hrefs).toContain('/admin/vans');
     expect(hrefs).toContain('/admin/drivers');
-    // EXACTLY six links, one per non-zero card — a zero card must not
+    // EXACTLY seven links, one per non-zero card — a zero card must not
     // offer an action there is nothing to do.
-    expect(hrefs).toHaveLength(6);
+    expect(hrefs).toHaveLength(7);
   });
 
   it('offers no link on a zero card', async () => {
@@ -150,12 +160,13 @@ describe('AdminDashboardPage', () => {
   });
 
   it('uses ONE status region for the whole set', async () => {
-    renderDashboard(ALL_SIX_NONZERO);
+    renderDashboard(ALL_SEVEN_NONZERO);
     await screen.findByTestId('alert-payments_to_verify');
     // Five competing live regions is the named anti-pattern; one sentence
     // tells an operator more than five numbers read in sequence.
     expect(screen.getAllByRole('status')).toHaveLength(1);
-    expect(screen.getByRole('status').textContent).toMatch(/13 things need attention/i);
+    // 2 + 3 + 1 + 4 + 2 + 1 + 1 — fourteen since `driver_locked` joined the set.
+    expect(screen.getByRole('status').textContent).toMatch(/14 things need attention/i);
   });
 
   it('says nothing needs attention when every alert is zero', async () => {
@@ -210,6 +221,73 @@ describe('AdminDashboardPage', () => {
     });
   });
 
+  /**
+   * The seventh card (owner decision 2026-10-23, Q1). It ships with the
+   * backing-off PIN lockout: the lockout lifts itself, so this card is
+   * information rather than a job — but the office should not learn that a
+   * driver cannot sign in by that driver ringing from beside a van at 5am.
+   */
+  describe('the locked-driver alert', () => {
+    it('names the driver and says the lockout clears itself', async () => {
+      renderDashboard([
+        alert('driver_locked', 1, [{ id: 7, label: 'Joselito Reyes', date: null }]),
+      ]);
+      const card = await screen.findByTestId('alert-driver_locked');
+      expect(card.textContent).toMatch(/Drivers locked out/i);
+      expect(card.textContent).toMatch(/1 driver is locked out/i);
+      expect(card.textContent).toMatch(/Joselito Reyes/);
+      /*
+       * The two facts a dispatcher decides with, in the SENTENCE rather than
+       * in the card's colour: it ends by itself, and the remedy does not cost
+       * the driver their PIN. Without the second, the obvious reading of
+       * "locked out" is still "reset their PIN", which is what `unlock` exists
+       * to avoid.
+       */
+      expect(card.textContent).toMatch(/clears itself within the hour/i);
+      expect(card.textContent).toMatch(/does not change their PIN/i);
+    });
+
+    it('pluralises, and links to the drivers screen where the unlock lives', async () => {
+      renderDashboard([alert('driver_locked', 3)]);
+      expect(await screen.findByText(/3 drivers are locked out/i)).toBeTruthy();
+      expect(screen.getByRole('link', { name: /open the drivers/i }).getAttribute('href')).toBe(
+        '/admin/drivers',
+      );
+    });
+
+    it('is all clear at zero: no sentence, no link', async () => {
+      renderDashboard([alert('driver_locked', 0)]);
+      const card = await screen.findByTestId('alert-driver_locked');
+      expect(card.textContent).toMatch(/all clear/i);
+      expect(card.textContent).not.toMatch(/locked out\b.*\d/i);
+      expect(card.textContent).not.toMatch(/clears itself/i);
+      expect(within(card).queryAllByRole('link')).toEqual([]);
+    });
+
+    it('never names the attempt count or the unlock time', async () => {
+      /*
+       * The alert payload deliberately carries neither (`driverLocked` in
+       * `services/dispatch/alerts.ts` sets `date: null`), and the card must
+       * not invent either: "locked until 05:42" would be a promise the backoff
+       * can extend, and a count of failed attempts is the number §8 narrates
+       * nowhere.
+       */
+      renderDashboard([
+        alert('driver_locked', 1, [{ id: 7, label: 'Joselito Reyes', date: null }]),
+      ]);
+      const card = await screen.findByTestId('alert-driver_locked');
+      expect(card.textContent).not.toMatch(/\b\d{1,2}:\d{2}\b/);
+      expect(card.textContent).not.toMatch(/attempts?\b/i);
+    });
+
+    it('is painted amber like its siblings', async () => {
+      renderDashboard([alert('driver_locked', 1)]);
+      const card = await screen.findByTestId('alert-driver_locked');
+      expect(card.className).toMatch(/border-amber-200/);
+      expect(card.className).toMatch(/bg-white/);
+    });
+  });
+
   it("carries §9's departures board below the cards", async () => {
     /*
      * This test used to assert the line of apology that stood here while
@@ -222,7 +300,7 @@ describe('AdminDashboardPage', () => {
      * busy state — is `departures-board.test.tsx`. This only pins that
      * the dashboard mounts it.
      */
-    renderDashboard(ALL_SIX_NONZERO);
+    renderDashboard(ALL_SEVEN_NONZERO);
     expect(await screen.findByTestId('departures-board')).toBeTruthy();
     expect(screen.getByRole('heading', { name: /leaving today/i })).toBeTruthy();
   });
@@ -231,7 +309,7 @@ describe('AdminDashboardPage', () => {
     // The board deliberately adds none: `aria-busy` is an attribute, not
     // an announcement, and a panel that announced itself every fifteen
     // seconds would be worse than the five regions this page avoids.
-    renderDashboard(ALL_SIX_NONZERO);
+    renderDashboard(ALL_SEVEN_NONZERO);
     // The board renders synchronously, so its presence is NOT evidence the
     // alerts have landed — wait for a card, or this counts the regions of a
     // half-rendered page and passes for the wrong reason.

@@ -137,14 +137,19 @@ describe('drivers table', () => {
   });
 
   /**
-   * All five columns Task 21's lockout policy is implemented against:
-   * 5 consecutive failures -> a 15-minute lock; 3 locks inside one 24h
-   * window -> an admin must unlock. Task 21 cannot be written if any one of
-   * them is missing, and a missing counter does not fail loudly — it makes
-   * the policy silently weaker than the spec says it is, which is the worst
-   * possible failure mode for a brute-force defence.
+   * All five columns the lockout policy has ever been implemented against:
+   * 5 consecutive failures -> a lock, whose length now backs off 15 -> 30 ->
+   * 60 minutes inside one 24h window (owner decision 2026-10-23, superseding
+   * "3 locks -> an admin must unlock"). A missing counter does not fail
+   * loudly — it makes the policy silently weaker than the spec says it is,
+   * which is the worst possible failure mode for a brute-force defence.
+   *
+   * `requires_admin_unlock` is in the list because the COLUMN still exists:
+   * the 2026-10-23 decision retired the terminal state without taking a
+   * migration, and this assertion is what would notice if someone dropped the
+   * column while `resetPin` still writes it.
    */
-  it('ships all five lockout columns the Task 21 policy needs', () => {
+  it('ships all five lockout columns the policy has ever needed', () => {
     for (const name of [
       'failed_attempts',
       'locked_until',
@@ -176,13 +181,21 @@ describe('drivers table', () => {
   });
 
   /**
-   * Fails closed by construction: the flag is a non-null boolean, so a
-   * driver is either locked out of self-service or not — there is no third,
-   * unknown state a check could read as "probably fine". And there is
-   * deliberately NO expiry column beside it: per the spec only an admin
-   * clears it, never a timer, so no column exists for a timer to consult.
+   * **RETIRED, and still here** (owner decision 2026-10-23, Q1). This used to
+   * be named `'gates the hard lockout on an admin-only boolean with no expiry
+   * beside it'`, and the reasoning was that the flag fails closed by
+   * construction — a non-null boolean with no expiry column, because per the
+   * spec only an admin cleared it and never a timer.
+   *
+   * There is no hard lockout any more: the lockout backs off and lifts itself,
+   * nothing reads this column, and `requires_admin_unlock` is dead storage.
+   * No migration was taken to drop it, so what is left to assert is that it is
+   * still shaped the way the rows already in it assume — non-null, defaulting
+   * to false, and exactly one of them — because `resetPin` and the login path
+   * both still write it. Dropping the column is a schema change and needs its
+   * own decision; doing it silently would break those two writers.
    */
-  it('gates the hard lockout on an admin-only boolean with no expiry beside it', () => {
+  it('keeps the retired requires_admin_unlock column non-null and defaulting to false', () => {
     const flag = column('requires_admin_unlock');
     expect(flag?.notNull).toBe(true);
     expect(flag?.default).toBe(false);

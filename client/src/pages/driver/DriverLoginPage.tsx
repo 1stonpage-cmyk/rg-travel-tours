@@ -15,8 +15,10 @@
  * `REFUSAL_COPY` below is a `Record<DriverLoginRefusal, Refusal>`, so the
  * COMPILER refuses a build where a refusal has no words — the same
  * discipline Week 5's `AssignRefusal` / `REFUSAL_COPY` pair established in
- * `components/admin/AssignPanel.tsx`. Add a fifth refusal server-side and
- * this object stops compiling until someone decides what a driver reads.
+ * `components/admin/AssignPanel.tsx`. Add a refusal server-side and this
+ * object stops compiling until someone decides what a driver reads; remove
+ * one, as owner decision 2026-10-23 did, and it stops compiling until the
+ * words for it are deleted too.
  *
  * Three rules hold it together, and each one is a test in
  * `__tests__/driver-login.test.tsx`:
@@ -26,17 +28,22 @@
  *     (driver codes are short and printed on a van, so the PIN is the only
  *     half that is hard to get). A sentence saying which half was wrong
  *     would hand back in the browser the oracle the server withholds.
- *  2. **`locked` and `needs_admin_unlock` stay two sentences.** One clears
- *     by itself in fifteen minutes; the other never does. A driver shown
- *     the timer when only a dispatcher can help them waits a quarter of an
- *     hour, is refused again, and the van leaves without a manifest.
- *     Amber for the one that clears, dark blue/grey for the one that does
- *     not — and the words say it too, because colour alone is a WCAG 1.4.1
- *     failure.
+ *  2. **`locked` promises the schedule, never a single number and never the
+ *     driver's place in it** (rewritten for owner decision 2026-10-23, Q1).
+ *     This rule used to read "`locked` and `needs_admin_unlock` stay two
+ *     sentences" — one clearing in fifteen minutes and the other never — and
+ *     the second sentence is gone with the refusal it belonged to: a lockout
+ *     is never terminal now, so waiting is always the driver's next action.
+ *     What replaced it is a narrower rule. The lockout lengthens inside a day
+ *     (15 → 30 → 60 minutes), the server sends no tier and no unlock time, so
+ *     the sentence says "15 minutes, longer if it keeps happening today" and
+ *     the screen never pretends to know which. Still amber, because waiting is
+ *     still the cure — and the words carry it, because colour alone is a
+ *     WCAG 1.4.1 failure.
  *  3. **The attempt count is never rendered.** "2 tries left" tells a
  *     shoulder-surfer how much room they have and tells the driver nothing
- *     they can act on. §8's policy (5 failures → 15 minutes; 3 lockouts in
- *     24h → a dispatcher) is enforced server-side and narrated nowhere.
+ *     they can act on. §8's policy (5 failures → a lockout of 15, 30 or 60
+ *     minutes) is enforced server-side and narrated nowhere.
  *
  * No red anywhere, per CLAUDE.md: the two tones are amber and
  * `brand-error` (#334155).
@@ -80,16 +87,23 @@ const REFUSAL_COPY: Record<DriverLoginRefusal, Refusal> = {
     tone: 'stop',
     text: 'We could not sign you in. Check what you typed and try again.',
   },
-  // Clears by itself, so the sentence is a clock.
+  /*
+   * REWRITTEN for owner decision 2026-10-23 (Q1). It used to promise exactly
+   * fifteen minutes, which was true of the old policy's only lockout length.
+   * The lockout now backs off — 15, then 30, then up to an hour inside the
+   * same day — so a flat promise of fifteen would have a driver trying again
+   * at minute sixteen, being refused, and concluding the portal is broken.
+   *
+   * It names the SCHEDULE, not the driver's place in it. The server sends no
+   * tier, no count and no unlock time (`asTrpcError`, and that is deliberate),
+   * so this screen genuinely does not know which it is and must not guess.
+   * Still amber, because waiting is still what fixes it; and it offers the
+   * office as the shortcut it now really is — they can unlock the account
+   * without changing the PIN.
+   */
   locked: {
     tone: 'wait',
-    text: 'Locked for 15 minutes. Try again after that, or ring the office if you are due out now.',
-  },
-  // Does NOT clear by itself, so the sentence is an instruction. It must
-  // never mention fifteen minutes.
-  needs_admin_unlock: {
-    tone: 'stop',
-    text: 'Ask the office to reset your PIN. Only they can open this account again.',
+    text: 'Too many wrong PINs, so sign-in is locked for a while — 15 minutes, longer if it keeps happening today. Try again later, or ring the office if you are due out now: they can unlock it without changing your PIN.',
   },
 };
 

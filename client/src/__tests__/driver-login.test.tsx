@@ -2,16 +2,19 @@
  * Week 6, Task 9 — the driver portal shell and its sign-in screen.
  *
  * `server/src/__tests__/driver-auth.test.ts` and `driver-lockout.test.ts`
- * prove the policy: five failures lock a driver out for fifteen minutes,
- * three lockouts in a day need a dispatcher, and a wrong code and a wrong
- * PIN are refused byte-identically. This file proves the SCREEN — and
- * almost all of what it proves is words, because on this screen the words
- * are the feature:
+ * prove the policy: five failures lock a driver out, each further lockout in
+ * the same day lasts longer (15 → 30 → 60 minutes, capped, and never
+ * terminal — owner decision 2026-10-23), and a wrong code and a wrong PIN are
+ * refused byte-identically. This file proves the SCREEN — and almost all of
+ * what it proves is words, because on this screen the words are the feature:
  *
  *  - one generic sentence for a refused pair, naming neither half;
- *  - "Locked for 15 minutes" and "Ask the office" as two DIFFERENT
- *    sentences, because the driver's next action differs and the second is
- *    the only useful thing to say at 5am when the van is leaving;
+ *  - ONE sentence for a lockout, naming the schedule rather than a single
+ *    number and offering the office as the shortcut it now is. Until
+ *    2026-10-23 there were TWO — "Locked for 15 minutes" and "Ask the office
+ *    to reset your PIN" — because a lockout could be terminal; it cannot be
+ *    now, so waiting is always the driver's next action and the second
+ *    sentence went with the refusal it belonged to;
  *  - no attempt count, ever.
  *
  * ## What jsdom cannot see, and this file therefore does not claim
@@ -186,38 +189,57 @@ describe('DriverLoginPage — what a refusal is allowed to say', () => {
     expect(alert.textContent ?? '').not.toMatch(/\bpin\b/i);
   });
 
-  it('tells a locked-out driver to wait fifteen minutes, in amber', async () => {
+  /**
+   * REWRITTEN for owner decision 2026-10-23 (Q1). It used to assert the
+   * sentence read `locked for 15 minutes` — true while fifteen was the only
+   * lockout length there was. The lockout now backs off (15 → 30 → 60 minutes
+   * inside a day), so a flat promise of fifteen has a driver trying again at
+   * minute sixteen, being refused, and deciding the portal is broken.
+   *
+   * What the sentence must do now: name the schedule, offer the office, and
+   * stay amber, because waiting is still what fixes it.
+   */
+  it('tells a locked-out driver the lockout can be longer than fifteen minutes, in amber', async () => {
     mockTrpcError('driver.login', 'FORBIDDEN', 'locked');
     const user = userEvent.setup();
     renderLogin();
     await signIn(user);
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent(/locked for 15 minutes/i);
+    const text = alert.textContent ?? '';
+    expect(text).toMatch(/15 minutes/i);
+    // The half that would be missing from a copy of the OLD sentence: it can
+    // be longer, and a driver who only reads "15 minutes" is misled.
+    expect(text).toMatch(/longer if it keeps happening/i);
+    // The office can now help without costing the driver their PIN, which is
+    // the fact `admin.drivers.unlock` was added for.
+    expect(text).toMatch(/without changing your PIN/i);
     // Amber, because it clears by itself (CLAUDE.md: warnings are amber).
     expect(alert.className).toMatch(/\bbg-amber-50\b/);
     expect(alert.className).toMatch(/\btext-amber-900\b/);
   });
 
-  it('tells a driver who needs a dispatcher to ring the office, and never to wait', async () => {
+  /**
+   * REPLACES `'tells a driver who needs a dispatcher to ring the office, and
+   * never to wait'`, which asserted a second, `needs_admin_unlock` sentence
+   * reading "Ask the office to reset your PIN" and containing neither "15
+   * minutes" nor "wait". That refusal no longer exists (owner decision
+   * 2026-10-23): the lockout is never terminal, so there is no state in which
+   * a driver must be told NOT to wait, and the copy for it is gone.
+   *
+   * This test is what stops it coming back as a fourth refusal with a
+   * hand-written sentence: a reason the server cannot send must read as any
+   * unrecognised reason does, not as its own instruction.
+   */
+  it('has no sentence of its own for the retired needs_admin_unlock refusal', async () => {
     mockTrpcError('driver.login', 'FORBIDDEN', 'needs_admin_unlock');
     const user = userEvent.setup();
     renderLogin();
     await signIn(user);
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent(/ask the office to reset your PIN/i);
-    /*
-     * THE POINT OF THIS FILE. `locked` clears by itself and
-     * `needs_admin_unlock` does not, so a driver shown the fifteen-minute
-     * sentence here waits a quarter of an hour, tries again, and is refused
-     * again — while the van leaves. Collapsing the two into one sentence is
-     * the failure this assertion exists to catch.
-     */
-    expect(alert.textContent ?? '').not.toMatch(/15 minutes/i);
-    expect(alert.textContent ?? '').not.toMatch(/\bwait\b/i);
-    // Dark blue/grey, because waiting will not fix it.
-    expect(alert.className).toMatch(/\btext-brand-error\b/);
+    expect(alert.textContent ?? '').not.toMatch(/reset your PIN/i);
+    expect(alert).toHaveTextContent(/not answering just now/i);
   });
 
   /*

@@ -18,7 +18,7 @@
  *      `wrong_credentials` — before the policy, touching no counter
  *   4. `evaluatePinAttempt(state, now, pinOk)`
  *   5. persist `decision.next` onto the row, same transaction
- *   6. `writeAudit` for a lockout or an escalation, same transaction
+ *   6. `writeAudit` for a lockout, same transaction
  *   7. on `'ok'`, mint a session; otherwise map the outcome to a refusal
  *
  * ## The unknown-code dummy hash runs AFTER the commit
@@ -103,20 +103,25 @@ function refuse(reason: DriverLoginRefusal): DriverLoginRefused {
   return { ok: false, reason };
 }
 
-/** Exactly the five lockout columns, in the shape the policy expects. */
+/**
+ * Exactly the lockout columns the policy reads, in the shape it expects.
+ *
+ * `requires_admin_unlock` is still SELECTed by the caller and is deliberately
+ * not copied across: owner decision 2026-10-23 retired the terminal state, so
+ * `LockoutState` has no field for it and the policy cannot be reached by a
+ * `true` left in the column by a login from before that deploy.
+ */
 function stateFrom(row: {
   failedAttempts: number;
   lockedUntil: Date | null;
   lockoutCount: number;
   lockoutWindowStartedAt: Date | null;
-  requiresAdminUnlock: boolean;
 }): LockoutState {
   return {
     failedAttempts: row.failedAttempts,
     lockedUntil: row.lockedUntil,
     lockoutCount: row.lockoutCount,
     lockoutWindowStartedAt: row.lockoutWindowStartedAt,
-    requiresAdminUnlock: row.requiresAdminUnlock,
   };
 }
 
@@ -136,9 +141,9 @@ type Verdict =
  * success mints a 12-hour session (`SESSION_TTL_MS_BY_SUBJECT.driver`).
  *
  * `now` is a parameter, as everywhere in this codebase that makes a
- * time-based decision: the 15-minute lockout and the 24-hour escalation
- * window are then assertable at the boundary instead of depending on when
- * the suite runs, and the procedure takes no time from the client.
+ * time-based decision: the lockout's length and the 24-hour backoff window are
+ * then assertable at the boundary instead of depending on when the suite runs,
+ * and the procedure takes no time from the client.
  */
 export async function attemptDriverLogin(input: {
   code: string;
@@ -162,7 +167,6 @@ export async function attemptDriverLogin(input: {
         lockedUntil: drivers.lockedUntil,
         lockoutCount: drivers.lockoutCount,
         lockoutWindowStartedAt: drivers.lockoutWindowStartedAt,
-        requiresAdminUnlock: drivers.requiresAdminUnlock,
       })
       .from(drivers)
       .where(eq(drivers.code, code))
@@ -232,9 +236,17 @@ export async function attemptDriverLogin(input: {
     const decision = evaluatePinAttempt(stateFrom(row), input.now, pinOk);
 
     // 5. Persist `next` in the SAME transaction as the read that produced
-    //    it. All five columns, never a subset: `evaluatePinAttempt` returns
-    //    a whole state, and writing half of one is how a cleared lockout
-    //    keeps its counter.
+    //    it. All four policy columns, never a subset: `evaluatePinAttempt`
+    //    returns a whole state, and writing half of one is how a cleared
+    //    lockout keeps its counter.
+    //
+    //    `requiresAdminUnlock` is NOT one of them any more (owner decision
+    //    2026-10-23) and is written as `false` on every attempt anyway —
+    //    deliberately, as a one-line cleanup rather than a migration. A driver
+    //    left `requires_admin_unlock = 1` by a login from before this deploy
+    //    could not be refused by it regardless (the policy no longer has the
+    //    field), but leaving a stale `1` in the column would mislead anyone
+    //    reading the row in SQL about why that driver cannot sign in.
     await tx
       .update(drivers)
       .set({
@@ -242,14 +254,14 @@ export async function attemptDriverLogin(input: {
         lockedUntil: decision.next.lockedUntil,
         lockoutCount: decision.next.lockoutCount,
         lockoutWindowStartedAt: decision.next.lockoutWindowStartedAt,
-        requiresAdminUnlock: decision.next.requiresAdminUnlock,
+        requiresAdminUnlock: false,
       })
       .where(eq(drivers.id, row.id));
 
     // 6. Audit, also inside the transaction — an audit row written outside
     //    it survives a rollback and then claims a lockout that never
-    //    happened. Only a lockout or an escalation sets `decision.audit`;
-    //    an ordinary mistyped digit is not an audit event.
+    //    happened. Only a lockout sets `decision.audit`; an ordinary mistyped
+    //    digit is not an audit event.
     //
     //    The ACTOR is the driver, not `system`: §8's lockout is something
     //    that happened to one driver's account, and an admin reading the
@@ -273,11 +285,11 @@ export async function attemptDriverLogin(input: {
         return { kind: 'refused', reason: 'wrong_credentials' };
       case 'locked':
         return { kind: 'refused', reason: 'locked' };
-      case 'needs_admin_unlock':
-        return { kind: 'refused', reason: 'needs_admin_unlock' };
       default: {
         // Exhaustiveness: a new LockoutOutcome with no case here fails
-        // `pnpm typecheck` rather than falling through to a login.
+        // `pnpm typecheck` rather than falling through to a login. It is also
+        // what would catch a reintroduced terminal outcome (retired
+        // 2026-10-23) before it could reach a driver's screen.
         const unreachable: never = decision.outcome;
         throw new Error(`Unhandled lockout outcome: ${String(unreachable)}`);
       }
