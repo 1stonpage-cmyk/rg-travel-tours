@@ -41,9 +41,7 @@ import {
   type AdminRole,
 } from '@rg/shared';
 import PasswordField from '@/components/admin/PasswordField';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { trpc } from '@/lib/trpc';
@@ -60,17 +58,27 @@ const ROLE_HELP: Record<AdminRole, string> = {
   dispatcher: 'Bookings, calendar, vans, drivers and reviews.',
 };
 
+const PILL = 'inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold';
+
 const ROLE_BADGE_CLASS: Record<AdminRole, string> = {
-  owner: 'border-0 bg-brand-gold-100 text-brand-gold-800',
-  finance: 'border-0 bg-brand-blue-50 text-brand-blue-900',
-  dispatcher: 'border-0 bg-brand-blue-100 text-brand-blue-900',
+  owner: `${PILL} bg-brand-gold-100 text-brand-gold-800`,
+  finance: `${PILL} bg-brand-blue-50 text-brand-blue-900`,
+  dispatcher: `${PILL} bg-brand-blue-100 text-brand-blue-900`,
 };
 
+const CARD = 'border-brand-blue-100 rounded-[14px] border bg-white';
+
+const OUTLINE_BUTTON =
+  'tap-target border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 hover:text-brand-blue-800 rounded-[10px] font-semibold transition-colors';
+const PRIMARY_BUTTON =
+  'tap-target bg-brand-blue-700 hover:bg-brand-blue-800 rounded-[10px] font-semibold text-white transition-colors';
+const FIELD = 'tap-target border-brand-blue-200 rounded-[10px] bg-white';
+
 const NOTICE_CLASS =
-  'border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-lg border p-3 text-sm font-medium';
+  'border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-xl border p-3 text-sm font-medium';
 
 const SELECT_CLASS =
-  'border-input tap-target focus-visible:border-ring focus-visible:ring-ring/50 w-full rounded-md border bg-transparent px-3 text-base shadow-xs outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50 md:text-sm';
+  'border-brand-blue-200 tap-target focus-visible:border-ring focus-visible:ring-ring/50 w-full rounded-[10px] border bg-white px-3 text-base shadow-xs outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:bg-slate-50 disabled:opacity-60 md:text-sm';
 
 /** The server's own sentence for a refusal it chose; calm fixed text for everything else. */
 function describeStaffError(error: unknown, fallback: string): string {
@@ -172,11 +180,11 @@ function AddStaffForm({ onCreated }: { onCreated: (name: string) => void }) {
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-brand-blue-900 text-lg">Add a staff member</CardTitle>
-      </CardHeader>
-      <CardContent>
+    <section aria-labelledby="staff-add-heading" className={`${CARD} min-w-0 flex-[1_1_300px] p-5`}>
+      <h2 id="staff-add-heading" className="text-brand-ink text-lg font-bold">
+        Add a staff member
+      </h2>
+      <div className="mt-4">
         <form onSubmit={onSubmit} noValidate className="space-y-4">
           {banner ? (
             <p role="alert" className={NOTICE_CLASS}>
@@ -193,7 +201,7 @@ function AddStaffForm({ onCreated }: { onCreated: (name: string) => void }) {
               onChange={(event) => setName(event.target.value)}
               aria-invalid={errors.name ? true : undefined}
               aria-describedby={errors.name ? 'staff-new-name-error' : undefined}
-              className="tap-target"
+              className={FIELD}
             />
             {errors.name ? (
               <p id="staff-new-name-error" className="text-brand-error text-sm font-medium">
@@ -212,7 +220,7 @@ function AddStaffForm({ onCreated }: { onCreated: (name: string) => void }) {
               onChange={(event) => setEmail(event.target.value)}
               aria-invalid={errors.email ? true : undefined}
               aria-describedby={errors.email ? 'staff-new-email-error' : 'staff-new-email-hint'}
-              className="tap-target"
+              className={FIELD}
             />
             <p id="staff-new-email-hint" className="text-muted-foreground text-xs">
               They sign in with this email.
@@ -239,7 +247,7 @@ function AddStaffForm({ onCreated }: { onCreated: (name: string) => void }) {
             error={errors.tempPassword}
           />
 
-          <Button type="submit" disabled={create.isPending} className="tap-target w-full sm:w-auto">
+          <Button type="submit" disabled={create.isPending} className={`${PRIMARY_BUTTON} w-full`}>
             {create.isPending ? (
               <>
                 <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />
@@ -250,8 +258,8 @@ function AddStaffForm({ onCreated }: { onCreated: (name: string) => void }) {
             )}
           </Button>
         </form>
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   );
 }
 
@@ -311,7 +319,7 @@ function EditPanel({
       onSubmit={onSubmit}
       noValidate
       aria-label={`Edit ${user.name}`}
-      className="bg-brand-blue-50 mt-3 space-y-4 rounded-lg p-4"
+      className="border-brand-blue-200 bg-brand-blue-50 mt-4 space-y-4 rounded-xl border p-4"
     >
       {banner ? (
         <p role="alert" className={NOTICE_CLASS}>
@@ -326,7 +334,7 @@ function EditPanel({
           onChange={(event) => setName(event.target.value)}
           aria-invalid={errors.name ? true : undefined}
           aria-describedby={errors.name ? `${idBase}-name-error` : undefined}
-          className="tap-target bg-background"
+          className={FIELD}
         />
         {errors.name ? (
           <p id={`${idBase}-name-error`} className="text-brand-error text-sm font-medium">
@@ -344,14 +352,14 @@ function EditPanel({
         </p>
       </div>
       <div className="flex flex-wrap gap-2">
-        <Button type="submit" size="sm" className="tap-target" disabled={update.isPending}>
+        <Button type="submit" size="sm" className={PRIMARY_BUTTON} disabled={update.isPending}>
           {update.isPending ? 'Saving…' : 'Save changes'}
         </Button>
         <Button
           type="button"
           variant="outline"
           size="sm"
-          className="tap-target"
+          className={OUTLINE_BUTTON}
           disabled={update.isPending}
           onClick={onDone}
         >
@@ -407,7 +415,7 @@ function ResetPanel({
       onSubmit={onSubmit}
       noValidate
       aria-label={`Reset password for ${user.name}`}
-      className={`${NOTICE_CLASS} mt-3 space-y-4 font-normal`}
+      className={`${NOTICE_CLASS} mt-4 space-y-4 font-normal`}
     >
       <p className="font-medium">
         Reset the password for {user.name}? This signs them out of every device now. They will have
@@ -427,14 +435,14 @@ function ResetPanel({
         error={error}
       />
       <div className="flex flex-wrap gap-2">
-        <Button type="submit" size="sm" className="tap-target" disabled={reset.isPending}>
+        <Button type="submit" size="sm" className={PRIMARY_BUTTON} disabled={reset.isPending}>
           {reset.isPending ? 'Resetting…' : `Reset and sign out ${user.name}`}
         </Button>
         <Button
           type="button"
           variant="outline"
           size="sm"
-          className="tap-target"
+          className={OUTLINE_BUTTON}
           disabled={reset.isPending}
           onClick={onDone}
         >
@@ -478,7 +486,7 @@ function DeactivatePanel({
     <div
       role="group"
       aria-label={`Confirm deactivating ${user.name}`}
-      className={`${NOTICE_CLASS} mt-3 font-normal`}
+      className={`${NOTICE_CLASS} mt-4 font-normal`}
     >
       <p className="font-medium">
         Deactivate {user.name}? This signs them out on every device right away and they can no
@@ -493,7 +501,7 @@ function DeactivatePanel({
         <Button
           type="button"
           size="sm"
-          className="tap-target"
+          className={PRIMARY_BUTTON}
           disabled={setActive.isPending}
           onClick={() => setActive.mutate({ id: user.id, isActive: false })}
         >
@@ -504,7 +512,7 @@ function DeactivatePanel({
           type="button"
           variant="outline"
           size="sm"
-          className="tap-target"
+          className={OUTLINE_BUTTON}
           disabled={setActive.isPending}
           onClick={onDone}
         >
@@ -544,91 +552,105 @@ function StaffAccounts() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-6">
-      <h1 className="text-brand-blue-900 text-2xl font-bold">Staff accounts</h1>
-      <p className="text-muted-foreground mt-1 text-sm">
-        Only the owner sees this page. Staff sign in at the staff sign-in with their email.
-      </p>
+    <div className="flex flex-col gap-6">
+      <header className="flex flex-col gap-1">
+        <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.08em]">
+          Owner only
+        </p>
+        <h1 className="text-brand-ink text-2xl font-bold sm:text-3xl">Staff accounts</h1>
+        <p className="text-brand-error text-sm">
+          Only the owner sees this page. Staff sign in at the staff sign-in with their email.
+        </p>
+      </header>
 
       {notice ? (
         <p
           role="status"
-          className="bg-brand-blue-50 text-brand-blue-900 mt-4 rounded-lg p-3 text-sm font-medium"
+          className="bg-brand-blue-50 text-brand-blue-900 border-brand-blue-200 rounded-xl border p-3 text-sm font-medium"
         >
           {notice}
         </p>
       ) : null}
 
-      <div className="mt-6">
-        <AddStaffForm
-          onCreated={(name) =>
-            setNotice(`${name} was added. Give them the temporary password in person.`)
-          }
-        />
-      </div>
+      <div className="flex flex-wrap items-start gap-6">
+        <section
+          aria-labelledby="staff-team-heading"
+          className={`${CARD} min-w-0 flex-[2_1_520px]`}
+        >
+          <header className="border-brand-blue-100 border-b px-5 py-4">
+            <h2 id="staff-team-heading" className="text-brand-ink text-lg font-bold">
+              Everyone with a login
+              {list.data ? (
+                <span className="text-brand-error ml-2 text-sm font-normal">
+                  · {users.length} {users.length === 1 ? 'person' : 'people'}
+                </span>
+              ) : null}
+            </h2>
+          </header>
 
-      <h2 className="text-brand-blue-900 mt-8 text-lg font-semibold">Everyone with a login</h2>
+          {rowBanner ? (
+            <p role="alert" className={`${NOTICE_CLASS} m-4`}>
+              {rowBanner}
+            </p>
+          ) : null}
 
-      {rowBanner ? (
-        <p role="alert" className={`${NOTICE_CLASS} mt-4`}>
-          {rowBanner}
-        </p>
-      ) : null}
+          {list.isPending ? (
+            <p className="text-brand-error flex items-center gap-2 p-5 text-sm">
+              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              Loading staff…
+            </p>
+          ) : list.isError ? (
+            <p role="alert" className={`${NOTICE_CLASS} m-4`}>
+              {describeStaffError(
+                list.error,
+                'We could not load staff accounts. Try again in a moment.',
+              )}
+            </p>
+          ) : (
+            <ul className="divide-brand-blue-100 divide-y">
+              {users.map((user) => {
+                const isSelf = user.id === selfId;
+                const open = panel?.id === user.id ? panel.kind : null;
+                const reactivating = reactivate.isPending && reactivate.variables?.id === user.id;
 
-      {list.isPending ? (
-        <p className="text-muted-foreground mt-4 flex items-center gap-2 text-sm">
-          <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-          Loading staff…
-        </p>
-      ) : list.isError ? (
-        <p role="alert" className={`${NOTICE_CLASS} mt-4`}>
-          {describeStaffError(
-            list.error,
-            'We could not load staff accounts. Try again in a moment.',
-          )}
-        </p>
-      ) : (
-        <ul className="mt-4 space-y-4">
-          {users.map((user) => {
-            const isSelf = user.id === selfId;
-            const open = panel?.id === user.id ? panel.kind : null;
-            const reactivating = reactivate.isPending && reactivate.variables?.id === user.id;
-
-            return (
-              <li key={user.id}>
-                <Card>
-                  <CardContent className="pt-6">
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="text-brand-blue-900 font-semibold">
+                return (
+                  <li key={user.id} className={`px-5 py-4 ${user.isActive ? '' : 'bg-slate-50'}`}>
+                    <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+                      <div className="min-w-0 flex-[1_1_200px]">
+                        <p className="text-brand-ink font-semibold">
                           {user.name}
                           {isSelf ? (
-                            <span className="text-muted-foreground ml-2 text-sm font-normal">
-                              (You)
-                            </span>
+                            <span className="text-brand-error ml-2 text-sm font-normal">(You)</span>
                           ) : null}
                         </p>
-                        <p className="text-muted-foreground break-all text-sm">{user.email}</p>
+                        <p className="text-brand-error break-all text-sm">{user.email}</p>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
-                        <Badge className={ROLE_BADGE_CLASS[user.role]}>
+                        <span className={ROLE_BADGE_CLASS[user.role]}>
                           Role: {ROLE_LABELS[user.role]}
-                        </Badge>
-                        <Badge
-                          className={
-                            user.isActive
-                              ? 'bg-brand-blue-50 text-brand-blue-900 border-0'
-                              : 'bg-muted text-foreground border-0'
-                          }
-                        >
+                        </span>
+                        <span className={`${PILL} text-brand-ink gap-1.5 bg-slate-100`}>
+                          <span
+                            aria-hidden="true"
+                            className={`size-2 rounded-full ${
+                              user.isActive ? 'bg-brand-blue-600' : 'bg-slate-400'
+                            }`}
+                          />
                           {user.isActive ? 'Active' : 'Inactive'}
-                        </Badge>
+                        </span>
                       </div>
                     </div>
 
-                    <p className="text-muted-foreground mt-2 text-xs">
+                    <p className="text-brand-error mt-1.5 text-xs">
                       {formatLastSignIn(user.lastLoginAt)}
-                      {user.mustChangePassword ? ' · Must set a new password' : ''}
+                      {user.mustChangePassword ? (
+                        <>
+                          {' · '}
+                          <span className="text-brand-warning font-semibold">
+                            Must set a new password
+                          </span>
+                        </>
+                      ) : null}
                     </p>
 
                     <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -636,7 +658,7 @@ function StaffAccounts() {
                         type="button"
                         variant="outline"
                         size="sm"
-                        className="tap-target"
+                        className={OUTLINE_BUTTON}
                         onClick={() => setPanel({ kind: 'edit', id: user.id })}
                       >
                         Edit
@@ -646,7 +668,7 @@ function StaffAccounts() {
                           type="button"
                           variant="outline"
                           size="sm"
-                          className="tap-target"
+                          className={OUTLINE_BUTTON}
                           onClick={() => setPanel({ kind: 'reset', id: user.id })}
                         >
                           Reset password
@@ -657,7 +679,7 @@ function StaffAccounts() {
                           type="button"
                           variant="outline"
                           size="sm"
-                          className="tap-target"
+                          className={OUTLINE_BUTTON}
                           onClick={() => setPanel({ kind: 'deactivate', id: user.id })}
                         >
                           Deactivate
@@ -668,7 +690,7 @@ function StaffAccounts() {
                           type="button"
                           variant="outline"
                           size="sm"
-                          className="tap-target"
+                          className={OUTLINE_BUTTON}
                           disabled={reactivate.isPending}
                           onClick={() => {
                             setNotice(null);
@@ -702,13 +724,19 @@ function StaffAccounts() {
                         onDeactivated={closePanelWith}
                       />
                     ) : null}
-                  </CardContent>
-                </Card>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
+
+        <AddStaffForm
+          onCreated={(name) =>
+            setNotice(`${name} was added. Give them the temporary password in person.`)
+          }
+        />
+      </div>
     </div>
   );
 }
@@ -723,14 +751,19 @@ export default function AdminStaffPage() {
 
   if (me.data && me.data.role !== 'owner') {
     return (
-      <div className="mx-auto max-w-3xl px-4 py-6">
-        <h1 className="text-brand-blue-900 text-2xl font-bold">Staff accounts</h1>
-        <p role="alert" className={`${NOTICE_CLASS} mt-4`}>
+      <div className="flex flex-col items-start gap-4">
+        <header className="flex flex-col gap-1">
+          <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.08em]">
+            Owner only
+          </p>
+          <h1 className="text-brand-ink text-2xl font-bold sm:text-3xl">Staff accounts</h1>
+        </header>
+        <p role="alert" className={NOTICE_CLASS}>
           Only the owner can manage staff accounts.
         </p>
         <Link
           to="/admin"
-          className="tap-target text-brand-blue-700 mt-4 inline-flex items-center text-sm font-medium underline"
+          className="tap-target text-brand-blue-700 hover:text-brand-blue-900 inline-flex items-center text-sm font-semibold underline underline-offset-4 transition-colors"
         >
           Back to the dashboard
         </Link>

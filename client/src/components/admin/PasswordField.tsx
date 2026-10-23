@@ -51,14 +51,14 @@ export default function PasswordField({
           onChange={(event) => onChange(event.target.value)}
           aria-invalid={error ? true : undefined}
           aria-describedby={describedBy || undefined}
-          className="tap-target pr-12"
+          className="tap-target border-brand-blue-200 rounded-[10px] bg-white pr-12"
         />
         <button
           type="button"
           onClick={() => setRevealed((shown) => !shown)}
           aria-label={revealed ? `Hide ${label.toLowerCase()}` : `Show ${label.toLowerCase()}`}
           aria-pressed={revealed}
-          className="text-muted-foreground hover:text-brand-blue-700 focus-visible:ring-brand-blue-600 absolute inset-y-0 right-0 flex w-12 items-center justify-center rounded-r-md transition-colors focus-visible:outline-none focus-visible:ring-2"
+          className="text-muted-foreground hover:text-brand-blue-700 focus-visible:ring-brand-blue-600 absolute inset-y-0 right-0 flex w-12 items-center justify-center rounded-r-[10px] transition-colors focus-visible:outline-none focus-visible:ring-2"
         >
           {revealed ? (
             <EyeOff className="size-5" aria-hidden="true" />

@@ -87,6 +87,20 @@ describe('AdminStaffPage', () => {
     expect(within(fiona).getByText('Role: Finance')).toBeInTheDocument();
   });
 
+  it('counts the team from the list it was sent, and names the owner-only page', async () => {
+    renderPage();
+    const team = await screen.findByRole('heading', { name: /everyone with a login/i });
+    await waitFor(() => expect(team.textContent).toMatch(/3 people/));
+    expect(screen.getByText('Owner only')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Add a staff member' })).toBeInTheDocument();
+  });
+
+  it('says "1 person" for a team of one', async () => {
+    renderPage({ 'admin.staffUsers.list': [OWNER] });
+    const team = await screen.findByRole('heading', { name: /everyone with a login/i });
+    await waitFor(() => expect(team.textContent).toMatch(/1 person$/));
+  });
+
   it('offers the owner neither Deactivate nor Reset password on their own row', async () => {
     renderPage();
     const olivia = await rowFor('Olivia Owner');
