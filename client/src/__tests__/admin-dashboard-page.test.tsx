@@ -135,7 +135,7 @@ describe('AdminDashboardPage', () => {
       .flatMap((card) => within(card).queryAllByRole('link'))
       .map((a) => a.getAttribute('href'));
     expect(hrefs).toContain('/admin/calendar');
-    expect(hrefs.some((h) => h?.startsWith('/admin/bookings'))).toBe(true);
+    expect(hrefs).toContain('/admin/payments');
     expect(hrefs).toContain('/admin/vans');
     expect(hrefs).toContain('/admin/drivers');
     // EXACTLY six links, one per non-zero card — a zero card must not

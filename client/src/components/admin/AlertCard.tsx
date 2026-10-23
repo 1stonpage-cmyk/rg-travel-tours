@@ -39,8 +39,8 @@ const ALERT_COPY: Record<
 > = {
   payments_to_verify: {
     noun: (n) => (n === 1 ? '1 payment to verify' : `${n} payments to verify`),
-    href: '/admin/bookings?filter=pending_verification',
-    action: 'Open the verification queue',
+    href: '/admin/payments',
+    action: 'Open payment checks',
   },
   unassigned_soon: {
     noun: (n) =>
