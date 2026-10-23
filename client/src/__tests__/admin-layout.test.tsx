@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -115,7 +115,15 @@ describe('AdminLayout', () => {
     it('draws Vans, Drivers and Staff for an owner', async () => {
       renderAt('/admin');
       await screen.findByRole('link', { name: 'Staff' });
-      expect(names()).toEqual(['Dashboard', 'Bookings', 'Dispatch', 'Vans', 'Drivers', 'Staff']);
+      expect(names()).toEqual([
+        'Dashboard',
+        'Bookings',
+        'Payment checks',
+        'Dispatch',
+        'Vans',
+        'Drivers',
+        'Staff',
+      ]);
     });
 
     it('does not draw Staff for a dispatcher, who keeps Vans and Drivers', async () => {
@@ -129,7 +137,52 @@ describe('AdminLayout', () => {
       mockTrpc({ 'staffAuth.me': { userId: 3, role: 'finance', mustChangePassword: false } });
       renderAt('/admin');
       await screen.findByText('Finance');
-      expect(names()).toEqual(['Dashboard', 'Bookings', 'Dispatch']);
+      expect(names()).toEqual(['Dashboard', 'Bookings', 'Payment checks', 'Dispatch']);
+    });
+  });
+
+  describe('the payment checks count', () => {
+    const waiting = (count: number) => [{ kind: 'payments_to_verify', count, examples: [] }];
+
+    it('shows how many payments are waiting beside the link, for finance', async () => {
+      mockTrpc({
+        'staffAuth.me': { userId: 3, role: 'finance', mustChangePassword: false },
+        'admin.dashboard.alerts': waiting(4),
+      });
+      renderAt('/admin');
+      const link = await screen.findByRole('link', { name: /payment checks/i });
+      await waitFor(() => expect(link.textContent).toMatch(/4/));
+      expect(link.textContent).toMatch(/4 waiting/);
+    });
+
+    it('draws no count at zero, and none when the alerts cannot load', async () => {
+      mockTrpc({
+        'staffAuth.me': { userId: 3, role: 'finance', mustChangePassword: false },
+        'admin.dashboard.alerts': waiting(0),
+      });
+      const first = renderAt('/admin');
+      const link = await screen.findByRole('link', { name: /payment checks/i });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(link.textContent).toBe('Payment checks');
+      first.unmount();
+
+      mockTrpc({
+        'staffAuth.me': { userId: 3, role: 'finance', mustChangePassword: false },
+      });
+      renderAt('/admin');
+      const again = await screen.findByRole('link', { name: /payment checks/i });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(again.textContent).toBe('Payment checks');
+    });
+
+    it('offers a dispatcher no payment link at all', async () => {
+      mockTrpc({
+        'staffAuth.me': { userId: 2, role: 'dispatcher', mustChangePassword: false },
+        'admin.dashboard.alerts': waiting(4),
+      });
+      renderAt('/admin');
+      await screen.findByRole('link', { name: 'Vans' });
+      expect(screen.queryByRole('link', { name: /payment/i })).toBeNull();
     });
   });
 

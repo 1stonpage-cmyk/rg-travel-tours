@@ -10,6 +10,7 @@ import AdminDriversPage from '@/pages/admin/AdminDriversPage';
 import AdminStaffPage from '@/pages/admin/AdminStaffPage';
 import AdminChangePasswordPage from '@/pages/admin/AdminChangePasswordPage';
 import AdminLoginPage from '@/pages/admin/AdminLoginPage';
+import AdminPaymentsPage from '@/pages/admin/AdminPaymentsPage';
 import AdminVansPage from '@/pages/admin/AdminVansPage';
 import DriverLayout from '@/components/layout/DriverLayout';
 import DriverLoginPage from '@/pages/driver/DriverLoginPage';
@@ -87,6 +88,7 @@ export default function App() {
         <Route index element={<AdminDashboardPage />} />
         <Route path="bookings" element={<AdminBookingsPage />} />
         <Route path="bookings/:ref" element={<AdminBookingDetailPage />} />
+        <Route path="payments" element={<AdminPaymentsPage />} />
         <Route path="calendar" element={<AdminCalendarPage />} />
         <Route path="vans" element={<AdminVansPage />} />
         <Route path="drivers" element={<AdminDriversPage />} />

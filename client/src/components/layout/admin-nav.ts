@@ -19,6 +19,8 @@ export interface AdminNavItem {
   roles: readonly AdminNavRole[];
   /** Also shown in the phone's bottom quick-link bar. */
   quick?: { label: string };
+  /** Draw the dashboard's count for this alert kind beside the label (when it is above zero). */
+  badge?: 'payments_to_verify';
 }
 
 const ALL: readonly AdminNavRole[] = ['owner', 'dispatcher', 'finance'];
@@ -31,6 +33,14 @@ export const ADMIN_NAV: readonly AdminNavItem[] = [
     end: false,
     roles: ALL,
     quick: { label: 'Bookings' },
+  },
+  {
+    to: '/admin/payments',
+    label: 'Payment checks',
+    end: false,
+    roles: ['owner', 'finance'],
+    quick: { label: 'Payments' },
+    badge: 'payments_to_verify',
   },
   {
     to: '/admin/calendar',

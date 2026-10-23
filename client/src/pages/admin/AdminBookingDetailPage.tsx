@@ -50,6 +50,7 @@ import { Label } from '@/components/ui/label';
 import { trpc } from '@/lib/trpc';
 import AssignPanel from '@/components/admin/AssignPanel';
 import CancelRefundPanel from '@/components/admin/CancelRefundPanel';
+import PaymentDecisions from '@/components/admin/PaymentDecisions';
 
 const STATUS_LABELS: Record<string, string> = {
   pending_payment: 'Awaiting payment',
@@ -74,9 +75,6 @@ const MAY_WRITE_NOTES = ['owner', 'dispatcher', 'finance'];
 
 export default function AdminBookingDetailPage() {
   const { ref = '' } = useParams();
-  const [reason, setReason] = useState('');
-  /** One refusal reason per pending cash claim, keyed by `payments.id`. */
-  const [cashReasons, setCashReasons] = useState<Record<number, string>>({});
   /*
    * The note form (Week 6.5 D6). `shareWithDriver` starts false and is put
    * back to false after every write: the safe direction is the one the form
@@ -88,35 +86,6 @@ export default function AdminBookingDetailPage() {
 
   const me = trpc.staffAuth.me.useQuery(undefined, { retry: false });
   const query = trpc.admin.bookings.detail.useQuery({ ref }, { retry: false, enabled: ref !== '' });
-
-  const approve = trpc.admin.bookings.approveReceipt.useMutation({
-    onSuccess: () => void query.refetch(),
-  });
-  const reject = trpc.admin.bookings.rejectReceipt.useMutation({
-    onSuccess: () => {
-      setReason('');
-      void query.refetch();
-    },
-  });
-  const approveCash = trpc.admin.bookings.approveCash.useMutation({
-    onSuccess: () => void query.refetch(),
-  });
-  /*
-   * The refusal half (Week 6.5 D2). Its reason is per-claim state keyed by
-   * `payments.id`, not one shared string: two taps of the driver's button
-   * are two rows by design, each refused on its own evidence, and a single
-   * box would put one claim's reason onto the other's audit row.
-   */
-  const rejectCash = trpc.admin.bookings.rejectCash.useMutation({
-    onSuccess: (_data, variables) => {
-      setCashReasons((previous) => {
-        const next = { ...previous };
-        delete next[variables.paymentId];
-        return next;
-      });
-      void query.refetch();
-    },
-  });
 
   const addNote = trpc.admin.bookings.addNote.useMutation({
     onSuccess: () => {
@@ -152,42 +121,9 @@ export default function AdminBookingDetailPage() {
   }
 
   const booking = query.data;
-  const pendingReceipt = booking.payments.find(
-    (payment) => payment.status === 'pending' && payment.receiptPath !== null,
-  );
-  /*
-   * The driver's claims (Week 6 Task 11). The same two-arm split the server
-   * scopes itself to: a receipt is a file, cash is `method === 'cash'`. Kept
-   * as its own panel rather than folded into the receipt one, because the
-   * question is a different question — not "does this screenshot match the
-   * amount" but "did this driver actually hand over this money".
-   *
-   * **All four conditions, matching the server's clause** (Task 11 review):
-   * `verifyPendingManualPayment()` scopes to `type='payment' AND
-   * provider='manual' AND method='cash'`, and this finder omitted the first
-   * two. Nothing writes a non-manual cash row today and the server fails
-   * closed either way, so this was no live risk — but two halves of one
-   * rule that disagree is how the screen comes to offer a button the server
-   * then refuses.
-   *
-   * **`filter`, not `find`** (Task 11 review): `recordPendingCash()`
-   * deliberately does NOT merge two taps of the driver's button — "two
-   * genuinely separate claims of cash, which finance must see as two rows
-   * and resolve". A `find` here showed one of them and silently hid the
-   * other, which is the money going missing from the screen rather than
-   * from the till.
-   */
-  const pendingCash = booking.payments.filter(
-    (payment) =>
-      payment.status === 'pending' &&
-      payment.type === 'payment' &&
-      payment.provider === 'manual' &&
-      payment.method === 'cash',
-  );
   const mayVerify = me.data ? MAY_VERIFY.includes(me.data.role) : false;
   const mayWriteNotes = me.data ? MAY_WRITE_NOTES.includes(me.data.role) : false;
   const noteIsEmpty = noteText.trim() === '';
-  const decisionError = approve.error?.message ?? reject.error?.message ?? null;
 
   return (
     <div className="max-w-3xl">
@@ -342,202 +278,16 @@ export default function AdminBookingDetailPage() {
       </section>
 
       {/*
-       * The decision. Offered only to a role §9 allows, and refused by the
-       * server regardless — see the file note.
+       * The decisions on pending money (a guest's receipt, a driver's cash
+       * claim). Offered only to a role §9 allows, and refused by the server
+       * regardless - see `PaymentDecisions`.
        */}
-      {pendingReceipt && mayVerify ? (
-        <section
-          aria-labelledby="decide-heading"
-          className="border-brand-blue-200 bg-background mt-6 space-y-4 rounded-2xl border p-5"
-        >
-          <h2 id="decide-heading" className="text-brand-blue-900 text-base font-semibold">
-            Verify this receipt
-          </h2>
-
-          {decisionError ? (
-            <p
-              role="alert"
-              className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-lg border p-3 text-sm font-medium"
-            >
-              {decisionError}
-            </p>
-          ) : null}
-
-          <Button
-            type="button"
-            className="tap-target w-full"
-            disabled={approve.isPending}
-            onClick={() => approve.mutate({ paymentId: pendingReceipt.id })}
-          >
-            {approve.isPending
-              ? 'Approving…'
-              : `Approve ${formatPeso(pendingReceipt.amountCentavos)}`}
-          </Button>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="reject-reason">
-              Reason, if you are rejecting it — the guest reads this
-            </Label>
-            <textarea
-              id="reject-reason"
-              rows={3}
-              maxLength={400}
-              value={reason}
-              onChange={(event) => setReason(event.target.value)}
-              className="border-input bg-background focus-visible:ring-brand-blue-600 w-full rounded-md border p-3 text-sm focus-visible:outline-none focus-visible:ring-2"
-              placeholder="e.g. The amount is short by ₱500."
-            />
-            <Button
-              type="button"
-              variant="outline"
-              className="tap-target w-full"
-              disabled={reject.isPending || reason.trim().length === 0}
-              onClick={() => reject.mutate({ paymentId: pendingReceipt.id, reason: reason.trim() })}
-            >
-              {reject.isPending ? 'Rejecting…' : 'Reject and ask for another receipt'}
-            </Button>
-          </div>
-        </section>
-      ) : null}
-
-      {/*
-       * The cash panel (Week 6 Task 11, §8 item 5).
-       *
-       * A driver's tap is a CLAIM; this button is the reconciliation. The
-       * two are deliberately different people — a driver who could verify
-       * their own collection could pocket the cash and leave the booking
-       * reading "paid in full" — so the heading says "says they collected"
-       * rather than "collected", and the driver is named in the button
-       * itself. That is the fact being confirmed.
-       *
-       * **And the refusal, since D2.** `rejectCash` closes a claim whose
-       * money never arrived: the row becomes `rejected` with the reason,
-       * nothing moves on the booking — a claim credited nothing, so there
-       * is nothing to take back — and the driver's payment box returns to
-       * `collect_cash`, which is what unblocks a booking a mistaken tap had
-       * frozen. It is NOT the receipt rejection's shape: no guest is
-       * emailed and no re-upload deadline is set, because this is an
-       * internal finding about a driver.
-       *
-       * The reason is REQUIRED and the button names the driver and the
-       * amount, in place of an "are you sure" modal. Typing a sentence is a
-       * stronger deliberateness gate than a dialog nobody reads, and a
-       * refusal is a finding about a person: a vague button is how the
-       * wrong claim gets refused.
-       *
-       * ONE PANEL PER CLAIM. Two taps of the driver's button are two rows
-       * by design, each approved on its own — so each gets its own heading,
-       * its own amount and its own button. A single panel would make the
-       * second claim invisible and un-approvable.
-       */}
-      {mayVerify
-        ? pendingCash.map((claim) => (
-            <section
-              key={claim.id}
-              aria-labelledby={`cash-heading-${claim.id}`}
-              data-testid={`cash-claim-${claim.id}`}
-              className="border-brand-blue-200 bg-background mt-6 space-y-4 rounded-2xl border p-5"
-            >
-              <h2
-                id={`cash-heading-${claim.id}`}
-                className="text-brand-blue-900 text-base font-semibold"
-              >
-                Cash a driver says they collected
-              </h2>
-              <p className="text-muted-foreground text-sm">
-                {claim.collectedByDriverName ?? 'A driver'} recorded{' '}
-                {formatPeso(claim.amountCentavos)} on tour day. Approve it once the money is in hand
-                — that is what credits this booking.
-              </p>
-
-              {/*
-                SCOPED to the claim whose mutation failed — the pattern
-                `approveCash` established. Two claims on one booking each
-                have their own button, so an unscoped error would raise an
-                alert under both and leave the verifier guessing which one
-                was refused. Amber, never red (CLAUDE.md).
-              */}
-              {approveCash.error && approveCash.variables?.paymentId === claim.id ? (
-                <p
-                  role="alert"
-                  className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-lg border p-3 text-sm font-medium"
-                >
-                  {approveCash.error.message}
-                </p>
-              ) : null}
-
-              <Button
-                type="button"
-                className="tap-target w-full"
-                disabled={approveCash.isPending}
-                onClick={() => approveCash.mutate({ paymentId: claim.id })}
-              >
-                {approveCash.isPending && approveCash.variables?.paymentId === claim.id
-                  ? 'Confirming…'
-                  : `Confirm ${formatPeso(claim.amountCentavos)} received`}
-              </Button>
-
-              {/*
-                The refusal (D2). STACKED under the approve button rather
-                than beside it — at 360px two buttons in a row are two
-                half-width targets, and these two mean opposite things.
-                `border-t` separates them so the destructive one is not
-                mistaken for part of the approval.
-              */}
-              <div className="border-border space-y-1.5 border-t pt-4">
-                <Label htmlFor={`cash-reject-reason-${claim.id}`}>
-                  Why the cash was not received — required
-                </Label>
-                <textarea
-                  id={`cash-reject-reason-${claim.id}`}
-                  rows={2}
-                  maxLength={400}
-                  value={cashReasons[claim.id] ?? ''}
-                  onChange={(event) =>
-                    setCashReasons((previous) => ({ ...previous, [claim.id]: event.target.value }))
-                  }
-                  aria-describedby={`cash-reject-hint-${claim.id}`}
-                  className="border-input bg-background focus-visible:ring-brand-blue-600 w-full rounded-md border p-3 text-sm focus-visible:outline-none focus-visible:ring-2"
-                  placeholder="e.g. The driver never handed this in."
-                />
-                <p id={`cash-reject-hint-${claim.id}`} className="text-muted-foreground text-sm">
-                  The office reads this, not the guest. Nothing is credited either way — refusing
-                  closes the claim and lets the driver record the cash again.
-                </p>
-
-                {rejectCash.error && rejectCash.variables?.paymentId === claim.id ? (
-                  <p
-                    role="alert"
-                    className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-lg border p-3 text-sm font-medium"
-                  >
-                    {rejectCash.error.message}
-                  </p>
-                ) : null}
-
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="tap-target w-full"
-                  disabled={
-                    rejectCash.isPending || (cashReasons[claim.id] ?? '').trim().length === 0
-                  }
-                  onClick={() =>
-                    rejectCash.mutate({
-                      paymentId: claim.id,
-                      reason: (cashReasons[claim.id] ?? '').trim(),
-                    })
-                  }
-                >
-                  {rejectCash.isPending && rejectCash.variables?.paymentId === claim.id
-                    ? 'Recording…'
-                    : `Record that ${claim.collectedByDriverName ?? 'the driver'}’s ${formatPeso(
-                        claim.amountCentavos,
-                      )} never arrived`}
-                </Button>
-              </div>
-            </section>
-          ))
-        : null}
+      <PaymentDecisions
+        payments={booking.payments}
+        mayVerify={mayVerify}
+        onChanged={() => void query.refetch()}
+        className="mt-6"
+      />
 
       {/*
        * Cancel and refund (Week 6 Task 13, §13's 6F). Its own component with

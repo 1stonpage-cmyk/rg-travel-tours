@@ -120,6 +120,17 @@ export default function AdminLayout() {
   const role = me.data?.role;
   const nav = navFor(role);
 
+  // The payment-checks count beside its link. It is the dashboard's own alert
+  // (no new data), asked for only by the roles who can open that screen, and
+  // drawn only when above zero: an unknown count is left out, never guessed.
+  const showsPaymentBadge = nav.some((item) => item.badge === 'payments_to_verify');
+  const alerts = trpc.admin.dashboard.alerts.useQuery(undefined, {
+    retry: false,
+    enabled: showsPaymentBadge && !mustChange,
+  });
+  const paymentsWaiting =
+    alerts.data?.find((alert) => alert.kind === 'payments_to_verify')?.count ?? 0;
+
   // The phone menu is open for the page it was opened on and closes when the
   // route changes, with no effect needed to reset it.
   const [menuPath, setMenuPath] = useState<string | null>(null);
@@ -209,6 +220,12 @@ export default function AdminLayout() {
                 }
               >
                 {item.label}
+                {item.badge === 'payments_to_verify' && paymentsWaiting > 0 ? (
+                  <span className="bg-brand-gold-500 text-brand-ink rounded-full px-2 py-0.5 text-xs font-bold tabular-nums">
+                    {paymentsWaiting}
+                    <span className="sr-only"> waiting</span>
+                  </span>
+                ) : null}
               </NavLink>
             ))}
           </nav>
