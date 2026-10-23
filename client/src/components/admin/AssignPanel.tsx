@@ -112,6 +112,8 @@ export interface AssignPanelProps {
   currentDriverId: number | null;
   /** Called after a successful assignment so the caller can refetch. */
   onAssigned: () => void;
+  /** Outer spacing, so each mount point sets its own. */
+  className?: string;
 }
 
 export default function AssignPanel({
@@ -121,6 +123,7 @@ export default function AssignPanel({
   currentVanId,
   currentDriverId,
   onAssigned,
+  className = 'mt-3',
 }: AssignPanelProps) {
   const me = trpc.staffAuth.me.useQuery();
   const canAssign = me.data?.role === 'owner' || me.data?.role === 'dispatcher';
@@ -221,10 +224,10 @@ export default function AssignPanel({
     <section
       data-testid="assign-panel"
       aria-label="Assign a van and driver"
-      className="border-border bg-muted/30 mt-3 rounded-xl border p-3"
+      className={`border-brand-blue-100 rounded-[14px] border bg-white p-5 ${className}`}
     >
       <div className="flex flex-wrap items-center gap-2">
-        <h4 className="text-brand-blue-900 text-sm font-semibold">Assign van and driver</h4>
+        <h3 className="text-brand-ink text-lg font-bold">Assign van and driver</h3>
         {awaitingPayment ? (
           // Owner Q2: pre-assigning an unverified receipt is allowed, and the
           // label is TEXT so a dispatcher scanning tomorrow's board can see
@@ -245,8 +248,8 @@ export default function AssignPanel({
         </p>
       ) : null}
 
-      <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        <div className="space-y-1.5">
+      <div className="mt-3 grid gap-3">
+        <div className="border-brand-blue-200 bg-brand-blue-50 space-y-1.5 rounded-[10px] border p-3">
           <Label htmlFor={`assign-van-${bookingId}`}>Van</Label>
           <Select value={vanId} onValueChange={setVanId}>
             <SelectTrigger id={`assign-van-${bookingId}`} className="tap-target w-full">
@@ -262,7 +265,7 @@ export default function AssignPanel({
           </Select>
         </div>
 
-        <div className="space-y-1.5">
+        <div className="border-brand-blue-200 bg-brand-blue-50 space-y-1.5 rounded-[10px] border p-3">
           <Label htmlFor={`assign-driver-${bookingId}`}>Driver</Label>
           <Select value={driverId} onValueChange={setDriverId}>
             <SelectTrigger id={`assign-driver-${bookingId}`} className="tap-target w-full">
@@ -283,7 +286,7 @@ export default function AssignPanel({
           returns only what is free and no total, so a count would be
           invented — and the rule is more useful than a number anyway: it
           tells a dispatcher why the van they expected is missing. */}
-      <p className="text-muted-foreground mt-2 text-xs">
+      <p className="text-brand-error mt-2 text-xs">
         Only vans and drivers free on this date are listed, for {pax} guests. In-repair, parked,
         too-small and already-assigned vans are hidden, as are drivers on leave or already out.
       </p>
@@ -302,7 +305,7 @@ export default function AssignPanel({
             className="border-input bg-background focus-visible:ring-ring tap-target w-full rounded-md border px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2"
             placeholder="e.g. ABC 123 broke down at Carcar"
           />
-          <p className="text-muted-foreground text-xs">
+          <p className="text-brand-error text-xs">
             This trip has already started, so the change is recorded with your name and this reason.
           </p>
         </div>
@@ -312,7 +315,7 @@ export default function AssignPanel({
         <Button
           type="button"
           variant="outline"
-          className="tap-target"
+          className="tap-target border-brand-blue-200 text-brand-blue-700 flex-1 rounded-[10px] font-semibold"
           disabled={suggesting || options.isPending}
           onClick={() => void runSuggest()}
         >
@@ -321,7 +324,7 @@ export default function AssignPanel({
         </Button>
         <Button
           type="button"
-          className="tap-target"
+          className="tap-target flex-1 rounded-[10px] font-semibold"
           disabled={!ready || assign.isPending || options.isError}
           onClick={runAssign}
         >
@@ -336,12 +339,12 @@ export default function AssignPanel({
         </p>
       ) : null}
       {suggestNote !== null && suggestNote !== '' ? (
-        <p role="status" className="text-brand-blue-900 mt-2 text-sm">
+        <p role="status" className="text-brand-ink mt-2 text-sm">
           {suggestNote}
         </p>
       ) : null}
       {confirmation !== null ? (
-        <p role="status" className="text-brand-blue-900 mt-2 text-sm">
+        <p role="status" className="text-brand-ink mt-2 text-sm">
           {confirmation}
           {awaitingPayment ? ' This trip is still unpaid until the receipt is checked.' : ''}
         </p>
