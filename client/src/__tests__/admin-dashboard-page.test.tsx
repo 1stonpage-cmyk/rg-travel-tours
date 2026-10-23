@@ -237,17 +237,45 @@ describe('AdminDashboardPage', () => {
       expect(card.textContent).toMatch(/1 driver is locked out/i);
       expect(card.textContent).toMatch(/Joselito Reyes/);
       /*
-       * The two facts a dispatcher decides with, in the SENTENCE rather than
-       * in the card's colour: it ends by itself, and the remedy does not cost
-       * the driver their PIN. Without the second, the obvious reading of
-       * "locked out" is still "reset their PIN", which is what `unlock` exists
-       * to avoid.
+       * The facts a dispatcher decides with, in the SENTENCE rather than in
+       * the card's colour: it ends by itself, the driver's own PIN still works
+       * afterwards, and there is nothing to do unless the clock is against
+       * them. Without the middle one the obvious reading of "locked out" is
+       * "reset their PIN", which costs a driver a PIN they had memorised.
        */
       expect(card.textContent).toMatch(/clears itself within the hour/i);
-      expect(card.textContent).toMatch(/does not change their PIN/i);
+      expect(card.textContent).toMatch(/the PIN they already have/i);
+      expect(card.textContent).toMatch(/nothing here needs doing/i);
     });
 
-    it('pluralises, and links to the drivers screen where the unlock lives', async () => {
+    /**
+     * Review finding, 2026-10-24. The card links to `/admin/drivers`, which
+     * today offers **Reset PIN and no Unlock** — `admin.drivers.unlock` exists
+     * as a procedure, but surfacing a driver's locked state on that screen
+     * needs a `lockedUntil` on `DriverRow` that no task has added yet. So the
+     * copy must not instruct an action the destination cannot perform; the
+     * wording shipped on 2026-10-23 said "Unlock it only if the driver is due
+     * out before then — it does not change their PIN", and it did.
+     *
+     * This test is what stops that sentence drifting back in ahead of the
+     * button. **Delete it in the same change that ships the button**, not
+     * before: it guards a gap, not a principle.
+     */
+    it('instructs no on-screen action the drivers screen cannot yet perform', async () => {
+      renderDashboard([
+        alert('driver_locked', 1, [{ id: 7, label: 'Joselito Reyes', date: null }]),
+      ]);
+      const card = await screen.findByTestId('alert-driver_locked');
+      expect(card.textContent ?? '').not.toMatch(/\bunlock\b/i);
+      // The only action it offers is the link, which goes to a screen that
+      // does exist and does list the driver.
+      const links = within(card).getAllByRole('link');
+      expect(links).toHaveLength(1);
+      expect(links[0]!.getAttribute('href')).toBe('/admin/drivers');
+      expect(links[0]!.textContent).toMatch(/open the drivers/i);
+    });
+
+    it('pluralises, and links to the drivers screen', async () => {
       renderDashboard([alert('driver_locked', 3)]);
       expect(await screen.findByText(/3 drivers are locked out/i)).toBeTruthy();
       expect(screen.getByRole('link', { name: /open the drivers/i }).getAttribute('href')).toBe(

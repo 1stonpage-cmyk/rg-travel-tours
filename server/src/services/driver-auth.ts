@@ -106,10 +106,12 @@ function refuse(reason: DriverLoginRefusal): DriverLoginRefused {
 /**
  * Exactly the lockout columns the policy reads, in the shape it expects.
  *
- * `requires_admin_unlock` is still SELECTed by the caller and is deliberately
- * not copied across: owner decision 2026-10-23 retired the terminal state, so
- * `LockoutState` has no field for it and the policy cannot be reached by a
- * `true` left in the column by a login from before that deploy.
+ * `requires_admin_unlock` is **not among them and is no longer read at all**:
+ * owner decision 2026-10-23 retired the terminal state, `LockoutState` has no
+ * field for it, and the locking `SELECT` below stopped fetching the column
+ * rather than fetching one nothing consults. A `true` left in it by a login
+ * from before that deploy therefore cannot reach the policy — and step 5
+ * overwrites it with `false` on the way out.
  */
 function stateFrom(row: {
   failedAttempts: number;

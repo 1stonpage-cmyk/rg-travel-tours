@@ -92,17 +92,25 @@ const ALERT_COPY: Record<
   /*
    * Owner decision 2026-10-23 (Q1). The `detail` line says the thing a
    * dispatcher needs to decide with: the lockout ends by itself, so this card
-   * is information rather than a job — unless the driver is due out now, which
-   * is the one case worth clicking for. It names the remedy as an unlock
-   * rather than a PIN reset, because reading a new PIN down a phone line at
-   * dawn is what `admin.drivers.unlock` exists to avoid.
+   * is information rather than a job — unless the driver is due out before it
+   * does.
+   *
+   * **It deliberately names no on-screen action** (review finding,
+   * 2026-10-24). An earlier wording read "Unlock it only if the driver is due
+   * out before then — it does not change their PIN", which promised a button
+   * `/admin/drivers` does not have: `admin.drivers.unlock` exists as a
+   * procedure, but the drivers screen offers Reset PIN only, because surfacing
+   * a driver's locked state there needs a `lockedUntil` on `DriverRow` that no
+   * task has added yet. A card that tells an operator to do something the page
+   * it links to cannot do is worse than one that only reports. Put the
+   * instruction back when the button exists, not before.
    */
   driver_locked: {
     noun: (n) => (n === 1 ? '1 driver is locked out' : `${n} drivers are locked out`),
     href: '/admin/drivers',
     action: 'Open the drivers',
     detail:
-      'A lockout clears itself within the hour. Unlock it only if the driver is due out before then — it does not change their PIN.',
+      'A lockout clears itself within the hour, and the driver signs in afterwards with the PIN they already have. Nothing here needs doing unless they are due out before then.',
   },
 };
 
