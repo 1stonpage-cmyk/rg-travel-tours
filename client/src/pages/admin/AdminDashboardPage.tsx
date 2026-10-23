@@ -120,7 +120,7 @@ export default function AdminDashboardPage() {
       </section>
 
       {/* §9's lead panel. Its own query, its own poll - see the module note. */}
-      <DeparturesBoard />
+      <DeparturesBoard showBoardLink />
     </div>
   );
 }

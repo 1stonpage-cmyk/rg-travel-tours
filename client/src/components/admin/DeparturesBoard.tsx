@@ -201,6 +201,8 @@ function DepartureRow({ departure }: { departure: TodayDeparture }) {
 }
 
 export interface DeparturesBoardProps {
+  /** Draw a "Departures board" link to the full-screen version (the dashboard does; the board's own page does not). */
+  showBoardLink?: boolean;
   /**
    * The poll interval. Defaults to §9's fifteen seconds; a test passes a
    * few milliseconds so that "it really does poll" is something asserted
@@ -209,7 +211,10 @@ export interface DeparturesBoardProps {
   pollMs?: number;
 }
 
-export default function DeparturesBoard({ pollMs = DEPARTURES_POLL_MS }: DeparturesBoardProps) {
+export default function DeparturesBoard({
+  pollMs = DEPARTURES_POLL_MS,
+  showBoardLink = false,
+}: DeparturesBoardProps) {
   const query = trpc.admin.departures.today.useQuery(undefined, {
     refetchInterval: pollMs,
     retry: false,
@@ -230,11 +235,19 @@ export default function DeparturesBoard({ pollMs = DEPARTURES_POLL_MS }: Departu
       data-testid="departures-board"
       className="border-brand-blue-100 overflow-hidden rounded-[14px] border bg-white"
     >
-      <div className="border-brand-blue-100 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b px-5 py-4">
+      <div className="border-brand-blue-100 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b px-5 py-4">
         <h2 id="departures-heading" className="text-brand-ink text-lg font-bold">
           Leaving today
         </h2>
         <p className="text-brand-error text-xs">Updates every 15 seconds.</p>
+        {showBoardLink ? (
+          <Link
+            to="/admin/departures"
+            className="text-brand-blue-700 hover:text-brand-blue-900 tap-target inline-flex items-center text-sm font-semibold underline underline-offset-4 transition-colors"
+          >
+            Departures board
+          </Link>
+        ) : null}
       </div>
 
       {query.isPending ? (

@@ -49,6 +49,7 @@ export const ADMIN_NAV: readonly AdminNavItem[] = [
     roles: ALL,
     quick: { label: 'Dispatch' },
   },
+  { to: '/admin/departures', label: 'Departures', end: false, roles: ALL },
   { to: '/admin/vans', label: 'Vans', end: false, roles: ['owner', 'dispatcher'] },
   { to: '/admin/drivers', label: 'Drivers', end: false, roles: ['owner', 'dispatcher'] },
   { to: '/admin/staff', label: 'Staff', end: false, roles: ['owner'] },

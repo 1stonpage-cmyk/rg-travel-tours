@@ -52,6 +52,12 @@ function renderDashboard(alerts: DashboardAlert[]) {
 afterEach(resetTrpcMock);
 
 describe('AdminDashboardPage', () => {
+  it('links the departures panel to the departures board screen', async () => {
+    renderDashboard(ALL_SIX_NONZERO);
+    const link = await screen.findByRole('link', { name: 'Departures board' });
+    expect(link).toHaveAttribute('href', '/admin/departures');
+  });
+
   it('states each count in words, not as a bare numeral', async () => {
     renderDashboard(ALL_SIX_NONZERO);
     expect(await screen.findByText(/2 payments to verify/i)).toBeTruthy();

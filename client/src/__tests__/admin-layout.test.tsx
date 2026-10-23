@@ -120,6 +120,7 @@ describe('AdminLayout', () => {
         'Bookings',
         'Payment checks',
         'Dispatch',
+        'Departures',
         'Vans',
         'Drivers',
         'Staff',
@@ -130,14 +131,27 @@ describe('AdminLayout', () => {
       mockTrpc({ 'staffAuth.me': { userId: 2, role: 'dispatcher', mustChangePassword: false } });
       renderAt('/admin');
       await screen.findByRole('link', { name: 'Vans' });
-      expect(names()).toEqual(['Dashboard', 'Bookings', 'Dispatch', 'Vans', 'Drivers']);
+      expect(names()).toEqual([
+        'Dashboard',
+        'Bookings',
+        'Dispatch',
+        'Departures',
+        'Vans',
+        'Drivers',
+      ]);
     });
 
     it('draws neither Vans, Drivers nor Staff for finance', async () => {
       mockTrpc({ 'staffAuth.me': { userId: 3, role: 'finance', mustChangePassword: false } });
       renderAt('/admin');
       await screen.findByText('Finance');
-      expect(names()).toEqual(['Dashboard', 'Bookings', 'Payment checks', 'Dispatch']);
+      expect(names()).toEqual([
+        'Dashboard',
+        'Bookings',
+        'Payment checks',
+        'Dispatch',
+        'Departures',
+      ]);
     });
   });
 
