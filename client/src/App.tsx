@@ -25,7 +25,7 @@ import CheckoutPage from '@/pages/public/CheckoutPage';
 import HomePage from '@/pages/public/HomePage';
 import PrivacyPage from '@/pages/public/PrivacyPage';
 import TermsPage from '@/pages/public/TermsPage';
-import ToursStubPage from '@/pages/public/ToursStubPage';
+import ToursPage from '@/pages/public/ToursPage';
 
 /**
  * `BOOKING_PAGE_ROUTE` (`@rg/shared`) is `'/booking/:ref'` — an absolute
@@ -42,7 +42,7 @@ export default function App() {
     <Routes>
       <Route element={<PublicLayout />}>
         <Route index element={<HomePage />} />
-        <Route path="tours" element={<ToursStubPage />} />
+        <Route path="tours" element={<ToursPage />} />
         {/*
          * BUILD_SPEC §4 names `/checkout/:holdId` — written before Week 3's
          * own owner ruling (Q3) made the quote id stateless. No hold exists

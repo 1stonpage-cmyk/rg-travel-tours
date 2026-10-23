@@ -55,4 +55,32 @@ describe('TourCard', () => {
     expect(screen.getByText(/best seller/i)).toBeInTheDocument();
     expect(screen.getByText(/sea conditions permitting/i)).toBeInTheDocument();
   });
+
+  // Task 2C: ToursPage forwards the hero search's date/guests onto each
+  // card as `searchParams` (renamed `date`/`pax`), appended to BOTH of
+  // TourCard's internal links. Omitting the prop (every other `show()` in
+  // this file) must stay byte-identical to the plain `/tours/<slug>` href —
+  // that is what the rest of this suite already proves without asserting
+  // on `href` directly, so this is the one case that needs to.
+  it('appends searchParams to both links when given, and leaves them bare when omitted', () => {
+    const withParams = render(
+      <MemoryRouter>
+        <TourCard tour={tour} searchParams="date=2026-11-02&pax=4" />
+      </MemoryRouter>,
+    );
+    const expectedHref = `/tours/${tour.slug}?date=2026-11-02&pax=4`;
+    expect(screen.getByRole('heading', { level: 3 }).querySelector('a')).toHaveAttribute(
+      'href',
+      expectedHref,
+    );
+    expect(screen.getByRole('link', { name: /view tour/i })).toHaveAttribute('href', expectedHref);
+    withParams.unmount();
+
+    show(); // no searchParams — both links must stay the bare slug URL.
+    const bareLinks = screen.getAllByRole('link');
+    expect(bareLinks).toHaveLength(2);
+    for (const link of bareLinks) {
+      expect(link.getAttribute('href')).toBe(`/tours/${tour.slug}`);
+    }
+  });
 });

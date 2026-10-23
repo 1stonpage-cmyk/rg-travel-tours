@@ -6,7 +6,17 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import type { TourListItem } from '../../../../server/src/routers/public/tours';
 
-type Props = { tour: TourListItem };
+type Props = {
+  tour: TourListItem;
+  /**
+   * Raw query string (no leading `?`) to append to both of this card's
+   * links — e.g. the hero search's `date`/`guests` forwarded onto the tour
+   * detail page as `date`/`pax` (ToursPage, task 2C). Omitted entirely
+   * (the default, and CatalogPreview's existing usage) leaves both links
+   * byte-identical to before this prop existed.
+   */
+  searchParams?: string;
+};
 
 /**
  * Admin-set per-tour badge (`tours.badge`) — distinct from, and must never
@@ -19,7 +29,8 @@ const BADGE_LABELS: Record<Exclude<TourListItem['badge'], 'none'>, string> = {
   seasonal: 'Seasonal',
 };
 
-export default function TourCard({ tour }: Props) {
+export default function TourCard({ tour, searchParams }: Props) {
+  const href = searchParams ? `/tours/${tour.slug}?${searchParams}` : `/tours/${tour.slug}`;
   return (
     <Card className="press group overflow-hidden p-0 hover:-translate-y-1 hover:shadow-lg">
       <div className="bg-brand-blue-100 relative aspect-[4/3] overflow-hidden">
@@ -56,7 +67,7 @@ export default function TourCard({ tour }: Props) {
         </p>
 
         <h3 className="text-brand-blue-900 text-base font-semibold leading-snug">
-          <Link to={`/tours/${tour.slug}`} className="flex min-h-11 items-center hover:underline">
+          <Link to={href} className="flex min-h-11 items-center hover:underline">
             {tour.title}
           </Link>
         </h3>
@@ -99,7 +110,7 @@ export default function TourCard({ tour }: Props) {
             <span className="text-muted-foreground"> / person</span>
           </p>
           <Link
-            to={`/tours/${tour.slug}`}
+            to={href}
             className="text-brand-blue-700 hover:bg-brand-blue-50 inline-flex min-h-11 items-center rounded-md px-3 text-sm font-semibold"
           >
             View tour
