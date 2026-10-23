@@ -25,6 +25,13 @@
  * draws its buttons for them only - a courtesy. A dispatcher who opens the URL
  * sees the queue read-only; the four decision procedures are
  * `adminProcedure('verifyPayments')` and refuse them regardless.
+ *
+ * The "Open receipt" link is the same courtesy, for the same two roles since
+ * 2026-10-23 (Q2) - and worth more than it sounds, because the dashboard's
+ * `payments_to_verify` alert is drawn for all three roles and links straight
+ * here, so a dispatcher arrives by clicking their own dashboard rather than by
+ * guessing a URL. `/api/receipts/:name` answers them the same 404 it answers a
+ * stranger either way; what the gate removes is a dead end, not an exposure.
  */
 import { Link, useSearchParams } from 'react-router-dom';
 import { ExternalLink, Loader2 } from 'lucide-react';
@@ -217,8 +224,25 @@ export default function AdminPaymentsPage() {
                         ))}
                     </dl>
 
+                    {/*
+                      A receipt is payment data, so only an owner or a finance
+                      user is offered it (owner decision 2026-10-23, Q2) — the
+                      same `mayVerify` that draws the decision buttons below.
+                      COSMETIC: `/api/receipts/:name` answers a dispatcher the
+                      same 404 it answers a stranger, and
+                      `server/src/__tests__/receipts-route.test.ts` is the
+                      guard. It is gated here rather than left dangling
+                      because the dashboard's `payments_to_verify` alert links
+                      every role straight to this page, so a dispatcher
+                      reaches the link by clicking their own dashboard. The
+                      payment REFERENCE above stays — that is queue data a
+                      dispatcher may read (§9's `bookingsView`).
+                    */}
                     {booking.payments
-                      .filter((payment) => payment.status === 'pending' && payment.receiptPath)
+                      .filter(
+                        (payment) =>
+                          mayVerify && payment.status === 'pending' && payment.receiptPath,
+                      )
                       .map((payment) => (
                         <a
                           key={`receipt-${payment.id}`}

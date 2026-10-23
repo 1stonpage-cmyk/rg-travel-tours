@@ -129,6 +129,48 @@ describe('AdminPaymentsPage', () => {
     expect(screen.queryByRole('button', { name: /reject/i })).toBeNull();
   });
 
+  /**
+   * **The receipt link, by role** (owner decision 2026-10-23, Q2).
+   *
+   * `/api/receipts/:name` admits owner and finance and answers everyone else
+   * the same 404 it answers a stranger — `server/src/__tests__/
+   * receipts-route.test.ts` is where that is proved, and it is the guard.
+   * What is pinned here is that this screen does not DANGLE the link at a
+   * dispatcher, which matters more than it sounds: the dashboard's
+   * `payments_to_verify` alert is drawn for all three roles and links
+   * straight here, and the queue itself is `bookingsView`, so a dispatcher
+   * arrives on this page by clicking their own dashboard rather than by
+   * guessing a URL. An unconditional link is a dead end they reach in normal
+   * use.
+   *
+   * Asserted in both directions, because a gate that hides it from everyone
+   * would satisfy the dispatcher half on its own.
+   */
+  it('offers the receipt link to a finance user', async () => {
+    mockFor('finance');
+    renderPage();
+    expect(await screen.findByRole('link', { name: /open receipt/i })).toHaveAttribute(
+      'href',
+      '/api/receipts/a1b2c3d4e5f60718293a4b5c6d7e8f90.jpg',
+    );
+  });
+
+  it('offers it to an owner too', async () => {
+    mockFor('owner');
+    renderPage();
+    expect(await screen.findByRole('link', { name: /open receipt/i })).toBeTruthy();
+  });
+
+  it('offers a dispatcher the queue and the payment reference but NO receipt link', async () => {
+    mockFor('dispatcher');
+    renderPage();
+
+    await screen.findByRole('heading', { name: /RG-AAAAA1 · Maria Santos/ });
+    // Still the queue they are allowed to read (§9's `bookingsView`).
+    expect(screen.getByText('GC1234567890'), 'the dispatcher lost the payment trail').toBeTruthy();
+    expect(screen.queryByRole('link', { name: /open receipt/i })).toBeNull();
+  });
+
   it('says so when nothing is waiting', async () => {
     mockFor('finance', { 'admin.bookings.list': { items: [], total: 0, limit: 100, offset: 0 } });
     renderPage();
