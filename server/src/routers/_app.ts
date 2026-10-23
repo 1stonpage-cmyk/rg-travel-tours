@@ -14,6 +14,7 @@ import { adminDispatchRouter } from './admin/dispatch';
 import { adminDriversRouter } from './admin/drivers';
 import { adminRefundsRouter } from './admin/refunds';
 import { adminStaffUsersRouter } from './admin/staff-users';
+import { adminToursRouter } from './admin/tours';
 import { adminVansRouter } from './admin/vans';
 import { staffAuthRouter } from './admin/auth';
 import { portalRouter } from './public/portal';
@@ -125,6 +126,13 @@ export const appRouter = router({
     refunds: adminRefundsRouter,
     vans: adminVansRouter,
     drivers: adminDriversRouter,
+    /*
+     * Tours, price tiers, images, itinerary stops and add-ons (Week 7,
+     * Task 6). Its own namespace because §9 gates it on `toursPricing` —
+     * OWNER ONLY, the narrowest row in the matrix, because these mutations
+     * write the per-person price a guest is charged.
+     */
+    tours: adminToursRouter,
   }),
 });
 

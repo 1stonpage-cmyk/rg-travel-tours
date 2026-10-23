@@ -11,4 +11,5 @@ export * from './review';
 export * from './roles';
 export * from './staff-users';
 export * from './time';
+export * from './tours-admin';
 export * from './schemas/public';
