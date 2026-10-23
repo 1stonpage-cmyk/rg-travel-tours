@@ -589,13 +589,7 @@ const resolveTour: Resolver = async (params) => {
     ],
     preload: null,
     status: 200,
-    // D5: the resolver is complete and tested, but NO PAGE RENDERS THIS URL
-    // yet — the SPA has no /tours/:slug route, so the shell would be served
-    // with correct meta over an empty body. Serving that to a crawler as
-    // indexable would be the one thing worse than not having the page.
-    // WEEK 2D: delete this line (and uncomment the sitemap's detail URLs in
-    // seo/sitemap.ts) in the same task that builds the detail page.
-    robots: 'noindex,nofollow',
+    robots: 'index,follow',
   };
 };
 

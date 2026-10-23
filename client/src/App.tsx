@@ -25,6 +25,7 @@ import CheckoutPage from '@/pages/public/CheckoutPage';
 import HomePage from '@/pages/public/HomePage';
 import PrivacyPage from '@/pages/public/PrivacyPage';
 import TermsPage from '@/pages/public/TermsPage';
+import TourDetailPage from '@/pages/public/TourDetailPage';
 import ToursPage from '@/pages/public/ToursPage';
 
 /**
@@ -43,6 +44,15 @@ export default function App() {
       <Route element={<PublicLayout />}>
         <Route index element={<HomePage />} />
         <Route path="tours" element={<ToursPage />} />
+        {/*
+         * The tour detail page (Week 7 plan, Task 2) — `/tours/:slug` now
+         * renders, which is what lets `resolveTour` (seo/resolvers.ts) drop
+         * its D5 `noindex` and the sitemap list these URLs. Placed BELOW
+         * `tours`, ABOVE `checkout/:tourSlug`: react-router matches static
+         * segments before a `:param` sibling regardless of declaration
+         * order, so this ordering is for a human reader, not the router.
+         */}
+        <Route path="tours/:slug" element={<TourDetailPage />} />
         {/*
          * BUILD_SPEC §4 names `/checkout/:holdId` — written before Week 3's
          * own owner ruling (Q3) made the quote id stateless. No hold exists

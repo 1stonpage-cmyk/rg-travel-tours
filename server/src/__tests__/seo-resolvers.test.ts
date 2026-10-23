@@ -131,10 +131,38 @@ describeWithDb('page resolution', () => {
     expect(meta.ogImage).toBe('http://localhost:5180/placeholders/oslob.svg');
   });
 
-  it('keeps tour and package detail URLs out of the index while no page renders them (D5)', async () => {
-    expect((await resolvePage('/tours/oslob-whale-shark-tumalog-falls')).robots).toBe(
-      'noindex,nofollow',
-    );
+  /**
+   * Week 7 plan, Task 2 (2D): `/tours/:slug` now renders — the detail page
+   * built in this task — so it is released from D5's `noindex` and answers
+   * `index,follow`. `/packages/:slug` has no page yet, so it stays exactly
+   * as D5 left it until Task 3 builds that page and makes the same edit to
+   * `resolvePackage`.
+   *
+   * `content_unverified` has to be false for this: the seeded default is
+   * true, and `resolvePage`'s site-wide gate (task 4.3) forces EVERY route
+   * to `noindex,nofollow` while it is — which would make this assertion
+   * pass even if `resolveTour` itself still said `noindex`.
+   */
+  it('releases /tours/:slug from D5 — it now answers index,follow', async () => {
+    await getDb()
+      .update(settings)
+      .set({ value: false })
+      .where(eq(settings.key, 'content_unverified'));
+    resetContentUnverifiedCache();
+    try {
+      expect((await resolvePage('/tours/oslob-whale-shark-tumalog-falls')).robots).toBe(
+        'index,follow',
+      );
+    } finally {
+      await getDb()
+        .update(settings)
+        .set({ value: true })
+        .where(eq(settings.key, 'content_unverified'));
+      resetContentUnverifiedCache();
+    }
+  });
+
+  it('keeps /packages/:slug out of the index while no page renders it (D5)', async () => {
     expect((await resolvePage('/packages/cebu-highlights-3d2n')).robots).toBe('noindex,nofollow');
   });
 

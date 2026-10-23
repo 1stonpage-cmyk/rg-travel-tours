@@ -14,8 +14,10 @@
  *  - **A sitemap must never list a URL that says `noindex`.** It is a list of
  *    pages you are asking to have indexed; listing a page you then refuse to
  *    let be indexed is a contradiction crawlers report as an error. So the
- *    detail URLs are collected, filtered and sorted here (`detailUrls()`) but
- *    deliberately not emitted — see the WEEK 2D note in `collectSitemapUrls`.
+ *    detail URLs are collected, filtered and sorted here (`detailUrls()`),
+ *    split by kind (`buildTourDetailUrls`/`buildPackageDetailUrls`), and only
+ *    the tour half is emitted — the package half waits on its own detail
+ *    page (Task 3) — see `collectSitemapUrls`.
  *  - **`lastmod` is read, never invented.** Every date below comes from an
  *    `updated_at` column. A sitemap that claims today's date for every URL on
  *    every fetch trains crawlers to ignore the field.
@@ -128,25 +130,30 @@ function settingUpdatedAt(rows: SitemapRows['settingRows'], key: string): Date |
  * `/tours/:slug` and `/packages/:slug`, already filtered by `is_active` and
  * sorted by slug.
  *
- * Exported and tested, but NOT in the sitemap today: both resolvers return
- * `noindex,nofollow` because no page renders those URLs yet (plan decision
- * D5). See `collectSitemapUrls` for the one-line Week 2D change.
+ * Exported and tested. The tour half is now in the sitemap (Task 2 of the
+ * Week 7 plan, 2D): `/tours/:slug` renders and `resolveTour` answers
+ * `index,follow`, so `collectSitemapUrls` appends `buildTourDetailUrls`
+ * below. The package half is still withheld — `/packages/:slug` has no page
+ * yet and `resolvePackage` still answers `noindex,nofollow` (plan decision
+ * D5) — see `collectSitemapUrls` for the one-line change Task 3 makes.
  */
 export async function detailUrls(): Promise<SitemapEntry[]> {
-  return buildDetailUrls(await loadSitemapRows());
+  const rows = await loadSitemapRows();
+  return [...buildTourDetailUrls(rows), ...buildPackageDetailUrls(rows)];
 }
 
-function buildDetailUrls(rows: SitemapRows): SitemapEntry[] {
-  return [
-    ...rows.tourRows.map((tour) => ({
-      loc: absoluteUrl(`/tours/${tour.slug}`),
-      lastmod: tour.updatedAt,
-    })),
-    ...rows.packageRows.map((pkg) => ({
-      loc: absoluteUrl(`/packages/${pkg.slug}`),
-      lastmod: pkg.updatedAt,
-    })),
-  ];
+function buildTourDetailUrls(rows: SitemapRows): SitemapEntry[] {
+  return rows.tourRows.map((tour) => ({
+    loc: absoluteUrl(`/tours/${tour.slug}`),
+    lastmod: tour.updatedAt,
+  }));
+}
+
+function buildPackageDetailUrls(rows: SitemapRows): SitemapEntry[] {
+  return rows.packageRows.map((pkg) => ({
+    loc: absoluteUrl(`/packages/${pkg.slug}`),
+    lastmod: pkg.updatedAt,
+  }));
 }
 
 /**
@@ -173,13 +180,18 @@ export async function collectSitemapUrls(): Promise<SitemapEntry[]> {
     { loc: absoluteUrl('/privacy'), lastmod: settingUpdatedAt(rows.settingRows, 'legal_privacy') },
     { loc: absoluteUrl('/terms'), lastmod: settingUpdatedAt(rows.settingRows, 'legal_terms') },
 
-    // WEEK 2D: append `...buildDetailUrls(rows)` to this array, in the same
-    // task that builds the tour and package detail pages and deletes the
-    // `robots: 'noindex,nofollow'` line from `resolveTour`/`resolvePackage`
-    // in seo/resolvers.ts. Both changes belong to one commit: a sitemap may
-    // not list a noindex URL, and an indexable URL must be in the sitemap.
-    // `buildDetailUrls` already filters `is_active` on both sides and sorts
-    // by slug, so there is nothing else to write here. (BUILD_SPEC 2D.)
+    // Tour detail pages render now and `resolveTour` answers `index,follow`
+    // (Task 2, Week 7 plan) — a sitemap may not list a noindex URL, and an
+    // indexable URL must be in the sitemap, so both changes shipped in one
+    // commit. `buildTourDetailUrls` already filters `is_active` on both
+    // sides and sorts by slug, so there is nothing else to write here.
+    ...buildTourDetailUrls(rows),
+
+    // The package half is a SEPARATE, LATER task (Task 3): `/packages/:slug`
+    // has no page yet and `resolvePackage` still answers
+    // `noindex,nofollow`, so `buildPackageDetailUrls(rows)` stays out of
+    // this array until that page exists and the same robots line is deleted
+    // from `resolvePackage`. (BUILD_SPEC 2D.)
   ];
 }
 

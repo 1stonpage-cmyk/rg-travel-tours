@@ -31,7 +31,7 @@ import {
 import { getDb } from '../db/client';
 import { packages, settings, tours } from '../db/schema';
 import { isPrivatePath, robotsHeader, robotsTagValue } from '../middleware/robots-header';
-import { absoluteUrl } from '../seo/resolvers';
+import { absoluteUrl, resolvePage } from '../seo/resolvers';
 import {
   buildRobots,
   buildSitemap,
@@ -178,29 +178,69 @@ describeWithDb('buildSitemap', () => {
     resetContentUnverifiedCache();
   });
 
-  it('lists home, /tours, /privacy and /terms', async () => {
+  it('lists home, /tours, /privacy, /terms and every active tour', async () => {
     const xml = await buildSitemap();
 
     expect(xml).toContain(`<loc>${absoluteUrl('/')}</loc>`);
     expect(xml).toContain(`<loc>${absoluteUrl('/tours')}</loc>`);
     expect(xml).toContain(`<loc>${absoluteUrl('/privacy')}</loc>`);
     expect(xml).toContain(`<loc>${absoluteUrl('/terms')}</loc>`);
-    expect(xml.match(/<loc>/g)).toHaveLength(4);
+
+    // The tour half of Week 7 Task 2 (2D): every active tour's detail URL
+    // is now in the sitemap, not just the four static routes above.
+    const tourLocs = (await detailUrls())
+      .filter((entry) => entry.loc.includes('/tours/'))
+      .map((entry) => entry.loc);
+    expect(tourLocs.length).toBeGreaterThan(0);
+    for (const loc of tourLocs) expect(xml).toContain(`<loc>${loc}</loc>`);
+
+    expect(xml.match(/<loc>/g)).toHaveLength(4 + tourLocs.length);
   });
 
-  it('does NOT list tour or package detail URLs yet (D5 — no page behind them)', async () => {
+  it('lists tour detail URLs now, but still withholds package detail URLs (2D / D5)', async () => {
     const xml = await buildSitemap();
 
-    expect(xml).not.toContain('/tours/oslob');
+    expect(xml).toContain('/tours/oslob-whale-shark-tumalog-falls');
     expect(xml).not.toContain('/packages/');
 
-    // ...and the exclusion is a deliberate omission, not a missing feature:
-    // the collector that Week 2D switches on already produces them.
+    // ...and the package exclusion is a deliberate omission, not a missing
+    // feature: the collector already produces package URLs too, they are
+    // just not appended to collectSitemapUrls's array yet — Task 3's job,
+    // once /packages/:slug has a page and resolvePackage drops its own
+    // noindex line.
     const detail = await detailUrls();
     expect(detail.map((entry) => entry.loc)).toContain(
       absoluteUrl('/tours/oslob-whale-shark-tumalog-falls'),
     );
     expect(detail.some((entry) => entry.loc.includes('/packages/'))).toBe(true);
+  });
+
+  /**
+   * Week 7 plan, Task 2 — the load-bearing test for the tour half of this
+   * release: every URL the sitemap actually emits must resolve to
+   * `index,follow` through the real resolver. This currently passes because
+   * the package URLs are not in the sitemap yet (the previous test proves
+   * that); it is also what will catch a mistake if Task 3 appends the
+   * package URLs before `/packages/:slug` actually renders them indexable.
+   *
+   * `content_unverified` must be false for this: `resolvePage`'s site-wide
+   * gate (task 4.3) forces EVERY route to `noindex,nofollow` while it is
+   * true, which is the seeded default — that gate is a different, already-
+   * tested rule, and would make this assertion vacuously pass no matter
+   * what each resolver itself asks for.
+   */
+  it('lists no URL that says noindex', async () => {
+    await setContentUnverified(false);
+    try {
+      const urls = await collectSitemapUrls();
+      expect(urls.length).toBeGreaterThan(4); // premise: tour URLs are really in here
+      for (const entry of urls) {
+        const meta = await resolvePage(new URL(entry.loc).pathname);
+        expect(meta.robots, entry.loc).toBe('index,follow');
+      }
+    } finally {
+      await setContentUnverified(true);
+    }
   });
 
   it('uses updated_at for lastmod in W3C date format', async () => {
@@ -222,11 +262,15 @@ describeWithDb('buildSitemap', () => {
     expect(privacy?.lastmod?.toISOString()).toBe(known.toISOString());
     expect(await buildSitemap()).toContain('<lastmod>2024-01-02T03:04:05+00:00</lastmod>');
 
-    // Every lastmod the document carries is in the W3C form, not just that one.
+    // Every lastmod the document carries is in the W3C form, not just that
+    // one. Every active tour has a NOT NULL updated_at too (schema.ts), so
+    // the count is the four static routes plus one per tour the sitemap now
+    // lists.
+    const tourCount = (await detailUrls()).filter((entry) => entry.loc.includes('/tours/')).length;
     const lastmods = [...(await buildSitemap()).matchAll(/<lastmod>([^<]+)<\/lastmod>/g)].map(
       (match) => match[1],
     );
-    expect(lastmods).toHaveLength(4);
+    expect(lastmods).toHaveLength(4 + tourCount);
     for (const value of lastmods) {
       expect(value).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+00:00$/);
     }
@@ -234,13 +278,15 @@ describeWithDb('buildSitemap', () => {
 
   it('is well-formed XML with a urlset namespace', async () => {
     const xml = await buildSitemap();
+    const tourCount = (await detailUrls()).filter((entry) => entry.loc.includes('/tours/')).length;
+    const urlCount = 4 + tourCount;
 
     expect(xml.startsWith('<?xml version="1.0" encoding="UTF-8"?>\n')).toBe(true);
     expect(xml).toContain('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">');
     expect(xml.trimEnd().endsWith('</urlset>')).toBe(true);
     // Balanced elements...
-    expect(xml.match(/<url>/g)).toHaveLength(4);
-    expect(xml.match(/<\/url>/g)).toHaveLength(4);
+    expect(xml.match(/<url>/g)).toHaveLength(urlCount);
+    expect(xml.match(/<\/url>/g)).toHaveLength(urlCount);
     expect(xml.match(/<loc>/g)?.length).toBe(xml.match(/<\/loc>/g)?.length);
     // ...and no raw ampersand anywhere outside an entity, which is the one
     // way a database string can break a parser.

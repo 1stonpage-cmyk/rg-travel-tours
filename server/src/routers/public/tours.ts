@@ -61,7 +61,12 @@ export interface TourDetail extends TourListItem {
   images: TourImage[];
   priceTiers: Array<{ minPax: number; maxPax: number; pricePerPersonCentavos: number }>;
   itinerary: Array<{ name: string; description: string | null; sortOrder: number }>;
-  addons: Array<{ name: string; priceCentavos: number; perPerson: boolean }>;
+  /**
+   * `id` added for the tour detail page (Week 7 plan, Task 2): `BookingPicker`
+   * needs an addon's id to submit it in `checkout.quote`/`createHold`'s
+   * `addonIds: number[]`, and the select below previously omitted it.
+   */
+  addons: Array<{ id: number; name: string; priceCentavos: number; perPerson: boolean }>;
   maxGuests: number;
   freeCancelHours: number | null;
   seoTitle: string | null;
@@ -296,6 +301,7 @@ export const toursRouter = router({
         .orderBy(asc(tourItineraryStops.sortOrder)),
       db
         .select({
+          id: tourAddons.id,
           name: tourAddons.name,
           priceCentavos: tourAddons.priceCentavos,
           perPerson: tourAddons.perPerson,
