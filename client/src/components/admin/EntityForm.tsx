@@ -108,9 +108,7 @@ function EntityFormRow({
     <div className="space-y-1.5">
       <Label htmlFor={inputId}>
         {field.label}
-        {field.required ? null : (
-          <span className="text-muted-foreground font-normal"> (optional)</span>
-        )}
+        {field.required ? null : <span className="text-brand-error font-normal"> (optional)</span>}
       </Label>
 
       {field.type === 'textarea' ? (
@@ -121,7 +119,7 @@ function EntityFormRow({
           value={value}
           onChange={(event) => onChange(event.target.value)}
           rows={4}
-          className="border-input bg-background tap-target focus-visible:ring-brand-blue-600 w-full rounded-md border p-3 text-sm focus-visible:outline-none focus-visible:ring-2"
+          className="border-brand-blue-200 tap-target focus-visible:ring-brand-blue-600 w-full rounded-[10px] border bg-white p-3 text-sm focus-visible:outline-none focus-visible:ring-2"
         />
       ) : field.type === 'select' ? (
         <Select value={value} onValueChange={onChange}>
@@ -129,7 +127,7 @@ function EntityFormRow({
             id={inputId}
             aria-describedby={describedBy}
             aria-invalid={error ? true : undefined}
-            className="tap-target w-full"
+            className="tap-target border-brand-blue-200 w-full rounded-[10px] bg-white"
           >
             <SelectValue />
           </SelectTrigger>
@@ -149,12 +147,12 @@ function EntityFormRow({
           aria-invalid={error ? true : undefined}
           value={value}
           onChange={(event) => onChange(event.target.value)}
-          className="tap-target"
+          className="tap-target border-brand-blue-200 rounded-[10px] bg-white"
         />
       )}
 
       {field.hint ? (
-        <p id={hintId} className="text-muted-foreground text-xs">
+        <p id={hintId} className="text-brand-error text-xs">
           {field.hint}
         </p>
       ) : null}
@@ -209,7 +207,7 @@ export default function EntityForm({
       {moreFields.length > 0 ? (
         <Accordion type="single" collapsible defaultValue={defaultOpen}>
           <AccordionItem value="details">
-            <AccordionTrigger className="tap-target text-brand-blue-900 text-sm font-semibold">
+            <AccordionTrigger className="tap-target text-brand-ink text-sm font-semibold">
               More details ({moreFields.length})
             </AccordionTrigger>
             <AccordionContent>
@@ -230,7 +228,11 @@ export default function EntityForm({
         </Accordion>
       ) : null}
 
-      <Button type="submit" disabled={pending} className="tap-target w-full sm:w-auto">
+      <Button
+        type="submit"
+        disabled={pending}
+        className="tap-target bg-brand-blue-700 hover:bg-brand-blue-800 w-full rounded-[10px] font-semibold text-white transition-colors sm:w-auto"
+      >
         {pending ? 'Saving…' : submitLabel}
       </Button>
     </form>

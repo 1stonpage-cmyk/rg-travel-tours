@@ -81,10 +81,18 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 /** Amber for `for_repair`, never red — text always renders too (no-colour-alone). */
+const CARD = 'border-brand-blue-100 rounded-[14px] border bg-white';
+const NOTICE =
+  'border-brand-blue-200 bg-brand-blue-50 text-brand-blue-900 mb-4 rounded-xl border p-3 text-sm font-medium';
+const ALERT =
+  'border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-xl border p-3 text-sm font-medium';
+const OUTLINE_BUTTON =
+  'tap-target border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 hover:text-brand-blue-800 rounded-[10px] font-semibold transition-colors';
+
 const STATUS_BADGE_CLASS: Record<string, string> = {
   available: 'border-0 bg-brand-blue-50 text-brand-blue-800',
   on_trip: 'border-0 bg-brand-blue-100 text-brand-blue-900',
-  parked: 'border-0 bg-muted text-foreground',
+  parked: 'border-0 bg-slate-100 text-brand-ink',
   for_repair: 'border-0 bg-brand-gold-100 text-brand-gold-800',
 };
 
@@ -208,7 +216,7 @@ function StatusCell({
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <Badge className={STATUS_BADGE_CLASS[van.status] ?? 'bg-muted text-foreground border-0'}>
+      <Badge className={STATUS_BADGE_CLASS[van.status] ?? 'text-brand-ink border-0 bg-slate-100'}>
         {STATUS_LABELS[van.status] ?? van.status}
       </Badge>
       {van.status === 'on_trip' ? null : (
@@ -227,7 +235,7 @@ function StatusCell({
           <SelectTrigger
             size="sm"
             aria-label={`Change status for ${van.plate}`}
-            className="tap-target"
+            className="tap-target border-brand-blue-200 rounded-[10px] bg-white"
           >
             <SelectValue placeholder="Change status" />
           </SelectTrigger>
@@ -343,31 +351,30 @@ export default function AdminVansPage() {
   const vans = list.data ?? [];
 
   return (
-    <div>
-      <h1 className="text-brand-blue-900 text-2xl font-bold">Vans</h1>
-      <p className="text-muted-foreground mt-1 text-sm">
-        The fleet. Plate, model and seats are what every other screen needs; service dates, papers
-        and repair notes live behind "More details".
-      </p>
+    <div className="flex flex-col gap-6">
+      <header className="flex flex-col gap-1">
+        <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.08em]">
+          Operations
+        </p>
+        <h1 className="text-brand-ink text-2xl font-bold sm:text-3xl">Vans</h1>
+        <p className="text-brand-error text-sm">
+          The fleet. Plate, model and seats are what every other screen needs; service dates, papers
+          and repair notes live behind "More details".
+        </p>
+      </header>
 
-      <Card className="mt-6">
+      <Card className={CARD}>
         <CardHeader>
-          <CardTitle className="text-brand-blue-900 text-base">Add a van</CardTitle>
+          <CardTitle className="text-brand-ink text-lg font-bold">Add a van</CardTitle>
         </CardHeader>
         <CardContent>
           {createNotice ? (
-            <p
-              role="status"
-              className="border-brand-blue-200 bg-brand-blue-50 text-brand-blue-900 mb-4 rounded-lg border p-3 text-sm font-medium"
-            >
+            <p role="status" className={NOTICE}>
               {createNotice}
             </p>
           ) : null}
           {createBanner ? (
-            <p
-              role="alert"
-              className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 mb-4 rounded-lg border p-3 text-sm font-medium"
-            >
+            <p role="alert" className={`${ALERT} mb-4`}>
               {createBanner}
             </p>
           ) : null}
@@ -386,24 +393,20 @@ export default function AdminVansPage() {
       </Card>
 
       {editingVan ? (
-        <Card className="mt-6">
+        <Card className={CARD}>
           <CardHeader>
-            <CardTitle className="text-brand-blue-900 text-base">Edit {editingVan.plate}</CardTitle>
+            <CardTitle className="text-brand-ink text-lg font-bold">
+              Edit {editingVan.plate}
+            </CardTitle>
           </CardHeader>
           <CardContent>
             {editNotice ? (
-              <p
-                role="status"
-                className="border-brand-blue-200 bg-brand-blue-50 text-brand-blue-900 mb-4 rounded-lg border p-3 text-sm font-medium"
-              >
+              <p role="status" className={NOTICE}>
                 {editNotice}
               </p>
             ) : null}
             {editBanner ? (
-              <p
-                role="alert"
-                className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 mb-4 rounded-lg border p-3 text-sm font-medium"
-              >
+              <p role="alert" className={`${ALERT} mb-4`}>
                 {editBanner}
               </p>
             ) : null}
@@ -421,7 +424,7 @@ export default function AdminVansPage() {
             <Button
               type="button"
               variant="outline"
-              className="tap-target mt-3 w-full sm:w-auto"
+              className={`${OUTLINE_BUTTON} mt-3 w-full sm:w-auto`}
               onClick={() => setEditingVan(null)}
             >
               Cancel
@@ -430,33 +433,29 @@ export default function AdminVansPage() {
         </Card>
       ) : null}
 
-      <h2 className="text-brand-blue-900 mt-8 text-lg font-semibold">Fleet</h2>
+      <h2 className="text-brand-ink -mb-3 text-lg font-bold">Fleet</h2>
 
       {list.isPending ? (
-        <p className="text-muted-foreground mt-4 flex items-center gap-2 text-sm">
+        <p className="text-brand-error flex items-center gap-2 text-sm">
           <Loader2 className="size-4 animate-spin" aria-hidden="true" />
           Loading vans…
         </p>
       ) : list.isError ? (
-        <p
-          role="alert"
-          className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 mt-4 rounded-lg border p-3 text-sm font-medium"
-        >
+        <p role="alert" className={ALERT}>
           We could not load the fleet. Sign in again, or try once more in a moment.
         </p>
       ) : vans.length === 0 ? (
-        <p className="text-muted-foreground mt-4 text-sm">No vans yet — add the first one above.</p>
+        <p className={`${CARD} text-brand-error p-5 text-sm`}>
+          No vans yet — add the first one above.
+        </p>
       ) : (
         <>
           {/* Phone: one card per van. */}
-          <ul className="mt-4 space-y-3 md:hidden">
+          <ul className="space-y-3 md:hidden">
             {vans.map((van) => (
-              <li
-                key={van.id}
-                className="border-border bg-background rounded-xl border p-4 text-sm"
-              >
-                <p className="text-brand-blue-900 font-mono font-semibold">{van.plate}</p>
-                <p className="text-muted-foreground">
+              <li key={van.id} className={`${CARD} p-4 text-sm`}>
+                <p className="text-brand-ink font-mono font-semibold">{van.plate}</p>
+                <p className="text-brand-error">
                   {van.model} · {van.capacity} seats
                 </p>
                 <div className="mt-2">
@@ -469,7 +468,7 @@ export default function AdminVansPage() {
                 <Button
                   type="button"
                   variant="outline"
-                  className="tap-target mt-3 w-full"
+                  className={`${OUTLINE_BUTTON} mt-3 w-full`}
                   onClick={() => startEdit(van)}
                 >
                   Edit
@@ -479,48 +478,54 @@ export default function AdminVansPage() {
           </ul>
 
           {/* Laptop and up: the table, inside its own horizontal scroll container. */}
-          <div data-testid="vans-table-wrapper" className="mt-4 hidden overflow-x-auto md:block">
+          <div
+            data-testid="vans-table-wrapper"
+            className={`${CARD} hidden overflow-x-auto md:block`}
+          >
             <table className="w-full text-left text-sm">
-              <thead className="text-muted-foreground border-b">
+              <thead className="bg-brand-blue-50 text-brand-error border-brand-blue-100 border-b text-xs uppercase tracking-[0.06em]">
                 <tr>
-                  <th scope="col" className="py-2 pr-3 font-medium">
+                  <th scope="col" className="px-4 py-3 font-semibold">
                     Plate
                   </th>
-                  <th scope="col" className="py-2 pr-3 font-medium">
+                  <th scope="col" className="px-4 py-3 font-semibold">
                     Model
                   </th>
-                  <th scope="col" className="py-2 pr-3 font-medium">
+                  <th scope="col" className="px-4 py-3 font-semibold">
                     Seats
                   </th>
-                  <th scope="col" className="py-2 pr-3 font-medium">
+                  <th scope="col" className="px-4 py-3 font-semibold">
                     Status
                   </th>
-                  <th scope="col" className="py-2 text-right font-medium">
+                  <th scope="col" className="px-4 py-3 text-right font-semibold">
                     &nbsp;
                   </th>
                 </tr>
               </thead>
               <tbody>
                 {vans.map((van) => (
-                  <tr key={van.id} className="border-b last:border-0">
-                    <td className="text-brand-blue-900 py-3 pr-3 font-mono font-semibold">
+                  <tr
+                    key={van.id}
+                    className="border-brand-blue-100 hover:bg-brand-blue-50/50 border-b transition-colors last:border-0"
+                  >
+                    <td className="text-brand-ink px-4 py-3 font-mono font-semibold">
                       {van.plate}
                     </td>
-                    <td className="py-3 pr-3">{van.model}</td>
-                    <td className="py-3 pr-3 tabular-nums">{van.capacity}</td>
-                    <td className="py-3 pr-3">
+                    <td className="text-brand-ink px-4 py-3">{van.model}</td>
+                    <td className="text-brand-ink px-4 py-3 tabular-nums">{van.capacity}</td>
+                    <td className="px-4 py-3">
                       <StatusCell
                         van={van}
                         onSetStatus={(id, status) => setStatus.mutate({ id, status })}
                         pending={setStatus.isPending}
                       />
                     </td>
-                    <td className="py-3 text-right">
+                    <td className="px-4 py-3 text-right">
                       <Button
                         type="button"
                         variant="outline"
                         size="sm"
-                        className="tap-target"
+                        className={OUTLINE_BUTTON}
                         onClick={() => startEdit(van)}
                       >
                         Edit

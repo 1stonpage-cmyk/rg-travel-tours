@@ -107,7 +107,7 @@ const DRIVER_STATUS_LABELS: Record<string, string> = {
 const DRIVER_STATUS_BADGE_CLASS: Record<string, string> = {
   available: 'border-0 bg-brand-blue-50 text-brand-blue-800',
   on_trip: 'border-0 bg-brand-blue-100 text-brand-blue-900',
-  off_duty: 'border-0 bg-muted text-foreground',
+  off_duty: 'border-0 bg-slate-100 text-brand-ink',
 };
 
 const DRIVER_FIELDS: readonly EntityFormField[] = [
@@ -262,30 +262,40 @@ function freshLeaveFormState(): LeaveFormState {
   return { values: defaultLeaveValues(), errors: {}, banner: null };
 }
 
+const CARD = 'border-brand-blue-100 rounded-[14px] border bg-white';
+const NOTICE =
+  'border-brand-blue-200 bg-brand-blue-50 text-brand-blue-900 rounded-xl border p-3 text-sm font-medium';
+const ALERT =
+  'border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-xl border p-3 text-sm font-medium';
+const PRIMARY_BUTTON =
+  'tap-target bg-brand-blue-700 hover:bg-brand-blue-800 rounded-[10px] font-semibold text-white transition-colors';
+const OUTLINE_BUTTON =
+  'tap-target border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 hover:text-brand-blue-800 rounded-[10px] font-semibold transition-colors';
+
 /** Everything about one driver's personal data — RA 10173, this screen only. */
 function DriverPersonalData({ driver }: { driver: DriverRow }) {
   return (
     <dl className="mt-2 grid grid-cols-1 gap-1 text-sm sm:grid-cols-2">
       <div>
-        <dt className="text-muted-foreground">Phone</dt>
-        <dd>{driver.phone}</dd>
+        <dt className="text-brand-error">Phone</dt>
+        <dd className="text-brand-ink">{driver.phone}</dd>
       </div>
       <div>
-        <dt className="text-muted-foreground">Licence</dt>
-        <dd>
+        <dt className="text-brand-error">Licence</dt>
+        <dd className="text-brand-ink">
           {driver.licenseNo ?? '—'}
           {driver.licenseExpiry ? ` (expires ${formatCivilDate(driver.licenseExpiry)})` : ''}
         </dd>
       </div>
       <div>
-        <dt className="text-muted-foreground">Languages</dt>
-        <dd>
+        <dt className="text-brand-error">Languages</dt>
+        <dd className="text-brand-ink">
           {driver.languages && driver.languages.length > 0 ? driver.languages.join(', ') : '—'}
         </dd>
       </div>
       <div>
-        <dt className="text-muted-foreground">Emergency contact</dt>
-        <dd>{driver.emergencyContact ?? '—'}</dd>
+        <dt className="text-brand-error">Emergency contact</dt>
+        <dd className="text-brand-ink">{driver.emergencyContact ?? '—'}</dd>
       </div>
     </dl>
   );
@@ -324,7 +334,9 @@ function DriverPersonalData({ driver }: { driver: DriverRow }) {
  */
 function RatingBadge({ driver }: { driver: DriverRow }) {
   if (driver.rating === null) {
-    return <Badge className="bg-muted text-foreground border-0">New driver — no ratings yet</Badge>;
+    return (
+      <Badge className="text-brand-ink border-0 bg-slate-100">New driver — no ratings yet</Badge>
+    );
   }
   return (
     <Badge className="bg-brand-blue-50 text-brand-blue-900 border-0">
@@ -339,12 +351,12 @@ function AvailabilityBadge({ driver }: { driver: DriverRow }) {
 
   if (availability.state === 'inactive') {
     return (
-      <Badge className="bg-muted text-foreground border-0">Inactive — not on the roster</Badge>
+      <Badge className="text-brand-ink border-0 bg-slate-100">Inactive — not on the roster</Badge>
     );
   }
   if (availability.state === 'on_leave') {
     return (
-      <Badge className="border-0 bg-amber-100 text-amber-900">
+      <Badge className="bg-brand-gold-100 text-brand-gold-800 border-0">
         On leave to {formatCivilDate(availability.until)}
       </Badge>
     );
@@ -579,16 +591,21 @@ export default function AdminDriversPage() {
   const drivers = list.data ?? [];
 
   return (
-    <div>
-      <h1 className="text-brand-blue-900 text-2xl font-bold">Drivers</h1>
-      <p className="text-muted-foreground mt-1 text-sm">
-        Everyone who drives for us. PIN resets and leave come straight from here.
-      </p>
+    <div className="flex flex-col gap-6">
+      <header className="flex flex-col gap-1">
+        <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.08em]">
+          Operations
+        </p>
+        <h1 className="text-brand-ink text-2xl font-bold sm:text-3xl">Drivers</h1>
+        <p className="text-brand-error text-sm">
+          Everyone who drives for us. PIN resets and leave come straight from here.
+        </p>
+      </header>
 
       {pinPanel ? (
         <div
           role="status"
-          className="border-brand-gold-400 bg-brand-gold-50 text-brand-gold-900 mt-6 rounded-xl border p-4 text-sm"
+          className="border-brand-gold-400 bg-brand-gold-50 text-brand-gold-900 rounded-[14px] border p-4 text-sm"
         >
           <p className="font-semibold">
             {pinPanel.kind === 'create' ? 'New driver, new PIN' : 'New PIN'} for {pinPanel.name}
@@ -609,7 +626,7 @@ export default function AdminDriversPage() {
             <Button
               type="button"
               size="sm"
-              className="tap-target"
+              className={PRIMARY_BUTTON}
               onClick={() => copyPin(pinPanel.pin)}
             >
               Copy PIN
@@ -618,7 +635,7 @@ export default function AdminDriversPage() {
               type="button"
               variant="outline"
               size="sm"
-              className="tap-target"
+              className={OUTLINE_BUTTON}
               onClick={() => setPinPanel(null)}
             >
               Dismiss
@@ -628,33 +645,24 @@ export default function AdminDriversPage() {
       ) : null}
 
       {activeNotice ? (
-        <p
-          role="status"
-          className="border-brand-blue-200 bg-brand-blue-50 text-brand-blue-900 mt-6 rounded-lg border p-3 text-sm font-medium"
-        >
+        <p role="status" className={NOTICE}>
           {activeNotice}
         </p>
       ) : null}
 
       {activeBanner ? (
-        <p
-          role="alert"
-          className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 mt-6 rounded-lg border p-3 text-sm font-medium"
-        >
+        <p role="alert" className={ALERT}>
           {activeBanner}
         </p>
       ) : null}
 
-      <Card className="mt-6">
+      <Card className={CARD}>
         <CardHeader>
-          <CardTitle className="text-brand-blue-900 text-base">Add a driver</CardTitle>
+          <CardTitle className="text-brand-ink text-lg font-bold">Add a driver</CardTitle>
         </CardHeader>
         <CardContent>
           {createBanner ? (
-            <p
-              role="alert"
-              className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 mb-4 rounded-lg border p-3 text-sm font-medium"
-            >
+            <p role="alert" className={`${ALERT} mb-4`}>
               {createBanner}
             </p>
           ) : null}
@@ -673,26 +681,20 @@ export default function AdminDriversPage() {
       </Card>
 
       {editingDriver ? (
-        <Card className="mt-6">
+        <Card className={CARD}>
           <CardHeader>
-            <CardTitle className="text-brand-blue-900 text-base">
+            <CardTitle className="text-brand-ink text-lg font-bold">
               Edit {editingDriver.name}
             </CardTitle>
           </CardHeader>
           <CardContent>
             {editNotice ? (
-              <p
-                role="status"
-                className="border-brand-blue-200 bg-brand-blue-50 text-brand-blue-900 mb-4 rounded-lg border p-3 text-sm font-medium"
-              >
+              <p role="status" className={`${NOTICE} mb-4`}>
                 {editNotice}
               </p>
             ) : null}
             {editBanner ? (
-              <p
-                role="alert"
-                className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 mb-4 rounded-lg border p-3 text-sm font-medium"
-              >
+              <p role="alert" className={`${ALERT} mb-4`}>
                 {editBanner}
               </p>
             ) : null}
@@ -710,7 +712,7 @@ export default function AdminDriversPage() {
             <Button
               type="button"
               variant="outline"
-              className="tap-target mt-3 w-full sm:w-auto"
+              className={`${OUTLINE_BUTTON} mt-3 w-full sm:w-auto`}
               onClick={() => setEditingDriver(null)}
             >
               Cancel
@@ -719,35 +721,29 @@ export default function AdminDriversPage() {
         </Card>
       ) : null}
 
-      <h2 className="text-brand-blue-900 mt-8 text-lg font-semibold">The roster</h2>
+      <h2 className="text-brand-ink -mb-3 text-lg font-bold">The roster</h2>
 
       {removeLeaveBanner ? (
-        <p
-          role="alert"
-          className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 mt-4 rounded-lg border p-3 text-sm font-medium"
-        >
+        <p role="alert" className={ALERT}>
           {removeLeaveBanner}
         </p>
       ) : null}
 
       {list.isPending ? (
-        <p className="text-muted-foreground mt-4 flex items-center gap-2 text-sm">
+        <p className="text-brand-error flex items-center gap-2 text-sm">
           <Loader2 className="size-4 animate-spin" aria-hidden="true" />
           Loading drivers…
         </p>
       ) : list.isError ? (
-        <p
-          role="alert"
-          className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 mt-4 rounded-lg border p-3 text-sm font-medium"
-        >
+        <p role="alert" className={ALERT}>
           We could not load the drivers. Sign in again, or try once more in a moment.
         </p>
       ) : drivers.length === 0 ? (
-        <p className="text-muted-foreground mt-4 text-sm">
+        <p className={`${CARD} text-brand-error p-5 text-sm`}>
           No drivers yet — add the first one above.
         </p>
       ) : (
-        <ul className="mt-4 space-y-4">
+        <ul className="space-y-4">
           {drivers.map((driver) => {
             const leaves = driver.leaves;
             const leaveForm = leaveFormFor(driver.id);
@@ -758,12 +754,12 @@ export default function AdminDriversPage() {
 
             return (
               <li key={driver.id}>
-                <Card>
+                <Card className={CARD}>
                   <CardContent className="pt-6">
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <div>
-                        <p className="text-brand-blue-900 font-semibold">{driver.name}</p>
-                        <p className="text-muted-foreground font-mono text-sm">{driver.code}</p>
+                        <p className="text-brand-ink text-base font-bold">{driver.name}</p>
+                        <p className="text-brand-error font-mono text-sm">{driver.code}</p>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
                         <RatingBadge driver={driver} />
@@ -771,7 +767,7 @@ export default function AdminDriversPage() {
                         <Badge
                           className={
                             DRIVER_STATUS_BADGE_CLASS[driver.status] ??
-                            'bg-muted text-foreground border-0'
+                            'text-brand-ink border-0 bg-slate-100'
                           }
                         >
                           {DRIVER_STATUS_LABELS[driver.status] ?? driver.status}
@@ -786,7 +782,7 @@ export default function AdminDriversPage() {
                         type="button"
                         variant="outline"
                         size="sm"
-                        className="tap-target"
+                        className={OUTLINE_BUTTON}
                         onClick={() => startEdit(driver)}
                       >
                         Edit
@@ -797,7 +793,7 @@ export default function AdminDriversPage() {
                           <Button
                             type="button"
                             size="sm"
-                            className="tap-target"
+                            className={PRIMARY_BUTTON}
                             disabled={resetPin.isPending}
                             onClick={() => resetPin.mutate({ id: driver.id })}
                           >
@@ -807,7 +803,7 @@ export default function AdminDriversPage() {
                             type="button"
                             variant="outline"
                             size="sm"
-                            className="tap-target"
+                            className={OUTLINE_BUTTON}
                             disabled={resetPin.isPending}
                             onClick={() => setConfirmResetId(null)}
                           >
@@ -819,7 +815,7 @@ export default function AdminDriversPage() {
                           type="button"
                           variant="outline"
                           size="sm"
-                          className="tap-target"
+                          className={OUTLINE_BUTTON}
                           onClick={() => setConfirmResetId(driver.id)}
                         >
                           Reset PIN
@@ -831,7 +827,7 @@ export default function AdminDriversPage() {
                           type="button"
                           variant="outline"
                           size="sm"
-                          className="tap-target"
+                          className={OUTLINE_BUTTON}
                           disabled={setActive.isPending}
                           aria-label={`Deactivate ${driver.name}`}
                           onClick={() => {
@@ -846,7 +842,7 @@ export default function AdminDriversPage() {
                           type="button"
                           variant="outline"
                           size="sm"
-                          className="tap-target"
+                          className={OUTLINE_BUTTON}
                           disabled={setActive.isPending}
                           aria-label={`Reactivate ${driver.name}`}
                           onClick={() => setActive.mutate({ id: driver.id, isActive: true })}
@@ -860,7 +856,7 @@ export default function AdminDriversPage() {
                       <div
                         role="group"
                         aria-label={`Confirm deactivating ${driver.name}`}
-                        className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 mt-3 rounded-lg border p-3 text-sm"
+                        className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 mt-3 rounded-xl border p-3 text-sm"
                       >
                         <p className="font-medium">
                           Deactivate {driver.name}? This signs them out of the driver portal
@@ -871,7 +867,7 @@ export default function AdminDriversPage() {
                           <Button
                             type="button"
                             size="sm"
-                            className="tap-target"
+                            className={PRIMARY_BUTTON}
                             disabled={setActive.isPending}
                             onClick={() => setActive.mutate({ id: driver.id, isActive: false })}
                           >
@@ -884,7 +880,7 @@ export default function AdminDriversPage() {
                             type="button"
                             variant="outline"
                             size="sm"
-                            className="tap-target"
+                            className={OUTLINE_BUTTON}
                             disabled={setActive.isPending}
                             onClick={() => setConfirmDeactivateId(null)}
                           >
@@ -894,17 +890,17 @@ export default function AdminDriversPage() {
                       </div>
                     ) : null}
 
-                    <div className="mt-5 border-t pt-4">
-                      <h3 className="text-brand-blue-900 text-sm font-semibold">Leave</h3>
+                    <div className="border-brand-blue-100 mt-5 border-t pt-4">
+                      <h3 className="text-brand-ink text-sm font-bold">Leave</h3>
 
                       {leaves.length === 0 ? (
-                        <p className="text-muted-foreground mt-2 text-sm">No leave on file.</p>
+                        <p className="text-brand-error mt-2 text-sm">No leave on file.</p>
                       ) : (
                         <ul className="mt-2 space-y-1">
                           {leaves.map((leave) => (
                             <li
                               key={leave.id}
-                              className="flex flex-wrap items-center justify-between gap-2 text-sm"
+                              className="text-brand-ink flex flex-wrap items-center justify-between gap-2 text-sm"
                             >
                               <span>
                                 {formatCivilDate(leave.startDate)} to{' '}
@@ -915,7 +911,7 @@ export default function AdminDriversPage() {
                                 type="button"
                                 variant="outline"
                                 size="sm"
-                                className="tap-target"
+                                className={OUTLINE_BUTTON}
                                 disabled={
                                   removeLeave.isPending && removeLeave.variables?.id === leave.id
                                 }
@@ -929,10 +925,7 @@ export default function AdminDriversPage() {
                       )}
 
                       {leaveForm.banner ? (
-                        <p
-                          role="alert"
-                          className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 mt-3 rounded-lg border p-3 text-sm font-medium"
-                        >
+                        <p role="alert" className={`${ALERT} mt-3`}>
                           {leaveForm.banner}
                         </p>
                       ) : null}
