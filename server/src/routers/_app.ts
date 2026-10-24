@@ -14,6 +14,7 @@ import { adminCouponsRouter } from './admin/coupons';
 import { adminDispatchRouter } from './admin/dispatch';
 import { adminDriversRouter } from './admin/drivers';
 import { adminRefundsRouter } from './admin/refunds';
+import { adminSettingsRouter } from './admin/settings';
 import { adminStaffUsersRouter } from './admin/staff-users';
 import { adminToursRouter } from './admin/tours';
 import { adminVansRouter } from './admin/vans';
@@ -143,6 +144,15 @@ export const appRouter = router({
      * do with a tour's children.
      */
     coupons: adminCouponsRouter,
+    /*
+     * The seventeen `settings` rows (Week 7, Task 9). §9 gates it on
+     * `usersSettings` — OWNER ONLY, the same narrowness as `toursPricing`
+     * and for overlapping reasons: `trust.depositPercent` is how much of a
+     * guest's total is taken at checkout, `payment_qr` is the account it is
+     * transferred to, and `content_unverified` decides whether this site is
+     * in a search index at all.
+     */
+    settings: adminSettingsRouter,
   }),
 });
 

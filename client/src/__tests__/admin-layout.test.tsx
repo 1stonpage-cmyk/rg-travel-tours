@@ -128,6 +128,9 @@ describe('AdminLayout', () => {
         // same `toursPricing` area as tours and pricing.
         'Coupons',
         'Staff',
+        // Settings is owner-only too (Week 7 Task 9): §9's `usersSettings`
+        // row, which holds the deposit percentage and the payment QR.
+        'Settings',
       ]);
     });
 

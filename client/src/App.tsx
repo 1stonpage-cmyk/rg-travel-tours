@@ -14,6 +14,7 @@ import AdminToursPage from '@/pages/admin/AdminToursPage';
 import AdminChangePasswordPage from '@/pages/admin/AdminChangePasswordPage';
 import AdminLoginPage from '@/pages/admin/AdminLoginPage';
 import AdminPaymentsPage from '@/pages/admin/AdminPaymentsPage';
+import AdminSettingsPage from '@/pages/admin/AdminSettingsPage';
 import AdminVansPage from '@/pages/admin/AdminVansPage';
 import DriverLayout from '@/components/layout/DriverLayout';
 import DriverLoginPage from '@/pages/driver/DriverLoginPage';
@@ -116,6 +117,7 @@ export default function App() {
         <Route path="tours" element={<AdminToursPage />} />
         <Route path="coupons" element={<AdminCouponsPage />} />
         <Route path="staff" element={<AdminStaffPage />} />
+        <Route path="settings" element={<AdminSettingsPage />} />
         <Route path="change-password" element={<AdminChangePasswordPage />} />
       </Route>
 

@@ -55,6 +55,9 @@ export const ADMIN_NAV: readonly AdminNavItem[] = [
   { to: '/admin/tours', label: 'Tours', end: false, roles: ['owner'] },
   { to: '/admin/coupons', label: 'Coupons', end: false, roles: ['owner'] },
   { to: '/admin/staff', label: 'Staff', end: false, roles: ['owner'] },
+  // Owner-only too (Week 7 Task 9): `admin.settings.*` is §9's `usersSettings`
+  // row, which holds the deposit percentage and the payment QR account.
+  { to: '/admin/settings', label: 'Settings', end: false, roles: ['owner'] },
 ];
 
 function isAdminNavRole(role: string | undefined): role is AdminNavRole {
