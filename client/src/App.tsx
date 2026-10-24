@@ -9,6 +9,7 @@ import AdminCalendarPage from '@/pages/admin/AdminCalendarPage';
 import AdminDeparturesPage from '@/pages/admin/AdminDeparturesPage';
 import AdminDriversPage from '@/pages/admin/AdminDriversPage';
 import AdminStaffPage from '@/pages/admin/AdminStaffPage';
+import AdminToursPage from '@/pages/admin/AdminToursPage';
 import AdminChangePasswordPage from '@/pages/admin/AdminChangePasswordPage';
 import AdminLoginPage from '@/pages/admin/AdminLoginPage';
 import AdminPaymentsPage from '@/pages/admin/AdminPaymentsPage';
@@ -111,6 +112,7 @@ export default function App() {
         <Route path="departures" element={<AdminDeparturesPage />} />
         <Route path="vans" element={<AdminVansPage />} />
         <Route path="drivers" element={<AdminDriversPage />} />
+        <Route path="tours" element={<AdminToursPage />} />
         <Route path="staff" element={<AdminStaffPage />} />
         <Route path="change-password" element={<AdminChangePasswordPage />} />
       </Route>

@@ -123,6 +123,7 @@ describe('AdminLayout', () => {
         'Departures',
         'Vans',
         'Drivers',
+        'Tours',
         'Staff',
       ]);
     });
