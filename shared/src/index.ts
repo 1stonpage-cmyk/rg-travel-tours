@@ -2,6 +2,7 @@ export * from './booking';
 export * from './checkout';
 export * from './constants';
 export * from './coupon';
+export * from './coupons-admin';
 export * from './dispatch';
 export * from './driver';
 export * from './money';

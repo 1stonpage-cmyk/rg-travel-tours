@@ -10,6 +10,7 @@ import { adminBookingsRouter } from './admin/bookings';
 import { adminDashboardRouter } from './admin/dashboard';
 import { adminDeparturesRouter } from './admin/departures';
 import { adminCalendarRouter } from './admin/calendar';
+import { adminCouponsRouter } from './admin/coupons';
 import { adminDispatchRouter } from './admin/dispatch';
 import { adminDriversRouter } from './admin/drivers';
 import { adminRefundsRouter } from './admin/refunds';
@@ -133,6 +134,15 @@ export const appRouter = router({
      * write the per-person price a guest is charged.
      */
     tours: adminToursRouter,
+    /*
+     * Coupons and the redemption log (Week 7, Task 8). The SAME
+     * `toursPricing` area as `tours` above — owner only — because a discount
+     * is a price decision: a coupon that takes 20% off every booking changes
+     * what a guest pays exactly as a tier edit does. Its own namespace
+     * because the tables, the inputs and the redemption log have nothing to
+     * do with a tour's children.
+     */
+    coupons: adminCouponsRouter,
   }),
 });
 
