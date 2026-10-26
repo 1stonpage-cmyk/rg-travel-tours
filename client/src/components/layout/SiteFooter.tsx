@@ -2,6 +2,7 @@ import { Clock, Facebook, Mail, MapPin, Phone } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ViberGlyph, WhatsAppGlyph } from '@/components/common/BrandGlyphs';
+import { useConsent } from '@/lib/consent/useConsent';
 import { SITE, telLink, viberLink, whatsappLink } from '@/lib/site';
 import { trpc } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
@@ -87,6 +88,7 @@ export default function SiteFooter() {
    * the brief gap before the query resolves — not a real "no settings"
    * state, since `readSettings()` throws rather than omitting a key.
    */
+  const { reopen: reopenCookieSettings } = useConsent();
   const { data: settings } = trpc.settings.get.useQuery();
   const permits = settings?.permits ?? NO_PERMITS;
   const paymentMethods = settings?.paymentMethods ?? [];
@@ -272,17 +274,32 @@ export default function SiteFooter() {
               {/* Legal entity, not the trading brand — see SITE.legalOperator. */}©{' '}
               {new Date().getFullYear()} {SITE.legalOperator}. All rights reserved.
             </p>
-            {/* Task 3.6: legal pages, rendered from settings.legal via <Markdown/>. Plain
-                text links beside the copyright — not a new contact target, so the
-                contact-parity guard (scripts/check-contact-parity.mjs) has nothing new
-                to track here. */}
-            <nav aria-label="Legal" className="flex items-center gap-3">
+            {/* The four static legal pages (task 2B, 2026-10-27 — /privacy and /terms no
+                longer read settings.legal, see docs/superpowers/plans/2026-10-27-legal-pages.md)
+                plus "Cookie settings" (task 2C), which reopens the Customize panel via the same
+                ConsentProvider PublicLayout mounts above this component. Plain text/button links
+                beside the copyright — not a new contact target, so the contact-parity guard
+                (scripts/check-contact-parity.mjs) has nothing new to track here. */}
+            <nav aria-label="Legal" className="flex flex-wrap items-center gap-x-3 gap-y-1">
               <Link to="/privacy" className="flex min-h-11 items-center hover:underline">
                 Privacy Policy
               </Link>
               <Link to="/terms" className="flex min-h-11 items-center hover:underline">
                 Terms of Service
               </Link>
+              <Link to="/refund-policy" className="flex min-h-11 items-center hover:underline">
+                Refund Policy
+              </Link>
+              <Link to="/cookies" className="flex min-h-11 items-center hover:underline">
+                Cookie Policy
+              </Link>
+              <button
+                type="button"
+                onClick={reopenCookieSettings}
+                className="tap-target flex items-center hover:underline"
+              >
+                Cookie settings
+              </button>
             </nav>
           </div>
           <p>Payments processed securely by PayMongo. Card details never touch our servers.</p>
