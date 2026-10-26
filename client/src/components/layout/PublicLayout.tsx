@@ -3,11 +3,35 @@ import { Outlet, useLocation } from 'react-router-dom';
 import CookieConsentBanner from '@/components/common/CookieConsentBanner';
 import CookieCustomizePanel from '@/components/common/CookieCustomizePanel';
 import { ConsentProvider } from '@/lib/consent/ConsentContext';
+import { useConsent } from '@/lib/consent/useConsent';
+import { cn } from '@/lib/utils';
 import AnnouncementBar from './AnnouncementBar';
 import FloatingWhatsApp from './FloatingWhatsApp';
 import PlaceholderBadge from './PlaceholderBadge';
 import SiteFooter from './SiteFooter';
 import SiteHeader from './SiteHeader';
+
+/**
+ * Split out so it can read `bannerOpen` — `PublicLayout`'s own return is `ConsentProvider`'s
+ * root, so it can't call `useConsent()` itself; a child a level down can.
+ *
+ * While the cookie banner is showing, its own `pb-mobile-bar-safe` reservation (sized for
+ * `FloatingWhatsApp`'s bar, which hides whenever the banner does — see FloatingWhatsApp.tsx) is
+ * swapped for a taller one sized for the banner itself: task 2D's "must not cover checkout
+ * buttons at 360px" needs the LAST element of whatever page is in `<Outlet/>` to always be
+ * scrollable clear of whichever fixed-bottom element is actually on screen, not just the one
+ * that happened to be there when `.pb-mobile-bar-safe` was first tuned (BUG-078/079). `pb-48`
+ * covers the banner's stacked mobile layout (text block + a 3-button row + padding); `sm:pb-28`
+ * covers its shorter sm+ single-row layout.
+ */
+function MainContent() {
+  const { bannerOpen } = useConsent();
+  return (
+    <main id="main" className={cn('flex-1', bannerOpen ? 'pb-48 sm:pb-28' : 'pb-mobile-bar-safe')}>
+      <Outlet />
+    </main>
+  );
+}
 
 export default function PublicLayout() {
   const { pathname, hash } = useLocation();
@@ -59,40 +83,26 @@ export default function PublicLayout() {
         <AnnouncementBar />
         <SiteHeader />
         {/*
-         * Bottom padding reserved for the mobile sticky bar in FloatingWhatsApp
-         * (spec task 2.9B; fix round 1, F2 / BUG-078). The bar is `position:
-         * fixed`, so it occupies no layout space of its own — nothing pushes
-         * the last element of whatever page is in <Outlet/> clear of it. This
-         * padding does that unconditionally (not toggled with the bar's own
-         * show/hide state, matching the existing precedent in SiteFooter's own
-         * pb-20/sm:pb-24, reserved the same way for the floating bubble), so
-         * the very last interactive element on ANY page — not just the ones
-         * this task happened to check by hand — can always be scrolled clear
-         * of the bar, independent of the bar's own "hide near the footer"
-         * timing.
+         * Bottom padding reserved for whichever fixed-bottom element is actually on screen —
+         * FloatingWhatsApp's mobile bar (spec task 2.9B; fix round 1, F2 / BUG-078) normally, the
+         * cookie consent banner while it's showing (task 2D). See MainContent above for why this
+         * had to become conditional rather than the one flat class it used to be.
          *
-         * ~128px comfortably covers the bar's real worst-case height: a 56px
-         * icon button + 12px top padding + max(12px, the safe-area inset on a
-         * notched phone, up to ~34px) bottom padding + a 1px border ≈ 81–103px.
+         * ~128px (`.pb-mobile-bar-safe`, index.css) comfortably covers the WhatsApp bar's real
+         * worst-case height: a 56px icon button + 12px top padding + max(12px, the safe-area
+         * inset on a notched phone, up to ~34px) bottom padding + a 1px border ≈ 81–103px.
          *
-         * BUG-079: that 128px (8rem) is a flat number, but the bar's own
-         * bottom padding is `max(0.75rem, env(safe-area-inset-bottom))` — on
-         * a notched phone the inset can exceed the 0.75rem already folded
-         * into the 103px estimate above, making the flat reservation short
-         * and letting the bar sit over whatever the page scrolls up against
-         * it. `.pb-mobile-bar-safe` (index.css) adds the same
-         * `env(safe-area-inset-bottom)` on top of the flat 8rem so the
-         * reservation grows with the inset instead of assuming a fixed worst
-         * case. This is reasoned, not measured — there was no notched device
-         * to confirm it against; see the task report.
-         *
-         * The class also cancels to 0 at the exact breakpoint where the bar
-         * itself stops existing (`md:hidden` in FloatingWhatsApp) — desktop
-         * gains nothing.
+         * BUG-079: that 128px (8rem) is a flat number, but the bar's own bottom padding is
+         * `max(0.75rem, env(safe-area-inset-bottom))` — on a notched phone the inset can exceed
+         * the 0.75rem already folded into the 103px estimate above, making the flat reservation
+         * short and letting the bar sit over whatever the page scrolls up against it.
+         * `.pb-mobile-bar-safe` adds the same `env(safe-area-inset-bottom)` on top of the flat
+         * 8rem so the reservation grows with the inset instead of assuming a fixed worst case.
+         * This is reasoned, not measured — there was no notched device to confirm it against;
+         * see the task report. The class also cancels to 0 at the exact breakpoint where the bar
+         * itself stops existing (`md:hidden` in FloatingWhatsApp) — desktop gains nothing.
          */}
-        <main id="main" className="pb-mobile-bar-safe flex-1">
-          <Outlet />
-        </main>
+        <MainContent />
         <SiteFooter />
         <FloatingWhatsApp />
         <CookieConsentBanner />

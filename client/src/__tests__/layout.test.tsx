@@ -94,10 +94,26 @@ describe('PublicLayout', () => {
    * device.
    */
   it("reserves mobile-only bottom padding on <main> for the sticky bar's height, with nothing added on desktop", () => {
+    // Task 2D: this reservation is for FloatingWhatsApp's bar specifically, which only shows
+    // once the cookie consent banner is no longer undecided (see PublicLayout.tsx's MainContent)
+    // — seeded here so this test still exercises that original scenario, not the banner's own
+    // (taller) reservation, which the next test covers.
+    localStorage.setItem(
+      CONSENT_STORAGE_KEY,
+      JSON.stringify({ v: 1, analytics: false, marketing: false, at: new Date().toISOString() }),
+    );
     renderLayout();
     const main = screen.getByRole('main');
     expect(main.className).toMatch(/\bpb-mobile-bar-safe\b/);
     expect(main.className).not.toMatch(/\bpb-32\b/);
+    localStorage.clear();
+  });
+
+  it('reserves a taller bottom padding on <main> while the cookie consent banner is undecided, instead of the WhatsApp-bar one', () => {
+    renderLayout();
+    const main = screen.getByRole('main');
+    expect(main.className).toMatch(/\bpb-48\b/);
+    expect(main.className).not.toMatch(/\bpb-mobile-bar-safe\b/);
   });
 
   it('BUG-079: .pb-mobile-bar-safe adds the safe-area inset on top of the flat 8rem, and cancels both at md', () => {
