@@ -19,8 +19,6 @@ const env = import.meta.env;
 
 export const SITE = {
   name: 'TravelSugbo',
-  /** Short mark for the 36px header square and the browser-tab favicon. */
-  shortMark: 'TS',
   domain: 'TravelSugbo.com',
   /** The licensed operator. Permits and the copyright notice belong to this name. */
   legalOperator: 'R&G Travel & Tours',
