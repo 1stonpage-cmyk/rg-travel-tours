@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { WhatsAppGlyph } from '@/components/common/BrandGlyphs';
 import { Button } from '@/components/ui/button';
+import { useConsent } from '@/lib/consent/useConsent';
 import { SITE, whatsappLink } from '@/lib/site';
 import { trpc } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
@@ -187,7 +188,13 @@ export default function FloatingWhatsApp() {
   const { pathname } = useLocation();
   const coversHeroSearch = useCoversHeroSearch(pathname);
   const nearFooter = useNearFooter(pathname);
-  const barVisible = !coversHeroSearch && !nearFooter;
+  // The cookie consent banner/panel (task 2D) are the one other thing allowed to own this
+  // screen real estate — both read from the same ConsentProvider this component sits under, so
+  // there's one source of truth for "is something more important on screen right now" rather
+  // than a pixel offset tuned against the banner's own height.
+  const { bannerOpen, panelOpen } = useConsent();
+  const consentOpen = bannerOpen || panelOpen;
+  const barVisible = !coversHeroSearch && !nearFooter && !consentOpen;
 
   /**
    * `settings.openState.message` is computed server-side, in Asia/Manila
@@ -245,7 +252,7 @@ export default function FloatingWhatsApp() {
        * element would still sit there capturing hover/focus/taps over the
        * CTA it exists to avoid covering.
        */}
-      {!coversHeroSearch && (
+      {!coversHeroSearch && !consentOpen && (
         <div className="motion-rise group fixed bottom-4 right-4 z-50 hidden sm:bottom-6 sm:right-6 md:block">
           {openState && <OpenStatusChip openState={openState} />}
           <ChatLabel reveal={false} onRevealEnd={() => {}} />

@@ -10,6 +10,8 @@ import ContactSection from '@/components/home/ContactSection';
 import FaqSection from '@/components/home/FaqSection';
 import FloatingWhatsApp from '@/components/layout/FloatingWhatsApp';
 import SiteFooter from '@/components/layout/SiteFooter';
+import { ConsentProvider } from '@/lib/consent/ConsentContext';
+import { CONSENT_STORAGE_KEY } from '@/lib/consent/types';
 import { SITE } from '@/lib/site';
 import { TrpcProviders } from '@/lib/trpc';
 import { SETTINGS_FIXTURE } from './helpers/fixtures';
@@ -28,7 +30,9 @@ function settingsWith(overrides: Partial<typeof SETTINGS_FIXTURE>) {
 function renderWithTrpc(node: ReactNode) {
   return render(
     <TrpcProviders>
-      <MemoryRouter>{node}</MemoryRouter>
+      <MemoryRouter>
+        <ConsentProvider>{node}</ConsentProvider>
+      </MemoryRouter>
     </TrpcProviders>,
   );
 }
@@ -66,6 +70,13 @@ describe('open/closed state', () => {
     mockTrpc({
       'settings.get': settingsWith({ openState: { isOpen: true, message: OPEN_MESSAGE } }),
     });
+    // Task 2D: FloatingWhatsApp hides itself while the cookie consent banner is undecided (it
+    // shares bannerOpen with ConsentProvider, same as the real app). Seed an already-decided
+    // choice so this WhatsApp-specific assertion isn't tangled up with consent-banner behaviour.
+    localStorage.setItem(
+      CONSENT_STORAGE_KEY,
+      JSON.stringify({ v: 1, analytics: false, marketing: false, at: new Date().toISOString() }),
+    );
     const { container } = renderWithTrpc(
       <>
         <ContactSection />
@@ -99,6 +110,7 @@ describe('open/closed state', () => {
       const wrapper = control.parentElement as HTMLElement;
       expect(within(wrapper).getAllByText(OPEN_MESSAGE)).toHaveLength(1);
     }
+    localStorage.removeItem(CONSENT_STORAGE_KEY);
   });
 
   /**

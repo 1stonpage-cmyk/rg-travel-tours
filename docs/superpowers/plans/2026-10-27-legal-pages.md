@@ -7,11 +7,11 @@ review" — not legal advice).
 
 ## Owner decisions (2026-10-27)
 
-| #   | Decision                                                                                                                                                                                 |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1   | GA4 and Meta Pixel, **both opt-in only**. Essential cookies always on, no toggle.                                                                                                      |
+| #   | Decision                                                                                                                                                                              |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | GA4 and Meta Pixel, **both opt-in only**. Essential cookies always on, no toggle.                                                                                                     |
 | 2   | Refund rules and business details are **not confirmed** by R&G yet. Every `[PLACEHOLDER]` in the source drafts stays **visible** on the live site as an amber "To be confirmed" chip. |
-| 3   | GA4/Pixel IDs come from `VITE_GA_MEASUREMENT_ID` / `VITE_META_PIXEL_ID` client env vars, added **empty** to `.env.example` only. Empty ID = that tool never loads, even with consent.  |
+| 3   | GA4/Pixel IDs come from `VITE_GA_MEASUREMENT_ID` / `VITE_META_PIXEL_ID` client env vars, added **empty** to `.env.example` only. Empty ID = that tool never loads, even with consent. |
 
 ## Architecture decision — made mid-task, 2026-10-27
 

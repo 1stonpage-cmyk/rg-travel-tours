@@ -16,6 +16,8 @@ import HomePage from '@/pages/public/HomePage';
 import FloatingWhatsApp from '@/components/layout/FloatingWhatsApp';
 import SiteHeader from '@/components/layout/SiteHeader';
 import TourCard from '@/components/common/TourCard';
+import { ConsentProvider } from '@/lib/consent/ConsentContext';
+import { CONSENT_STORAGE_KEY } from '@/lib/consent/types';
 import { useCardStagger } from '@/lib/use-scroll-reveal';
 import { useCountUp } from '@/lib/use-count-up';
 import { TrpcProviders } from '@/lib/trpc';
@@ -708,22 +710,41 @@ describe('ContactSection — WhatsApp/Viber branding (spec task 2.9I, fix round 
   });
 });
 
+/**
+ * Task 2D: FloatingWhatsApp now also hides itself while the cookie consent banner is undecided
+ * (it reads the same `bannerOpen` the banner itself does, from `ConsentProvider`) — correct in
+ * the real app, where `PublicLayout` always mounts both together, but these tests render
+ * `FloatingWhatsApp` on its own and only care about its pre-existing pulse/bar behaviour. Seeding
+ * an already-decided consent choice keeps `bannerOpen` false from the first render, the same as
+ * any returning visitor these tests are really modelling.
+ */
+function seedDecidedConsent() {
+  localStorage.setItem(
+    CONSENT_STORAGE_KEY,
+    JSON.stringify({ v: 1, analytics: false, marketing: false, at: new Date().toISOString() }),
+  );
+}
+
 describe('FloatingWhatsApp — attention pulse and "Chat with us" peek fire once per session, not once per mount (spec task 2.9I)', () => {
   beforeEach(() => {
     sessionStorage.clear();
+    seedDecidedConsent();
     // FloatingWhatsApp now reads `settings.openState` (task 3.4).
     mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
   });
 
   afterEach(() => {
     sessionStorage.clear();
+    localStorage.clear();
   });
 
   function renderBubble() {
     return render(
       <TrpcProviders>
         <MemoryRouter>
-          <FloatingWhatsApp />
+          <ConsentProvider>
+            <FloatingWhatsApp />
+          </ConsentProvider>
         </MemoryRouter>
       </TrpcProviders>,
     );
@@ -794,6 +815,7 @@ describe('Mobile bottom bar — "Book a tour" + WhatsApp (spec task 2.9B)', () =
   }
 
   beforeEach(() => {
+    seedDecidedConsent();
     // FloatingWhatsApp now reads `settings.openState` (task 3.4).
     mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
   });
@@ -801,13 +823,16 @@ describe('Mobile bottom bar — "Book a tour" + WhatsApp (spec task 2.9B)', () =
   afterEach(() => {
     document.querySelectorAll('footer').forEach((f) => f.remove());
     vi.unstubAllGlobals();
+    localStorage.clear();
   });
 
   it('renders a "Book a tour" link to /tours and an icon-only, aria-labelled WhatsApp link', () => {
     render(
       <TrpcProviders>
         <MemoryRouter>
-          <FloatingWhatsApp />
+          <ConsentProvider>
+            <FloatingWhatsApp />
+          </ConsentProvider>
         </MemoryRouter>
       </TrpcProviders>,
     );
@@ -832,7 +857,9 @@ describe('Mobile bottom bar — "Book a tour" + WhatsApp (spec task 2.9B)', () =
     const { container } = render(
       <TrpcProviders>
         <MemoryRouter>
-          <FloatingWhatsApp />
+          <ConsentProvider>
+            <FloatingWhatsApp />
+          </ConsentProvider>
         </MemoryRouter>
       </TrpcProviders>,
     );

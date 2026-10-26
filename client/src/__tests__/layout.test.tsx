@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import PublicLayout from '@/components/layout/PublicLayout';
+import { CONSENT_STORAGE_KEY } from '@/lib/consent/types';
 import { SITE, viberLink, whatsappLink } from '@/lib/site';
 import { TrpcProviders } from '@/lib/trpc';
 import { SETTINGS_FIXTURE } from './helpers/fixtures';
@@ -205,11 +206,20 @@ describe('FloatingWhatsApp hides behind the hero search form', () => {
   beforeEach(() => {
     MockIntersectionObserver.instances = [];
     vi.stubGlobal('IntersectionObserver', MockIntersectionObserver);
+    // Task 2D: FloatingWhatsApp also hides while the cookie consent banner is undecided (shares
+    // ConsentProvider's bannerOpen). Seeded here so this describe block's assertions stay about
+    // the hero-search-form behaviour they were written for, not tangled up with a fresh visitor's
+    // cookie choice.
+    localStorage.setItem(
+      CONSENT_STORAGE_KEY,
+      JSON.stringify({ v: 1, analytics: false, marketing: false, at: new Date().toISOString() }),
+    );
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
     document.querySelectorAll('form[aria-label="Search tours"]').forEach((f) => f.remove());
+    localStorage.clear();
   });
 
   /**
