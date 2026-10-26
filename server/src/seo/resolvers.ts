@@ -509,7 +509,12 @@ const resolveToursIndex: Resolver = async () => {
   };
 };
 
-/** The two legal pages. Titles match the `<h1>` the markdown in `settings.legal_*` renders. */
+/**
+ * The four legal pages (task 2B, 2026-10-27). Titles match the `<h1>` each page's own
+ * `LegalPage` component renders from its static content module
+ * (`client/src/content/legal/*.tsx`) — `/privacy` and `/terms` no longer read
+ * `settings.legal_*`; see docs/superpowers/plans/2026-10-27-legal-pages.md for why.
+ */
 const LEGAL_PAGES = {
   privacy: {
     path: '/privacy',
@@ -520,6 +525,16 @@ const LEGAL_PAGES = {
     path: '/terms',
     title: `Terms of Service | ${BRAND}`,
     description: `Booking, payment, cancellation and safety terms for Cebu tours operated by ${LEGAL_OPERATOR}.`,
+  },
+  refund: {
+    path: '/refund-policy',
+    title: `Cancellation & Refund Policy | ${BRAND}`,
+    description: `Cancellation windows, refund rules and how refunds are paid for ${BRAND} tours operated by ${LEGAL_OPERATOR}.`,
+  },
+  cookies: {
+    path: '/cookies',
+    title: `Cookie Policy | ${BRAND}`,
+    description: `The essential, analytics and marketing cookies ${BRAND} uses, and how to change your choice.`,
   },
 } as const;
 
@@ -661,6 +676,8 @@ export const ROUTES: RouteEntry[] = [
   { pattern: '/packages/:slug', resolve: resolvePackage },
   { pattern: '/privacy', resolve: resolveLegal('privacy') },
   { pattern: '/terms', resolve: resolveLegal('terms') },
+  { pattern: '/refund-policy', resolve: resolveLegal('refund') },
+  { pattern: '/cookies', resolve: resolveLegal('cookies') },
 ];
 
 export interface RouteMatch {

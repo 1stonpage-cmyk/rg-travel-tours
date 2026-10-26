@@ -125,19 +125,19 @@ describe('robotsTagValue', () => {
   );
 
   it('does not set it on the public pages in verified production', () => {
-    for (const path of ['/', '/tours', '/privacy', '/terms']) {
+    for (const path of ['/', '/tours', '/privacy', '/terms', '/refund-policy', '/cookies']) {
       expect(robotsTagValue(path, 'production', false)).toBeNull();
     }
   });
 
   it('sets noindex on every path in the preview environment', () => {
-    for (const path of ['/', '/tours', '/privacy', '/terms']) {
+    for (const path of ['/', '/tours', '/privacy', '/terms', '/refund-policy', '/cookies']) {
       expect(robotsTagValue(path, 'preview', false)).toBe('noindex, nofollow');
     }
   });
 
   it('sets noindex on every path while content_unverified is true', () => {
-    for (const path of ['/', '/tours', '/privacy', '/terms']) {
+    for (const path of ['/', '/tours', '/privacy', '/terms', '/refund-policy', '/cookies']) {
       expect(robotsTagValue(path, 'production', true)).toBe('noindex, nofollow');
     }
   });
@@ -178,22 +178,26 @@ describeWithDb('buildSitemap', () => {
     resetContentUnverifiedCache();
   });
 
-  it('lists home, /tours, /privacy, /terms and every active tour and package', async () => {
+  it('lists home, /tours, the four legal pages and every active tour and package', async () => {
     const xml = await buildSitemap();
 
     expect(xml).toContain(`<loc>${absoluteUrl('/')}</loc>`);
     expect(xml).toContain(`<loc>${absoluteUrl('/tours')}</loc>`);
     expect(xml).toContain(`<loc>${absoluteUrl('/privacy')}</loc>`);
     expect(xml).toContain(`<loc>${absoluteUrl('/terms')}</loc>`);
+    // Task 2B, 2026-10-27: /refund-policy and /cookies joined the other two
+    // legal pages as static routes.
+    expect(xml).toContain(`<loc>${absoluteUrl('/refund-policy')}</loc>`);
+    expect(xml).toContain(`<loc>${absoluteUrl('/cookies')}</loc>`);
 
     // Both detail-page halves (Week 7 plan, Tasks 2 and 3): every active
     // tour's AND package's detail URL is now in the sitemap, not just the
-    // four static routes above.
+    // six static routes above.
     const detail = await detailUrls();
     expect(detail.length).toBeGreaterThan(0);
     for (const entry of detail) expect(xml).toContain(`<loc>${entry.loc}</loc>`);
 
-    expect(xml.match(/<loc>/g)).toHaveLength(4 + detail.length);
+    expect(xml.match(/<loc>/g)).toHaveLength(6 + detail.length);
   });
 
   it('lists both tour and package detail URLs now (2D / D5 resolved)', async () => {
@@ -245,7 +249,18 @@ describeWithDb('buildSitemap', () => {
 
   it('uses updated_at for lastmod in W3C date format', async () => {
     const db = getDb();
-    const known = new Date('2024-01-02T03:04:05Z');
+    // Far enough in the future that it is the newest settings row regardless
+    // of whatever else a test run's setup/seed touched moments ago — the
+    // home page's lastmod is the newest of EVERY settings row (`newest()`),
+    // not one row picked by key, so the test needs a date nothing else can
+    // beat rather than a specific key to target.
+    //
+    // `legal_privacy` itself is just a convenient still-real settings row to
+    // write through — since task 2B (2026-10-27) it no longer drives what
+    // `/privacy` renders or its own sitemap entry (that page is static
+    // content now; see docs/superpowers/plans/2026-10-27-legal-pages.md), so
+    // this test no longer targets `/privacy`'s lastmod at all.
+    const known = new Date('2099-01-02T03:04:05Z');
     await db.update(settings).set({ updatedAt: known }).where(eq(settings.key, 'legal_privacy'));
 
     // The premise, asserted rather than assumed: the column really does hold
@@ -256,30 +271,40 @@ describeWithDb('buildSitemap', () => {
       .where(eq(settings.key, 'legal_privacy'));
     expect(row?.updatedAt.toISOString()).toBe(known.toISOString());
 
-    const privacy = (await collectSitemapUrls()).find(
-      (entry) => entry.loc === absoluteUrl('/privacy'),
-    );
-    expect(privacy?.lastmod?.toISOString()).toBe(known.toISOString());
-    expect(await buildSitemap()).toContain('<lastmod>2024-01-02T03:04:05+00:00</lastmod>');
+    const home = (await collectSitemapUrls()).find((entry) => entry.loc === absoluteUrl('/'));
+    expect(home?.lastmod?.toISOString()).toBe(known.toISOString());
+    expect(await buildSitemap()).toContain('<lastmod>2099-01-02T03:04:05+00:00</lastmod>');
 
     // Every lastmod the document carries is in the W3C form, not just that
     // one. Every active tour and package has a NOT NULL updated_at too
-    // (schema.ts), so the count is the four static routes plus one per
-    // tour and package detail URL the sitemap now lists.
+    // (schema.ts). Only home and /tours carry a lastmod among the six static
+    // routes now — the four legal pages are static content with no
+    // `updated_at` to read, so their `<lastmod>` is omitted rather than
+    // invented (seo/sitemap.ts's own "read, never invented" rule).
     const detailCount = (await detailUrls()).length;
     const lastmods = [...(await buildSitemap()).matchAll(/<lastmod>([^<]+)<\/lastmod>/g)].map(
       (match) => match[1],
     );
-    expect(lastmods).toHaveLength(4 + detailCount);
+    expect(lastmods).toHaveLength(2 + detailCount);
     for (const value of lastmods) {
       expect(value).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+00:00$/);
+    }
+  });
+
+  it('omits lastmod for the four static legal pages (static content, no updated_at)', async () => {
+    const xml = await buildSitemap();
+    for (const path of ['/privacy', '/terms', '/refund-policy', '/cookies']) {
+      const loc = absoluteUrl(path);
+      const urlBlock = xml.split('<url>').find((block) => block.includes(`<loc>${loc}</loc>`));
+      expect(urlBlock, path).toBeDefined();
+      expect(urlBlock, path).not.toContain('<lastmod>');
     }
   });
 
   it('is well-formed XML with a urlset namespace', async () => {
     const xml = await buildSitemap();
     const detailCount = (await detailUrls()).length;
-    const urlCount = 4 + detailCount;
+    const urlCount = 6 + detailCount;
 
     expect(xml.startsWith('<?xml version="1.0" encoding="UTF-8"?>\n')).toBe(true);
     expect(xml).toContain('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">');
@@ -485,7 +510,7 @@ describeWithDb('crawl directives through createApp', () => {
     await setContentUnverified(true);
     expect(await readContentUnverified()).toBe(true);
 
-    for (const path of ['/', '/tours', '/privacy', '/terms']) {
+    for (const path of ['/', '/tours', '/privacy', '/terms', '/refund-policy', '/cookies']) {
       const res = await request(production).get(path);
 
       expect(res.status).toBe(200);

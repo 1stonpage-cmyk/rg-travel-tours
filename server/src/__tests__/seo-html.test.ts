@@ -70,7 +70,7 @@ describeWithDb('Express HTML serving', () => {
     // The non-hero routes. That the real client/index.html no longer carries a
     // preload of its own is asserted where that file lives — see
     // client/src/__tests__/performance-markup.test.tsx.
-    for (const path of ['/tours', '/privacy', '/terms']) {
+    for (const path of ['/tours', '/privacy', '/terms', '/refund-policy', '/cookies']) {
       const res = await request(app).get(path);
       expect(res.status).toBe(200);
       expect(res.text, `${path} must not preload the hero`).not.toContain('rel="preload"');

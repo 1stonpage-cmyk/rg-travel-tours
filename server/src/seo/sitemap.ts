@@ -122,10 +122,6 @@ function newest(dates: Array<Date | null | undefined>): Date | null {
   return latest;
 }
 
-function settingUpdatedAt(rows: SitemapRows['settingRows'], key: string): Date | null {
-  return rows.find((row) => row.key === key)?.updatedAt ?? null;
-}
-
 /**
  * `/tours/:slug` and `/packages/:slug`, already filtered by `is_active` and
  * sorted by slug.
@@ -162,9 +158,13 @@ function buildPackageDetailUrls(rows: SitemapRows): SitemapEntry[] {
  * `ROUTES` in seo/resolvers.ts. Their `lastmod` comes from the `settings`
  * rows that actually render them: the home page shows nearly every block, so
  * it takes the newest of all of them; `/tours` is dated by its newest tour
- * and falls back to settings when the catalog is empty; the two legal pages
- * are dated by their own `legal_*` rows, which is the date a reader of a
- * privacy notice actually cares about.
+ * and falls back to settings when the catalog is empty.
+ *
+ * All four legal pages (`/privacy`, `/terms`, `/refund-policy`, `/cookies`) are static content
+ * now (task 2B, 2026-10-27 — see docs/superpowers/plans/2026-10-27-legal-pages.md), not rendered
+ * from a `settings` row any more. There is no `updated_at` left to read for them, and this file's
+ * own rule is "read, never invented" — so `lastmod` is omitted for all four (`null`; the renderer
+ * below drops the `<lastmod>` tag entirely rather than emit a guessed date).
  */
 export async function collectSitemapUrls(): Promise<SitemapEntry[]> {
   const rows = await loadSitemapRows();
@@ -176,8 +176,10 @@ export async function collectSitemapUrls(): Promise<SitemapEntry[]> {
       loc: absoluteUrl('/tours'),
       lastmod: newest(rows.tourRows.map((tour) => tour.updatedAt)) ?? settingsNewest,
     },
-    { loc: absoluteUrl('/privacy'), lastmod: settingUpdatedAt(rows.settingRows, 'legal_privacy') },
-    { loc: absoluteUrl('/terms'), lastmod: settingUpdatedAt(rows.settingRows, 'legal_terms') },
+    { loc: absoluteUrl('/privacy'), lastmod: null },
+    { loc: absoluteUrl('/terms'), lastmod: null },
+    { loc: absoluteUrl('/refund-policy'), lastmod: null },
+    { loc: absoluteUrl('/cookies'), lastmod: null },
 
     // Tour detail pages render now and `resolveTour` answers `index,follow`
     // (Task 2, Week 7 plan) — a sitemap may not list a noindex URL, and an

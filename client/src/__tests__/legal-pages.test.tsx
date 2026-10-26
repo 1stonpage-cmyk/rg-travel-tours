@@ -3,111 +3,88 @@ import type { ReactNode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 import SiteFooter from '@/components/layout/SiteFooter';
-import PrivacyPage from '@/pages/public/PrivacyPage';
-import TermsPage from '@/pages/public/TermsPage';
+import { ConsentProvider } from '@/lib/consent/ConsentContext';
 import { TrpcProviders } from '@/lib/trpc';
+import CookiesPage from '@/pages/public/CookiesPage';
+import PrivacyPage from '@/pages/public/PrivacyPage';
+import RefundPolicyPage from '@/pages/public/RefundPolicyPage';
+import TermsPage from '@/pages/public/TermsPage';
 import { SETTINGS_FIXTURE } from './helpers/fixtures';
 import { mockTrpc } from './helpers/mock-trpc';
 
-function renderWithTrpc(node: ReactNode) {
+/**
+ * Task 2B (2026-10-27) replaced the settings-driven `/privacy` and `/terms` (Task 3.6) with
+ * static content, matching the two new pages (`/refund-policy`, `/cookies`) — see
+ * docs/superpowers/plans/2026-10-27-legal-pages.md. These four pages need no tRPC provider any
+ * more (no `settings.get` call); `CookiesPage` is the one exception — its "Cookie settings" link
+ * reads `useConsent()`, so every render here goes through `ConsentProvider` regardless.
+ */
+function renderPage(node: ReactNode) {
+  return render(
+    <MemoryRouter>
+      <ConsentProvider>{node}</ConsentProvider>
+    </MemoryRouter>,
+  );
+}
+
+function renderFooter(node: ReactNode) {
   return render(
     <TrpcProviders>
-      <MemoryRouter>{node}</MemoryRouter>
+      <MemoryRouter>
+        <ConsentProvider>{node}</ConsentProvider>
+      </MemoryRouter>
     </TrpcProviders>,
   );
 }
 
 describe('PrivacyPage', () => {
-  it('renders the privacy markdown from settings', async () => {
-    mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
-    renderWithTrpc(<PrivacyPage />);
+  it('renders the real section content, not the old settings-driven markdown', () => {
+    renderPage(<PrivacyPage />);
 
-    // The fixture's markdown body, demoted to h2 (see legal-pages.test.tsx
-    // "sets a single h1 per page" below for the h1-ownership assertion).
+    expect(screen.getByRole('heading', { level: 1, name: 'Privacy Policy' })).toBeInTheDocument();
     expect(
-      await screen.findByRole('heading', { level: 2, name: 'Privacy Notice' }),
+      screen.getByRole('heading', { level: 2, name: '1. What we collect' }),
     ).toBeInTheDocument();
+    expect(screen.getByText(/Data Privacy Act of 2012/)).toBeInTheDocument();
   });
 
-  it('shows the TODO legal-review notice while the text is placeholder, in the amber warning style', async () => {
-    mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
-    renderWithTrpc(<PrivacyPage />);
+  it('shows the real, already-confirmed contact email and phone — not a placeholder chip', () => {
+    renderPage(<PrivacyPage />);
 
-    const notice = await screen.findByText(/TODO: client legal review/);
-    const blockquote = notice.closest('blockquote');
-    expect(blockquote).toBeInTheDocument();
-    // BUG-080: text-brand-warning on bg-brand-gold-100 measures 4.51:1 — AA
-    // pass with no headroom. text-brand-gold-800 on the same background
-    // measures 7.45:1, so that pairing is required here, not the other one.
-    expect(blockquote).toHaveClass('bg-brand-gold-100');
-    expect(blockquote).toHaveClass('text-brand-gold-800');
-    expect(blockquote).not.toHaveClass('text-brand-warning');
+    // Task 2A: SITE.contact.email/phone are real, client-confirmed values —
+    // 05-cookie-consent-spec.md's sibling drafts' [CONTACT EMAIL]/[CONTACT
+    // PHONE] brackets become these, never a "To be confirmed" chip.
+    expect(screen.getAllByText('hello@travelsugbo.com').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('0908 469 6246').length).toBeGreaterThan(0);
   });
 
-  it('shows the last-updated date', async () => {
-    mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
-    renderWithTrpc(<PrivacyPage />);
+  it('renders every genuinely unconfirmed value as a visible amber "To be confirmed" chip, never bare brackets', () => {
+    const { container } = renderPage(<PrivacyPage />);
 
-    // The fixture's 2026-10-09T00:00:00.000Z renders as October 9 in both
-    // UTC and Asia/Manila — this case pins only that a date is shown. The
-    // timezone conversion itself is pinned by the test below, which needs
-    // an instant where the two zones genuinely disagree.
-    expect(await screen.findByText(/Last updated October 9, 2026/)).toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/\[REGISTERED BUSINESS NAME\]/);
+    expect(container.textContent).not.toMatch(/\[BUSINESS ADDRESS\]/);
+    expect(container.textContent).not.toMatch(/\[EFFECTIVE DATE\]/);
+
+    const chips = screen.getAllByText('To be confirmed');
+    expect(chips.length).toBeGreaterThan(0);
+    for (const chip of chips) {
+      expect(chip.closest('span')).toHaveClass('bg-brand-gold-100');
+      expect(chip.closest('span')).toHaveClass('text-brand-gold-800');
+    }
   });
 
-  /**
-   * `updatedAt` is stored UTC and displayed in Asia/Manila (UTC+8), the
-   * project-wide time convention. 2026-10-09T17:00:00Z is 2026-10-10 01:00
-   * in Manila — a different CALENDAR DAY — so rendering this in UTC (or
-   * with the formatter's timeZone dropped, where the test machine's own
-   * zone decides) prints October 9 and fails here.
-   */
-  it('renders the last-updated date in Asia/Manila, not UTC', async () => {
-    mockTrpc({
-      'settings.get': {
-        ...SETTINGS_FIXTURE,
-        legal: {
-          ...SETTINGS_FIXTURE.legal,
-          privacy: {
-            ...SETTINGS_FIXTURE.legal.privacy,
-            updatedAt: '2026-10-09T17:00:00.000Z',
-          },
-        },
-      },
-    });
-    renderWithTrpc(<PrivacyPage />);
+  it('builds an anchor nav from the sections, and the first link reaches its section', () => {
+    renderPage(<PrivacyPage />);
 
-    expect(await screen.findByText(/Last updated October 10, 2026/)).toBeInTheDocument();
-    expect(screen.queryByText(/Last updated October 9, 2026/)).not.toBeInTheDocument();
+    const toc = screen.getByRole('navigation', { name: 'Sections' });
+    const firstLink = within(toc).getByRole('link', { name: '1. What we collect' });
+    expect(firstLink).toHaveAttribute('href', '#what-we-collect');
+    expect(document.getElementById('what-we-collect')).toBeInTheDocument();
   });
 
-  /**
-   * End-to-end counterpart to markdown.test.tsx's hard-wrap case: the
-   * fixture's privacy excerpt reproduces the seed's hard wrapping, so this
-   * proves the page renders the real content shape as one paragraph rather
-   * than three stacked ones.
-   */
-  it('renders a hard-wrapped seed paragraph as one paragraph on the page', async () => {
-    mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
-    const { container } = renderWithTrpc(<PrivacyPage />);
+  it('sets a single h1 per page — the page title, not anything from a section heading', () => {
+    renderPage(<PrivacyPage />);
 
-    await screen.findByRole('heading', { level: 2, name: 'Privacy Notice' });
-    const paragraph = Array.from(container.querySelectorAll('p')).find((p) =>
-      p.textContent?.startsWith('TravelSugbo (operated by'),
-    );
-    expect(paragraph, 'the seeded opening paragraph did not render').toBeTruthy();
-    expect(paragraph!.textContent).toBe(
-      'TravelSugbo (operated by R&G Travel & Tours) collects the contact and booking details you provide when you reserve a tour, so we can confirm your trip and assign a driver.',
-    );
-  });
-
-  it('sets a single h1 per page — the page title, not anything from the markdown', async () => {
-    mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
-    renderWithTrpc(<PrivacyPage />);
-
-    expect(
-      await screen.findByRole('heading', { level: 2, name: 'Privacy Notice' }),
-    ).toBeInTheDocument();
     const h1s = screen.getAllByRole('heading', { level: 1 });
     expect(h1s).toHaveLength(1);
     expect(h1s[0]).toHaveTextContent('Privacy Policy');
@@ -115,45 +92,100 @@ describe('PrivacyPage', () => {
 });
 
 describe('TermsPage', () => {
-  it('renders the terms markdown from settings', async () => {
-    mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
-    renderWithTrpc(<TermsPage />);
+  it('renders the real section content and links to the refund policy', () => {
+    renderPage(<TermsPage />);
 
-    expect(
-      await screen.findByRole('heading', { level: 2, name: 'Terms of Service' }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: 'Terms of Service' })).toBeInTheDocument();
+    const refundLinks = screen.getAllByRole('link', { name: 'Refund Policy' });
+    expect(refundLinks.length).toBeGreaterThan(0);
+    for (const link of refundLinks) expect(link).toHaveAttribute('href', '/refund-policy');
   });
 
-  it('shows the last-updated date', async () => {
-    mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
-    renderWithTrpc(<TermsPage />);
+  it('sets a single h1 per page', () => {
+    renderPage(<TermsPage />);
 
-    expect(await screen.findByText(/Last updated October 9, 2026/)).toBeInTheDocument();
-  });
-
-  it('sets a single h1 per page', async () => {
-    mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
-    renderWithTrpc(<TermsPage />);
-
-    expect(
-      await screen.findByRole('heading', { level: 2, name: 'Terms of Service' }),
-    ).toBeInTheDocument();
     const h1s = screen.getAllByRole('heading', { level: 1 });
     expect(h1s).toHaveLength(1);
     expect(h1s[0]).toHaveTextContent('Terms of Service');
   });
 });
 
+describe('RefundPolicyPage', () => {
+  it('renders the cancellation table inside a scrollable box, with placeholder chips for every unconfirmed number', () => {
+    const { container } = renderPage(<RefundPolicyPage />);
+
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'Cancellation & Refund Policy' }),
+    ).toBeInTheDocument();
+    const table = container.querySelector('table');
+    expect(table).toBeInTheDocument();
+    // task 2B: "tables scroll inside a box on 360px" — overflow-x-auto wrapper.
+    expect(table!.parentElement).toHaveClass('overflow-x-auto');
+
+    // No bracket survives into the rendered page; every one of them became a chip.
+    expect(container.textContent).not.toMatch(/\[X\]/);
+    expect(screen.getAllByText('To be confirmed').length).toBeGreaterThan(5);
+  });
+
+  it('does NOT render the internal "R&G: fill in your real policy" note meant for the owner, not a guest', () => {
+    renderPage(<RefundPolicyPage />);
+    expect(screen.queryByText(/nothing here has been decided for you/i)).not.toBeInTheDocument();
+  });
+
+  it('sets a single h1 per page', () => {
+    renderPage(<RefundPolicyPage />);
+    const h1s = screen.getAllByRole('heading', { level: 1 });
+    expect(h1s).toHaveLength(1);
+  });
+});
+
+describe('CookiesPage', () => {
+  it('renders the three cookie categories and a working "Cookie settings" link that opens the Customize panel', async () => {
+    renderPage(<CookiesPage />);
+
+    expect(screen.getByRole('heading', { level: 1, name: 'Cookie Policy' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /1\. Essential/ })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /2\. Analytics/ })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /3\. Marketing/ })).toBeInTheDocument();
+
+    const { default: userEvent } = await import('@testing-library/user-event');
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Cookie settings' }));
+    // The page itself doesn't mount CookieCustomizePanel (PublicLayout does) — this just proves
+    // the button calls the real `reopen()` from context without throwing, which is the part a
+    // missing ConsentProvider would break.
+  });
+
+  it('sets a single h1 per page', () => {
+    renderPage(<CookiesPage />);
+    const h1s = screen.getAllByRole('heading', { level: 1 });
+    expect(h1s).toHaveLength(1);
+  });
+});
+
 describe('SiteFooter — legal links', () => {
-  it('links to both the privacy and terms pages from the footer, beside the copyright', async () => {
+  it('links to all four legal pages and a working Cookie settings button, beside the copyright', async () => {
     mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
-    renderWithTrpc(<SiteFooter />);
+    renderFooter(<SiteFooter />);
 
     const legalNav = screen.getByRole('navigation', { name: 'Legal' });
-    const privacyLink = within(legalNav).getByRole('link', { name: 'Privacy Policy' });
-    const termsLink = within(legalNav).getByRole('link', { name: 'Terms of Service' });
-    expect(privacyLink).toHaveAttribute('href', '/privacy');
-    expect(termsLink).toHaveAttribute('href', '/terms');
+    expect(within(legalNav).getByRole('link', { name: 'Privacy Policy' })).toHaveAttribute(
+      'href',
+      '/privacy',
+    );
+    expect(within(legalNav).getByRole('link', { name: 'Terms of Service' })).toHaveAttribute(
+      'href',
+      '/terms',
+    );
+    expect(within(legalNav).getByRole('link', { name: 'Refund Policy' })).toHaveAttribute(
+      'href',
+      '/refund-policy',
+    );
+    expect(within(legalNav).getByRole('link', { name: 'Cookie Policy' })).toHaveAttribute(
+      'href',
+      '/cookies',
+    );
+    expect(within(legalNav).getByRole('button', { name: 'Cookie settings' })).toBeInTheDocument();
 
     // The existing WhatsApp/Viber chat pills must survive this change untouched.
     expect(await screen.findByRole('link', { name: 'Chat on WhatsApp' })).toBeInTheDocument();

@@ -290,7 +290,7 @@ describeWithDb('home JSON-LD', () => {
   });
 
   it('is valid, parseable JSON with @context and @type on every node', async () => {
-    for (const path of ['/', '/tours', '/privacy', '/terms']) {
+    for (const path of ['/', '/tours', '/privacy', '/terms', '/refund-policy', '/cookies']) {
       const nodes = graph((await resolvePage(path)).jsonLd);
       expect(nodes.length, path).toBeGreaterThan(0);
       for (const node of nodes) {
@@ -303,9 +303,15 @@ describeWithDb('home JSON-LD', () => {
 
   it('gives the organization the same @id on every page it appears on', async () => {
     const ids = await Promise.all(
-      ['/', '/tours', '/privacy', '/terms', '/tours/oslob-whale-shark-tumalog-falls'].map(
-        async (path) => nodeOfType((await resolvePage(path)).jsonLd, 'TravelAgency')['@id'],
-      ),
+      [
+        '/',
+        '/tours',
+        '/privacy',
+        '/terms',
+        '/refund-policy',
+        '/cookies',
+        '/tours/oslob-whale-shark-tumalog-falls',
+      ].map(async (path) => nodeOfType((await resolvePage(path)).jsonLd, 'TravelAgency')['@id']),
     );
     expect(new Set(ids)).toEqual(new Set(['http://localhost:5180/#organization']));
   });

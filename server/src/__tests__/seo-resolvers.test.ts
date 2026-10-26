@@ -105,6 +105,19 @@ describeWithDb('page resolution', () => {
     const terms = await resolvePage('/terms');
     expect(terms.ogType).toBe('article');
     expect(terms.title).toContain('Terms of Service');
+
+    // Task 2B (2026-10-27): the two new legal pages resolve the same way.
+    const refund = await resolvePage('/refund-policy');
+    expect(refund.status).toBe(200);
+    expect(refund.ogType).toBe('article');
+    expect(refund.canonical).toBe('http://localhost:5180/refund-policy');
+    expect(refund.title).toContain('Cancellation & Refund Policy');
+
+    const cookies = await resolvePage('/cookies');
+    expect(cookies.status).toBe(200);
+    expect(cookies.ogType).toBe('article');
+    expect(cookies.canonical).toBe('http://localhost:5180/cookies');
+    expect(cookies.title).toContain('Cookie Policy');
   });
 
   it('falls back to a generated title when a tour has no seo_title', async () => {
@@ -212,7 +225,7 @@ describeWithDb('page resolution', () => {
     // the page never used, plus Chrome's "preloaded but not used" warning.
     expect((await resolvePage('/')).preload).toEqual(HERO_IMAGE_PRELOAD);
 
-    for (const path of ['/tours', '/privacy', '/terms']) {
+    for (const path of ['/tours', '/privacy', '/terms', '/refund-policy', '/cookies']) {
       expect((await resolvePage(path)).preload, `${path} should preload nothing`).toBeNull();
     }
     expect((await resolvePage('/tours/oslob-whale-shark-tumalog-falls')).preload).toBeNull();

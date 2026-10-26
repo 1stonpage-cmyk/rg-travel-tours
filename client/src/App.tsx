@@ -26,8 +26,10 @@ import PortalLoginPage from '@/pages/portal/PortalLoginPage';
 import BookingStatusPage from '@/pages/public/BookingStatusPage';
 import CheckoutPage from '@/pages/public/CheckoutPage';
 import HomePage from '@/pages/public/HomePage';
+import CookiesPage from '@/pages/public/CookiesPage';
 import PackageDetailPage from '@/pages/public/PackageDetailPage';
 import PrivacyPage from '@/pages/public/PrivacyPage';
+import RefundPolicyPage from '@/pages/public/RefundPolicyPage';
 import TermsPage from '@/pages/public/TermsPage';
 import TourDetailPage from '@/pages/public/TourDetailPage';
 import ToursPage from '@/pages/public/ToursPage';
@@ -81,6 +83,8 @@ export default function App() {
         <Route path={bookingStatusPath} element={<BookingStatusPage />} />
         <Route path="privacy" element={<PrivacyPage />} />
         <Route path="terms" element={<TermsPage />} />
+        <Route path="refund-policy" element={<RefundPolicyPage />} />
+        <Route path="cookies" element={<CookiesPage />} />
       </Route>
 
       {/*
