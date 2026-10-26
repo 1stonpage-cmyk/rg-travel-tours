@@ -28,20 +28,6 @@ function roleLabel(role: string): string {
   return role.charAt(0).toUpperCase() + role.slice(1);
 }
 
-function BrandMark({ size }: { size: 'sm' | 'md' }) {
-  return (
-    <span
-      aria-hidden="true"
-      className={[
-        'bg-brand-gold-500 text-brand-ink flex shrink-0 items-center justify-center font-bold',
-        size === 'md' ? 'size-10 rounded-[10px] text-[15px]' : 'size-9 rounded-[9px] text-sm',
-      ].join(' ')}
-    >
-      TS
-    </span>
-  );
-}
-
 const SIDE_LINK =
   'tap-target flex items-center justify-between gap-2 rounded-lg px-3 text-sm transition-colors';
 
@@ -160,7 +146,14 @@ export default function AdminLayout() {
       {/* Phone top bar. From `lg` the sidebar's own brand block takes over. */}
       <header className="bg-brand-ink sticky top-0 z-40 flex items-center justify-between px-4 py-3 text-white lg:hidden">
         <Link to="/admin" className="tap-target flex items-center gap-2.5 rounded-md">
-          <BrandMark size="sm" />
+          <img
+            src="/brand/icon-192.png"
+            alt=""
+            aria-hidden="true"
+            width={192}
+            height={192}
+            className="size-9 rounded-full"
+          />
           <span className="text-base font-bold">Staff console</span>
         </Link>
         <button
@@ -189,14 +182,19 @@ export default function AdminLayout() {
       >
         <Link
           to="/admin"
-          className="tap-target hidden items-center gap-3 rounded-md px-2 lg:flex"
+          className="tap-target hidden flex-col items-start gap-1 rounded-md px-2 lg:flex"
           aria-label="TravelSugbo staff console, dashboard"
         >
-          <BrandMark size="md" />
-          <span className="flex flex-col">
-            <span className="text-base font-bold">TravelSugbo</span>
-            <span className="text-brand-blue-200 text-xs">Staff console</span>
-          </span>
+          <img
+            src="/brand/travelsugbo-logo-horizontal-white.png"
+            srcSet="/brand/travelsugbo-logo-horizontal-white.png 1x, /brand/travelsugbo-logo-horizontal-white@2x.png 2x"
+            width={225}
+            height={64}
+            alt=""
+            aria-hidden="true"
+            className="h-8 w-auto"
+          />
+          <span className="text-brand-blue-200 text-xs">Staff console</span>
         </Link>
 
         {mustChange ? null : (

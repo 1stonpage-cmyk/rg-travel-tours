@@ -173,6 +173,13 @@ export default function DriverLoginPage() {
         noValidate
       >
         <div className="text-center">
+          <img
+            src="/brand/icon-192.png"
+            alt={SITE.name}
+            width={192}
+            height={192}
+            className="mx-auto mb-3 size-12 rounded-full"
+          />
           <span className="text-brand-gold-800 text-xs font-semibold uppercase tracking-[0.18em]">
             {SITE.legalOperator}
           </span>

@@ -72,6 +72,14 @@ export default function AdminLoginPage() {
     <main className="bg-brand-blue-50 flex min-h-screen items-center justify-center px-4 py-10">
       <div className="w-full max-w-sm">
         <div className="mb-6 text-center">
+          <img
+            src="/brand/icon-192.png"
+            alt=""
+            aria-hidden="true"
+            width={192}
+            height={192}
+            className="mx-auto mb-3 size-12 rounded-full"
+          />
           <span className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.18em]">
             {SITE.legalOperator}
           </span>
