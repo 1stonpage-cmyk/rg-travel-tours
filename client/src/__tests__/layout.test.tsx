@@ -289,7 +289,8 @@ describe('FloatingWhatsApp hides behind the hero search form', () => {
 describe('brand vs legal operator', () => {
   it('shows the TravelSugbo brand in the footer and as the home link name', () => {
     renderLayout();
-    expect(screen.getByRole('contentinfo')).toHaveTextContent(/TravelSugbo/);
+    const footer = screen.getByRole('contentinfo');
+    expect(within(footer).getByRole('img', { name: SITE.name })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /TravelSugbo — home/i })).toBeInTheDocument();
   });
 

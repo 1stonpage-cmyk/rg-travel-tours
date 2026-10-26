@@ -102,8 +102,15 @@ export default function SiteFooter() {
     <footer className="bg-brand-blue-950 text-brand-blue-100 mt-16">
       <div className="mx-auto grid max-w-7xl gap-10 px-4 py-12 sm:px-6 lg:grid-cols-4 lg:px-8">
         <div className="lg:col-span-2">
-          <p className="text-brand-gold-300 text-lg font-bold">{SITE.name}</p>
-          <p className="text-brand-blue-100 mt-1 text-base font-medium sm:text-sm">{SITE.motto}</p>
+          <img
+            src="/brand/travelsugbo-logo-horizontal-white.png"
+            srcSet="/brand/travelsugbo-logo-horizontal-white.png 1x, /brand/travelsugbo-logo-horizontal-white@2x.png 2x"
+            width={225}
+            height={64}
+            alt={SITE.name}
+            className="h-8 w-auto"
+          />
+          <p className="text-brand-blue-100 mt-3 text-base font-medium sm:text-sm">{SITE.motto}</p>
           <p className="text-brand-blue-200 mt-2 max-w-sm text-base sm:text-sm">{SITE.tagline}</p>
 
           <ul className="mt-6 space-y-2 text-base sm:text-sm">

@@ -71,11 +71,15 @@ export default function SiteHeader() {
           className="tap-target flex items-center gap-2 rounded-md"
           aria-label={`${SITE.name} — home`}
         >
-          <span className="bg-brand-blue-600 flex size-9 items-center justify-center rounded-lg">
-            <span className="text-brand-gold-300 text-sm font-bold">{SITE.shortMark}</span>
-          </span>
+          <img
+            src="/brand/travelsugbo-logo-horizontal.png"
+            srcSet="/brand/travelsugbo-logo-horizontal.png 1x, /brand/travelsugbo-logo-horizontal@2x.png 2x"
+            width={225}
+            height={64}
+            alt={SITE.name}
+            className="h-9 w-auto"
+          />
           <span className="hidden flex-col leading-tight sm:flex">
-            <span className="text-brand-blue-900 text-sm font-bold">{SITE.name}</span>
             <span className="text-muted-foreground text-xs">Cebu, Philippines</span>
             {/* Operator credit — desktop only; the header is h-16 and a third
                 line is too tight below lg. The footer carries it at every width. */}
