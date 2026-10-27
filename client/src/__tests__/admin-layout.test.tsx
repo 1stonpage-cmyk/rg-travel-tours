@@ -127,6 +127,9 @@ describe('AdminLayout', () => {
         // Coupons is owner-only too (Week 7 Task 8): `admin.coupons.*` is the
         // same `toursPricing` area as tours and pricing.
         'Coupons',
+        // Owner + dispatcher (Week 7 Task 11): `admin.reviews.*` is the
+        // `reviewsModeration` area.
+        'Reviews',
         'Staff',
         // Settings is owner-only too (Week 7 Task 9): §9's `usersSettings`
         // row, which holds the deposit percentage and the payment QR.
@@ -145,6 +148,8 @@ describe('AdminLayout', () => {
         'Departures',
         'Vans',
         'Drivers',
+        // Reviews is owner + dispatcher too (Week 7 Task 11).
+        'Reviews',
       ]);
     });
 

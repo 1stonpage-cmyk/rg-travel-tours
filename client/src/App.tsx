@@ -7,6 +7,7 @@ import AdminBookingsPage from '@/pages/admin/AdminBookingsPage';
 import AdminDashboardPage from '@/pages/admin/AdminDashboardPage';
 import AdminCalendarPage from '@/pages/admin/AdminCalendarPage';
 import AdminCouponsPage from '@/pages/admin/AdminCouponsPage';
+import AdminReviewsPage from '@/pages/admin/AdminReviewsPage';
 import AdminDeparturesPage from '@/pages/admin/AdminDeparturesPage';
 import AdminDriversPage from '@/pages/admin/AdminDriversPage';
 import AdminStaffPage from '@/pages/admin/AdminStaffPage';
@@ -120,6 +121,7 @@ export default function App() {
         <Route path="drivers" element={<AdminDriversPage />} />
         <Route path="tours" element={<AdminToursPage />} />
         <Route path="coupons" element={<AdminCouponsPage />} />
+        <Route path="reviews" element={<AdminReviewsPage />} />
         <Route path="staff" element={<AdminStaffPage />} />
         <Route path="settings" element={<AdminSettingsPage />} />
         <Route path="change-password" element={<AdminChangePasswordPage />} />

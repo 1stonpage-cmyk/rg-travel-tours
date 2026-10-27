@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import BookingPicker from '@/components/tour/BookingPicker';
 import Gallery from '@/components/tour/Gallery';
 import PriceTierTable from '@/components/tour/PriceTierTable';
+import ReviewsBlock from '@/components/tour/ReviewsBlock';
 import { trpc } from '@/lib/trpc';
 
 /**
@@ -17,11 +18,13 @@ import { trpc } from '@/lib/trpc';
  * ordered questions (availability, then quote) rather than one conflated
  * call — see that component's own note.
  *
- * The reviews block is explicitly OUT OF SCOPE here (plan Task 9/10, 7A):
- * this page shows only the heading and, when `tour.rating` is already
- * present on the `tours.bySlug` payload (the same display aggregate the
- * catalog card shows, R1's threshold already applied), that average —
- * nothing else. No moderation, no votes, no write-a-review form.
+ * The reviews section (Week 7 plan, Task 11) is `ReviewsBlock`, which runs
+ * its own `reviews.forTour` query — the breakdown, sub-scores, filter, sort
+ * and helpful votes all live there. The header above still shows `tour.rating`
+ * (the same threshold-gated average the catalog card shows); that and
+ * `ReviewsBlock`'s own `rating` are mathematically identical (both go through
+ * `applyRatingThreshold` server-side), so this is one number shown twice in
+ * two places readers expect it, never two numbers that could disagree.
  */
 
 /** `unknown` from the database's `json` column, narrowed to a plain string list, or empty. */
@@ -198,26 +201,11 @@ export default function TourDetailPage() {
                   </section>
                 )}
 
-                {/*
-                 * Reviews: explicitly out of scope here (plan Task 9/10).
-                 * `tour.rating` is the same display aggregate the catalog
-                 * card already shows (R1's threshold applied), so showing
-                 * it here costs no extra query — nothing else belongs in
-                 * this section yet.
-                 */}
                 <section id="reviews" aria-labelledby="reviews-heading">
                   <h2 id="reviews-heading" className="text-brand-blue-900 text-xl font-bold">
                     Guest reviews
                   </h2>
-                  {tour.rating ? (
-                    <div className="mt-3">
-                      <StarRating value={tour.rating.average} count={tour.rating.count} size="md" />
-                    </div>
-                  ) : (
-                    <p className="text-muted-foreground mt-3 text-sm">
-                      Not enough published reviews yet.
-                    </p>
-                  )}
+                  <ReviewsBlock tourSlug={tour.slug} />
                 </section>
               </div>
 

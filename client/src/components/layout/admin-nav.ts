@@ -54,6 +54,9 @@ export const ADMIN_NAV: readonly AdminNavItem[] = [
   { to: '/admin/drivers', label: 'Drivers', end: false, roles: ['owner', 'dispatcher'] },
   { to: '/admin/tours', label: 'Tours', end: false, roles: ['owner'] },
   { to: '/admin/coupons', label: 'Coupons', end: false, roles: ['owner'] },
+  // Owner + dispatcher (Week 7 Task 11): `admin.reviews.*` is §9's
+  // `reviewsModeration` row — the same gate `admin.vans`/`admin.drivers` use.
+  { to: '/admin/reviews', label: 'Reviews', end: false, roles: ['owner', 'dispatcher'] },
   { to: '/admin/staff', label: 'Staff', end: false, roles: ['owner'] },
   // Owner-only too (Week 7 Task 9): `admin.settings.*` is §9's `usersSettings`
   // row, which holds the deposit percentage and the payment QR account.
