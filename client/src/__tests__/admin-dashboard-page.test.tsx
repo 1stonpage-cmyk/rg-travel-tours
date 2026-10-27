@@ -18,7 +18,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { DashboardAlert } from '@rg/shared';
 import AdminDashboardPage from '@/pages/admin/AdminDashboardPage';
 import { TrpcProviders } from '@/lib/trpc';
-import { mockTrpc, resetTrpcMock } from './helpers/mock-trpc';
+import { mockTrpc, mockTrpcError, resetTrpcMock } from './helpers/mock-trpc';
 
 const alert = (
   kind: DashboardAlert['kind'],
@@ -340,6 +340,46 @@ describe('AdminDashboardPage', () => {
     renderDashboard(ALL_SEVEN_NONZERO);
     expect(await screen.findByTestId('departures-board')).toBeTruthy();
     expect(screen.getByRole('heading', { name: /leaving today/i })).toBeTruthy();
+  });
+
+  /**
+   * Task 16 (7M): the mockup's "Good morning, <name>" greeting, left out of
+   * the restyle until `staffAuth.me` carried a name to put in it.
+   */
+  describe('the staff greeting', () => {
+    it('greets the signed-in staff member by name', async () => {
+      mockTrpc({
+        'staffAuth.me': {
+          userId: 1,
+          role: 'owner',
+          mustChangePassword: false,
+          name: 'Maria Santos',
+        },
+      });
+      renderDashboard([]);
+      // The h1 exists from the very first synchronous render (it falls back
+      // to "Dashboard" while `me` is pending), so `findByRole` alone would
+      // resolve against that first paint — wait for the NAME to land before
+      // reading the heading.
+      await screen.findByText(/Maria Santos/);
+      const heading = screen.getByRole('heading', { level: 1 });
+      expect(heading.textContent).toMatch(/Maria Santos/);
+      expect(heading.textContent).toMatch(/Good (morning|afternoon|evening)/);
+    });
+
+    /**
+     * The alerts query is independent and must keep working even if the
+     * name never arrives — the brief's own requirement, and the reason
+     * `AdminDashboardPage` reads `me` with its own `retry: false` rather
+     * than blocking the page on it.
+     */
+    it('falls back to the plain heading when staffAuth.me fails, and the rest of the page still renders', async () => {
+      mockTrpcError('staffAuth.me', 'INTERNAL_SERVER_ERROR');
+      renderDashboard([alert('vans_in_repair', 1)]);
+      const heading = await screen.findByRole('heading', { level: 1 });
+      expect(heading.textContent).toBe('Dashboard');
+      expect(await screen.findByTestId('alert-vans_in_repair')).toBeTruthy();
+    });
   });
 
   it('still keeps ONE status region with the board mounted', async () => {

@@ -71,8 +71,29 @@ function manilaToday(): string {
   }).format(new Date());
 }
 
+/**
+ * "Good morning/afternoon/evening" by the MANILA clock, not the browser's —
+ * an operator checking in from a different timezone must not be told
+ * "morning" because their own laptop still thinks it is one.
+ */
+function manilaGreeting(): string {
+  const hour = Number(
+    new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Manila',
+      hour: 'numeric',
+      hourCycle: 'h23',
+    }).format(new Date()),
+  );
+  if (hour < 12) return 'Good morning';
+  if (hour < 18) return 'Good afternoon';
+  return 'Good evening';
+}
+
 export default function AdminDashboardPage() {
   const query = trpc.admin.dashboard.alerts.useQuery(undefined, { retry: false });
+  // A greeting, never a gate: the dashboard's alerts above already work on
+  // their own query, independent of whether this one is pending or fails.
+  const me = trpc.staffAuth.me.useQuery(undefined, { retry: false });
 
   const alerts = query.data ?? [];
   const ordered = ORDER.map((kind) => alerts.find((a) => a.kind === kind)).filter(
@@ -86,7 +107,9 @@ export default function AdminDashboardPage() {
           <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.08em]">
             {manilaToday()} · Manila time
           </p>
-          <h1 className="text-brand-ink text-2xl font-bold sm:text-3xl">Dashboard</h1>
+          <h1 className="text-brand-ink text-2xl font-bold sm:text-3xl">
+            {me.data?.name ? `${manilaGreeting()}, ${me.data.name}` : 'Dashboard'}
+          </h1>
         </div>
         <Link
           to="/admin/bookings"

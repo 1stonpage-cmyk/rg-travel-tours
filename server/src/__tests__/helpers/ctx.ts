@@ -107,7 +107,11 @@ export function driverCaller(driverId: number) {
  * session — and `requireRole` then re-parses it rather than trusting it.
  * This helper is the shape the real factory produces, so a test that uses
  * it is exercising the same context an authenticated request would.
+ *
+ * `name` is optional and omitted by every existing call site: almost none of
+ * them exercise `staffAuth.me`, which is the only resolver that reads it.
+ * The handful that do (Task 16, 7M) pass it explicitly.
  */
-export function staffContext(userId: number, role: AdminRole = 'owner') {
-  return testContext({ subjectType: 'user', subjectId: userId, role });
+export function staffContext(userId: number, role: AdminRole = 'owner', name?: string) {
+  return testContext({ subjectType: 'user', subjectId: userId, role, name });
 }

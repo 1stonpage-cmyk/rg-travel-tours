@@ -100,6 +100,30 @@ describe('AdminLayout', () => {
   });
 
   /**
+   * Task 16 (7M): the signed-in staff member's name, carried through
+   * `readSession` → `staffAuth.me` and shown above the role it already drew.
+   */
+  describe('the sidebar identity block', () => {
+    it('shows the name above the role', async () => {
+      mockTrpc({
+        'staffAuth.me': {
+          userId: 1,
+          role: 'owner',
+          mustChangePassword: false,
+          name: 'Maria Santos',
+        },
+      });
+      renderAt('/admin');
+      const name = await screen.findByText('Maria Santos');
+      const role = screen.getByText('Owner');
+      // DOM order, not just presence: the brief is explicit that the name
+      // sits ABOVE the role, and a sibling span reordered beneath it would
+      // still pass a presence-only assertion.
+      expect(name.compareDocumentPosition(role) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+  });
+
+  /**
    * Restyle 2B: the nav is drawn per role. This is cosmetic - the server is
    * the guard - so the test pins only what is DRAWN, and that the owner-only
    * and finance-only links appear for the right people.
@@ -174,6 +198,52 @@ describe('AdminLayout', () => {
         // Reports is owner + finance (Week 7 Task 12), so finance keeps it
         // while Vans, Drivers and Staff stay out of reach.
         'Reports',
+      ]);
+    });
+
+    /**
+     * **The hard rule (Task 16, 7M):** the nav is drawn from the ROLE alone
+     * — `navFor(role)` in `AdminLayout` — and must never key off the name,
+     * however the two sessions differ. A regression that swapped the
+     * argument for `me.data?.name` would draw the dispatcher-only
+     * fall-through (an unrecognised "role" string draws the dashboard
+     * alone, per `navFor`'s own doc comment), so this would fail loudly
+     * rather than merely drift.
+     */
+    it('draws the identical nav for a role no matter what name comes with the session', async () => {
+      mockTrpc({
+        'staffAuth.me': {
+          userId: 2,
+          role: 'dispatcher',
+          mustChangePassword: false,
+          name: 'Alice First',
+        },
+      });
+      const first = renderAt('/admin');
+      await screen.findByRole('link', { name: 'Vans' });
+      const withAlice = names();
+      first.unmount();
+
+      mockTrpc({
+        'staffAuth.me': {
+          userId: 2,
+          role: 'dispatcher',
+          mustChangePassword: false,
+          name: 'Bob Second',
+        },
+      });
+      renderAt('/admin');
+      await screen.findByRole('link', { name: 'Vans' });
+      expect(names()).toEqual(withAlice);
+      expect(withAlice).toEqual([
+        'Dashboard',
+        'Bookings',
+        'Dispatch',
+        'Departures',
+        'Vans',
+        'Drivers',
+        'Packages',
+        'Reviews',
       ]);
     });
   });

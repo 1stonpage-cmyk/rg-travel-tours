@@ -111,6 +111,12 @@ export interface StaffSession {
    * `adminProcedure` refuses everything except the change-password flow.
    */
   mustChangePassword?: boolean;
+  /**
+   * `users.name`, read live with the role (Task 16, 7M) — `staffAuth.me`
+   * carries it through to the greeting and the sidebar. Never used for an
+   * access decision: `requireRole` gates on `role` alone.
+   */
+  name?: string;
 }
 
 /** The session-bearing slice of a tRPC context, as admin procedures will have it. */

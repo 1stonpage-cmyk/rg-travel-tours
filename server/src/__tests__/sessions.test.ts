@@ -90,10 +90,11 @@ const staffIds: number[] = [];
 /** A real `users` row, which a `user` session now requires to resolve. */
 async function makeStaff(role: 'owner' | 'dispatcher' | 'finance') {
   const unique = `${Math.floor(Math.random() * 1e9)}_${Date.now()}`;
+  const name = `Session Fixture ${unique}`;
   const [row] = await getDb()
     .insert(users)
     .values({
-      name: `Session Fixture ${unique}`,
+      name,
       email: `session_${unique}@example.test`,
       // Not a real hash and not a real password: nothing here signs in.
       passwordHash: '__session_fixture_not_a_hash__',
@@ -101,7 +102,7 @@ async function makeStaff(role: 'owner' | 'dispatcher' | 'finance') {
       isActive: true,
     });
   staffIds.push(row.insertId);
-  return row.insertId;
+  return { id: row.insertId, name };
 }
 
 async function cleanup() {
@@ -162,13 +163,14 @@ describeWithDb('sessions', () => {
       subjectId: SUBJECT.driver,
     });
 
-    const staffId = await makeStaff('owner');
-    const staff = await createSession('user', staffId, NOW);
-    expect(await readSession(staff.token, NOW)).toEqual({
+    const staff = await makeStaff('owner');
+    const staffSession = await createSession('user', staff.id, NOW);
+    expect(await readSession(staffSession.token, NOW)).toEqual({
       subjectType: 'user',
-      subjectId: staffId,
+      subjectId: staff.id,
       role: 'owner',
       mustChangePassword: false,
+      name: staff.name,
     });
   });
 
@@ -179,16 +181,36 @@ describeWithDb('sessions', () => {
    * the next request instead of at the end of a 24-hour session.
    */
   it('reflects a role CHANGE immediately, without a new login', async () => {
-    const staffId = await makeStaff('dispatcher');
-    const { token } = await createSession('user', staffId, NOW);
+    const staff = await makeStaff('dispatcher');
+    const { token } = await createSession('user', staff.id, NOW);
     expect((await readSession(token, NOW))?.role).toBe('dispatcher');
 
-    await getDb().update(users).set({ role: 'finance' }).where(eq(users.id, staffId));
+    await getDb().update(users).set({ role: 'finance' }).where(eq(users.id, staff.id));
 
     expect(
       (await readSession(token, NOW))?.role,
       'the role was cached in the session — a demotion would not take effect',
     ).toBe('finance');
+  });
+
+  /**
+   * **`name` is read live too, for the same reason as `role`** (Task 16,
+   * 7M — `staffAuth.me` carries it through to the greeting and the
+   * sidebar). A rename made mid-session — the office correcting a typo, or
+   * HR updating a legal name — must show up on the very next request
+   * instead of waiting out a 24-hour session.
+   */
+  it('reflects a NAME change immediately, without a new login', async () => {
+    const staff = await makeStaff('owner');
+    const { token } = await createSession('user', staff.id, NOW);
+    expect((await readSession(token, NOW))?.name).toBe(staff.name);
+
+    await getDb().update(users).set({ name: 'Renamed Fixture' }).where(eq(users.id, staff.id));
+
+    expect(
+      (await readSession(token, NOW))?.name,
+      'the name was cached in the session — a rename would not take effect',
+    ).toBe('Renamed Fixture');
   });
 
   /**
@@ -199,11 +221,11 @@ describeWithDb('sessions', () => {
    * `null` as an expired token, because it cannot act on the difference.
    */
   it('REFUSES a staff session whose user has been deactivated', async () => {
-    const staffId = await makeStaff('owner');
-    const { token } = await createSession('user', staffId, NOW);
+    const staff = await makeStaff('owner');
+    const { token } = await createSession('user', staff.id, NOW);
     expect(await readSession(token, NOW)).not.toBeNull();
 
-    await getDb().update(users).set({ isActive: false }).where(eq(users.id, staffId));
+    await getDb().update(users).set({ isActive: false }).where(eq(users.id, staff.id));
 
     expect(
       await readSession(token, NOW),

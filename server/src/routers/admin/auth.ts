@@ -175,6 +175,9 @@ export const staffAuthRouter = router({
     role: ctx.session.role,
     // Tells the client to send this person to "Set a new password" first.
     mustChangePassword: ctx.session.mustChangePassword === true,
+    // Read live off the `users` row by `readSession` (Task 16, 7M), same as
+    // `role` above: a rename mid-session shows up on the very next request.
+    name: ctx.session.name,
   })),
 
   /**

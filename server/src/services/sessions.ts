@@ -83,6 +83,14 @@ export interface ResolvedSession {
    * while the staff member is mid-session takes effect on their next request.
    */
   mustChangePassword?: boolean;
+  /**
+   * The staff member's display name, for `subject_type = 'user'` only and
+   * read LIVE from the `users` row for the same reason as `role`: a rename
+   * made mid-session must show up on the very next request rather than
+   * waiting out the session. `users.name` is `NOT NULL`, so this is never an
+   * empty string for a session that resolves at all.
+   */
+  name?: string;
 }
 
 /** One-way, fast, and the only form the token takes at rest. */
@@ -161,6 +169,7 @@ export async function readSession(token: string, now: Date): Promise<ResolvedSes
       role: users.role,
       isActive: users.isActive,
       mustChangePassword: users.mustChangePassword,
+      name: users.name,
     })
     .from(sessions)
     .leftJoin(users, and(eq(sessions.subjectType, 'user'), eq(users.id, sessions.subjectId)))
@@ -179,6 +188,7 @@ export async function readSession(token: string, now: Date): Promise<ResolvedSes
       subjectId: row.subjectId,
       role: row.role,
       mustChangePassword: row.mustChangePassword === true,
+      name: row.name ?? undefined,
     };
   }
 

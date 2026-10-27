@@ -67,7 +67,10 @@ function SidebarFooter({ showAccountLink }: { showAccountLink: boolean }) {
           Could not confirm your session.
         </span>
       ) : me.data ? (
-        <span className="text-brand-blue-100 text-sm font-semibold">{roleLabel(me.data.role)}</span>
+        <span className="flex flex-col">
+          <span className="truncate text-sm font-semibold text-white">{me.data.name}</span>
+          <span className="text-brand-blue-100 text-xs">{roleLabel(me.data.role)}</span>
+        </span>
       ) : null}
 
       {showAccountLink ? (

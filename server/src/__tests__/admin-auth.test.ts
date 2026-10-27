@@ -114,6 +114,7 @@ describeWithDb('staffAuth.login', () => {
       subjectId: ownerId,
       role: 'owner',
       mustChangePassword: false,
+      name: 'Admin Fixture',
     });
   });
 
@@ -282,12 +283,45 @@ describeWithDb('staffAuth.me', () => {
    * session. It is the end-to-end proof of the chain Task 1 built.
    */
   it('reports the signed-in staff member', async () => {
-    const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
+    const api = appRouter.createCaller(staffContext(ownerId, 'owner', 'Admin Fixture') as never);
     await expect(api.staffAuth.me()).resolves.toEqual({
       userId: ownerId,
       role: 'owner',
       mustChangePassword: false,
+      name: 'Admin Fixture',
     });
+  });
+
+  /**
+   * **The live-read proof** (Task 16, 7M): `name` comes from the SAME join
+   * `readSession` already does for `role` (see `sessions.ts`'s "reflects a
+   * role CHANGE immediately" test for that half). Driven end to end through
+   * `createApp()` rather than a fixture context, so this proves the whole
+   * chain — cookie → `createContext` → `readSession` → `me` — re-reads the
+   * `users` row on every request rather than copying the name in at login.
+   */
+  it('returns a renamed user’s NEW name on the very next call, with no new login', async () => {
+    const app = createApp();
+    const login = await request(app)
+      .post('/trpc/staffAuth.login')
+      .set('Origin', 'http://localhost:5180')
+      .send({ email: EMAIL.owner, password: PASSWORD });
+    expect(login.status).toBe(200);
+    const cookie = login.headers['set-cookie'] as unknown as string[];
+
+    const before = await request(app).get('/trpc/staffAuth.me').set('Cookie', cookie);
+    expect(before.body.result.data.name).toBe('Admin Fixture');
+
+    await getDb().update(users).set({ name: 'Renamed Fixture' }).where(eq(users.id, ownerId));
+
+    const after = await request(app).get('/trpc/staffAuth.me').set('Cookie', cookie);
+    expect(
+      after.body.result.data.name,
+      'the name was cached somewhere in the session — a rename did not take effect',
+    ).toBe('Renamed Fixture');
+
+    // Restore, so other tests in this file see the fixture name they expect.
+    await getDb().update(users).set({ name: 'Admin Fixture' }).where(eq(users.id, ownerId));
   });
 
   it('REFUSES no session at all', async () => {
