@@ -139,9 +139,10 @@ export interface DriverRow {
    */
   isLockedOut: boolean;
   /**
-   * The derived guide rating, or `null` when the driver has fewer than
-   * {@link DRIVER_RATING_MIN_RATINGS} real ratings (owner-decided
-   * 2026-10-15). Never a fabricated or defaulted number — see
+   * The derived guide rating, or `null` when the driver has fewer real
+   * ratings than `settings.trust.minReviewsForRating` (owner-decided
+   * 2026-10-15; the threshold moved to that setting by owner decision
+   * 2026-10-23, Q4). Never a fabricated or defaulted number — see
    * {@link DriverRating}.
    */
   rating: DriverRating | null;
@@ -319,17 +320,6 @@ export interface CalendarDay {
  * whitespace-only reason fails Zod before the service ever runs.
  */
 /**
- * How many real guide ratings a driver needs before an average is shown at
- * all (owner-decided 2026-10-15).
- *
- * Below this the screen says "New driver — no ratings yet" and shows NO
- * number. Not a zero, not a dash, not an average of one review: a single
- * five from a guest's good mood is not a rating, and a number on screen is
- * read as a measurement whatever caveat sits beside it.
- */
-export const DRIVER_RATING_MIN_RATINGS = 3;
-
-/**
  * A driver's guide rating, DERIVED and never stored (owner-decided
  * 2026-10-15).
  *
@@ -345,13 +335,21 @@ export const DRIVER_RATING_MIN_RATINGS = 3;
  *  - **`guide IS NOT NULL`** — a review that rated the trip but not the
  *    guide has nothing to say about the driver.
  *
- * `null` means "fewer than {@link DRIVER_RATING_MIN_RATINGS} ratings", which
- * the UI must render as words rather than as a number.
+ * `null` means "fewer ratings than `settings.trust.minReviewsForRating`",
+ * which the UI must render as words rather than as a number.
+ *
+ * **The threshold is that ONE setting** (owner decision 2026-10-23, Q4:
+ * "reuse the existing `settings.trust.minReviewsForRating` (3), not a second
+ * constant"). It was a standalone constant here until Week 7 Task 10, written
+ * before that decision — which meant an admin raising the public tour cards'
+ * threshold left this screen quoting the old number. `admin.drivers.list`
+ * reads it through `readTrustSettings()`, the same call `tours.list` and
+ * `reviews.forTour` make.
  */
 export interface DriverRating {
   /** Mean of `reviews.guide`, 1–5, rounded to one decimal place. */
   average: number;
-  /** How many ratings it came from. Always >= DRIVER_RATING_MIN_RATINGS. */
+  /** How many ratings it came from. Never below `trust.minReviewsForRating`. */
   count: number;
 }
 

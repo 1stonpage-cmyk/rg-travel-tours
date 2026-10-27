@@ -17,6 +17,8 @@ import {
   createCheckoutHoldLimiter,
   createDriverLoginLimiter,
   createProcedureRateLimit,
+  createReviewSubmitLimiter,
+  createReviewVoteLimiter,
   createStaffLoginLimiter,
 } from './middleware/rate-limit';
 import { robotsHeader } from './middleware/robots-header';
@@ -190,6 +192,22 @@ export function createApp(
    * `services/driver-lockout.ts`.
    */
   app.use('/trpc', createDriverLoginLimiter());
+
+  /*
+   * §12's review limits (Week 7, Task 10). Two budgets rather than one,
+   * because the two costs are different: a submission lands in a human
+   * moderation queue (five per 15 minutes, like the inquiries form), and a
+   * helpful vote is a click a genuine reader may make several times in one
+   * visit (thirty). Both are mounted WITH the routes they guard, so neither is
+   * a limiter aimed at a guessed procedure name — see middleware/rate-limit.ts
+   * for why that distinction has mattered here before.
+   *
+   * The vote limiter is the second half of §4's "one per browser via cookie +
+   * IP rate limit": the cookie stops one browser voting twice, this stops a
+   * caller that throws its cookie away.
+   */
+  app.use('/trpc', createReviewSubmitLimiter());
+  app.use('/trpc', createReviewVoteLimiter());
 
   /*
    * Cookies, then the context factory that reads them (Week 4, Task 1).

@@ -43,12 +43,12 @@ import {
   driverLeaveInputSchema,
   civilDateFromDate,
   type DriverInput,
-  DRIVER_RATING_MIN_RATINGS,
   type DriverLeaveRow,
   type DriverRating,
   type DriverRow,
 } from '@rg/shared';
 import { and, asc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
+import { readTrustSettings } from '../../content/settings';
 import { getDb } from '../../db/client';
 import { isDuplicateKeyError } from '../../db/duplicate-key';
 import { bookings, driverLeaves, drivers, reviews } from '../../db/schema';
@@ -273,7 +273,17 @@ export const adminDriversRouter = router({
      *
      * `guide IS NOT NULL` because the sub-score is optional — a guest who
      * rated the trip but not the guide has said nothing about the driver.
+     *
+     * **The threshold comes from `settings.trust.minReviewsForRating`**
+     * (owner decision 2026-10-23, Q4: "reuse the existing
+     * `settings.trust.minReviewsForRating` (3), not a second constant"). It
+     * used to be a standalone shared constant, written in Week 6 before that
+     * decision existed — so the public tour cards and this screen could have
+     * been moved apart by an admin editing the setting, and one of the two
+     * would have gone on claiming the old number. One setting, one answer,
+     * editable in one place.
      */
+    const trust = await readTrustSettings();
     const ratingRows = await getDb()
       .select({
         driverId: bookings.driverId,
@@ -298,7 +308,7 @@ export const adminDriversRouter = router({
       // BELOW the threshold is `null`, not a number with a caveat: a single
       // five from a guest's good mood is not a rating, and anything on
       // screen reads as a measurement.
-      if (row.driverId === null || count < DRIVER_RATING_MIN_RATINGS) continue;
+      if (row.driverId === null || count < trust.minReviewsForRating) continue;
       ratingByDriver.set(row.driverId, {
         average: Math.round((Number(row.total) / count) * 10) / 10,
         count,

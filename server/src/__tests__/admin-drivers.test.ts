@@ -52,6 +52,7 @@ import {
   drivers,
   reviews,
   sessions,
+  settings as settingsTable,
   tours,
   users,
 } from '../db/schema';
@@ -694,8 +695,11 @@ describeWithDb('drivers', () => {
    * ---------------------------------------------------------------------
    *
    * DERIVED, never stored. Averaged from `reviews.guide` on published,
-   * non-sample reviews of bookings this driver actually drove, and shown
-   * only at or above `DRIVER_RATING_MIN_RATINGS`.
+   * non-sample reviews of bookings this driver actually drove, and shown only
+   * at or above `settings.trust.minReviewsForRating` — the SETTING, read live,
+   * not a constant (owner decision 2026-10-23, Q4). The seeded value is 3,
+   * which is what every boundary below is written against; the last test in
+   * this block is the one that proves the number really comes from the row.
    *
    * The 2 → 3 boundary is the owner's named test, and it is the one that
    * matters: below the threshold the answer is `null`, not a number with a
@@ -814,6 +818,51 @@ describeWithDb('drivers', () => {
       await reviewFor(await drivenBooking(driverId), guide);
     }
     // Three published reviews, but only two said anything about the guide.
+    expect(await ratingOf(driverId)).toBeNull();
+  });
+
+  /**
+   * **The threshold is read from `settings.trust.minReviewsForRating`, not
+   * hardcoded** (owner decision 2026-10-23, Q4). It used to be a standalone
+   * shared constant, written in Week 6 before that decision existed — so an
+   * admin lowering the public tour cards' threshold left this screen quoting
+   * the old number.
+   *
+   * Two ratings is below the seeded 3 and at the edited 2, so the SAME driver
+   * answers `null` and then a number with nothing but the settings row
+   * changing. The row is restored in `finally`, because every other test in
+   * this file is written against the seeded value.
+   */
+  it('reads the threshold from settings.trust rather than a hardcoded 3', async () => {
+    const driverId = await makeDriver();
+    await reviewFor(await drivenBooking(driverId), 5);
+    await reviewFor(await drivenBooking(driverId), 3);
+
+    expect(await ratingOf(driverId), 'two ratings is below the seeded threshold').toBeNull();
+
+    const db = getDb();
+    const [trustRow] = await db.select().from(settingsTable).where(eq(settingsTable.key, 'trust'));
+    expect(trustRow).toBeDefined();
+    const originalValue = trustRow!.value;
+
+    await db
+      .update(settingsTable)
+      .set({ value: { ...(originalValue as Record<string, unknown>), minReviewsForRating: 2 } })
+      .where(eq(settingsTable.key, 'trust'));
+
+    try {
+      expect(
+        await ratingOf(driverId),
+        'the threshold is hardcoded — editing the setting changed nothing',
+      ).toEqual({ average: 4, count: 2 });
+    } finally {
+      await db
+        .update(settingsTable)
+        .set({ value: originalValue })
+        .where(eq(settingsTable.key, 'trust'));
+    }
+
+    // And back to null once the setting is back where it was.
     expect(await ratingOf(driverId)).toBeNull();
   });
 

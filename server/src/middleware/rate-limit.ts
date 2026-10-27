@@ -329,6 +329,69 @@ export function createBookingLookupLimiter(): RequestHandler {
 }
 
 /**
+ * Review submission, per IP (Week 7, Task 10; §12 lists "review
+ * submissions" among the endpoints that must be limited).
+ *
+ * **Five per 15 minutes, matching the inquiries limit** — and for the same
+ * reason: on the other side of this endpoint is a HUMAN moderation queue.
+ * `portal.submitReview` already refuses a second review for the same booking,
+ * so a guest acting normally spends exactly one of these five; the cap is
+ * there for a script with a stolen portal session, or a guest whose first
+ * three attempts failed Zod validation.
+ *
+ * Every attempt counts, successes included: the cost being limited is a row
+ * in a queue a person reads, and a successful submission spends more of that
+ * than a refused one.
+ *
+ * The procedure is `portal.submitReview` — a `customerProcedure`, so the
+ * portal login's own budget (`BOOKING_LOOKUP_PROCEDURES`) is a separate
+ * limiter on a separate pair of procedures. Two different costs, two budgets:
+ * sharing them would let five submissions lock a guest out of signing in.
+ */
+export const REVIEW_SUBMIT_WINDOW_MS = 15 * 60_000;
+export const REVIEW_SUBMIT_MAX = 5;
+export const REVIEW_SUBMIT_PROCEDURES = ['portal.submitReview'] as const;
+
+export function createReviewSubmitLimiter(): RequestHandler {
+  return createProcedureRateLimit([...REVIEW_SUBMIT_PROCEDURES], {
+    windowMs: REVIEW_SUBMIT_WINDOW_MS,
+    max: REVIEW_SUBMIT_MAX,
+  });
+}
+
+/**
+ * Helpful votes, per IP (Week 7, Task 10) — **the second half of §4's rule,
+ * not an optional extra**.
+ *
+ * §4 says "one per browser via cookie + IP rate limit", and the cookie half
+ * alone is not a control: `review_helpful_votes`'s primary key stops one
+ * `rg_vid` voting twice on one review, but the cookie is minted on demand, so
+ * a caller that discards it gets a fresh identity every request. THIS is what
+ * bounds that (`services/reviews/votes.ts` says the same from the other side).
+ *
+ * **Thirty rather than five**, which is the one place this limiter differs
+ * from the submission one above: a genuine reader scrolling §4's block may
+ * well mark several reviews helpful in one visit, and a tour with twenty
+ * reviews would otherwise refuse a reader who simply agreed with six of them.
+ * Thirty is generous for a person and still worthless for inflating a count.
+ *
+ * Every attempt counts, successes included — the opposite of the login
+ * limiters, and deliberately: a vote that LANDED is exactly the thing being
+ * rationed, so giving the hit back would leave the cap applying only to
+ * failures.
+ */
+export const REVIEW_VOTE_WINDOW_MS = 15 * 60_000;
+export const REVIEW_VOTE_MAX = 30;
+export const REVIEW_VOTE_PROCEDURES = ['reviews.voteHelpful'] as const;
+
+export function createReviewVoteLimiter(): RequestHandler {
+  return createProcedureRateLimit([...REVIEW_VOTE_PROCEDURES], {
+    windowMs: REVIEW_VOTE_WINDOW_MS,
+    max: REVIEW_VOTE_MAX,
+  });
+}
+
+/**
  * The receipt upload (Week 4 plan, Task 6): **10 uploads per IP per 15
  * minutes**, counting successes as well as failures.
  *

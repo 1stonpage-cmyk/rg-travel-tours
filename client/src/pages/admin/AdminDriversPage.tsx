@@ -345,7 +345,8 @@ function DriverPersonalData({ driver }: { driver: DriverRow }) {
  * §9's "average rating", DERIVED and shown only when it means something
  * (owner-decided 2026-10-15).
  *
- * The server sends `rating: null` below `DRIVER_RATING_MIN_RATINGS`, and
+ * The server sends `rating: null` below `settings.trust.minReviewsForRating`
+ * (owner decision 2026-10-23, Q4 — one setting, not a second constant), and
  * this renders WORDS for that case rather than a number. No zero, no dash,
  * no "4.0 (1 review)": anything numeric on screen is read as a measurement,
  * and one five from a guest's good mood is not one.

@@ -14,6 +14,7 @@ import { adminCouponsRouter } from './admin/coupons';
 import { adminDispatchRouter } from './admin/dispatch';
 import { adminDriversRouter } from './admin/drivers';
 import { adminRefundsRouter } from './admin/refunds';
+import { adminReviewsRouter } from './admin/reviews';
 import { adminSettingsRouter } from './admin/settings';
 import { adminStaffUsersRouter } from './admin/staff-users';
 import { adminToursRouter } from './admin/tours';
@@ -153,6 +154,15 @@ export const appRouter = router({
      * in a search index at all.
      */
     settings: adminSettingsRouter,
+    /*
+     * Review moderation, replies and the queue (Week 7, Task 10). §9 gates it
+     * on `reviewsModeration` — owner and dispatcher, never finance — which is
+     * the same row the dashboard and bookings use for dispatch work and a
+     * different one from the money areas. This router is the ONLY writer of
+     * `reviews.status` after a submission, which is what makes "a guest
+     * cannot publish straight to the site" structural.
+     */
+    reviews: adminReviewsRouter,
   }),
 });
 

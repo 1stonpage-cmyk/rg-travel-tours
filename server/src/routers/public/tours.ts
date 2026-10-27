@@ -23,7 +23,12 @@ import {
   tourPriceTiers,
   tours,
 } from '../../db/schema';
-import { aggregatesByTour, displayAggregate, type Aggregate } from '../../services/ratings';
+import {
+  aggregatesByTour,
+  applyRatingThreshold,
+  displayAggregate,
+  type Aggregate,
+} from '../../services/ratings';
 import { publicProcedure, router } from '../../trpc';
 
 export interface TourImage {
@@ -93,21 +98,6 @@ interface ListRow {
 
 function freeCancellationFrom(freeCancelHours: number | null): boolean {
   return freeCancelHours != null && freeCancelHours > 0;
-}
-
-/**
- * Task 1.9 (R1): withhold the display rating below `minReviewsForRating`
- * published reviews (sample or real — `rating`'s count already is that
- * population). `rating: null` is the only signal the card needs to fall
- * back to a "New" badge; this must never touch `realAggregate`, which feeds
- * JSON-LD and stays exactly as strict as it already was.
- */
-function applyRatingThreshold(
-  rating: Aggregate | null,
-  minReviewsForRating: number,
-): Aggregate | null {
-  if (rating === null || rating.count < minReviewsForRating) return null;
-  return rating;
 }
 
 function toListItem(row: ListRow, image: TourImage | null, rating: Aggregate | null): TourListItem {

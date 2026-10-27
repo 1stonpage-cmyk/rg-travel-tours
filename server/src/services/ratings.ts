@@ -77,6 +77,30 @@ export async function realAggregate(tourId?: number): Promise<Aggregate | null> 
 }
 
 /**
+ * Task 1.9 (R1): withhold the display rating below `minReviewsForRating`
+ * published reviews (sample or real — an aggregate's `count` already is that
+ * population). `null` is the only signal a caller needs to fall back to words
+ * — a "New" badge on a tour card, a "not enough reviews yet" line in §4's
+ * block — and anything numeric on screen is read as a measurement.
+ *
+ * **It must never touch `realAggregate`**, which feeds JSON-LD and stays
+ * exactly as strict as it already was.
+ *
+ * Here rather than in `routers/public/tours.ts`, where it was written: two
+ * surfaces now apply this threshold (the tour cards and detail, and
+ * `reviews.forTour`), and two copies of "what counts as enough reviews" is how
+ * a card and the block beneath it come to disagree about whether this tour has
+ * a rating.
+ */
+export function applyRatingThreshold(
+  rating: Aggregate | null,
+  minReviewsForRating: number,
+): Aggregate | null {
+  if (rating === null || rating.count < minReviewsForRating) return null;
+  return rating;
+}
+
+/**
  * Every tour's aggregate in one round trip, keyed by `tour_id` — the batch
  * form `tours.list` must use instead of calling `displayAggregate(id)` once
  * per tour (an N+1 the catalog would otherwise hit on every page load).
