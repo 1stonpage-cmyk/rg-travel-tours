@@ -23,7 +23,7 @@ import {
   type TourReviewsResult,
 } from '@rg/shared';
 import { TRPCError } from '@trpc/server';
-import { and, desc, eq, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { readTrustSettings } from '../../content/settings';
 import { getDb } from '../../db/client';
 import { isDuplicateKeyError } from '../../db/duplicate-key';
@@ -173,12 +173,19 @@ export const reviewsRouter = router({
         .limit(1);
       if (!tour) throw tourNotFound(input.tourSlug);
 
-      const publishedForTour = and(eq(reviews.tourId, tour.id), eq(reviews.status, 'published'));
-
-      const itemConditions: SQL[] = [publishedForTour as SQL];
-      if (input.starFilter !== undefined) {
-        itemConditions.push(eq(reviews.rating, input.starFilter));
-      }
+      /*
+       * ONE definition of "a review a guest may see of this tour", shared by
+       * all three reads below. The star filter narrows the LIST only — the
+       * breakdown, the sub-scores and the aggregate are over the whole
+       * published set, which is what lets the summary stay still while the
+       * list moves.
+       */
+      const visible = [eq(reviews.tourId, tour.id), eq(reviews.status, 'published')];
+      const publishedForTour = and(...visible);
+      const itemWhere =
+        input.starFilter === undefined
+          ? publishedForTour
+          : and(...visible, eq(reviews.rating, input.starFilter));
 
       /*
        * `COUNT()` over the left-joined votes, so the count and the `helpful`
@@ -217,7 +224,7 @@ export const reviewsRouter = router({
           })
           .from(reviews)
           .leftJoin(reviewHelpfulVotes, eq(reviewHelpfulVotes.reviewId, reviews.id))
-          .where(and(...itemConditions))
+          .where(itemWhere)
           .groupBy(
             reviews.id,
             reviews.bookingId,
