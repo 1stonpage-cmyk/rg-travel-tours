@@ -200,12 +200,29 @@ describe('AdminPaymentsPage', () => {
     expect(secondCard.textContent).toMatch(/1st try/);
   });
 
-  /** The masked phone is server data on the row — the screen never sees the real number. */
-  it('never renders the full phone number anywhere on the page', async () => {
+  /**
+   * The masking itself is proven server-side (`admin-bookings.test.ts`, which
+   * sends the real unmasked phone and watches that test go red). What a
+   * CLIENT test can actually get wrong is the rendering: this asserts the
+   * shape of whatever the page puts on screen for the phone line — bullets,
+   * then exactly four digits, nothing interpolated alongside it — so a
+   * client-side regression that concatenates another field onto that line is
+   * caught here even though it would never touch the server at all.
+   */
+  it('renders each queue card phone as bullets followed by exactly four digits, nothing else', async () => {
     mockFor('finance');
     renderPage();
-    await screen.findByRole('heading', { name: /RG-AAAAA1 · Maria Santos/ });
-    expect(document.body.textContent).not.toMatch(/9171234567/);
+    const queue = await screen.findByRole('region', { name: /waiting receipts/i });
+    await within(queue).findAllByRole('link');
+
+    const phoneLines = within(queue)
+      .getAllByText(/•/)
+      .map((el) => el.textContent);
+
+    expect(phoneLines).toHaveLength(2);
+    for (const text of phoneLines) {
+      expect(text).toMatch(/^•+\d{4}$/);
+    }
   });
 
   /**
