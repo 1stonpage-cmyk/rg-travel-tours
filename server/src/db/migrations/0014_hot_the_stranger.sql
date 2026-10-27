@@ -1,0 +1,3 @@
+ALTER TABLE `tour_images` ADD CONSTRAINT `tour_images_tour_id_tours_id_fk` FOREIGN KEY (`tour_id`) REFERENCES `tours`(`id`) ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE `tour_itinerary_stops` ADD CONSTRAINT `tour_itinerary_stops_tour_id_tours_id_fk` FOREIGN KEY (`tour_id`) REFERENCES `tours`(`id`) ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE `tour_price_tiers` ADD CONSTRAINT `tour_price_tiers_tour_id_tours_id_fk` FOREIGN KEY (`tour_id`) REFERENCES `tours`(`id`) ON DELETE no action ON UPDATE no action;

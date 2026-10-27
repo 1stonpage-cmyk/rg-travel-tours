@@ -116,11 +116,26 @@ export const tours = mysqlTable(
   ],
 );
 
+/**
+ * A tour's gallery. **Foreign key added in migration `0014`** (7N item 3),
+ * along with `tour_price_tiers` and `tour_itinerary_stops`: all three held a
+ * `tour_id` that nothing in the database checked, so a mistyped id wrote a
+ * row belonging to no tour and every reader joined it away silently.
+ * `tour_date_slots` has had the same reference since `0000`; these three were
+ * simply missed.
+ *
+ * Plain RESTRICT, the house style — there is no `onDelete` anywhere in this
+ * file, and nothing hard-deletes a tour (CLAUDE.md "Soft deletes":
+ * `is_active`). The reference also means a tour cannot be deleted while a
+ * gallery row points at it, which is the right refusal.
+ */
 export const tourImages = mysqlTable(
   'tour_images',
   {
     id: int('id').autoincrement().primaryKey(),
-    tourId: int('tour_id').notNull(),
+    tourId: int('tour_id')
+      .notNull()
+      .references(() => tours.id),
     path: varchar('path', { length: 300 }).notNull(),
     alt: varchar('alt', { length: 300 }).notNull(),
     width: int('width'),
@@ -130,11 +145,14 @@ export const tourImages = mysqlTable(
   (t) => [index('tour_images_tour_sort_idx').on(t.tourId, t.sortOrder)],
 );
 
+/** The per-head price bands. FK added in `0014` — see `tourImages` above. */
 export const tourPriceTiers = mysqlTable(
   'tour_price_tiers',
   {
     id: int('id').autoincrement().primaryKey(),
-    tourId: int('tour_id').notNull(),
+    tourId: int('tour_id')
+      .notNull()
+      .references(() => tours.id),
     minPax: int('min_pax').notNull(),
     maxPax: int('max_pax').notNull(),
     pricePerPersonCentavos: int('price_per_person_centavos').notNull(),
@@ -142,11 +160,22 @@ export const tourPriceTiers = mysqlTable(
   (t) => [index('tour_price_tiers_tour_min_idx').on(t.tourId, t.minPax)],
 );
 
+/**
+ * The stops a van calls at, in `sort_order`. FK added in `0014` — see
+ * `tourImages` above.
+ *
+ * `trip_checkpoints.stop_id` already references THIS table with RESTRICT,
+ * which is why a stop with real check-in history cannot be deleted
+ * (`services/tours/upsert.ts` refuses with CONFLICT rather than trying).
+ * The new reference closes the other end of the same chain.
+ */
 export const tourItineraryStops = mysqlTable(
   'tour_itinerary_stops',
   {
     id: int('id').autoincrement().primaryKey(),
-    tourId: int('tour_id').notNull(),
+    tourId: int('tour_id')
+      .notNull()
+      .references(() => tours.id),
     sortOrder: int('sort_order').notNull(),
     name: varchar('name', { length: 200 }).notNull(),
     description: text('description'),

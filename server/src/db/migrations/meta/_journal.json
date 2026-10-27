@@ -99,6 +99,13 @@
       "when": 1792700121383,
       "tag": "0013_sturdy_rocket_raccoon",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "5",
+      "when": 1793128711861,
+      "tag": "0014_hot_the_stranger",
+      "breakpoints": true
     }
   ]
 }
