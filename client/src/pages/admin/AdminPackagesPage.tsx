@@ -403,7 +403,19 @@ function PackageActions({ row, onEdit }: { row: PackageAdminRow; onEdit: () => v
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <Button type="button" variant="outline" size="sm" className={OUTLINE_BUTTON} onClick={onEdit}>
+      {/*
+       * The `aria-label` names the package. Every row draws a button reading
+       * "Edit", so without it a screen-reader user tabbing the list hears
+       * "Edit" five times with nothing to tell the five apart.
+       */}
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className={OUTLINE_BUTTON}
+        aria-label={`Edit ${row.title}`}
+        onClick={onEdit}
+      >
         Edit
       </Button>
 
@@ -527,6 +539,12 @@ function InquiryRow({ row }: { row: InquiryAdminRow }) {
       ) : null}
 
       <div className="flex flex-wrap items-center gap-2">
+        {/*
+         * The visible word is short ("Mark read") and the `aria-label` names
+         * the guest: every enquiry in the list draws the same three buttons, so
+         * the label is the only thing that tells a screen-reader user which
+         * enquiry they are about to close.
+         */}
         {INQUIRY_STATUSES.filter((status) => status !== row.status).map((status) => (
           <Button
             key={status}
@@ -535,6 +553,7 @@ function InquiryRow({ row }: { row: InquiryAdminRow }) {
             size="sm"
             className={OUTLINE_BUTTON}
             disabled={setStatus.isPending}
+            aria-label={`Mark ${INQUIRY_STATUS_LABELS[status].toLowerCase()} — enquiry from ${row.name}`}
             onClick={() => setStatus.mutate({ id: row.id, status })}
           >
             {`Mark ${INQUIRY_STATUS_LABELS[status].toLowerCase()}`}

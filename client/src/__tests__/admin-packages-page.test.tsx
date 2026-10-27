@@ -268,6 +268,21 @@ describe('AdminPackagesPage — the package list', () => {
 });
 
 describe('AdminPackagesPage — the enquiries', () => {
+  /**
+   * Every enquiry in the list draws the same three "Mark …" buttons, so the
+   * accessible name has to say WHICH enquiry — otherwise a screen-reader user
+   * tabbing the list hears "Mark closed" over and over with nothing to tell
+   * them apart. Asserted globally (`screen`, not `within(row)`) on purpose:
+   * scoping to the row would pass even if the label named nobody.
+   */
+  it('names the guest in each status button, so the labels are not all identical', async () => {
+    renderPage();
+    await screen.findByText('Maria Santos');
+
+    expect(screen.getByRole('button', { name: /mark closed .*maria santos/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /mark new .*john dela cruz/i })).toBeInTheDocument();
+  });
+
   it('shows each enquiry with the package it is about, or that there is none', async () => {
     renderPage();
     await screen.findByText('Maria Santos');
