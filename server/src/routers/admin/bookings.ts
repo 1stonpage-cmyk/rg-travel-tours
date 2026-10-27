@@ -45,6 +45,7 @@ import { BOOKING_STATUSES, addBookingNoteInputSchema, manilaCivilDate } from '@r
 import { and, asc, desc, eq, gte, lte, sql } from 'drizzle-orm';
 import { getDb } from '../../db/client';
 import {
+  PAYMENT_METHODS,
   auditLog,
   bookingAddons,
   bookingNotes,
@@ -227,6 +228,68 @@ async function mailPayload(bookingId: number) {
  * and an uncapped limit is how one admin screen becomes a way to pull the
  * whole customer table in a single request.
  */
+/**
+ * `payments.method`, in words — Task 15 (7L). One map, reused everywhere a
+ * method needs a human label, rather than an ad-hoc string transform at
+ * each call site. Exhaustive over `PAYMENT_METHODS` (TypeScript enforces
+ * it below), so a value added to the enum fails to compile here until this
+ * map is given a label for it too.
+ */
+const PAYMENT_METHOD_LABELS: Record<(typeof PAYMENT_METHODS)[number], string> = {
+  card: 'Card',
+  gcash: 'GCash',
+  maya: 'Maya',
+  grab_pay: 'GrabPay',
+  qrph: 'QR Ph',
+  bank_transfer: 'Bank transfer',
+  cash: 'Cash',
+};
+
+/**
+ * Falls back to the raw value for anything the map does not recognise —
+ * defensive only; `PAYMENT_METHOD_LABELS` is exhaustive over the real enum,
+ * so this branch exists for a value read out of a raw SQL subquery (typed
+ * `string`, not the enum) rather than anything expected to happen.
+ */
+export function paymentMethodLabel(method: string): string {
+  return (PAYMENT_METHOD_LABELS as Record<string, string>)[method] ?? method;
+}
+
+/**
+ * The guest's phone, masked to its last four characters — Task 15 (7L).
+ * Personal data under RA 10173, so this runs ON THE SERVER and the real
+ * number is never put in a response: the caller must mask before it ever
+ * reaches a `.select()`'s mapped output.
+ *
+ * Reveals at most the last four characters, however the number is
+ * formatted (`+639171234567` normalised, or an older `0917...` row that
+ * predates the checkout schema's transform) — never more, never a
+ * substring that could be combined with other fields to reconstruct it.
+ */
+export function maskPhone(phone: string): string {
+  const visible = phone.slice(-4);
+  const hidden = Math.max(phone.length - visible.length, 0);
+  return '•'.repeat(hidden) + visible;
+}
+
+/**
+ * A raw `datetime` column read back through a hand-written `sql` fragment —
+ * never a typed Drizzle column, so none of Drizzle's own driver-value
+ * mapping runs on it (`MySqlDateTime.mapFromDriverValue` only fires for a
+ * real column reference). mysql2 hands this pool's `datetime`/`timestamp`
+ * values back as a bare `'YYYY-MM-DD HH:MM:SS'` string with no timezone
+ * marker, and this pool stores everything as UTC (`timezone: 'Z'` in
+ * `db/client.ts`) — so appending `Z` after swapping the separator is exactly
+ * what Drizzle's own column class does, reproduced here for a value that
+ * never passed through one. Without it, `new Date(rawValue)` in the caller
+ * parses the space-separated string as LOCAL time instead of UTC, which is
+ * silent and wrong everywhere this server is not itself running in UTC.
+ */
+function parseRawDatetime(value: string | null): Date | null {
+  if (value === null) return null;
+  return new Date(`${value.replace(' ', 'T')}Z`);
+}
+
 const listInput = z
   .object({
     status: z.enum(BOOKING_STATUSES).optional(),
@@ -295,6 +358,29 @@ export const adminBookingsRouter = router({
 
       const condition = where.length > 0 ? and(...where) : undefined;
 
+      /*
+       * The one pending manual payment a queue card is about — Task 15
+       * (7L). Same two-arm match as the `awaitingVerification` clause above
+       * (a receipt, or cash), so the row these scalars read is the same row
+       * that put the booking in the queue in the first place. When a
+       * booking somehow carries both at once, the receipt wins (matching
+       * the detail pane's own `findPendingReceipt() ?? cash[0]` rule) and
+       * ties break on the newest id — deterministic, not "whichever MySQL
+       * happens to return first".
+       *
+       * Scalar correlated subqueries, not a join: a join against `payments`
+       * would fan this list out to one row per payment, and the comment on
+       * the `awaitingVerification` clause above already explains why that
+       * must not happen to this query.
+       */
+      const pendingPaymentMatch = sql`
+        p.provider = 'manual'
+        AND p.type = 'payment'
+        AND p.status = 'pending'
+        AND (p.receipt_path IS NOT NULL OR p.method = 'cash')
+      `;
+      const pendingPaymentOrder = sql`ORDER BY (p.receipt_path IS NULL) ASC, p.id DESC LIMIT 1`;
+
       const rows = await getDb()
         .select({
           id: bookings.id,
@@ -308,6 +394,36 @@ export const adminBookingsRouter = router({
           paidCentavos: bookings.amountPaidCentavos,
           paymentReviewRequired: bookings.paymentReviewRequired,
           createdAt: bookings.createdAt,
+          /** The guest's phone, masked below — never sent to the client as-is. */
+          leadPhone: bookings.leadPhone,
+          /**
+           * The pending payment's OWN `created_at` — not the booking's.
+           * Named unambiguously so it cannot be confused with the booking's
+           * `createdAt` two lines up.
+           */
+          pendingPaymentCreatedAt: sql<string | null>`(
+            SELECT p.created_at FROM payments p
+            WHERE p.booking_id = ${bookings.id} AND ${pendingPaymentMatch}
+            ${pendingPaymentOrder}
+          )`,
+          /** The raw enum value; translated to words in the map below. */
+          pendingPaymentMethod: sql<string | null>`(
+            SELECT p.method FROM payments p
+            WHERE p.booking_id = ${bookings.id} AND ${pendingPaymentMatch}
+            ${pendingPaymentOrder}
+          )`,
+          /**
+           * "2nd try" — every `type = 'payment'` row this booking has ever
+           * had, superseded and rejected ones included, because each one
+           * really was an attempt at paying (a refund is not). Counted
+           * rather than ranked: the pending row, being the booking's
+           * latest payment-type row by construction, is always the last
+           * attempt, so its count IS its ordinal.
+           */
+          attemptNumber: sql<number>`(
+            SELECT COUNT(*) FROM payments p
+            WHERE p.booking_id = ${bookings.id} AND p.type = 'payment'
+          )`,
         })
         .from(bookings)
         .innerJoin(tours, eq(tours.id, bookings.tourId))
@@ -324,7 +440,20 @@ export const adminBookingsRouter = router({
         .where(condition);
 
       return {
-        items: rows.map((row) => ({ ...row, tourDate: manilaCivilDate(row.tourDate) })),
+        items: rows.map((row) => {
+          // `leadPhone` never leaves this function: masked below, and the
+          // real value is deliberately not in the object this returns
+          // (RA 10173 — CLAUDE.md Security).
+          const { leadPhone, pendingPaymentMethod, ...rest } = row;
+          return {
+            ...rest,
+            tourDate: manilaCivilDate(row.tourDate),
+            pendingPaymentCreatedAt: parseRawDatetime(row.pendingPaymentCreatedAt),
+            attemptNumber: Number(row.attemptNumber),
+            method: pendingPaymentMethod ? paymentMethodLabel(pendingPaymentMethod) : null,
+            phoneMasked: maskPhone(leadPhone),
+          };
+        }),
         /** For the pager. `COUNT(*)` comes back as a string on some drivers. */
         total: Number(counted?.total ?? 0),
         limit: input.limit,

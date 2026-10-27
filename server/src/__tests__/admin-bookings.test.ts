@@ -10,7 +10,7 @@
  * session is refused, because the admin surface and the guest portal share
  * one cookie and only `subject_type` separates them.
  */
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { inArray, sql } from 'drizzle-orm';
 import { createApp } from '../app';
@@ -29,6 +29,7 @@ import {
 import { SESSION_COOKIE } from '../middleware/session-cookie';
 import { appRouter } from '../routers/_app';
 import { generateBookingRef } from '../services/booking-ref';
+import { maskPhone, paymentMethodLabel } from '../routers/admin/bookings';
 import { createSession } from '../services/sessions';
 import { receiptStorageDir, storeReceipt } from '../services/uploads';
 import { customerContext, staffContext, testContext } from './helpers/ctx';
@@ -60,6 +61,7 @@ async function makeBooking(opts: {
   withPendingReceipt?: boolean;
   withAddon?: boolean;
   withNote?: boolean;
+  leadPhone?: string;
 }): Promise<Fixture> {
   const db = getDb();
   seq += 1;
@@ -79,7 +81,7 @@ async function makeBooking(opts: {
     pax: 2,
     leadName: 'Maria Santos',
     leadEmail: `adminbk_${slug}@example.test`,
-    leadPhone: '09170000000',
+    leadPhone: opts.leadPhone ?? '09170000000',
     status: opts.status ?? 'pending_payment',
     payMode: 'full',
     priceSnapshot: {
@@ -445,5 +447,145 @@ describeWithDb('the receipt an admin is asked to verify', () => {
     const detail = await apiFor(finance, 'finance').admin.bookings.detail({ ref: queued.ref });
     const res = await request(createApp()).get(`/api/receipts/${detail.payments[0]!.receiptPath}`);
     expect(res.status).toBe(404);
+  });
+});
+
+/**
+ * Task 15 (7L) — pure helpers. `maskPhone` and `paymentMethodLabel` carry no
+ * database or role logic, so they are proven here with plain function calls
+ * rather than through a round trip.
+ */
+describe('maskPhone', () => {
+  it('reveals only the last four characters', () => {
+    expect(maskPhone('09171234567')).toBe('•••••••4567');
+  });
+
+  it('never returns more than four characters of the real number', () => {
+    const masked = maskPhone('+639171234567');
+    const revealed = masked.replace(/[^0-9]/g, '');
+    expect(revealed).toBe('4567');
+    expect(masked).not.toContain('917123');
+  });
+
+  it('leaves a string of four or fewer characters unchanged — nothing beyond the last four exists to hide', () => {
+    expect(maskPhone('123')).toBe('123');
+  });
+});
+
+describe('paymentMethodLabel', () => {
+  it('renders every enum value in words', () => {
+    expect(paymentMethodLabel('card')).toBe('Card');
+    expect(paymentMethodLabel('gcash')).toBe('GCash');
+    expect(paymentMethodLabel('maya')).toBe('Maya');
+    expect(paymentMethodLabel('grab_pay')).toBe('GrabPay');
+    expect(paymentMethodLabel('qrph')).toBe('QR Ph');
+    expect(paymentMethodLabel('bank_transfer')).toBe('Bank transfer');
+    expect(paymentMethodLabel('cash')).toBe('Cash');
+  });
+
+  it('falls back to the raw value for anything unrecognised, rather than throwing', () => {
+    expect(paymentMethodLabel('something_new')).toBe('something_new');
+  });
+});
+
+describeWithDb('admin.bookings.list — the payment queue card details (Task 15, 7L)', () => {
+  /**
+   * A booking whose guest uploaded a receipt, had it superseded by a second
+   * upload, and whose second upload is the one still `pending` — the
+   * realistic shape of a "2nd try" (owner decision 2026-10-14, Q6: a
+   * replacement receipt supersedes rather than overwrites).
+   */
+  let secondAttempt: Fixture;
+  const PENDING_PAYMENT_CREATED_AT = new Date('2099-01-05T03:00:00Z');
+  const SECOND_ATTEMPT_PHONE = '09171234567';
+
+  beforeAll(async () => {
+    secondAttempt = await makeBooking({
+      status: 'pending_verification',
+      tourDate: '2099-04-05',
+      leadPhone: SECOND_ATTEMPT_PHONE,
+    });
+    const db = getDb();
+
+    const { path: firstPath } = await storeReceipt({
+      buffer: JPEG,
+      mimetype: 'image/jpeg',
+      originalname: 'first.jpg',
+    });
+    created.files.push(firstPath);
+    await db.insert(payments).values({
+      bookingId: secondAttempt.bookingId,
+      type: 'payment',
+      provider: 'manual',
+      method: 'gcash',
+      amountCentavos: TOTAL,
+      status: 'superseded',
+      receiptPath: firstPath,
+      createdAt: new Date('2099-01-01T00:00:00Z'),
+    });
+
+    const { path: secondPath } = await storeReceipt({
+      buffer: JPEG,
+      mimetype: 'image/jpeg',
+      originalname: 'second.jpg',
+    });
+    created.files.push(secondPath);
+    await db.insert(payments).values({
+      bookingId: secondAttempt.bookingId,
+      type: 'payment',
+      provider: 'manual',
+      method: 'bank_transfer',
+      amountCentavos: TOTAL,
+      status: 'pending',
+      receiptPath: secondPath,
+      createdAt: PENDING_PAYMENT_CREATED_AT,
+    });
+  }, 30_000);
+
+  it("carries the pending payment's own createdAt, not the booking's", async () => {
+    const result = await apiFor(finance, 'finance').admin.bookings.list({
+      awaitingVerification: true,
+      limit: 100,
+    });
+    const row = result.items.find((item) => item.ref === secondAttempt.ref);
+    expect(row).toBeDefined();
+    expect(new Date(row!.pendingPaymentCreatedAt!).toISOString()).toBe(
+      PENDING_PAYMENT_CREATED_AT.toISOString(),
+    );
+    expect(row!.pendingPaymentCreatedAt).not.toBe(row!.createdAt);
+  });
+
+  it('reads attemptNumber 2 for a booking on its second payment-type row', async () => {
+    const result = await apiFor(finance, 'finance').admin.bookings.list({
+      awaitingVerification: true,
+      limit: 100,
+    });
+    const row = result.items.find((item) => item.ref === secondAttempt.ref);
+    expect(row?.attemptNumber).toBe(2);
+  });
+
+  it('renders the method enum in words', async () => {
+    const result = await apiFor(finance, 'finance').admin.bookings.list({
+      awaitingVerification: true,
+      limit: 100,
+    });
+    const row = result.items.find((item) => item.ref === secondAttempt.ref);
+    expect(row?.method).toBe('Bank transfer');
+  });
+
+  it("masks the guest's phone to its last four digits, and never sends the real number", async () => {
+    const result = await apiFor(finance, 'finance').admin.bookings.list({
+      awaitingVerification: true,
+      limit: 100,
+    });
+    const row = result.items.find((item) => item.ref === secondAttempt.ref);
+    expect(row?.phoneMasked).toBe('•••••••4567');
+    expect(row).not.toHaveProperty('leadPhone');
+
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain(SECOND_ATTEMPT_PHONE);
+    // No run of more than the last four digits of the real number may
+    // survive anywhere in the payload — not just the exact full string.
+    expect(serialized).not.toContain(SECOND_ATTEMPT_PHONE.slice(0, -4));
   });
 });

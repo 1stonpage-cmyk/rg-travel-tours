@@ -47,6 +47,47 @@ const MAY_VERIFY = ['owner', 'finance'];
 /** The list endpoint's page cap. A queue longer than this says so. */
 const QUEUE_LIMIT = 100;
 
+/**
+ * "1st", "2nd", "3rd", "4th try" — Task 15 (7L). `attemptNumber` is the
+ * server's count of a booking's payment-type rows (superseded included),
+ * so this is purely the English ordinal suffix for it.
+ */
+function ordinal(n: number): string {
+  const remainder = n % 100;
+  if (remainder >= 11 && remainder <= 13) return `${n}th`;
+  switch (n % 10) {
+    case 1:
+      return `${n}st`;
+    case 2:
+      return `${n}nd`;
+    case 3:
+      return `${n}rd`;
+    default:
+      return `${n}th`;
+  }
+}
+
+/**
+ * A relative upload age ("2 hours ago") beside the queue card's figures —
+ * cosmetic chrome, not money or a business decision, so unlike
+ * CLAUDE.md's time-dependent-query rule this reads the viewer's own clock
+ * rather than taking an explicit `now` from the server.
+ */
+function relativeAge(iso: string, now: Date): string {
+  const minutes = Math.round((now.getTime() - new Date(iso).getTime()) / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'} ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`;
+  const days = Math.round(hours / 24);
+  return `${days} ${days === 1 ? 'day' : 'days'} ago`;
+}
+
+/** A PDF has no inline preview — only an image receipt gets the `<img>`. */
+function isImageReceipt(receiptPath: string): boolean {
+  return !receiptPath.toLowerCase().endsWith('.pdf');
+}
+
 const ALERT =
   'border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-lg border p-3 text-sm font-medium';
 
@@ -144,6 +185,17 @@ export default function AdminPaymentsPage() {
                       </span>
                       <span className="text-brand-error mt-0.5 block text-sm tabular-nums">
                         {formatPeso(item.paidCentavos)} paid of {formatPeso(item.totalCentavos)}
+                      </span>
+                      {item.method ? (
+                        <span className="text-brand-error mt-0.5 block text-sm">
+                          {item.method} · {ordinal(item.attemptNumber)} try
+                          {item.pendingPaymentCreatedAt
+                            ? ` · uploaded ${relativeAge(item.pendingPaymentCreatedAt, new Date())}`
+                            : ''}
+                        </span>
+                      ) : null}
+                      <span className="text-brand-error mt-0.5 block text-sm tabular-nums">
+                        {item.phoneMasked}
                       </span>
                     </Link>
                   </li>
@@ -244,16 +296,32 @@ export default function AdminPaymentsPage() {
                           mayVerify && payment.status === 'pending' && payment.receiptPath,
                       )
                       .map((payment) => (
-                        <a
-                          key={`receipt-${payment.id}`}
-                          href={`/api/receipts/${payment.receiptPath}`}
-                          target="_blank"
-                          rel="noreferrer noopener"
-                          className="border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 tap-target inline-flex items-center gap-2 self-start rounded-[10px] border px-4 text-sm font-semibold transition-colors"
-                        >
-                          <ExternalLink className="size-4" aria-hidden="true" />
-                          Open receipt
-                        </a>
+                        <div key={`receipt-${payment.id}`} className="flex flex-col gap-2">
+                          {/*
+                            An inline preview, Task 15 (7L): the same
+                            authenticated route as "Open receipt" below, so
+                            it inherits that route's owner/finance gate with
+                            nothing new to enforce here. A PDF has no image
+                            to render — browsers do not draw one in an
+                            `<img>` — so it keeps the link only.
+                          */}
+                          {isImageReceipt(payment.receiptPath!) ? (
+                            <img
+                              src={`/api/receipts/${payment.receiptPath}`}
+                              alt="Uploaded payment receipt"
+                              className="border-brand-blue-200 max-h-64 w-auto self-start rounded-[10px] border object-contain"
+                            />
+                          ) : null}
+                          <a
+                            href={`/api/receipts/${payment.receiptPath}`}
+                            target="_blank"
+                            rel="noreferrer noopener"
+                            className="border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 tap-target inline-flex items-center gap-2 self-start rounded-[10px] border px-4 text-sm font-semibold transition-colors"
+                          >
+                            <ExternalLink className="size-4" aria-hidden="true" />
+                            Open receipt
+                          </a>
+                        </div>
                       ))}
                   </div>
 

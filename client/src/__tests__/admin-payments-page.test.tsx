@@ -11,7 +11,9 @@ import AdminPaymentsPage from '@/pages/admin/AdminPaymentsPage';
 import { TrpcProviders } from '@/lib/trpc';
 import { mockTrpc, mockTrpcError, resetTrpcMock } from './helpers/mock-trpc';
 
-const row = (ref: string, leadName: string) => ({
+const TWO_HOURS_AGO = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+
+const row = (ref: string, leadName: string, overrides: Record<string, unknown> = {}) => ({
   id: ref === 'RG-AAAAA1' ? 1 : 2,
   ref,
   status: 'pending_verification',
@@ -23,10 +25,18 @@ const row = (ref: string, leadName: string) => ({
   paidCentavos: 0,
   paymentReviewRequired: false,
   createdAt: new Date().toISOString(),
+  pendingPaymentCreatedAt: TWO_HOURS_AGO,
+  attemptNumber: 1,
+  method: 'GCash',
+  phoneMasked: '•••••••4567',
+  ...overrides,
 });
 
 const QUEUE = {
-  items: [row('RG-AAAAA1', 'Maria Santos'), row('RG-BBBBB2', 'Jun Reyes')],
+  items: [
+    row('RG-AAAAA1', 'Maria Santos', { attemptNumber: 2, method: 'Bank transfer' }),
+    row('RG-BBBBB2', 'Jun Reyes'),
+  ],
   total: 2,
   limit: 100,
   offset: 0,
@@ -169,6 +179,65 @@ describe('AdminPaymentsPage', () => {
     // Still the queue they are allowed to read (§9's `bookingsView`).
     expect(screen.getByText('GC1234567890'), 'the dispatcher lost the payment trail').toBeTruthy();
     expect(screen.queryByRole('link', { name: /open receipt/i })).toBeNull();
+  });
+
+  /**
+   * Task 15 (7L) — the queue card carries upload age, attempt number, method
+   * and a masked phone, server-computed and never the full number.
+   */
+  it('shows the method, attempt number and upload age on each queue card', async () => {
+    mockFor('finance');
+    renderPage();
+    const queue = await screen.findByRole('region', { name: /waiting receipts/i });
+
+    const firstCard = within(queue).getAllByRole('link')[0]!;
+    expect(firstCard.textContent).toMatch(/Bank transfer/);
+    expect(firstCard.textContent).toMatch(/2nd try/);
+    expect(firstCard.textContent).toMatch(/2 hours ago/i);
+    expect(firstCard.textContent).toMatch(/•••••••4567/);
+
+    const secondCard = within(queue).getAllByRole('link')[1]!;
+    expect(secondCard.textContent).toMatch(/1st try/);
+  });
+
+  /** The masked phone is server data on the row — the screen never sees the real number. */
+  it('never renders the full phone number anywhere on the page', async () => {
+    mockFor('finance');
+    renderPage();
+    await screen.findByRole('heading', { name: /RG-AAAAA1 · Maria Santos/ });
+    expect(document.body.textContent).not.toMatch(/9171234567/);
+  });
+
+  /**
+   * The inline preview (Task 15, 7L): an `<img>` at the authenticated
+   * receipt route, beside the existing "Open receipt" link, for an image
+   * receipt only.
+   */
+  it('renders an inline preview for an image receipt, beside the link', async () => {
+    mockFor('finance');
+    renderPage();
+    const img = await screen.findByRole('img', { name: /receipt/i });
+    expect(img).toHaveAttribute('src', '/api/receipts/a1b2c3d4e5f60718293a4b5c6d7e8f90.jpg');
+    expect(await screen.findByRole('link', { name: /open receipt/i })).toBeTruthy();
+  });
+
+  it('renders NO inline preview for a PDF receipt, only the link', async () => {
+    mockFor('finance', {
+      'admin.bookings.detail': {
+        ...DETAIL,
+        payments: [{ ...DETAIL.payments[0], receiptPath: 'a1b2c3d4e5f60718293a4b5c6d7e8f90.pdf' }],
+      },
+    });
+    renderPage();
+    await screen.findByRole('link', { name: /open receipt/i });
+    expect(screen.queryByRole('img', { name: /receipt/i })).toBeNull();
+  });
+
+  it('offers neither the inline preview nor the link to a dispatcher', async () => {
+    mockFor('dispatcher');
+    renderPage();
+    await screen.findByRole('heading', { name: /RG-AAAAA1 · Maria Santos/ });
+    expect(screen.queryByRole('img', { name: /receipt/i })).toBeNull();
   });
 
   it('says so when nothing is waiting', async () => {
