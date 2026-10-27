@@ -67,6 +67,37 @@ const SAMPLE: Record<NotifyEvent, Parameters<typeof notify>[1]> = {
     totalCentavos: 567800,
     paidCentavos: 0,
   },
+  /*
+   * The three §11 events Week 7 Task 14 added. `driverName` / `vanPlate` are
+   * optional on `NotifyPayload` and required at runtime for `driver_assigned`
+   * only — the same arrangement `reason` has for `payment_rejected`.
+   */
+  driver_assigned: {
+    to: 'guest@example.test',
+    ref: 'RG-7KQ4M9',
+    tourTitle: 'Oslob Whale Sharks',
+    tourDate: '2026-11-20',
+    totalCentavos: 567800,
+    paidCentavos: 170400,
+    driverName: 'Ramon Dela Cruz',
+    vanPlate: 'GAB 1234',
+  },
+  trip_reminder: {
+    to: 'guest@example.test',
+    ref: 'RG-7KQ4M9',
+    tourTitle: 'Oslob Whale Sharks',
+    tourDate: '2026-11-20',
+    totalCentavos: 567800,
+    paidCentavos: 170400,
+  },
+  review_request: {
+    to: 'guest@example.test',
+    ref: 'RG-7KQ4M9',
+    tourTitle: 'Oslob Whale Sharks',
+    tourDate: '2026-11-20',
+    totalCentavos: 567800,
+    paidCentavos: 567800,
+  },
 };
 
 beforeEach(() => {
@@ -243,5 +274,101 @@ describe('renderTemplate', () => {
     expect(html).not.toContain('<script>');
     expect(html).toContain('&lt;script&gt;');
     expect(html).toContain('&amp;');
+  });
+
+  /**
+   * Week 7 Task 14 — the three §11 events that had no template.
+   */
+
+  it('names the driver and the van plate in the assignment email', () => {
+    const { html, text } = renderTemplate('driver_assigned', SAMPLE.driver_assigned);
+    for (const body of [html, text]) {
+      expect(body).toContain('Ramon Dela Cruz');
+      expect(body).toContain('GAB 1234');
+    }
+  });
+
+  /**
+   * `driverName` and `vanPlate` come from admin-editable columns, so they go
+   * through `escapeHtml` like every other interpolated value. "A plate could
+   * never contain a bracket" is exactly the assumption the file's own escaping
+   * note warns about.
+   */
+  it('escapes the driver name and the plate', () => {
+    const { html } = renderTemplate('driver_assigned', {
+      ...SAMPLE.driver_assigned,
+      driverName: '<script>alert(1)</script>',
+      vanPlate: 'A&B "1"',
+    });
+    expect(html).not.toContain('<script>');
+    expect(html).toContain('&lt;script&gt;');
+    expect(html).toContain('&amp;');
+  });
+
+  /**
+   * **The link is `/portal/login?ref=…`, never `/portal/booking?ref=…`.**
+   *
+   * `PortalBookingPage` reads its booking from an ACTIVE SESSION and takes no
+   * `ref` query parameter at all, so a signed-out guest clicking that URL sees
+   * a sign-in prompt with nothing filled in. `PortalLoginPage` is the entry
+   * point: it reads `?ref=` to prefill the reference, the guest still proves
+   * ref + email (owner decision Q5 — no new auth path), and its own
+   * `safeNext()` lands them on `/portal/booking` afterwards.
+   */
+  it('links the reminder and the review request at the portal SIGN-IN, ref prefilled', () => {
+    for (const event of ['trip_reminder', 'review_request'] as const) {
+      const { html, text } = renderTemplate(event, SAMPLE[event]);
+      for (const body of [html, text]) {
+        expect(body, `${event} does not link the sign-in screen`).toContain(
+          '/portal/login?ref=RG-7KQ4M9',
+        );
+        expect(body, `${event} links a page that cannot read a ref`).not.toContain(
+          '/portal/booking?ref=',
+        );
+      }
+      // An absolute URL, because a relative path in an email client resolves
+      // against nothing.
+      expect(html).toMatch(/https?:\/\/[^"]+\/portal\/login\?ref=RG-7KQ4M9/);
+    }
+  });
+
+  /**
+   * The reminder's job is "your trip is tomorrow, and this is what is still
+   * owed" — a guest on deposit pays the balance to the driver, so the number
+   * has to be in the email they read the night before.
+   */
+  it('tells a deposit guest the balance to bring', () => {
+    const { html, text } = renderTemplate('trip_reminder', SAMPLE.trip_reminder);
+    // 567800 - 170400 = 397400 centavos, which `formatPeso` renders as ₱3,974
+    // (whole pesos — see `shared/src/money.ts`). The amounts in SAMPLE are
+    // whole pesos on purpose, so this asserts the subtraction rather than a
+    // rounding rule.
+    expect(html).toContain('3,974');
+    expect(text).toContain('3,974');
+  });
+
+  /** The other half: a fully-paid guest must not be asked for ₱0. */
+  it('asks a fully paid guest for nothing', () => {
+    const { html, text } = renderTemplate('trip_reminder', {
+      ...SAMPLE.trip_reminder,
+      paidCentavos: SAMPLE.trip_reminder.totalCentavos,
+    });
+    for (const body of [html, text]) {
+      expect(body).toContain('fully paid');
+      expect(body).not.toContain('₱0');
+    }
+  });
+
+  /**
+   * Not a one-click prefilled form (owner decision Q5): the review itself is
+   * written inside My Booking, behind ref + email. A `rating=` or `stars=`
+   * parameter in this link would be a review submitted by whoever forwarded
+   * the email.
+   */
+  it('does not carry a prefilled rating in the review-request link', () => {
+    const { html, text } = renderTemplate('review_request', SAMPLE.review_request);
+    for (const body of [html, text]) {
+      expect(body).not.toMatch(/[?&](rating|stars|score)=/i);
+    }
   });
 });

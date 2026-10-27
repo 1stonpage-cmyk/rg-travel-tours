@@ -35,6 +35,18 @@ const schema = z.object({
   SMTP_PASSWORD: z.string().optional(),
   MAIL_FROM: z.string().optional(),
   /*
+   * SMS (Week 7 Task 14, 7E; owner decision 2026-10-23, Q6 — "SMS is not paid
+   * for; email only this week; the interface is built switched off").
+   *
+   * Optional, and UNSET IS THE DEFAULT AND THE INTENT: with no value,
+   * `getSmsProvider()` returns the null provider, which logs and sends
+   * nothing. A name nobody registered is REFUSED rather than quietly
+   * defaulted — see `services/notify/sms.ts`. `.env.example` has carried this
+   * key (with `SMS_ENABLED` and `SMS_API_KEY`, which no code reads yet) since
+   * before there was anything to read it.
+   */
+  SMS_PROVIDER: z.string().optional(),
+  /*
    * The first owner account, read by the seed (Week 4, Task 5). Both
    * optional so `pnpm test` can seed `rg_travel_test` without
    * production-shaped config; `seedFirstOwner()` in `db/seed.ts` refuses if

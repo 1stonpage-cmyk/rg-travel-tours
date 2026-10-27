@@ -15,11 +15,14 @@
  * decides nothing.
  */
 import { TRPCError } from '@trpc/server';
-import { assignInputSchema, suggestInputSchema } from '@rg/shared';
+import { eq } from 'drizzle-orm';
+import { assignInputSchema, manilaCivilDate, suggestInputSchema } from '@rg/shared';
 import { getDb } from '../../db/client';
+import { bookings, drivers, tours, vans } from '../../db/schema';
 import { withDeadlockRetry } from '../../db/deadlock';
 import { type AssignRefusal, assignVanAndDriver } from '../../services/dispatch/assign';
 import { suggestAssignment } from '../../services/dispatch/suggest';
+import { notify } from '../../services/notify';
 import { adminProcedure, router } from '../../trpc';
 
 /**
@@ -48,6 +51,69 @@ function asTrpcError(reason: AssignRefusal): TRPCError {
       const unreachable: never = reason;
       throw new Error(`Unhandled AssignRefusal: ${unreachable}`);
     }
+  }
+}
+
+/**
+ * §11's "driver assigned" email to the guest (Week 7 Task 14).
+ *
+ * **Called only AFTER the assignment transaction has committed**, and shaped
+ * exactly like `sendReceiptNotices` in `routers/receipts.ts`:
+ *
+ *  - It re-queries the booking, tour, van and driver FRESH by booking id and
+ *    never trusts the mutation's own input. The committed row is the record of
+ *    what was assigned; the input is only what was asked for.
+ *  - It is wrapped in its own try/catch even though `notify()` cannot throw,
+ *    because this read CAN — and a database hiccup reading a tour title must
+ *    not fail an assignment that is already committed and already correct.
+ *  - It is awaited rather than fired and forgotten, so a dispatcher's request
+ *    does not finish before the mail attempt and a test can observe it. The
+ *    cost is one SMTP round trip on the assign call; the alternative is an
+ *    unhandled rejection with nothing holding it.
+ *
+ * `manilaCivilDate`, not `toISOString().slice(0, 10)`: `tour_date` is a DATE
+ * column read back as UTC midnight, and a raw slice names the day before on a
+ * UTC+8 box — a guest told their van arrives on the wrong morning.
+ */
+async function sendAssignmentNotice(bookingId: number): Promise<void> {
+  try {
+    const [row] = await getDb()
+      .select({
+        ref: bookings.ref,
+        leadEmail: bookings.leadEmail,
+        tourTitle: tours.title,
+        tourDate: bookings.tourDate,
+        totalCentavos: bookings.totalCentavos,
+        paidCentavos: bookings.amountPaidCentavos,
+        driverName: drivers.name,
+        vanPlate: vans.plate,
+      })
+      .from(bookings)
+      .innerJoin(tours, eq(tours.id, bookings.tourId))
+      // INNER joins on both: the assignment wrote both ids, so a row with
+      // either missing is not an assignment this email describes, and saying
+      // "your driver is undefined" to a guest is worse than saying nothing.
+      .innerJoin(drivers, eq(drivers.id, bookings.driverId))
+      .innerJoin(vans, eq(vans.id, bookings.vanId))
+      .where(eq(bookings.id, bookingId))
+      .limit(1);
+    if (!row) return;
+
+    await notify('driver_assigned', {
+      to: row.leadEmail,
+      ref: row.ref,
+      tourTitle: row.tourTitle,
+      tourDate: manilaCivilDate(row.tourDate),
+      totalCentavos: row.totalCentavos,
+      paidCentavos: row.paidCentavos,
+      driverName: row.driverName,
+      vanPlate: row.vanPlate,
+    });
+  } catch (error) {
+    // The error's TYPE only, never its message — the same rule `notify()`
+    // itself follows, for the same reason.
+    const kind = error instanceof Error ? error.name : typeof error;
+    console.error(`[dispatch] could not send the assignment notice (${kind})`);
   }
 }
 
@@ -108,6 +174,17 @@ export const adminDispatchRouter = router({
       );
 
       if (!verdict.ok) throw asTrpcError(verdict.reason);
+
+      /*
+       * §11's "driver assigned" guest email. HERE, not inside the
+       * transaction: `withDeadlockRetry`/`getDb().transaction(...)` above has
+       * already returned, so the assignment is committed and nothing this
+       * call does — a dead mail server, a slow DNS lookup, a thrown read —
+       * can roll it back. `sendAssignmentNotice` swallows its own failures;
+       * see its header.
+       */
+      await sendAssignmentNotice(input.bookingId);
+
       return { ok: true as const };
     }),
 

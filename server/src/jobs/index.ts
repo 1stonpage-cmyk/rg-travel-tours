@@ -23,6 +23,8 @@ import { schedule } from 'node-cron';
 import { expireHolds } from './expire-holds';
 import { checkOrphanedVans } from './orphaned-vans';
 import { pruneSessions } from './prune-sessions';
+import { sendReviewRequests } from './review-requests';
+import { sendTripReminders } from './trip-reminders';
 
 /** §5 / §13: the hold-expiry sweep runs every minute. */
 const EVERY_MINUTE = '* * * * *';
@@ -31,8 +33,31 @@ const EVERY_MINUTE = '* * * * *';
  * D5 (2026-10-16): the orphaned-van check, 07:00 Manila — before the first
  * departures, so a dispatcher starting the day sees it. The zone is passed
  * to node-cron explicitly below; the server's own zone is not assumed.
+ *
+ * Q5 (2026-10-23): the review-request sweep runs on this same expression, as
+ * **its own `schedule()` call** below rather than as logic inside
+ * `orphaned-vans` — "so neither job's failure touches the other". The hour
+ * suits it for a second reason: the trips it asks about finished yesterday,
+ * and 07:00 is before today's departures take anyone's attention.
  */
 const DAILY_0700 = '0 7 * * *';
+
+/**
+ * Task 14 (7E): the day-before trip reminder, 16:00 Manila.
+ *
+ * Not 07:00 like the two jobs above, and the reason is who the email is for.
+ * The orphaned-van check and the review sweep are read by staff; this one is
+ * read by a guest who has to act on it — be awake, be packed, and have the
+ * balance ready for a pickup that is often before dawn. Late afternoon the day
+ * before is when that is still actionable: it arrives while the guest is up,
+ * it leaves the office reachable for an hour or two if they have a question,
+ * and it is close enough to the trip to be remembered. A 07:00 send would be
+ * twenty-five hours early and compete with a working day; an evening send
+ * would arrive after the office has gone home.
+ *
+ * Zone passed explicitly below, like every job here.
+ */
+const DAILY_1600 = '0 16 * * *';
 
 /**
  * C3 (2026-10-16): the expired-session sweep, 03:30 Manila — off-peak, the
@@ -108,5 +133,52 @@ export function startScheduledJobs(): void {
       }
     },
     { name: 'prune-sessions', timezone: 'Asia/Manila', noOverlap: true },
+  );
+
+  /*
+   * §11's day-before reminder (Task 14). Same try/catch as every job above —
+   * a throw into the scheduler takes the API process down — and a missed
+   * afternoon costs one email, never a booking: the sweep claims each booking
+   * with an audit row before it mails, so tomorrow's run will not send twice.
+   */
+  schedule(
+    DAILY_1600,
+    async () => {
+      try {
+        const { sent, failed } = await sendTripReminders(new Date());
+        if (sent > 0 || failed > 0) {
+          console.log(
+            `[jobs] trip-reminders: reminded ${sent} guest(s) about tomorrow` +
+              (failed > 0 ? `, ${failed} could not be claimed` : ''),
+          );
+        }
+      } catch (error) {
+        console.error('[jobs] trip-reminders failed', error);
+      }
+    },
+    { name: 'trip-reminders', timezone: 'Asia/Manila', noOverlap: true },
+  );
+
+  /*
+   * §11's review request (Q5, 2026-10-23). Its OWN registration on the same
+   * expression as `orphaned-vans`, deliberately not folded into that job's
+   * callback: one of them throwing must not stop the other from running.
+   */
+  schedule(
+    DAILY_0700,
+    async () => {
+      try {
+        const { sent, failed } = await sendReviewRequests(new Date());
+        if (sent > 0 || failed > 0) {
+          console.log(
+            `[jobs] review-requests: asked ${sent} guest(s) for a review` +
+              (failed > 0 ? `, ${failed} could not be claimed` : ''),
+          );
+        }
+      } catch (error) {
+        console.error('[jobs] review-requests failed', error);
+      }
+    },
+    { name: 'review-requests', timezone: 'Asia/Manila', noOverlap: true },
   );
 }

@@ -35,6 +35,7 @@ import {
   vans,
 } from '../db/schema';
 import { generateBookingRef } from '../services/booking-ref';
+import { resetTransportForTests, setTransportForTests } from '../services/notify';
 import { staffContext } from './helpers/ctx';
 import { describeWithDb } from './helpers/db';
 
@@ -192,6 +193,20 @@ async function moneySnapshot(id: number) {
   return { ...b, payments: rows };
 }
 
+/**
+ * Week 7 Task 14: `assign` now sends §11's "driver assigned" email after its
+ * transaction commits, so this file needs a transport — a MOCK one, which
+ * never touches a network (`notify.test.ts` set that rule). Without it every
+ * successful assignment below would also log "SMTP is not configured".
+ */
+interface SentMail {
+  to: string;
+  subject: string;
+  html: string;
+  text: string;
+}
+const sent: SentMail[] = [];
+
 let dispatcherId = 0;
 let financeId = 0;
 
@@ -223,9 +238,18 @@ describeWithDb('admin.dispatch.assign', () => {
       await count(sql`SELECT COUNT(*) n FROM drivers`),
       'leftover drivers in rg_travel_test',
     ).toBe(0);
+
+    sent.length = 0;
+    setTransportForTests({
+      sendMail: async (message) => {
+        sent.push(message as unknown as SentMail);
+        return { messageId: 'mock' };
+      },
+    });
   });
 
   afterEach(async () => {
+    resetTransportForTests();
     const pool = getPool();
     for (const id of created.bookingIds) {
       await pool.query('DELETE FROM bookings WHERE id = ?', [id]);
@@ -821,6 +845,159 @@ describeWithDb('admin.dispatch.assign', () => {
       api.admin.dispatch.assign({ bookingId: secondBookingId, vanId: vanB, driverId }),
     ]);
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+  });
+
+  /* ---- Week 7 Task 14 (7E): §11's "driver assigned" guest email ---- */
+
+  /**
+   * The email names the DRIVER and the PLATE, which is why `NotifyPayload`
+   * grew two fields for it — and it names the tour title and the tour date,
+   * **neither of which is in the mutation's input**. That is the proof the
+   * notice re-queries the committed booking rather than echoing the request
+   * back, the same discipline `sendReceiptNotices` follows.
+   */
+  it('emails the guest with the driver, the plate and the committed booking facts', async () => {
+    const tourId = await makeTour();
+    const vanId = await makeVan({ capacity: 4 });
+    const driverId = await makeDriver();
+    const bookingId = await makeBooking({ tourId, pax: 2, status: 'confirmed' });
+
+    const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+    await api.admin.dispatch.assign({ bookingId, vanId, driverId });
+
+    const [booking] = await getDb()
+      .select({ ref: bookings.ref, leadEmail: bookings.leadEmail })
+      .from(bookings)
+      .where(eq(bookings.id, bookingId));
+    const [van] = await getDb().select({ plate: vans.plate }).from(vans).where(eq(vans.id, vanId));
+    const [driver] = await getDb()
+      .select({ name: drivers.name })
+      .from(drivers)
+      .where(eq(drivers.id, driverId));
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.to).toBe(booking!.leadEmail);
+    expect(sent[0]!.subject).toContain(booking!.ref);
+    expect(sent[0]!.html).toContain(driver!.name);
+    expect(sent[0]!.html).toContain(van!.plate);
+    // Read back from the row, not from the input: the input carried three ids
+    // and nothing else.
+    expect(sent[0]!.html).toContain(TOUR_DATE);
+  });
+
+  /**
+   * A refused assignment emails nobody.
+   *
+   * The booking is one that is ALREADY assigned, deliberately. A refusal on a
+   * never-assigned booking proves less than it looks: `sendAssignmentNotice`
+   * inner-joins `vans` and `drivers`, so with both ids still null it would
+   * find no row and send nothing wherever it were called from. Refusing a
+   * RE-assignment is the case where the notice could genuinely fire for work
+   * that did not happen — and moving the call above the verdict check turns
+   * this red, while the never-assigned version stays green (measured).
+   */
+  it('sends nothing when the assignment is refused', async () => {
+    const tourId = await makeTour();
+    const vanId = await makeVan({ capacity: 4 });
+    const driverId = await makeDriver();
+    const otherVanId = await makeVan({ capacity: 4 });
+    const otherDriverId = await makeDriver();
+    const bookingId = await makeBooking({ tourId, pax: 2, status: 'confirmed' });
+
+    const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+    await api.admin.dispatch.assign({ bookingId, vanId, driverId });
+    expect(sent).toHaveLength(1);
+    sent.length = 0;
+
+    // An in_progress re-assignment with no reason: refused by the service,
+    // on a booking that already holds a van and a driver.
+    await getDb().update(bookings).set({ status: 'in_progress' }).where(eq(bookings.id, bookingId));
+    await expect(
+      api.admin.dispatch.assign({ bookingId, vanId: otherVanId, driverId: otherDriverId }),
+    ).rejects.toThrow(/reason_required/);
+
+    expect(sent).toHaveLength(0);
+  });
+
+  it('sends nothing when the van is too small', async () => {
+    const tourId = await makeTour();
+    const tinyVanId = await makeVan({ capacity: 2 });
+    const driverId = await makeDriver();
+    const bookingId = await makeBooking({ tourId, pax: 6, status: 'confirmed' });
+
+    const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+    await expect(
+      api.admin.dispatch.assign({ bookingId, vanId: tinyVanId, driverId }),
+    ).rejects.toThrow(/van_too_small/);
+
+    expect(sent).toHaveLength(0);
+  });
+
+  /**
+   * **THE TEST THIS WHOLE ARRANGEMENT EXISTS FOR.** A mail server being down
+   * must never fail an assignment: the transaction has already committed by
+   * the time the notice is attempted, so the van really is dispatched and the
+   * dispatcher must be told so.
+   *
+   * Driven from the transport rather than by trusting `notify()`'s swallow,
+   * because the failure that matters is "the whole email step blew up", and
+   * this asserts both halves — the mutation still resolves `ok`, and the
+   * booking row really is assigned.
+   */
+  it('still assigns the van and driver when the mail transport is down', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const tourId = await makeTour();
+    const vanId = await makeVan({ capacity: 4 });
+    const driverId = await makeDriver();
+    const bookingId = await makeBooking({ tourId, pax: 2, status: 'confirmed' });
+
+    setTransportForTests({
+      sendMail: async () => {
+        throw new Error('smtp unreachable');
+      },
+    });
+
+    const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+    await expect(api.admin.dispatch.assign({ bookingId, vanId, driverId })).resolves.toEqual({
+      ok: true,
+    });
+
+    const [row] = await getDb()
+      .select({ vanId: bookings.vanId, driverId: bookings.driverId, status: bookings.status })
+      .from(bookings)
+      .where(eq(bookings.id, bookingId));
+    expect(row).toEqual({ vanId, driverId, status: 'assigned' });
+  });
+
+  /**
+   * And a re-assignment emails the NEW driver and van. The notice is not
+   * "once per booking" — the guest's information changed, so they are told
+   * again.
+   */
+  it('emails the new driver and plate on a re-assignment', async () => {
+    const tourId = await makeTour();
+    const vanId = await makeVan({ capacity: 4 });
+    const driverId = await makeDriver();
+    const otherVanId = await makeVan({ capacity: 4 });
+    const otherDriverId = await makeDriver();
+    const bookingId = await makeBooking({ tourId, pax: 2, status: 'confirmed' });
+
+    const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+    await api.admin.dispatch.assign({ bookingId, vanId, driverId });
+    await getDb().update(bookings).set({ status: 'in_progress' }).where(eq(bookings.id, bookingId));
+    await api.admin.dispatch.assign({
+      bookingId,
+      vanId: otherVanId,
+      driverId: otherDriverId,
+      reason: 'Breakdown at Carcar',
+    });
+
+    const [otherVan] = await getDb()
+      .select({ plate: vans.plate })
+      .from(vans)
+      .where(eq(vans.id, otherVanId));
+    expect(sent).toHaveLength(2);
+    expect(sent[1]!.html).toContain(otherVan!.plate);
   });
 
   it('lets a booking keep the van it already has when re-assigning the driver', async () => {
