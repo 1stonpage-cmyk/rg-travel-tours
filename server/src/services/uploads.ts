@@ -117,6 +117,11 @@ const ALLOWED = [
 
 export const ALLOWED_RECEIPT_TYPES = ALLOWED.map((a) => a.mime);
 
+/** The three image types a payment QR may be uploaded as — no PDF. */
+const QR_ALLOWED = ALLOWED.filter((a) => a.mime !== 'application/pdf');
+
+export const ALLOWED_QR_TYPES = QR_ALLOWED.map((a) => a.mime);
+
 /**
  * Where receipts live, resolved to an absolute path once.
  *
@@ -140,7 +145,10 @@ function extensionOf(filename: string): string | null {
 }
 
 /**
- * Validates and stores one receipt, returning the generated filename.
+ * Validates and stores one upload against a given set of allowed types and
+ * directory, returning the generated filename. Shared by `storeReceipt` and
+ * `storeQrImage` — same four checks, same random-name guarantee, different
+ * allow-list and destination.
  *
  * The order of the checks is deliberate: **size first**, because it is the
  * cheapest and the only one whose failure means we should not be looking at
@@ -148,16 +156,15 @@ function extensionOf(filename: string): string | null {
  * type, then the signature. Every one of them must pass; nothing is written
  * until all four have.
  */
-export async function storeReceipt(input: {
-  buffer: Buffer;
-  mimetype: string;
-  originalname: string;
-}): Promise<{ path: string }> {
-  if (input.buffer.byteLength > RECEIPT_MAX_BYTES) {
+async function storeUpload(
+  input: { buffer: Buffer; mimetype: string; originalname: string },
+  opts: { allowed: readonly (typeof ALLOWED)[number][]; maxBytes: number; dir: string },
+): Promise<{ path: string }> {
+  if (input.buffer.byteLength > opts.maxBytes) {
     throw new ReceiptTooLargeError(input.buffer.byteLength);
   }
 
-  const allowed = ALLOWED.find((a) => a.mime === input.mimetype.toLowerCase());
+  const allowed = opts.allowed.find((a) => a.mime === input.mimetype.toLowerCase());
   if (!allowed) throw new ReceiptTypeNotAllowedError(`declared type ${input.mimetype}`);
 
   const ext = extensionOf(input.originalname);
@@ -174,13 +181,37 @@ export async function storeReceipt(input: {
     throw new ReceiptTypeNotAllowedError(`bytes are not ${allowed.mime}`);
   }
 
-  const dir = receiptStorageDir();
-  await mkdir(dir, { recursive: true });
+  await mkdir(opts.dir, { recursive: true });
 
   // 16 bytes = 128 bits: unguessable, so the filename is not a credential
   // anyone can enumerate even before the authenticated route refuses them.
   const name = `${randomBytes(16).toString('hex')}.${allowed.ext}`;
-  await writeFile(join(dir, name), input.buffer);
+  await writeFile(join(opts.dir, name), input.buffer);
 
   return { path: name };
+}
+
+/** Validates and stores one receipt, returning the generated filename. */
+export async function storeReceipt(input: {
+  buffer: Buffer;
+  mimetype: string;
+  originalname: string;
+}): Promise<{ path: string }> {
+  return storeUpload(input, {
+    allowed: ALLOWED,
+    maxBytes: RECEIPT_MAX_BYTES,
+    dir: receiptStorageDir(),
+  });
+}
+
+/**
+ * Validates and stores one payment QR image — the same four checks as a
+ * receipt, restricted to PNG/JPG/WEBP (no PDF: a QR is always an image), and
+ * written to `dir` rather than `receiptStorageDir()`.
+ */
+export async function storeQrImage(
+  input: { buffer: Buffer; mimetype: string; originalname: string },
+  dir: string,
+): Promise<{ path: string }> {
+  return storeUpload(input, { allowed: QR_ALLOWED, maxBytes: RECEIPT_MAX_BYTES, dir });
 }

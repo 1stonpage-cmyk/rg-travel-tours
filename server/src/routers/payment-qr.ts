@@ -21,15 +21,47 @@
  * No session, a driver session, an unconfigured block, a configured block
  * whose file is missing: all 404, same body. There is nothing a caller can
  * learn about whether R&G have set up their QR yet.
+ *
+ * `POST /api/payment-qr/upload` — owner decision 2026-10-28: R&G's owner has
+ * no way to copy a file onto the server, so the settings screen's "QR image
+ * path" text field is replaced by an upload. Owner only — the same
+ * `ROLE_MATRIX.usersSettings` gate `admin.settings.write` uses for this
+ * block — reusing `storeReceipt`'s own safeguards (`storeQrImage`, in
+ * `services/uploads.ts`): declared MIME, extension, size and the file's own
+ * leading bytes, restricted to the three image types (no PDF — a QR is
+ * always an image), a random filename, written to `paymentQrStorageDir()`.
+ * The OLD file is kept, never deleted: `settings.payment_qr.imagePath` is
+ * just repointed at the new one. One `audit_log` row names the actor and
+ * both filenames — unlike `writeSettingBlock`'s generic `setting.updated`
+ * (which deliberately never logs a `payment_qr` value, because
+ * `accountNumber` is where a guest's money goes), a filename is not account
+ * data, and an owner asking "which file replaced which, and when" needs it.
+ * So this writes its own row directly, through the one validator
+ * (`SETTING_SCHEMAS.payment_qr`) and bypassing `writeSettingBlock` to avoid a
+ * second, redundant audit row for the same change.
  */
-import { Router } from 'express';
+import express, { Router } from 'express';
 import { createReadStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { stat, unlink } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
+import { eq } from 'drizzle-orm';
 import { readSettingBlock } from '../content/settings';
+import { SETTING_SCHEMAS } from '../content/settings-schema';
+import { SETTING_AUDIT_ENTITY, SETTING_AUDIT_ENTITY_ID } from '../content/settings-write';
+import { getDb } from '../db/client';
+import { settings } from '../db/schema';
 import { env } from '../env';
+import { ROLE_MATRIX } from '../middleware/require-role';
 import { SESSION_COOKIE } from '../middleware/session-cookie';
+import { writeAudit } from '../services/audit';
 import { readSession } from '../services/sessions';
+import {
+  ALLOWED_QR_TYPES,
+  RECEIPT_MAX_BYTES,
+  ReceiptTooLargeError,
+  ReceiptTypeNotAllowedError,
+  storeQrImage,
+} from '../services/uploads';
 
 /**
  * Where the QR image lives: a sibling of the receipts directory, under the
@@ -60,8 +92,97 @@ const CONTENT_TYPES: Record<string, string> = {
  */
 const QR_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,80}\.(png|jpg|jpeg|webp)$/;
 
+/** What the owner is told when the upload is not one of the three image types. */
+const TYPE_MESSAGE = 'Please upload a photo of the QR as a JPG, PNG or WEBP.';
+const SIZE_MESSAGE = 'That image is larger than 5MB. Please upload a smaller file.';
+
 export function createPaymentQrRouter(): Router {
   const router = Router();
+
+  /**
+   * **The upload.** Mounted before the `GET /` for clarity only — different
+   * methods, so the order does not matter to Express here. Same shape as
+   * `POST /api/receipts/upload`: the file as the raw body, its original
+   * name in the query string so the extension can be checked against the
+   * sniffed type.
+   */
+  router.post(
+    '/upload',
+    express.raw({ type: [...ALLOWED_QR_TYPES], limit: RECEIPT_MAX_BYTES + 1024 }),
+    async (req, res) => {
+      const refuse = (status: number, message: string) =>
+        res.status(status).json({ error: message });
+
+      const cookies = req.cookies as Record<string, string | undefined> | undefined;
+      const token = cookies?.[SESSION_COOKIE];
+      const session = token ? await readSession(token, new Date()) : null;
+      if (!session || session.subjectType !== 'user') {
+        return refuse(401, 'Please sign in again and retry the upload.');
+      }
+      // A staff member still on a temporary password has not finished signing in.
+      if (session.mustChangePassword === true) {
+        return refuse(401, 'Please sign in again and retry the upload.');
+      }
+      if (!ROLE_MATRIX.usersSettings.some((allowed) => allowed === session.role)) {
+        return refuse(403, 'Only the owner can change the payment QR.');
+      }
+
+      const filename = typeof req.query.filename === 'string' ? req.query.filename : '';
+      const body = req.body as unknown;
+      if (!Buffer.isBuffer(body) || body.byteLength === 0) return refuse(415, TYPE_MESSAGE);
+
+      let stored: { path: string };
+      try {
+        stored = await storeQrImage(
+          { buffer: body, mimetype: req.header('content-type') ?? '', originalname: filename },
+          paymentQrStorageDir(),
+        );
+      } catch (error) {
+        if (error instanceof ReceiptTooLargeError) return refuse(413, SIZE_MESSAGE);
+        if (error instanceof ReceiptTypeNotAllowedError) return refuse(415, TYPE_MESSAGE);
+        throw error;
+      }
+
+      // From here, the file is on disk: every exit below that does not
+      // commit the row removes it, so a refused or failed save never leaves
+      // an orphan image.
+      const removeStored = () =>
+        unlink(join(paymentQrStorageDir(), stored.path)).catch(() => undefined);
+
+      const current = await readSettingBlock('payment_qr');
+      const parsed = SETTING_SCHEMAS.payment_qr.safeParse({
+        ...current,
+        imagePath: stored.path,
+      });
+      if (!parsed.success) {
+        await removeStored();
+        return refuse(400, 'The QR could not be saved. Please try again.');
+      }
+
+      try {
+        await getDb().transaction(async (tx) => {
+          await tx
+            .update(settings)
+            .set({ value: parsed.data, updatedAt: new Date() })
+            .where(eq(settings.key, 'payment_qr'));
+
+          await writeAudit(tx, {
+            actorType: 'user',
+            actorId: session.subjectId,
+            action: 'payment_qr.image_uploaded',
+            entity: SETTING_AUDIT_ENTITY,
+            entityId: SETTING_AUDIT_ENTITY_ID,
+            data: { oldImagePath: current.imagePath, newImagePath: stored.path },
+          });
+        });
+      } catch (error) {
+        await removeStored();
+        throw error;
+      }
+
+      return res.status(200).json({ ok: true, imagePath: stored.path });
+    },
+  );
 
   router.get('/', async (req, res) => {
     /** The single refusal. Identical for every reason. */
