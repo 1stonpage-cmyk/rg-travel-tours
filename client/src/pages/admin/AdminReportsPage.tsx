@@ -65,6 +65,8 @@ const NOTICE =
   'border-brand-blue-200 bg-brand-blue-50 text-brand-blue-900 rounded-xl border p-3 text-sm font-medium';
 const ALERT =
   'border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-xl border p-3 text-sm font-medium';
+const PRIMARY_BUTTON =
+  'tap-target bg-brand-blue-700 hover:bg-brand-blue-800 rounded-[10px] font-semibold text-white transition-colors';
 const OUTLINE_BUTTON =
   'tap-target border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 hover:text-brand-blue-800 rounded-[10px] font-semibold transition-colors';
 const FIELD = 'tap-target border-brand-blue-200 rounded-[10px] bg-white';
@@ -461,10 +463,15 @@ function ReportsAdmin() {
                 onChange={(event) => setDraft({ ...draft, to: event.target.value })}
               />
             </div>
+            {/*
+              The one primary action on this screen, so the filled button:
+              `OUTLINE_BUTTON` here left shadcn's default `bg-primary` under
+              `text-brand-blue-700`, which is blue text on a blue fill.
+            */}
             <Button
               type="submit"
               disabled={invalid}
-              className={`${OUTLINE_BUTTON} w-full sm:w-auto`}
+              className={`${PRIMARY_BUTTON} w-full sm:w-auto`}
             >
               Show these dates
             </Button>
