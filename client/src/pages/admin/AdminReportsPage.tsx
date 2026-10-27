@@ -58,6 +58,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { MONEY_ROLES, roleMay } from '@/lib/roles';
 import { trpc } from '@/lib/trpc';
 
 const CARD = 'border-brand-blue-100 rounded-[14px] border bg-white';
@@ -70,9 +71,6 @@ const PRIMARY_BUTTON =
 const OUTLINE_BUTTON =
   'tap-target border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 hover:text-brand-blue-800 rounded-[10px] font-semibold transition-colors';
 const FIELD = 'tap-target border-brand-blue-200 rounded-[10px] bg-white';
-
-/** §9's `reports` row, mirrored for the cosmetic half of the gate. */
-const MAY_READ_REPORTS = ['owner', 'finance'];
 
 /** Is this refusal a role problem (401/403), rather than a network fault? */
 function isRoleRefusal(error: unknown): boolean {
@@ -560,7 +558,8 @@ function ReportsAdmin() {
 export default function AdminReportsPage() {
   const me = trpc.staffAuth.me.useQuery(undefined, { retry: false });
 
-  if (me.data && !MAY_READ_REPORTS.includes(me.data.role)) {
+  // §9's `reports` row, from `lib/roles.ts`; the server is the real gate.
+  if (me.data && !roleMay(me.data.role, MONEY_ROLES)) {
     return <DeniedState />;
   }
 

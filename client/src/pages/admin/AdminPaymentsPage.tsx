@@ -39,10 +39,8 @@ import { formatPeso } from '@rg/shared';
 import PaymentDecisions from '@/components/admin/PaymentDecisions';
 import { findPendingCash, findPendingReceipt } from '@/components/admin/pending-payments';
 import { pesosInWords } from '@/lib/peso-words';
+import { MONEY_ROLES, roleMay } from '@/lib/roles';
 import { trpc } from '@/lib/trpc';
-
-/** §9: verify payments is owner and finance. The server enforces it. */
-const MAY_VERIFY = ['owner', 'finance'];
 
 /** The list endpoint's page cap. A queue longer than this says so. */
 const QUEUE_LIMIT = 100;
@@ -108,7 +106,8 @@ export default function AdminPaymentsPage() {
     { retry: false, enabled: selectedRef !== '' },
   );
 
-  const mayVerify = me.data ? MAY_VERIFY.includes(me.data.role) : false;
+  // §9's "Verify payments" row, from `lib/roles.ts`. The server enforces it.
+  const mayVerify = roleMay(me.data?.role, MONEY_ROLES);
   const booking = detail.data;
   const receipt = booking ? findPendingReceipt(booking.payments) : undefined;
   const cash = booking ? findPendingCash(booking.payments) : [];

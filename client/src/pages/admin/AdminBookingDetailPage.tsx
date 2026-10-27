@@ -54,6 +54,7 @@ import AssignPanel from '@/components/admin/AssignPanel';
 import CancelRefundPanel from '@/components/admin/CancelRefundPanel';
 import PaymentDecisions from '@/components/admin/PaymentDecisions';
 import BookingStatusPill from '@/components/admin/BookingStatusPill';
+import { BOOKING_VIEW_ROLES, MONEY_ROLES, roleMay } from '@/lib/roles';
 
 const CARD = 'border-brand-blue-100 rounded-[14px] border bg-white p-5 text-sm';
 const HEADING = 'text-brand-ink text-lg font-bold';
@@ -61,16 +62,6 @@ const PRIMARY_BUTTON =
   'tap-target bg-brand-blue-700 hover:bg-brand-blue-800 rounded-[10px] font-semibold text-white transition-colors';
 const OUTLINE_BUTTON =
   'tap-target border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 hover:text-brand-blue-800 rounded-[10px] font-semibold transition-colors';
-
-/** §9: verify payments is owner and finance. The server enforces it. */
-const MAY_VERIFY = ['owner', 'finance'];
-
-/**
- * §9 "Bookings: view, notes": every staff role that can open this page may
- * also write a note on it (`bookingsView`). The server enforces it; this only
- * decides whether to draw the form.
- */
-const MAY_WRITE_NOTES = ['owner', 'dispatcher', 'finance'];
 
 export default function AdminBookingDetailPage() {
   const { ref = '' } = useParams();
@@ -120,8 +111,13 @@ export default function AdminBookingDetailPage() {
   }
 
   const booking = query.data;
-  const mayVerify = me.data ? MAY_VERIFY.includes(me.data.role) : false;
-  const mayWriteNotes = me.data ? MAY_WRITE_NOTES.includes(me.data.role) : false;
+  /*
+   * §9's "Verify payments" and "Bookings: view, notes" rows, from the one
+   * client-side mirror of the matrix (`lib/roles.ts`). Cosmetic in both
+   * cases — the server refuses either call from the wrong role.
+   */
+  const mayVerify = roleMay(me.data?.role, MONEY_ROLES);
+  const mayWriteNotes = roleMay(me.data?.role, BOOKING_VIEW_ROLES);
   const noteIsEmpty = noteText.trim() === '';
 
   return (

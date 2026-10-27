@@ -1,10 +1,24 @@
 /**
  * Week 5, Task 14: the admin dashboard (BUILD_SPEC §9 "Dashboard").
  *
- * Seven alert cards, always all seven, from `admin.dashboard.alerts`. §9 gives
- * this screen to all three roles and `ROLE_MATRIX.dashboard` already is that
- * trio, so there is no role gate here — unlike the assign panel, nothing on
- * this page is an action finance cannot take.
+ * Seven alert cards from `admin.dashboard.alerts`. §9 gives this screen to all
+ * three roles and `ROLE_MATRIX.dashboard` already is that trio, so there is no
+ * role gate on the page itself — unlike the assign panel, nothing here is an
+ * action finance cannot take.
+ *
+ * ## One card is not drawn for a dispatcher
+ *
+ * "Payments to verify" leads to `/admin/payments`, which is §9's
+ * `verifyPayments` row — owner and finance. The nav has never offered a
+ * dispatcher that link; the card did, and every receipt behind it is already
+ * hidden from them (Task 4), so it was a card whose only outcome was a dead
+ * end. Owner decision 2026-10-23 removes it, with **no explanation note**:
+ * the card simply is not there, the same as any other role-hidden element.
+ *
+ * **Cosmetic, and only cosmetic.** `admin.dashboard.alerts` still computes
+ * and still returns the alert to all three roles, gated exactly as it was —
+ * `ROLE_MATRIX.dashboard`. This decides what the page DRAWS with data it
+ * already has; the refusal that matters is `admin.payments`'s own.
  *
  * ## One status region for the whole set
  *
@@ -28,6 +42,7 @@ import { Link } from 'react-router-dom';
 import type { DashboardAlert } from '@rg/shared';
 import AlertCard from '@/components/admin/AlertCard';
 import DeparturesBoard from '@/components/admin/DeparturesBoard';
+import { MONEY_ROLES, roleMay } from '@/lib/roles';
 import { trpc } from '@/lib/trpc';
 
 /**
@@ -91,14 +106,20 @@ function manilaGreeting(): string {
 
 export default function AdminDashboardPage() {
   const query = trpc.admin.dashboard.alerts.useQuery(undefined, { retry: false });
-  // A greeting, never a gate: the dashboard's alerts above already work on
-  // their own query, independent of whether this one is pending or fails.
+  /*
+   * The greeting, and now which cards are drawn. Still never a gate: the
+   * alerts work on their own query, independent of whether this one is
+   * pending or fails, and a role this page cannot read draws the SMALLER
+   * set — the same direction `AdminLayout`'s nav already goes when `me` is
+   * pending or has failed.
+   */
   const me = trpc.staffAuth.me.useQuery(undefined, { retry: false });
+  const mayVerifyPayments = roleMay(me.data?.role, MONEY_ROLES);
 
   const alerts = query.data ?? [];
-  const ordered = ORDER.map((kind) => alerts.find((a) => a.kind === kind)).filter(
-    (a): a is DashboardAlert => a !== undefined,
-  );
+  const ordered = ORDER.filter((kind) => kind !== 'payments_to_verify' || mayVerifyPayments)
+    .map((kind) => alerts.find((a) => a.kind === kind))
+    .filter((a): a is DashboardAlert => a !== undefined);
 
   return (
     <div className="flex flex-col gap-6">

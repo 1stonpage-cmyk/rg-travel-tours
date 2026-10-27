@@ -38,7 +38,21 @@ const ALL_SEVEN_NONZERO: DashboardAlert[] = [
   alert('driver_locked', 1, [{ id: 7, label: 'Joselito Reyes', date: null }]),
 ];
 
-function renderDashboard(alerts: DashboardAlert[]) {
+/** What `staffAuth.me` answers unless a test says otherwise. */
+const OWNER_ME = { userId: 1, role: 'owner', mustChangePassword: false, name: 'Olivia Owner' };
+
+/**
+ * `me` reaches the page through `staffAuth.me`, and its ROLE now decides one
+ * thing: whether the "payments to verify" card is drawn at all (owner
+ * decision 2026-10-23, item 13). It defaults to an owner so every assertion
+ * written before that decision still describes the page it was written
+ * against; the dispatcher case has its own block below.
+ *
+ * Pass `null` to leave `staffAuth.me` to whatever the test registered
+ * itself — which is how the "the name never arrives" test keeps its
+ * `mockTrpcError` from being overwritten here.
+ */
+function renderDashboard(alerts: DashboardAlert[], me: object | null = OWNER_ME) {
   /*
    * The departures board (Week 6, Task 12) owns its own query on this
    * page, so every render here has to answer it too — an unmocked
@@ -47,7 +61,11 @@ function renderDashboard(alerts: DashboardAlert[]) {
    * answer: the board then renders its "nothing departing" line and the
    * alert cards are what is under test.
    */
-  mockTrpc({ 'admin.dashboard.alerts': alerts, 'admin.departures.today': [] });
+  mockTrpc({
+    'admin.dashboard.alerts': alerts,
+    'admin.departures.today': [],
+    ...(me === null ? {} : { 'staffAuth.me': me }),
+  });
   return render(
     <TrpcProviders>
       <MemoryRouter>
@@ -348,15 +366,7 @@ describe('AdminDashboardPage', () => {
    */
   describe('the staff greeting', () => {
     it('greets the signed-in staff member by name', async () => {
-      mockTrpc({
-        'staffAuth.me': {
-          userId: 1,
-          role: 'owner',
-          mustChangePassword: false,
-          name: 'Maria Santos',
-        },
-      });
-      renderDashboard([]);
+      renderDashboard([], { ...OWNER_ME, name: 'Maria Santos' });
       // The h1 exists from the very first synchronous render (it falls back
       // to "Dashboard" while `me` is pending), so `findByRole` alone would
       // resolve against that first paint — wait for the NAME to land before
@@ -375,10 +385,56 @@ describe('AdminDashboardPage', () => {
      */
     it('falls back to the plain heading when staffAuth.me fails, and the rest of the page still renders', async () => {
       mockTrpcError('staffAuth.me', 'INTERNAL_SERVER_ERROR');
-      renderDashboard([alert('vans_in_repair', 1)]);
+      renderDashboard([alert('vans_in_repair', 1)], null);
       const heading = await screen.findByRole('heading', { level: 1 });
       expect(heading.textContent).toBe('Dashboard');
       expect(await screen.findByTestId('alert-vans_in_repair')).toBeTruthy();
+    });
+  });
+
+  /**
+   * Owner decision 2026-10-23, 7N item 13. The card leads to
+   * `/admin/payments`, §9's `verifyPayments` row — owner and finance. The
+   * nav never offered a dispatcher that link; the card did, and every
+   * receipt behind it is already hidden from them, so it was a card whose
+   * only outcome was a dead end.
+   *
+   * COSMETIC ONLY, which is the half worth pinning: the server still sends
+   * the alert to all three roles. These tests therefore hand the page the
+   * same payload for every role and assert only on what it DRAWS — if they
+   * mocked the alert away for a dispatcher they would prove nothing about
+   * this change and would hide a server-side regression.
+   */
+  describe('the payments-to-verify card by role', () => {
+    it('is NOT drawn for a dispatcher, though the server still sent it', async () => {
+      renderDashboard(ALL_SEVEN_NONZERO, { ...OWNER_ME, role: 'dispatcher' });
+      // Wait for a card that IS theirs, so this is not asserting on an
+      // unrendered page.
+      await screen.findByTestId('alert-unassigned_soon');
+      expect(screen.queryByTestId('alert-payments_to_verify')).toBeNull();
+      // No explanation note (owner decision): the card simply is not there.
+      expect(screen.queryByText(/payments to verify/i)).toBeNull();
+      // The other six are untouched.
+      expect(screen.getAllByTestId(/^alert-/)).toHaveLength(6);
+      // And the one status sentence counts what is DRAWN: 14 − 2 = 12.
+      expect(screen.getByRole('status').textContent).toMatch(/12 things need attention/i);
+    });
+
+    it('IS drawn for an owner and for finance', async () => {
+      for (const role of ['owner', 'finance']) {
+        renderDashboard(ALL_SEVEN_NONZERO, { ...OWNER_ME, role });
+        expect(await screen.findByTestId('alert-payments_to_verify')).toBeTruthy();
+        resetTrpcMock();
+      }
+    });
+
+    it('is not drawn while the role is still unknown, erring towards the smaller screen', async () => {
+      // `AdminLayout`'s nav goes the same way when `me` is pending or has
+      // failed: draw less, never a control whose only outcome is a refusal.
+      mockTrpcError('staffAuth.me', 'INTERNAL_SERVER_ERROR');
+      renderDashboard(ALL_SEVEN_NONZERO, null);
+      await screen.findByTestId('alert-unassigned_soon');
+      expect(screen.queryByTestId('alert-payments_to_verify')).toBeNull();
     });
   });
 

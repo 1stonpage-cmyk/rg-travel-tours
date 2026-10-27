@@ -50,10 +50,8 @@ import { formatPeso } from '@rg/shared';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { pesosInWords } from '@/lib/peso-words';
+import { MONEY_ROLES, roleMay } from '@/lib/roles';
 import { trpc } from '@/lib/trpc';
-
-/** §9's "Cancel / refund" row. The server enforces it; see the file note. */
-const MAY_CANCEL_REFUND = ['owner', 'finance'];
 
 /**
  * The statuses the server will cancel FROM
@@ -170,7 +168,8 @@ export default function CancelRefundPanel({
     },
   });
 
-  if (!me.data || !MAY_CANCEL_REFUND.includes(me.data.role)) return null;
+  // §9's "Cancel / refund" row, from `lib/roles.ts`. See the file note.
+  if (!roleMay(me.data?.role, MONEY_ROLES)) return null;
 
   /*
    * The guide figures. `type === 'refund'` rows are money out; everything
