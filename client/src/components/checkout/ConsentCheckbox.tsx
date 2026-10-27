@@ -20,6 +20,19 @@ type Props = {
  * same submit-blocks-and-explains behaviour. Each link opens in a new tab
  * (`target="_blank"`) so a guest never loses their in-progress hold by
  * navigating away from checkout to read them.
+ *
+ * Week 7 batch 5 pre-task (2026-10-28): the shadcn `Label` primitive's own
+ * base classes include `flex items-center gap-2` (`components/ui/label.tsx`)
+ * — meant for a short "icon beside text" label, not a sentence with inline
+ * links. Once Task 2E added three `<a>` children, each one became its own
+ * FLEX ITEM rather than inline content sharing the paragraph's line, so a
+ * multi-word link name wrapped inside its own narrow item ("Terms / of /
+ * Service") instead of flowing with the sentence. `block` overrides that
+ * display (via `cn`'s `twMerge`, the last utility in a group wins) so the
+ * links are plain inline text again; `leading-relaxed` replaces the base's
+ * `leading-none`, which — now that this sentence actually wraps — was
+ * crushing its lines together. Checkbox validation, wording and the submit
+ * block-and-explain behaviour are unchanged.
  */
 export default function ConsentCheckbox({ error, onChange }: Props) {
   return (
@@ -32,7 +45,10 @@ export default function ConsentCheckbox({ error, onChange }: Props) {
           onChange={onChange}
           className="accent-brand-blue-600 border-input mt-0.5 size-5 shrink-0 rounded"
         />
-        <Label htmlFor="checkout-consent" className="text-muted-foreground text-sm font-normal">
+        <Label
+          htmlFor="checkout-consent"
+          className="text-muted-foreground block text-sm font-normal leading-relaxed"
+        >
           I agree to {SITE.legalOperator} collecting and storing my details to process this booking,
           per the Data Privacy Act (RA 10173), and to the{' '}
           <a
