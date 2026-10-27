@@ -611,6 +611,7 @@ Check-ins update the admin dashboard within ~15 seconds (polling is fine; no web
 | Cancel / refund                  | ✅    | ❌         | ✅      |
 | Vans, drivers                    | ✅    | ✅         | ❌      |
 | Tours, pricing, coupons          | ✅    | ❌         | ❌      |
+| Packages, inquiries              | ✅    | ✅         | ❌      |
 | Reviews moderation               | ✅    | ✅         | ❌      |
 | Reports, CSV export              | ✅    | ❌         | ✅      |
 | Users, settings                  | ✅    | ❌         | ❌      |

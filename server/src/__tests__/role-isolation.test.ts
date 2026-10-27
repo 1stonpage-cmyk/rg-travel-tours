@@ -1,12 +1,12 @@
 /**
  * Task 17 of the core-schema plan: role isolation, both directions.
  *
- * CLAUDE.md asks for "a test per role per area". Three roles across §9's eleven
- * areas is 33 cases, and they are GENERATED from `ROLE_MATRIX` rather than
+ * CLAUDE.md asks for "a test per role per area". Three roles across §9's twelve
+ * areas is 36 cases, and they are GENERATED from `ROLE_MATRIX` rather than
  * hand-written, because the direction that matters is the denial — and the
  * denial is exactly the case a hand-written set forgets. Writing them out by
  * hand also lets a new area arrive with no test at all; generating them means
- * area eleven is covered the moment it is added to the matrix.
+ * area twelve is covered the moment it is added to the matrix.
  *
  * Three layers, because the generated 33 on their own would prove less than
  * they appear to:
@@ -83,7 +83,7 @@ function gated(area: AdminArea) {
 
 /**
  * Listed one per line rather than generated from `Object.keys`, so that the
- * router is a second, independent statement of the eleven areas: a key dropped
+ * router is a second, independent statement of the twelve areas: a key dropped
  * here while the matrix keeps it is caught by `covers every area`, below.
  */
 const adminHarness = router({
@@ -98,6 +98,7 @@ const adminHarness = router({
   reports: gated('reports'),
   usersSettings: gated('usersSettings'),
   staffAccounts: gated('staffAccounts'),
+  packagesInquiries: gated('packagesInquiries'),
 });
 
 /** An authenticated staff session, as the Week 5 session service will build it. */
@@ -137,7 +138,7 @@ async function callArea(area: AdminArea, ctx: unknown) {
  * §9's row labels, mapped to matrix keys. This mapping is the only thing that
  * cannot be derived — the spec writes prose ("Verify payments, record
  * payments"), the code writes an identifier — so it is stated once, here,
- * and the eleven labels must match the spec's text exactly or the parse fails.
+ * and the twelve labels must match the spec's text exactly or the parse fails.
  */
 const AREA_LABELS: Record<string, AdminArea> = {
   Dashboard: 'dashboard',
@@ -147,6 +148,10 @@ const AREA_LABELS: Record<string, AdminArea> = {
   'Cancel / refund': 'cancelRefund',
   'Vans, drivers': 'vansDrivers',
   'Tours, pricing, coupons': 'toursPricing',
+  // Week 7 Task 13, owner decision 2026-10-23 (Q3): packages and inquiries
+  // are one operational area — owner and dispatcher. The newsletter export
+  // is NOT in it; §9 keeps that under "Users, settings".
+  'Packages, inquiries': 'packagesInquiries',
   'Reviews moderation': 'reviewsModeration',
   'Reports, CSV export': 'reports',
   'Users, settings': 'usersSettings',
@@ -189,9 +194,9 @@ function parseSpecMatrix(): Record<string, AdminRole[]> {
 describe('ROLE_MATRIX is BUILD_SPEC §9, transcribed', () => {
   const specMatrix = parseSpecMatrix();
 
-  it('covers the eleven areas of §9 and nothing else', () => {
+  it('covers the twelve areas of §9 and nothing else', () => {
     expect(Object.keys(ROLE_MATRIX).sort()).toEqual(Object.keys(specMatrix).sort());
-    expect(Object.keys(ROLE_MATRIX)).toHaveLength(11);
+    expect(Object.keys(ROLE_MATRIX)).toHaveLength(12);
   });
 
   for (const [area, allowed] of Object.entries(ROLE_MATRIX)) {
@@ -201,10 +206,10 @@ describe('ROLE_MATRIX is BUILD_SPEC §9, transcribed', () => {
     });
   }
 
-  it('splits the 33 role/area cases 21 allowed to 12 denied', () => {
+  it('splits the 36 role/area cases 23 allowed to 13 denied', () => {
     const allow = Object.values(ROLE_MATRIX).reduce((sum, roles) => sum + roles.length, 0);
-    expect(allow).toBe(21);
-    expect(ADMIN_ROLES.length * Object.keys(ROLE_MATRIX).length - allow).toBe(12);
+    expect(allow).toBe(23);
+    expect(ADMIN_ROLES.length * Object.keys(ROLE_MATRIX).length - allow).toBe(13);
   });
 
   it('names no role outside ADMIN_ROLES', () => {

@@ -64,6 +64,26 @@ export const ROLE_MATRIX = {
    * access here, not even to read.
    */
   staffAccounts: ['owner'],
+  /**
+   * Packages, inquiries              ✅ ✅ ❌
+   *
+   * Owner decision 2026-10-23 (Q3, option c — split). An enquiry is
+   * operational work: somebody has to answer it the same day, and a
+   * dispatcher already reads bookings, guest names and phone numbers under
+   * `bookingsView`, so this adds no class of personal data they cannot
+   * already see. Packages travel with the enquiries because a package
+   * enquiry is about a package — editing one and answering the other are the
+   * same person's afternoon.
+   *
+   * **The newsletter export is NOT in this area.** A list of every subscriber
+   * in one file is a different act from answering one enquiry, and §9 already
+   * lists "Newsletter list export" under Settings — so it is gated
+   * `usersSettings` (owner only) and lives in `admin.newsletter.export`. Two
+   * gates on one screen, deliberately.
+   *
+   * Finance is excluded in both directions: an enquiry carries no money.
+   */
+  packagesInquiries: ['owner', 'dispatcher'],
 } as const satisfies Record<string, readonly AdminRole[]>;
 
 /** The gated areas of §9's table. */
