@@ -2,6 +2,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { LogOut, Menu, X } from 'lucide-react';
 import { useState } from 'react';
 import { Link, Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { APP_SURFACE_TITLES } from '@rg/shared';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { trpc } from '@/lib/trpc';
 import { navFor } from './admin-nav';
 
@@ -104,6 +106,14 @@ function SidebarFooter({ showAccountLink }: { showAccountLink: boolean }) {
 
 export default function AdminLayout() {
   const location = useLocation();
+  /*
+   * The same words the server injects for `/admin` (`APP_SURFACE_TITLES`,
+   * `@rg/shared`), re-asserted so a staff member who arrives here from a
+   * public page by a client-side navigation does not keep that page's tab
+   * title. One name for the whole console on purpose: a screen title would
+   * have to be decided per route, and every one of them is "Staff console".
+   */
+  useDocumentTitle(APP_SURFACE_TITLES['/admin']);
   const me = trpc.staffAuth.me.useQuery(undefined, { retry: false });
   const mustChange = me.data?.mustChangePassword === true;
   const role = me.data?.role;

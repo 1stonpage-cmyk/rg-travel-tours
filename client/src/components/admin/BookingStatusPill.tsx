@@ -3,17 +3,13 @@
  * groups them (waiting on us / on track / done / closed), so nothing depends
  * on colour alone. No red: a closed booking is slate, a waiting one is amber.
  */
-const LABELS: Record<string, string> = {
-  pending_payment: 'Awaiting payment',
-  pending_verification: 'Checking receipt',
-  confirmed: 'Confirmed',
-  assigned: 'Driver assigned',
-  in_progress: 'On tour',
-  completed: 'Completed',
-  cancelled: 'Cancelled',
-  expired: 'Expired',
-};
+import { BOOKING_STATUS_LABELS, type BookingStatus } from '@rg/shared';
 
+/**
+ * The tint, and only the tint, lives here. The WORDS are
+ * `BOOKING_STATUS_LABELS` (`@rg/shared`), shared with the three admin
+ * screens; this grouping is this component's own design.
+ */
 const TONES: Record<string, string> = {
   pending_payment: 'bg-brand-gold-100 text-brand-gold-800',
   pending_verification: 'bg-brand-gold-100 text-brand-gold-800',
@@ -25,14 +21,14 @@ const TONES: Record<string, string> = {
   expired: 'bg-slate-100 text-brand-error',
 };
 
-export default function BookingStatusPill({ status }: { status: string }) {
+export default function BookingStatusPill({ status }: { status: BookingStatus }) {
   return (
     <span
       className={`inline-flex items-center whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold ${
         TONES[status] ?? 'text-brand-error bg-slate-100'
       }`}
     >
-      {LABELS[status] ?? status}
+      {BOOKING_STATUS_LABELS[status]}
     </span>
   );
 }

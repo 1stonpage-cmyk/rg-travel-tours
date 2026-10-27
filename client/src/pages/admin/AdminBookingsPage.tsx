@@ -23,7 +23,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
-import { BOOKING_STATUSES, formatPeso } from '@rg/shared';
+import { BOOKING_STATUS_LABELS, BOOKING_STATUSES, formatPeso } from '@rg/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -36,18 +36,6 @@ const CARD = 'border-brand-blue-100 rounded-[14px] border bg-white';
 const FIELD = 'tap-target border-brand-blue-200 rounded-[10px] bg-white';
 const OUTLINE_BUTTON =
   'tap-target border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 hover:text-brand-blue-800 rounded-[10px] font-semibold transition-colors';
-
-/** The statuses, in the order §5 lists them, with readable labels. */
-const STATUS_LABELS: Record<string, string> = {
-  pending_payment: 'Awaiting payment',
-  pending_verification: 'Checking receipt',
-  confirmed: 'Confirmed',
-  assigned: 'Driver assigned',
-  in_progress: 'On tour',
-  completed: 'Completed',
-  cancelled: 'Cancelled',
-  expired: 'Expired',
-};
 
 export default function AdminBookingsPage() {
   const [status, setStatus] = useState<string>('');
@@ -100,7 +88,7 @@ export default function AdminBookingsPage() {
             <option value="">Any status</option>
             {BOOKING_STATUSES.map((value) => (
               <option key={value} value={value}>
-                {STATUS_LABELS[value] ?? value}
+                {BOOKING_STATUS_LABELS[value]}
               </option>
             ))}
           </select>

@@ -1,9 +1,11 @@
 import { useEffect } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
+import { STATIC_PUBLIC_TITLES, type StaticPublicPath } from '@rg/shared';
 import CookieConsentBanner from '@/components/common/CookieConsentBanner';
 import CookieCustomizePanel from '@/components/common/CookieCustomizePanel';
 import { ConsentProvider } from '@/lib/consent/ConsentContext';
 import { useConsent } from '@/lib/consent/useConsent';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { cn } from '@/lib/utils';
 import AnnouncementBar from './AnnouncementBar';
 import FloatingWhatsApp from './FloatingWhatsApp';
@@ -33,8 +35,28 @@ function MainContent() {
   );
 }
 
+/**
+ * The page name for a public route, or `null` to leave the server's injected
+ * title alone.
+ *
+ * Only the routes whose title no database row owns are named here, and the
+ * names come from `@rg/shared` rather than this file (see
+ * `hooks/useDocumentTitle.ts`). `/`, `/tours/:slug` and `/packages/:slug`
+ * resolve their titles from `settings.site_seo` and each row's own
+ * `seo_title`; the browser cannot read either, so they get `null` and keep
+ * exactly the behaviour they have today. `/checkout/:slug` and
+ * `/booking/:ref` are noindex thin-content screens with no injected title of
+ * their own to improve on.
+ */
+function publicTitle(pathname: string): string | null {
+  const path = pathname.replace(/\/+$/, '') || '/';
+  return STATIC_PUBLIC_TITLES[path as StaticPublicPath] ?? null;
+}
+
 export default function PublicLayout() {
   const { pathname, hash } = useLocation();
+
+  useDocumentTitle(publicTitle(pathname));
 
   // React Router does not perform the browser's native fragment scroll on
   // client-side navigation (pushState never triggers it). Do it ourselves:

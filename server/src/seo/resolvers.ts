@@ -16,7 +16,12 @@
  * built by the pure builders in `seo/jsonld.ts`, and this module's only job
  * is to hand them the rows and settings they need.
  */
-import { formatPeso, HERO_IMAGE_PRELOAD } from '@rg/shared';
+import {
+  APP_SURFACE_TITLES,
+  formatPeso,
+  HERO_IMAGE_PRELOAD,
+  STATIC_PUBLIC_TITLES,
+} from '@rg/shared';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import {
   readContentUnverified,
@@ -376,25 +381,27 @@ export function notFoundMeta(pathname: string): PageMeta {
  * surface added there without a title here is a compile error rather than a
  * crash on a driver's phone.
  *
- * Titles name a place, not a status ("Driver portal", not "Please sign in"):
- * the tab is what a driver looks at for a whole shift, and the page behind it
- * changes from sign-in to itinerary without the title ever being re-injected.
- * The brand, not the licensed operator: a tab title is customer-facing copy.
+ * The title WORDS come from `APP_SURFACE_TITLES` (`@rg/shared`) because the
+ * SPA re-asserts them as `document.title` on client-side navigation (Task
+ * 17, item 4) — the browser is a third reader of these names, and a map of
+ * its own in the client would be the drifting copy "never build meta in a
+ * surface" exists to prevent. The descriptions stay here: they are meta, and
+ * no browser tab shows them.
  */
 const APP_SURFACE_COPY: Record<
   (typeof NOINDEX_PATH_PREFIXES)[number],
   { title: string; description: string }
 > = {
   '/driver': {
-    title: `Driver portal | ${BRAND}`,
+    title: `${APP_SURFACE_TITLES['/driver']} | ${BRAND}`,
     description: `Sign-in for ${BRAND} drivers. Not a public page.`,
   },
   '/admin': {
-    title: `Staff console | ${BRAND}`,
+    title: `${APP_SURFACE_TITLES['/admin']} | ${BRAND}`,
     description: `Sign-in for ${BRAND} staff. Not a public page.`,
   },
   '/portal': {
-    title: `My booking | ${BRAND}`,
+    title: `${APP_SURFACE_TITLES['/portal']} | ${BRAND}`,
     description: `Manage your ${BRAND} booking. Not a public page.`,
   },
 };
@@ -483,10 +490,13 @@ const resolveHome: Resolver = async () => {
 };
 
 /**
- * `/tours` — the catalog index. Its title is navigational and lives here
- * rather than in `settings`: there is no `settings` key for it, and inventing
- * one would be a schema change this task does not own. Its description is the
- * site description, so there is no invented marketing copy on the page.
+ * `/tours` — the catalog index. Its title is navigational rather than
+ * content: there is no `settings` key for it, and inventing one would be a
+ * schema change this task does not own. It is read from
+ * `STATIC_PUBLIC_TITLES` (`@rg/shared`) so `PublicLayout` can re-assert the
+ * same words as `document.title` after a client-side navigation. Its
+ * description is the site description, so there is no invented marketing
+ * copy on the page.
  */
 const resolveToursIndex: Resolver = async () => {
   const { siteSeo, hero } = await readSiteBlocks();
@@ -497,7 +507,7 @@ const resolveToursIndex: Resolver = async () => {
   const { agency } = await buildSiteGraph(siteSeo.description, ogImage);
 
   return {
-    title: `Cebu Day Tours | ${BRAND}`,
+    title: `${STATIC_PUBLIC_TITLES['/tours']} | ${BRAND}`,
     description: siteSeo.description,
     canonical: absoluteUrl('/tours'),
     ogImage,
@@ -518,22 +528,22 @@ const resolveToursIndex: Resolver = async () => {
 const LEGAL_PAGES = {
   privacy: {
     path: '/privacy',
-    title: `Privacy Notice | ${BRAND}`,
+    title: `${STATIC_PUBLIC_TITLES['/privacy']} | ${BRAND}`,
     description: `How ${BRAND} (operated by ${LEGAL_OPERATOR}) collects, uses and protects your personal data under the Data Privacy Act of 2012 (RA 10173).`,
   },
   terms: {
     path: '/terms',
-    title: `Terms of Service | ${BRAND}`,
+    title: `${STATIC_PUBLIC_TITLES['/terms']} | ${BRAND}`,
     description: `Booking, payment, cancellation and safety terms for Cebu tours operated by ${LEGAL_OPERATOR}.`,
   },
   refund: {
     path: '/refund-policy',
-    title: `Cancellation & Refund Policy | ${BRAND}`,
+    title: `${STATIC_PUBLIC_TITLES['/refund-policy']} | ${BRAND}`,
     description: `Cancellation windows, refund rules and how refunds are paid for ${BRAND} tours operated by ${LEGAL_OPERATOR}.`,
   },
   cookies: {
     path: '/cookies',
-    title: `Cookie Policy | ${BRAND}`,
+    title: `${STATIC_PUBLIC_TITLES['/cookies']} | ${BRAND}`,
     description: `The essential, analytics and marketing cookies ${BRAND} uses, and how to change your choice.`,
   },
 } as const;

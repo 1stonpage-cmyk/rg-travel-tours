@@ -69,6 +69,37 @@ export const CAPACITY_HOLDING_STATUSES = [
 ] as const satisfies readonly BookingStatus[];
 export type CapacityHoldingStatus = (typeof CAPACITY_HOLDING_STATUSES)[number];
 
+/**
+ * The words every surface uses for a booking status, in §5's order.
+ *
+ * `Record<BookingStatus, string>` so the compiler refuses a build where a
+ * ninth status has no words — the same guard `INQUIRY_STATUS_LABELS` uses.
+ *
+ * **Why shared.** Four byte-identical copies of this map had grown up
+ * independently (`DeparturesBoard`, `AdminBookingsPage`, `AdminCalendarPage`
+ * and `BookingStatusPill`), two of them carrying comments arguing opposite
+ * sides of whether a dictionary this short is worth sharing. Settled by
+ * doing it: the words a guest and a dispatcher read for the same status must
+ * not be able to drift, and the typed `Record` only guards the copy it is
+ * written on.
+ *
+ * The TONE maps stay where they are. `DeparturesBoard` and
+ * `BookingStatusPill` group these statuses differently on purpose (a
+ * departures row highlights `in_progress`; a pill tints by "waiting on us /
+ * on track / closed"), so those are two deliberate designs rather than two
+ * copies of one.
+ */
+export const BOOKING_STATUS_LABELS: Record<BookingStatus, string> = {
+  pending_payment: 'Awaiting payment',
+  pending_verification: 'Checking receipt',
+  confirmed: 'Confirmed',
+  assigned: 'Driver assigned',
+  in_progress: 'On tour',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+  expired: 'Expired',
+};
+
 /** §6: the guest pays the whole price now, or the deposit now and the balance on tour day. */
 export const PAY_MODES = ['full', 'deposit'] as const;
 export type PayMode = (typeof PAY_MODES)[number];

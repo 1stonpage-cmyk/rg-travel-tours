@@ -29,7 +29,8 @@
  */
 import { Link } from 'react-router-dom';
 import { Loader2, RefreshCw } from 'lucide-react';
-import { formatPeso, portalPollMs } from '@rg/shared';
+import { APP_SURFACE_TITLES, formatPeso, portalPollMs } from '@rg/shared';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import DriverCard from '@/components/portal/DriverCard';
 import ReceiptUpload from '@/components/portal/ReceiptUpload';
 import ReviewForm from '@/components/portal/ReviewForm';
@@ -50,6 +51,15 @@ const STATUS_SENTENCE: Record<string, string> = {
 };
 
 export default function PortalBookingPage() {
+  /*
+   * The portal has no shared layout component (`App.tsx` mounts its three
+   * pages directly), so each one re-asserts the surface's title itself. The
+   * words are the server's own (`APP_SURFACE_TITLES['/portal']`,
+   * `@rg/shared`), so a guest who walks here from `/booking/:ref` by a
+   * client-side navigation stops reading the booking page's tab title.
+   */
+  useDocumentTitle(APP_SURFACE_TITLES['/portal']);
+
   const query = trpc.portal.booking.useQuery(undefined, {
     retry: false,
     // §7's twenty seconds, and only where §7 asks for them. The rule lives

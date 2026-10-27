@@ -50,6 +50,7 @@
  * `text-brand-error`, not a coloured banner.
  */
 import {
+  BOOKING_STATUS_LABELS,
   TRIP_START_STOP_NAME,
   manilaTimeHHMM,
   type BookingStatus,
@@ -68,25 +69,13 @@ import { trpc } from '@/lib/trpc';
 export const DEPARTURES_POLL_MS = 15_000;
 
 /**
- * The statuses in §5's order, with readable labels.
+ * The status pill: words always, tone only to help the eye.
  *
- * `Record<BookingStatus, string>` so the compiler refuses a build where a
- * ninth status has no words. (The three existing admin screens each keep a
- * loose `Record<string, string>` copy of this map — noted, not refactored
- * here: four copies is a cleanup of its own, not part of this panel.)
+ * The WORDS are `BOOKING_STATUS_LABELS` (`@rg/shared`), shared with the three
+ * admin screens and the pill component. This tone grouping is the board's
+ * own: a departures row highlights `in_progress` because that is the van
+ * that is out right now.
  */
-const STATUS_LABELS: Record<BookingStatus, string> = {
-  pending_payment: 'Awaiting payment',
-  pending_verification: 'Checking receipt',
-  confirmed: 'Confirmed',
-  assigned: 'Driver assigned',
-  in_progress: 'On tour',
-  completed: 'Completed',
-  cancelled: 'Cancelled',
-  expired: 'Expired',
-};
-
-/** The status pill: words always, tone only to help the eye. */
 function statusPillClass(status: BookingStatus): string {
   if (status === 'in_progress') return 'bg-brand-blue-100 text-brand-blue-800';
   if (status === 'completed' || status === 'cancelled' || status === 'expired') {
@@ -143,7 +132,7 @@ function DepartureRow({ departure }: { departure: TodayDeparture }) {
             statusPillClass(departure.status),
           ].join(' ')}
         >
-          {STATUS_LABELS[departure.status]}
+          {BOOKING_STATUS_LABELS[departure.status]}
         </p>
       </div>
 

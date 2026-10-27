@@ -29,7 +29,7 @@
  * half. Role is always spelled out in words, and Active/Inactive likewise:
  * colour is reinforcement, never the only signal.
  */
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { TRPCClientError } from '@trpc/client';
@@ -523,6 +523,27 @@ function DeactivatePanel({
   );
 }
 
+/**
+ * The page heading, in one place.
+ *
+ * Both of this file's two return branches — the owner's screen and the
+ * "only the owner can manage staff accounts" refusal — render the same
+ * eyebrow and `<h1>`. Two copies of an `<h1>` is how a page ends up with
+ * two different names for itself, so the branches differ only in what they
+ * put under it.
+ */
+function StaffPageHeader({ children }: { children?: ReactNode }) {
+  return (
+    <header className="flex flex-col gap-1">
+      <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.08em]">
+        Owner only
+      </p>
+      <h1 className="text-brand-ink text-2xl font-bold sm:text-3xl">Staff accounts</h1>
+      {children}
+    </header>
+  );
+}
+
 function StaffAccounts() {
   const utils = trpc.useUtils();
   const list = trpc.admin.staffUsers.list.useQuery(undefined, { retry: false });
@@ -553,15 +574,11 @@ function StaffAccounts() {
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.08em]">
-          Owner only
-        </p>
-        <h1 className="text-brand-ink text-2xl font-bold sm:text-3xl">Staff accounts</h1>
+      <StaffPageHeader>
         <p className="text-brand-error text-sm">
           Only the owner sees this page. Staff sign in at the staff sign-in with their email.
         </p>
-      </header>
+      </StaffPageHeader>
 
       {notice ? (
         <p
@@ -691,7 +708,14 @@ function StaffAccounts() {
                           variant="outline"
                           size="sm"
                           className={OUTLINE_BUTTON}
-                          disabled={reactivate.isPending}
+                          /*
+                           * The PER-ROW predicate, not `reactivate.isPending`.
+                           * One mutation object is shared by every row, so the
+                           * global flag disabled every inactive user's button
+                           * while one request was in flight — the label beside
+                           * it was already row-scoped, so the two disagreed.
+                           */
+                          disabled={reactivating}
                           onClick={() => {
                             setNotice(null);
                             reactivate.mutate({ id: user.id, isActive: true });
@@ -752,12 +776,7 @@ export default function AdminStaffPage() {
   if (me.data && me.data.role !== 'owner') {
     return (
       <div className="flex flex-col items-start gap-4">
-        <header className="flex flex-col gap-1">
-          <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.08em]">
-            Owner only
-          </p>
-          <h1 className="text-brand-ink text-2xl font-bold sm:text-3xl">Staff accounts</h1>
-        </header>
+        <StaffPageHeader />
         <p role="alert" className={NOTICE_CLASS}>
           Only the owner can manage staff accounts.
         </p>

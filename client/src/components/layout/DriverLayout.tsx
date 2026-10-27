@@ -29,6 +29,8 @@
  */
 import { LogOut } from 'lucide-react';
 import { Outlet, useNavigate } from 'react-router-dom';
+import { APP_SURFACE_TITLES } from '@rg/shared';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { SITE } from '@/lib/site';
 import { trpc } from '@/lib/trpc';
 
@@ -64,6 +66,13 @@ function DriverSignOut() {
 }
 
 export default function DriverLayout() {
+  /*
+   * The same words the server injects for `/driver` (`APP_SURFACE_TITLES`,
+   * `@rg/shared`). Named as a place rather than a screen because the tab is
+   * what a driver looks at for a whole shift — see the shared map's own note.
+   */
+  useDocumentTitle(APP_SURFACE_TITLES['/driver']);
+
   return (
     <div className="bg-brand-blue-50 flex min-h-dvh flex-col">
       <a

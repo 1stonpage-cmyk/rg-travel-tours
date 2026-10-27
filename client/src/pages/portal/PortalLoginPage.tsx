@@ -30,6 +30,8 @@ import { Loader2, Lock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { APP_SURFACE_TITLES } from '@rg/shared';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { SITE } from '@/lib/site';
 import { trpc } from '@/lib/trpc';
 
@@ -46,6 +48,15 @@ function safeNext(raw: string | null): string {
 }
 
 export default function PortalLoginPage() {
+  /*
+   * The portal has no shared layout component (`App.tsx` mounts its three
+   * pages directly), so each one re-asserts the surface's title itself. The
+   * words are the server's own (`APP_SURFACE_TITLES['/portal']`,
+   * `@rg/shared`), so a guest who walks here from `/booking/:ref` by a
+   * client-side navigation stops reading the booking page's tab title.
+   */
+  useDocumentTitle(APP_SURFACE_TITLES['/portal']);
+
   const navigate = useNavigate();
   const [params] = useSearchParams();
   // Prefilled from the checkout link, so a guest coming straight from a hold

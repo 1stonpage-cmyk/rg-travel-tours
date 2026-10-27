@@ -4,6 +4,7 @@ export * from './constants';
 export * from './coupon';
 export * from './coupons-admin';
 export * from './dispatch';
+export * from './document-titles';
 export * from './driver';
 export * from './money';
 export * from './packages-admin';

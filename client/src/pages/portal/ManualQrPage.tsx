@@ -38,7 +38,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Copy, Download, Loader2 } from 'lucide-react';
-import { formatPeso } from '@rg/shared';
+import { APP_SURFACE_TITLES, formatPeso } from '@rg/shared';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import HoldCountdown from '@/components/checkout/HoldCountdown';
 import ReceiptUpload from '@/components/portal/ReceiptUpload';
 import { Button } from '@/components/ui/button';
@@ -91,6 +92,15 @@ function CopyableValue({ label, value }: { label: string; value: string }) {
 }
 
 export default function ManualQrPage() {
+  /*
+   * The portal has no shared layout component (`App.tsx` mounts its three
+   * pages directly), so each one re-asserts the surface's title itself. The
+   * words are the server's own (`APP_SURFACE_TITLES['/portal']`,
+   * `@rg/shared`), so a guest who walks here from `/booking/:ref` by a
+   * client-side navigation stops reading the booking page's tab title.
+   */
+  useDocumentTitle(APP_SURFACE_TITLES['/portal']);
+
   const query = trpc.portal.manualPayment.useQuery(undefined, {
     // A refused query means "not signed in", which is a state to render,
     // not an error to retry into a loop.

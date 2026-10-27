@@ -31,22 +31,10 @@
  */
 import { useState } from 'react';
 import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
-import { manilaParts, type CalendarDay } from '@rg/shared';
+import { BOOKING_STATUS_LABELS, manilaParts, type CalendarDay } from '@rg/shared';
 import MonthGrid from '@/components/admin/MonthGrid';
 import AssignPanel from '@/components/admin/AssignPanel';
 import { trpc } from '@/lib/trpc';
-
-/** Mirrors `AdminBookingsPage`'s own small label map — a dictionary this short isn't worth sharing. */
-const STATUS_LABELS: Record<string, string> = {
-  pending_payment: 'Awaiting payment',
-  pending_verification: 'Checking receipt',
-  confirmed: 'Confirmed',
-  assigned: 'Driver assigned',
-  in_progress: 'On tour',
-  completed: 'Completed',
-  cancelled: 'Cancelled',
-  expired: 'Expired',
-};
 
 const MONTH_YEAR_FORMAT = new Intl.DateTimeFormat('en-PH', {
   month: 'long',
@@ -345,7 +333,7 @@ export default function AdminCalendarPage() {
                           <span className="text-brand-error text-sm">
                             <span className="font-mono">{trip.ref}</span> · {trip.pax}{' '}
                             {trip.pax === 1 ? 'guest' : 'guests'} ·{' '}
-                            {STATUS_LABELS[trip.status] ?? trip.status}
+                            {BOOKING_STATUS_LABELS[trip.status]}
                             {trip.awaitingPaymentCheck ? ' · awaiting payment check' : ''}
                             {trip.needsAssignment
                               ? ''

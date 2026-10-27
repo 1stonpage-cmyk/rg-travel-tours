@@ -217,6 +217,40 @@ describe('AdminStaffPage', () => {
     await waitFor(() => expect(calls).toEqual([{ id: 3, isActive: true }]));
   });
 
+  /**
+   * Task 17, item 5. One `useMutation` object is shared by every row, so
+   * `reactivate.isPending` is TRUE for all of them while any one request is
+   * in flight — the button's own label was already row-scoped
+   * (`reactivate.variables?.id === user.id`) and its `disabled` was not, so
+   * clicking one inactive account's Reactivate greyed out every other
+   * inactive account's button while saying "Reactivate" on all of them.
+   *
+   * Two inactive accounts are needed to see it at all, which is why the
+   * existing one-tap test above (a single inactive row) could not.
+   */
+  it('disables only the row being reactivated, not every inactive row', async () => {
+    const SECOND_FORMER = {
+      ...FORMER,
+      id: 4,
+      name: 'Samuel Second',
+      email: 'samuel@example.test',
+    };
+    renderPage({
+      'admin.staffUsers.list': [OWNER, DISPATCHER, FORMER, SECOND_FORMER],
+      // Never settles: the mutation stays pending for the whole assertion.
+      'admin.staffUsers.setActive': () => new Promise(() => {}),
+    });
+
+    const fiona = await rowFor('Fiona Former');
+    const samuel = await rowFor('Samuel Second');
+    await user.click(within(fiona).getByRole('button', { name: 'Reactivate' }));
+
+    await waitFor(() =>
+      expect(within(fiona).getByRole('button', { name: 'Reactivating…' })).toBeDisabled(),
+    );
+    expect(within(samuel).getByRole('button', { name: 'Reactivate' })).toBeEnabled();
+  });
+
   it('resets a password only through the panel, with the typed temporary password', async () => {
     const calls: unknown[] = [];
     renderPage({
