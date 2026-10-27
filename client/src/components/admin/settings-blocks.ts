@@ -35,7 +35,15 @@ export type FieldKind =
   /** Not drawn: stamped with the current instant on every save. */
   | 'stamp'
   /** Not drawn: the row's position, for a fixed-length list. */
-  | 'rowIndex';
+  | 'rowIndex'
+  /**
+   * Not drawn, and not editable here at all — the value passes through on
+   * Save exactly as loaded. `payment_qr.imagePath` is the one case: it is
+   * set by its own upload widget (`PaymentQrImage` in
+   * `AdminSettingsPage.tsx`), never typed, so the generic grid must neither
+   * show it nor let a stale form value overwrite a newer upload.
+   */
+  | 'hidden';
 
 export interface FieldSpec {
   /** Dotted path inside the block, or inside one row of an array block. */
@@ -327,13 +335,9 @@ export const BLOCKS: readonly BlockSpec[] = [
       'Where a manual transfer is sent. "Offer manual transfer" is refused unless the image path, account name and account number are all filled in — a payment instruction that is wrong by a digit sends a guest’s money to a stranger.',
     shape: 'object',
     fields: [
-      {
-        name: 'imagePath',
-        label: 'QR image path',
-        kind: 'text',
-        nullable: true,
-        hint: 'A path under /uploads, served through the signed-in route. Never a public URL.',
-      },
+      // Set by the "Upload new QR" widget above this form, never typed —
+      // see the `hidden` kind's own note.
+      { name: 'imagePath', label: 'QR image path', kind: 'hidden', nullable: true },
       { name: 'accountName', label: 'Account name', kind: 'text', nullable: true },
       { name: 'accountNumber', label: 'Account number', kind: 'text', nullable: true },
       { name: 'instructions', label: 'Instructions', kind: 'textarea', nullable: true, rows: 3 },
@@ -483,9 +487,11 @@ export function toFormRow(record: unknown, fields: readonly FieldSpec[]): Record
   return row;
 }
 
-/** Which fields are actually drawn — `stamp` and `rowIndex` are not. */
+/** Which fields are actually drawn — `stamp`, `rowIndex` and `hidden` are not. */
 export function visibleFields(fields: readonly FieldSpec[]): readonly FieldSpec[] {
-  return fields.filter((field) => field.kind !== 'stamp' && field.kind !== 'rowIndex');
+  return fields.filter(
+    (field) => field.kind !== 'stamp' && field.kind !== 'rowIndex' && field.kind !== 'hidden',
+  );
 }
 
 /** A blank row for an array block: every field empty, every yes/no at No. */

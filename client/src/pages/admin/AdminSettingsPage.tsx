@@ -58,7 +58,7 @@
  * says what will happen rather than asking "are you sure". Switching it back
  * ON hides the site again and needs no confirm — that direction is safe.
  */
-import { useState } from 'react';
+import { useRef, useState, type ChangeEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { TRPCClientError } from '@trpc/client';
@@ -288,6 +288,180 @@ function BlockBanners({ banner, notice }: { banner: string | null; notice: strin
   );
 }
 
+/* ------------------------------------------- The payment QR upload widget */
+
+/** The authenticated route that streams the current QR; it takes no parameter. */
+const QR_SRC = '/api/payment-qr';
+
+/**
+ * `payment_qr.imagePath` has no text box any more (owner decision 2026-10-28):
+ * R&G's owner cannot copy a file onto the server, so this uploads one instead.
+ *
+ * Preview-before-save, same shape as the portal's `ReceiptUpload`: choosing a
+ * file shows it locally (an object URL, never sent yet) with Save and Cancel,
+ * so a wrong file can be backed out before it replaces the live QR. `Save`
+ * posts straight to `POST /api/payment-qr/upload` — file bytes, not JSON, for
+ * the same reason `ReceiptUpload` does not use a tRPC mutation.
+ *
+ * `onUploaded` writes the new filename into the PARENT's form row, not only
+ * into local state: `ObjectBlockEditor`'s `row` is seeded from `stored` once,
+ * on mount, so without this the hidden `imagePath` field would still hold the
+ * filename from before the upload and a later Save of Account name/number
+ * would silently write it back over the image that was just uploaded.
+ */
+function PaymentQrImage({
+  imagePath,
+  onUploaded,
+}: {
+  imagePath: string;
+  onUploaded: (path: string) => void;
+}) {
+  const [preview, setPreview] = useState<{ file: File; url: string } | null>(null);
+  const [cacheBust, setCacheBust] = useState(() => Date.now());
+  const [imageMissing, setImageMissing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  const hasImage = imagePath.trim() !== '';
+
+  function pickFile(event: ChangeEvent<HTMLInputElement>) {
+    setError(null);
+    const file = event.target.files?.[0] ?? null;
+    if (preview) URL.revokeObjectURL(preview.url);
+    setPreview(file ? { file, url: URL.createObjectURL(file) } : null);
+  }
+
+  function cancelPreview() {
+    if (preview) URL.revokeObjectURL(preview.url);
+    setPreview(null);
+    setError(null);
+    if (fileInput.current) fileInput.current.value = '';
+  }
+
+  async function save() {
+    if (!preview) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const query = new URLSearchParams({ filename: preview.file.name });
+      const response = await fetch(`/api/payment-qr/upload?${query.toString()}`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': preview.file.type },
+        body: preview.file,
+      });
+
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        setError(body?.error ?? 'That did not go through. Please try again in a moment.');
+        setSaving(false);
+        return;
+      }
+
+      const result = (await response.json()) as { imagePath: string };
+      URL.revokeObjectURL(preview.url);
+      setPreview(null);
+      setImageMissing(false);
+      setCacheBust(Date.now());
+      if (fileInput.current) fileInput.current.value = '';
+      onUploaded(result.imagePath);
+      setSaving(false);
+    } catch {
+      setError('We could not reach the server. Check your connection and try again.');
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="border-brand-blue-100 bg-brand-blue-50/50 space-y-3 rounded-xl border p-4">
+      <p className="text-brand-ink text-sm font-bold">Payment QR image</p>
+
+      {error ? (
+        <p role="alert" className={ALERT}>
+          {error}
+        </p>
+      ) : null}
+
+      <div className="flex flex-wrap items-start gap-4">
+        <div className="border-brand-blue-200 flex h-28 w-28 shrink-0 items-center justify-center rounded-lg border bg-white p-1">
+          {preview ? (
+            <img
+              src={preview.url}
+              alt="New QR, not saved yet"
+              className="h-full w-full object-contain"
+            />
+          ) : hasImage && !imageMissing ? (
+            <img
+              key={cacheBust}
+              src={`${QR_SRC}?v=${cacheBust}`}
+              alt="Current payment QR code"
+              onError={() => setImageMissing(true)}
+              className="h-full w-full object-contain"
+            />
+          ) : (
+            <p className="text-brand-error text-center text-xs">
+              {hasImage ? 'Could not load the saved QR.' : 'No QR uploaded yet.'}
+            </p>
+          )}
+        </div>
+
+        <div className="min-w-0 flex-1 space-y-2">
+          {preview ? (
+            <>
+              <p className="text-brand-error text-xs">
+                Shown above — not saved yet. Save to make this the live QR, or cancel to keep the
+                current one.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => void save()}
+                  className={`${PRIMARY_BUTTON} w-full sm:w-auto`}
+                >
+                  {saving ? (
+                    <>
+                      <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />
+                      Saving…
+                    </>
+                  ) : (
+                    'Save QR'
+                  )}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={saving}
+                  onClick={cancelPreview}
+                  className={`${OUTLINE_BUTTON} w-full sm:w-auto`}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <Label htmlFor="payment-qr-file">
+                {hasImage ? 'Upload a new QR' : 'Upload the QR'}
+              </Label>
+              <Input
+                ref={fileInput}
+                id="payment-qr-file"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={pickFile}
+                className="tap-target file:text-brand-blue-900 bg-white py-2 file:mr-3 file:font-medium"
+              />
+              <p className="text-brand-error text-xs">JPG, PNG or WEBP, up to 5MB.</p>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ---------------------------------------------------------- The three shapes */
 
 /** One record: the fields, flat, with a single Save. */
@@ -309,6 +483,13 @@ function ObjectBlockEditor({ block, stored }: { block: BlockSpec; stored: unknow
       }}
     >
       <BlockBanners banner={banner} notice={notice} />
+
+      {block.key === 'payment_qr' ? (
+        <PaymentQrImage
+          imagePath={row.imagePath ?? ''}
+          onUploaded={(path) => setRow((current) => ({ ...current, imagePath: path }))}
+        />
+      ) : null}
 
       <FieldGrid
         idPrefix={block.key}
