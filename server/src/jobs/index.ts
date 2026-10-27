@@ -3,8 +3,14 @@
  *
  * This module is the ONLY place that knows about time passing. Every job it
  * runs takes its clock as a parameter and can be called directly — which is
- * how the tests exercise `expireHolds()` without waiting on a timer, and why
- * no test imports this file.
+ * how the tests exercise `expireHolds()` without waiting on a timer.
+ *
+ * That left the SCHEDULE itself unguarded: for a long time no test imported
+ * this file at all, so the five expressions, the five names and the four
+ * timezones were only ever read by node-cron. `jobs-registration.test.ts`
+ * (7N item 8) now drives `startScheduledJobs()` against a stubbed `schedule`
+ * and pins all of it, including that `expire-holds` deliberately passes no
+ * timezone and that no job's failure rejects into the scheduler.
  *
  * **Importing this module starts nothing.** `startScheduledJobs()` is called
  * once, explicitly, from `server/src/index.ts` — the same discipline as
