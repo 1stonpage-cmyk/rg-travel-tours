@@ -448,6 +448,38 @@ describeWithDb('a package can be deactivated but not deleted', () => {
     ).rejects.toMatchObject({ code: 'NOT_FOUND', message: PACKAGE_NOT_FOUND_MESSAGE });
     expect(await auditRowsFor(PACKAGE_ENTITY, NOT_FOUND_SENTINEL_ID)).toEqual([]);
   });
+
+  /**
+   * 7N item 6, the same bug `admin.staffUsers.setActive` had: the `UPDATE`
+   * and the audit row were both unconditional, so asking for the state the
+   * row is already in wrote a `package.reactivated` or
+   * `package.deactivated` row claiming a change that did not happen.
+   * CLAUDE.md audits "every status change"; a non-change is not one, and a
+   * trail that records non-events is one a reader stops believing.
+   *
+   * Both directions, because the bug was in both: a fresh package is active,
+   * so `isActive: true` is the no-op for it, and `isActive: false` becomes
+   * the no-op once it has been switched off.
+   */
+  it('writes NO audit row when the package is ALREADY in the state asked for', async () => {
+    const { id } = await createPackage();
+    expect(await packageRow(id)).toMatchObject({ isActive: true });
+
+    await expect(ownerApi().admin.packages.setActive({ id, isActive: true })).resolves.toEqual({
+      ok: true,
+    });
+    expect((await auditRowsFor(PACKAGE_ENTITY, id)).map((e) => e.action)).toEqual([
+      'package.created',
+    ]);
+
+    await ownerApi().admin.packages.setActive({ id, isActive: false });
+    await ownerApi().admin.packages.setActive({ id, isActive: false });
+    expect((await auditRowsFor(PACKAGE_ENTITY, id)).map((e) => e.action)).toEqual([
+      'package.created',
+      'package.deactivated',
+    ]);
+    expect(await packageRow(id)).toMatchObject({ isActive: false });
+  });
 });
 
 /* ------------------------------------------------------------------ *

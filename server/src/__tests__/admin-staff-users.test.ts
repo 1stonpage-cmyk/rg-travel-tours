@@ -529,6 +529,63 @@ describeWithDb('admin.staffUsers: deactivating and resetting', () => {
     expect(await auditFor('staff.reactivated', ids.target)).toHaveLength(1);
   });
 
+  /**
+   * 7N item 6. The `UPDATE` and the audit row were both unconditional, so
+   * `setActive(id, true)` on an already-active account wrote a
+   * `staff.reactivated` row claiming a change that did not happen —
+   * `sessionsRevoked: 0`, nothing altered, and an audit trail that says a
+   * dormant account was brought back on a day nobody touched it. CLAUDE.md:
+   * "every payment, refund, status change, and assignment writes to
+   * `audit_log`" — a non-change is not a status change, and a log that
+   * records non-events is a log a reader stops believing.
+   *
+   * The guard is inside the transaction and AFTER `lockTarget`, so a
+   * concurrent pair cannot both read "it differs" and both write.
+   */
+  it('writes NO audit row and changes nothing when the account is ALREADY active', async () => {
+    expect((await row(ids.target)).isActive).toBe(true);
+    const { token } = await createSession('user', ids.target, new Date());
+
+    await asOwnerA().admin.staffUsers.setActive({ id: ids.target, isActive: true });
+
+    expect(await auditFor('staff.reactivated', ids.target)).toHaveLength(0);
+    expect(await auditFor('staff.deactivated', ids.target)).toHaveLength(0);
+    // Nothing happened, so nothing was revoked either.
+    expect(await readSession(token, new Date())).not.toBeNull();
+    expect((await row(ids.target)).isActive).toBe(true);
+  });
+
+  it('writes NO second audit row when the account is ALREADY inactive', async () => {
+    await asOwnerA().admin.staffUsers.setActive({ id: ids.target, isActive: false });
+    expect(await auditFor('staff.deactivated', ids.target)).toHaveLength(1);
+
+    /*
+     * A session ROW against an already-inactive account — the only way to
+     * see that the no-op revokes nothing, since the first call took the real
+     * ones. Counted rather than read: `readSession` resolves an inactive
+     * user's session to null regardless, so it could not tell a surviving
+     * row from a deleted one here.
+     */
+    await createSession('user', ids.target, new Date());
+    await asOwnerA().admin.staffUsers.setActive({ id: ids.target, isActive: false });
+
+    expect(await auditFor('staff.deactivated', ids.target)).toHaveLength(1);
+    expect(await sessionCount('user', ids.target)).toBe(1);
+  });
+
+  /** The refusals still come FIRST: a no-op is not a way around them. */
+  it('still refuses to deactivate your own account, even though nothing would change', async () => {
+    await expect(
+      asOwnerA().admin.staffUsers.setActive({ id: ids.ownerA, isActive: false }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('still answers NOT_FOUND for an unknown id rather than succeeding as a no-op', async () => {
+    await expect(
+      asOwnerA().admin.staffUsers.setActive({ id: 2_000_000_000, isActive: true }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
   it('keeps the other sessions when someone is reactivated', async () => {
     await getDb().update(users).set({ isActive: false }).where(eq(users.id, ids.target));
     await createSession('user', ids.target, new Date());

@@ -197,6 +197,30 @@ export const adminStaffUsersRouter = router({
           throw lastOwner();
         }
 
+        /*
+         * Already where it is being asked to go: write nothing, log nothing,
+         * revoke nothing (7N item 6).
+         *
+         * The `UPDATE` and the audit row were both unconditional, so
+         * `setActive(id, true)` on an active account wrote a
+         * `staff.reactivated` row with `sessionsRevoked: 0` — a log entry
+         * claiming a change that did not happen. CLAUDE.md audits "every
+         * payment, refund, status change, and assignment"; a non-change is
+         * not a status change, and a trail that records non-events is one a
+         * reader stops believing on the day it matters.
+         *
+         * It returns `{ ok: true }` rather than refusing, because the state
+         * the caller asked for is the state that holds — the two admins who
+         * both clicked Reactivate have both got what they wanted, and one of
+         * them seeing an error would be a lie in the other direction.
+         *
+         * Inside the transaction and AFTER `lockTarget`, deliberately: the
+         * row lock is what stops a concurrent pair from both reading "it
+         * differs" and both writing. It is also after both refusals above,
+         * so a no-op is never a way around them.
+         */
+        if (target.isActive === input.isActive) return;
+
         await tx.update(users).set({ isActive: input.isActive }).where(eq(users.id, input.id));
 
         // Switching OFF is the only direction that revokes. Same transaction,

@@ -313,7 +313,7 @@ export const adminPackagesRouter = router({
     .mutation(async ({ input, ctx }) => {
       await getDb().transaction(async (tx) => {
         const [row] = await tx
-          .select({ slug: packages.slug })
+          .select({ slug: packages.slug, isActive: packages.isActive })
           .from(packages)
           .where(eq(packages.id, input.id))
           // The row lock: two admins clicking at once must not both write and
@@ -323,6 +323,22 @@ export const adminPackagesRouter = router({
         if (!row) {
           throw new TRPCError({ code: 'NOT_FOUND', message: PACKAGE_NOT_FOUND_MESSAGE });
         }
+
+        /*
+         * Already where it is being asked to go: write nothing, log nothing
+         * (7N item 6 — the identical fix `admin.staffUsers.setActive` took in
+         * the same commit, and the reasoning is that procedure's).
+         *
+         * The `UPDATE` and the audit row were both unconditional, so a second
+         * click wrote a `package.deactivated` row claiming a status change
+         * that did not happen. It still answers `{ ok: true }`: the state the
+         * caller asked for is the state that holds.
+         *
+         * Under the row lock the `.for('update')` above already took, which
+         * is what the lock's own comment is for — two admins clicking at once
+         * cannot both read "it differs" and both audit.
+         */
+        if (row.isActive === input.isActive) return;
 
         await tx
           .update(packages)
