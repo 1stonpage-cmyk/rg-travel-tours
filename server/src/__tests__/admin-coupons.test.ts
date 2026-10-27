@@ -49,6 +49,9 @@ import { describeWithDb } from './helpers/db';
  */
 const CODE_PREFIX = 'ADMCPN-';
 
+/** An id no coupon in this database ever has. Shared with `afterAll`'s sweep. */
+const NOT_FOUND_SENTINEL_ID = 2_000_000_000;
+
 const created = {
   userIds: [] as number[],
   couponIds: [] as number[],
@@ -254,10 +257,18 @@ afterAll(async () => {
       await pool.query('DELETE FROM bookings WHERE id = ?', [id]);
     }
   }
+  /*
+   * `NOT_FOUND_SENTINEL_ID` (below) never names a real coupon, so a run that
+   * mutation-proves the NOT_FOUND test by letting the refused mutation
+   * through writes an audit row under this id that `couponIds` never
+   * contains — swept by name, the same reasoning as the code-prefix sweep
+   * above (owner decision, 2026-10-27, batch-3 answer 2).
+   */
+  const auditEntityIds = [...couponIds, NOT_FOUND_SENTINEL_ID];
+  await db
+    .delete(auditLog)
+    .where(and(eq(auditLog.entity, 'coupon'), inArray(auditLog.entityId, auditEntityIds)));
   if (couponIds.length > 0) {
-    await db
-      .delete(auditLog)
-      .where(and(eq(auditLog.entity, 'coupon'), inArray(auditLog.entityId, couponIds)));
     await db.delete(coupons).where(inArray(coupons.id, couponIds));
   }
 
@@ -712,12 +723,14 @@ describeWithDb('admin.coupons', () => {
   it('answers NOT_FOUND for a coupon that does not exist', async () => {
     const api = ownerApi();
     await expect(
-      api.admin.coupons.update({ ...percentInput(), id: 2_000_000_000 } as never),
+      api.admin.coupons.update({ ...percentInput(), id: NOT_FOUND_SENTINEL_ID } as never),
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     await expect(
-      api.admin.coupons.setActive({ id: 2_000_000_000, isActive: false }),
+      api.admin.coupons.setActive({ id: NOT_FOUND_SENTINEL_ID, isActive: false }),
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
-    await expect(api.admin.coupons.redemptions({ couponId: 2_000_000_000 })).rejects.toMatchObject({
+    await expect(
+      api.admin.coupons.redemptions({ couponId: NOT_FOUND_SENTINEL_ID }),
+    ).rejects.toMatchObject({
       code: 'NOT_FOUND',
     });
   });

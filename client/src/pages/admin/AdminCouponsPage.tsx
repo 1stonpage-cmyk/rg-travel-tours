@@ -159,6 +159,18 @@ function driftInWords(coupon: CouponAdminRow): string | null {
   return `Counter says ${coupon.usedCount}, the redemption log has ${coupon.redemptionCount}.`;
 }
 
+/**
+ * Display only (owner decision, 2026-10-27, batch-3 answer 1). `validateCoupon`
+ * already refuses an inverted window cleanly at checkout — this is not a
+ * validation gap, just a sentence so an owner reading the list notices before
+ * a guest ever tries the code.
+ */
+function windowWarningInWords(coupon: CouponAdminRow): string | null {
+  if (coupon.startsAt === null || coupon.endsAt === null) return null;
+  if (new Date(coupon.endsAt).getTime() >= new Date(coupon.startsAt).getTime()) return null;
+  return 'This window ends before it starts — the code will never be accepted.';
+}
+
 /* ------------------------------------------------------------------- The form */
 
 type DiscountType = 'percent' | 'fixed';
@@ -773,6 +785,11 @@ function CouponsAdmin() {
                 </div>
                 <p className="text-brand-error mt-2 text-xs">{minSpendInWords(coupon)}</p>
                 <p className="text-brand-error text-xs">{windowInWords(coupon)}</p>
+                {windowWarningInWords(coupon) ? (
+                  <p role="alert" className={`${ALERT} mt-2`}>
+                    {windowWarningInWords(coupon)}
+                  </p>
+                ) : null}
                 <p className="text-brand-ink mt-1">{usageInWords(coupon)}</p>
                 {driftInWords(coupon) ? (
                   <p role="alert" className={`${ALERT} mt-2`}>
@@ -832,6 +849,14 @@ function CouponsAdmin() {
                       <span className="text-brand-error block text-xs">
                         {windowInWords(coupon)}
                       </span>
+                      {windowWarningInWords(coupon) ? (
+                        <span
+                          role="alert"
+                          className="text-brand-gold-800 block text-xs font-medium"
+                        >
+                          {windowWarningInWords(coupon)}
+                        </span>
+                      ) : null}
                     </td>
                     <td className="text-brand-ink px-4 py-3">
                       <span className="block">{usageInWords(coupon)}</span>

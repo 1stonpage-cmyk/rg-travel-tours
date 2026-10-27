@@ -322,6 +322,32 @@ describe('AdminCouponsPage', () => {
     );
   });
 
+  /**
+   * Display only (owner decision, 2026-10-27, batch-3 answer 1) —
+   * `validateCoupon` already refuses an inverted window cleanly at checkout,
+   * so this is a sentence for the owner, not a new validation rule.
+   */
+  it('warns when a window ends before it starts, and says nothing when it does not', async () => {
+    renderPage({
+      'admin.coupons.list': [
+        {
+          ...PERCENT_COUPON,
+          startsAt: '2026-12-10T00:00:00.000Z',
+          endsAt: '2026-12-01T00:00:00.000Z',
+        },
+        {
+          ...FIXED_COUPON,
+          startsAt: '2026-12-01T00:00:00.000Z',
+          endsAt: '2026-12-10T00:00:00.000Z',
+        },
+      ],
+    });
+    await screen.findAllByText('SAVE10');
+    expect(screen.getAllByText(/this window ends before it starts/i).length).toBeGreaterThan(0);
+    const fixedRow = await firstRowFor('FLAT250');
+    expect(within(fixedRow).queryByText(/ends before it starts/i)).not.toBeInTheDocument();
+  });
+
   it('shows the denied state, not a blank screen, when the role is refused', async () => {
     renderPage({ 'staffAuth.me': { userId: 2, role: 'dispatcher', mustChangePassword: false } });
     expect(await screen.findByText(/only the owner can manage coupons/i)).toBeInTheDocument();

@@ -25,6 +25,8 @@ import { fileURLToPath } from 'node:url';
 import { sql } from 'drizzle-orm';
 import {
   bookings,
+  couponRedemptions,
+  coupons,
   drivers,
   fleetDateSlots,
   payments,
@@ -93,6 +95,15 @@ const LEAK_TABLES = [
    * in the run that caused it.
    */
   ['fleet_date_slots', fleetDateSlots],
+  /*
+   * Added by owner decision 2026-10-27 (Week 7 batch-3 answer 2). `coupons`
+   * and `coupon_redemptions` are counted by `admin.coupons.*` the same way
+   * `used_count` and the redemption log count each other — a leaked row
+   * changes "3 of 50 used" for every other suite that lists coupons, the
+   * same hazard `fleet_date_slots` was added for.
+   */
+  ['coupons', coupons],
+  ['coupon_redemptions', couponRedemptions],
 ] as const;
 
 /**
