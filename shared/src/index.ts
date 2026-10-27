@@ -6,6 +6,7 @@ export * from './coupons-admin';
 export * from './dispatch';
 export * from './driver';
 export * from './money';
+export * from './packages-admin';
 export * from './portal';
 export * from './receipts';
 export * from './reports';

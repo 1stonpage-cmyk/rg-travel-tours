@@ -25,6 +25,15 @@
  * cell gets a bare `1500.00`: two decimals, no glyph, no grouping, and
  * negative numbers keep their sign (an overpaid booking is a real row).
  *
+ * ## Three of these functions are the project's CSV primitives, not report code
+ *
+ * `csvField`, `csvText` and `toCsv` hold no opinion about money or reports, and
+ * they are this codebase's ONE tested escaping boundary — so anything else that
+ * builds a CSV imports them rather than writing its own quoting. Week 7 Task 13's
+ * `admin.newsletter.export` is the first such caller. The three `*Csv()`
+ * renderers below, `pesosFromCentavos` and `csvFilename` are report-specific and
+ * stay so.
+ *
  * ## RFC 4180, and nothing cleverer
  *
  * CRLF line endings and a header row, per the RFC; a field is quoted only when

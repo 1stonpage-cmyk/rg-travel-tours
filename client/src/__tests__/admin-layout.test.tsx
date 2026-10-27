@@ -127,6 +127,8 @@ describe('AdminLayout', () => {
         // Coupons is owner-only too (Week 7 Task 8): `admin.coupons.*` is the
         // same `toursPricing` area as tours and pricing.
         'Coupons',
+        // Owner + dispatcher (Week 7 Task 13): §9's `packagesInquiries` row.
+        'Packages',
         // Owner + dispatcher (Week 7 Task 11): `admin.reviews.*` is the
         // `reviewsModeration` area.
         'Reviews',
@@ -150,6 +152,10 @@ describe('AdminLayout', () => {
         'Departures',
         'Vans',
         'Drivers',
+        // Packages is owner + dispatcher too (Week 7 Task 13) — the enquiry
+        // queue is operational work. The newsletter export on that screen is
+        // owner-only and is not a nav link.
+        'Packages',
         // Reviews is owner + dispatcher too (Week 7 Task 11).
         'Reviews',
       ]);

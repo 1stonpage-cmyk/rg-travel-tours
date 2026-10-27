@@ -7,6 +7,7 @@ import AdminBookingsPage from '@/pages/admin/AdminBookingsPage';
 import AdminDashboardPage from '@/pages/admin/AdminDashboardPage';
 import AdminCalendarPage from '@/pages/admin/AdminCalendarPage';
 import AdminCouponsPage from '@/pages/admin/AdminCouponsPage';
+import AdminPackagesPage from '@/pages/admin/AdminPackagesPage';
 import AdminReportsPage from '@/pages/admin/AdminReportsPage';
 import AdminReviewsPage from '@/pages/admin/AdminReviewsPage';
 import AdminDeparturesPage from '@/pages/admin/AdminDeparturesPage';
@@ -122,6 +123,7 @@ export default function App() {
         <Route path="drivers" element={<AdminDriversPage />} />
         <Route path="tours" element={<AdminToursPage />} />
         <Route path="coupons" element={<AdminCouponsPage />} />
+        <Route path="packages" element={<AdminPackagesPage />} />
         <Route path="reviews" element={<AdminReviewsPage />} />
         <Route path="reports" element={<AdminReportsPage />} />
         <Route path="staff" element={<AdminStaffPage />} />

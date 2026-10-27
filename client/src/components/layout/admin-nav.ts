@@ -54,6 +54,11 @@ export const ADMIN_NAV: readonly AdminNavItem[] = [
   { to: '/admin/drivers', label: 'Drivers', end: false, roles: ['owner', 'dispatcher'] },
   { to: '/admin/tours', label: 'Tours', end: false, roles: ['owner'] },
   { to: '/admin/coupons', label: 'Coupons', end: false, roles: ['owner'] },
+  // Owner + dispatcher (Week 7 Task 13): `admin.packages.*` and
+  // `admin.inquiries.*` are §9's `packagesInquiries` row. The newsletter
+  // export on that same screen is owner-only (`usersSettings`) and has no
+  // nav entry of its own — it is a card the page draws for an owner.
+  { to: '/admin/packages', label: 'Packages', end: false, roles: ['owner', 'dispatcher'] },
   // Owner + dispatcher (Week 7 Task 11): `admin.reviews.*` is §9's
   // `reviewsModeration` row — the same gate `admin.vans`/`admin.drivers` use.
   { to: '/admin/reviews', label: 'Reviews', end: false, roles: ['owner', 'dispatcher'] },

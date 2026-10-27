@@ -13,6 +13,8 @@ import { adminCalendarRouter } from './admin/calendar';
 import { adminCouponsRouter } from './admin/coupons';
 import { adminDispatchRouter } from './admin/dispatch';
 import { adminDriversRouter } from './admin/drivers';
+import { adminNewsletterRouter } from './admin/newsletter';
+import { adminInquiriesRouter, adminPackagesRouter } from './admin/packages';
 import { adminRefundsRouter } from './admin/refunds';
 import { adminReportsRouter } from './admin/reports';
 import { adminReviewsRouter } from './admin/reviews';
@@ -146,6 +148,30 @@ export const appRouter = router({
      * do with a tour's children.
      */
     coupons: adminCouponsRouter,
+    /*
+     * Multi-day packages and the enquiries about them (Week 7, Task 13).
+     * Both namespaces are §9's `packagesInquiries` row — owner and
+     * dispatcher, never finance — added by owner decision 2026-10-23 (Q3,
+     * option c): an enquiry is operational work, and a dispatcher already
+     * reads guest names and phone numbers on a booking.
+     *
+     * Two keys rather than one, even though they share a file and a gate: a
+     * package is a catalog row an owner edits and an enquiry is a guest's
+     * question an office answers, and nesting one under the other would
+     * imply a general contact enquiry belongs to a package. It does not —
+     * `inquiries.package_id` is nullable.
+     */
+    packages: adminPackagesRouter,
+    inquiries: adminInquiriesRouter,
+    /*
+     * The newsletter list as a file (Week 7, Task 13). A THIRD key for what
+     * is one screen, because §9 gates this one on `usersSettings` — OWNER
+     * ONLY — while `packages` and `inquiries` above are owner and
+     * dispatcher. Same owner decision, different row: answering one guest's
+     * enquiry is operational, and taking every subscriber's address away in
+     * one file is a bulk disclosure of personal data (RA 10173).
+     */
+    newsletter: adminNewsletterRouter,
     /*
      * The seventeen `settings` rows (Week 7, Task 9). §9 gates it on
      * `usersSettings` — OWNER ONLY, the same narrowness as `toursPricing`
