@@ -14,6 +14,7 @@ import { adminCouponsRouter } from './admin/coupons';
 import { adminDispatchRouter } from './admin/dispatch';
 import { adminDriversRouter } from './admin/drivers';
 import { adminRefundsRouter } from './admin/refunds';
+import { adminReportsRouter } from './admin/reports';
 import { adminReviewsRouter } from './admin/reviews';
 import { adminSettingsRouter } from './admin/settings';
 import { adminStaffUsersRouter } from './admin/staff-users';
@@ -163,6 +164,16 @@ export const appRouter = router({
      * cannot publish straight to the site" structural.
      */
     reviews: adminReviewsRouter,
+    /*
+     * The money reports and their CSV exports (Week 7, Task 12). §9 gates it
+     * on `reports` — owner and FINANCE, never a dispatcher — which is the
+     * same pair as `verifyPayments` and `cancelRefund` and a different row
+     * from the `dashboard` all three roles share. Its own namespace because
+     * it reads money across every booking and payment rather than working on
+     * one of them, and because nothing in it writes: there is no mutation
+     * here and no audit row, which is what a report is.
+     */
+    reports: adminReportsRouter,
   }),
 });
 

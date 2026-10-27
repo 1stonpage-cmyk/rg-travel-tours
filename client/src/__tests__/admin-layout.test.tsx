@@ -130,6 +130,8 @@ describe('AdminLayout', () => {
         // Owner + dispatcher (Week 7 Task 11): `admin.reviews.*` is the
         // `reviewsModeration` area.
         'Reviews',
+        // Owner + finance (Week 7 Task 12): §9's `reports` row.
+        'Reports',
         'Staff',
         // Settings is owner-only too (Week 7 Task 9): §9's `usersSettings`
         // row, which holds the deposit percentage and the payment QR.
@@ -163,6 +165,9 @@ describe('AdminLayout', () => {
         'Payment checks',
         'Dispatch',
         'Departures',
+        // Reports is owner + finance (Week 7 Task 12), so finance keeps it
+        // while Vans, Drivers and Staff stay out of reach.
+        'Reports',
       ]);
     });
   });

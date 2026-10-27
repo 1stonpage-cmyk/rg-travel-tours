@@ -8,6 +8,7 @@ export * from './driver';
 export * from './money';
 export * from './portal';
 export * from './receipts';
+export * from './reports';
 export * from './review';
 export * from './roles';
 export * from './settings';

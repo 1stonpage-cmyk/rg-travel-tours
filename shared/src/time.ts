@@ -143,8 +143,16 @@ export interface BookableDateRange {
  * (`manilaCivilDate`, via `Intl` with an explicit `timeZone`), which is the
  * discipline this module opened with. Adding days to a Manila-local `Date`
  * instead is what produces the 23:00/01:00 off-by-one-day bugs.
+ *
+ * Exported since Week 7 Task 12 (it was private until then, and its behaviour
+ * did not change): the money reports turn a civil-date window into a half-open
+ * INSTANT range for `payments.created_at`, whose upper bound is "00:00 Manila
+ * on the day AFTER `to`". That is this function composed with
+ * `manilaInstant()`, and the alternative — adding 86,400,000 ms to the last
+ * day's midnight — is exactly the offset arithmetic this module exists to
+ * avoid.
  */
-function addCivilDays(date: string, days: number): string {
+export function addCivilDays(date: string, days: number): string {
   const [year, month, day] = date.split('-').map(Number) as [number, number, number];
   const moved = new Date(Date.UTC(year, month - 1, day) + days * 86_400_000);
   return [
