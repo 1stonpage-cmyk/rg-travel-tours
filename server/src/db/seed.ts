@@ -6,11 +6,16 @@
  * canonical baseline.
  *
  * Idempotent: every table is upserted by a natural key (`slug` for
- * destinations/tours/packages, `key` for settings, `name` + `tourId` for
- * reviews). A tour's price tiers and images have no natural key of their
- * own, so they are replaced wholesale for that tour on every run — same
- * fixed set in, same fixed set out, never duplicated. Itinerary stops follow
- * the same rule but are app-database only (`upsertItineraryStops`).
+ * destinations/tours/packages, `name` + `tourId` for reviews). A tour's price
+ * tiers and images have no natural key of their own, so they are replaced
+ * wholesale for that tour on every run — same fixed set in, same fixed set
+ * out, never duplicated. Itinerary stops follow the same rule but are
+ * app-database only (`upsertItineraryStops`).
+ *
+ * **`settings` is the exception: insert-only, never overwritten.** It is the
+ * one table whose rows an admin edits in place rather than through a screen
+ * that owns its own content, so a re-seed must leave an existing key alone.
+ * See `insertSettingIfMissing` for the incident that made this a rule.
  *
  * `assertDatabaseName` + `assertConnectedDatabase` run first (CLAUDE.md:
  * this project may only ever touch `rg_travel` for the app, `rg_travel_test`
@@ -200,18 +205,44 @@ async function upsertReview(db: Db, review: SeedReview, tourId: number): Promise
   await db.insert(schema.reviews).values(values);
 }
 
-async function upsertSetting(db: Db, key: string, value: unknown): Promise<void> {
+/**
+ * A settings row is INSERT-ONLY — the seed never touches one that already
+ * exists (LAUNCH BLOCKER, found 2026-10-28).
+ *
+ * This was an upsert, and on 2026-10-28 a `db:seed` against the live
+ * `rg_travel` database reset the `payment_qr` block back to its seed default
+ * (`isConfigured: false`, every field `null`), wiping a real configuration
+ * somebody had entered through the admin Settings screens. Every other table
+ * the seed writes holds seed CONTENT that an admin edits through a screen
+ * that owns it; `settings` is the one table where the seed's "today's
+ * content" and the owner's live configuration share the same rows. So the
+ * seed gets one chance at each key — the first run, when the row is missing —
+ * and after that the row belongs to the admin.
+ *
+ * Not even a read-and-compare: there is nothing the seed could usefully
+ * decide by looking at a stored value, and a comparison is how an overwrite
+ * grows back.
+ *
+ * **The test database is unaffected and needs no escape hatch.**
+ * `resetTestDb()` deletes every `settings` row before calling `seed('test')`,
+ * so there is never an existing row for this to skip and the canonical
+ * baseline is restored in full on every reset.
+ *
+ * Returns `true` when it inserted, so the caller can say how many keys it
+ * left alone.
+ */
+async function insertSettingIfMissing(db: Db, key: string, value: unknown): Promise<boolean> {
   const existing = await db
     .select({ key: schema.settings.key })
     .from(schema.settings)
     .where(eq(schema.settings.key, key));
 
-  if (existing.length > 0) {
-    await db.update(schema.settings).set({ value }).where(eq(schema.settings.key, key));
-    return;
-  }
+  // Never touch a row that already exists — it may be real, admin-entered
+  // configuration, and the seed cannot tell the difference.
+  if (existing.length > 0) return false;
 
   await db.insert(schema.settings).values({ key, value });
+  return true;
 }
 
 /**
@@ -685,11 +716,21 @@ export async function seed(context: DatabaseContext = 'app'): Promise<void> {
   }
   console.log(`[seed] reviews: ${SEED_REVIEWS.length}`);
 
+  /*
+   * Settings are INSERT-ONLY (see `insertSettingIfMissing`): a key already in
+   * the table is left exactly as it is, because it may be configuration an
+   * admin entered for real. The counts are printed so a re-seed's output says
+   * so out loud rather than looking identical to the old overwriting one.
+   */
   const settingKeys = Object.keys(SEED_SETTINGS) as Array<keyof typeof SEED_SETTINGS>;
+  let settingsInserted = 0;
   for (const key of settingKeys) {
-    await upsertSetting(db, key, SEED_SETTINGS[key]);
+    if (await insertSettingIfMissing(db, key, SEED_SETTINGS[key])) settingsInserted += 1;
   }
-  console.log(`[seed] settings: ${settingKeys.length} keys`);
+  console.log(
+    `[seed] settings: ${settingsInserted} inserted, ` +
+      `${settingKeys.length - settingsInserted} already present (left untouched)`,
+  );
 
   /*
    * The fleet is APP-ONLY (controller ruling, 2026-10-15). See
