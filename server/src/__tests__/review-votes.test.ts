@@ -418,6 +418,65 @@ describeWithDb('the helpful-vote rate limit', () => {
 });
 
 /* ------------------------------------------------------------------ *
+ * One batch, one browser, one voter — 7N (Task 10)
+ * ------------------------------------------------------------------ */
+
+describeWithDb('a browser with no rg_vid yet, voting twice in ONE batch', () => {
+  /**
+   * `readOrMintVoterId` used to mint and `res.cookie()` the new id without
+   * writing it back onto `req.cookies` — harmless for a single call, because
+   * the browser gets the `Set-Cookie` header and sends it back next time. But
+   * tRPC batches two calls onto ONE `req`/`res` pair, and a second resolver
+   * running inside the SAME request read `req.cookies` exactly as it stood
+   * before the first resolver minted anything — still no `rg_vid` — so it
+   * minted a SECOND id. One browser's one batch produced two voter
+   * identities, each able to vote on the same review once.
+   *
+   * No `Cookie` header is sent at all, matching the real first-ever visit
+   * this bug needed: `cookie-parser` hands the request an EMPTY `req.cookies`
+   * object, which is exactly what let the bug reproduce (an existing cookie
+   * would have made both calls agree already).
+   */
+  it('mints exactly one voter identity for two calls on the same review', async () => {
+    const app = createApp();
+    const reviewId = await makeReview(suiteTourId);
+    const batch = [REVIEW_VOTE_PROCEDURES[0], REVIEW_VOTE_PROCEDURES[0]].join(',');
+
+    await voteRequest(app, `/trpc/${batch}?batch=1`).send({
+      0: { reviewId },
+      1: { reviewId },
+    });
+
+    const rows = await votesFor(reviewId);
+    expect(
+      rows,
+      'two mints produced two voter identities for one browser in one batch',
+    ).toHaveLength(1);
+  });
+
+  /** The same proof again, across two DIFFERENT reviews, reading the hash directly. */
+  it('uses the SAME voter hash for two different reviews voted on in one batch', async () => {
+    const app = createApp();
+    const first = await makeReview(suiteTourId);
+    const second = await makeReview(suiteTourId);
+    const batch = [REVIEW_VOTE_PROCEDURES[0], REVIEW_VOTE_PROCEDURES[0]].join(',');
+
+    await voteRequest(app, `/trpc/${batch}?batch=1`).send({
+      0: { reviewId: first },
+      1: { reviewId: second },
+    });
+
+    const [firstVote] = await votesFor(first);
+    const [secondVote] = await votesFor(second);
+    expect(firstVote?.voterHash).toBeDefined();
+    expect(
+      secondVote?.voterHash,
+      'the batch minted two different voter identities for one browser',
+    ).toBe(firstVote?.voterHash);
+  });
+});
+
+/* ------------------------------------------------------------------ *
  * A vote is not an audit event
  * ------------------------------------------------------------------ */
 

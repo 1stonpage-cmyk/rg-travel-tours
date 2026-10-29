@@ -219,8 +219,8 @@ export type ReviewReplyInput = z.infer<typeof reviewReplyInput>;
  * It carries `bookingRef` where the public row carries only `verified`: a
  * moderator deciding whether a review is genuine needs to be able to find
  * the booking, and §9 gives this screen to owner and dispatcher only. The
- * guest's name, email and phone are still not here — the ref is enough to
- * look the booking up on the screen that is allowed to show them.
+ * guest's email and phone are still not here — the ref is enough to look
+ * the booking up on the screen that is allowed to show them.
  */
 export interface ReviewModerationRow {
   id: number;

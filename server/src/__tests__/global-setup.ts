@@ -30,6 +30,8 @@ import {
   drivers,
   fleetDateSlots,
   payments,
+  reviewHelpfulVotes,
+  reviews,
   sessions,
   tripCheckpoints,
   users,
@@ -104,6 +106,16 @@ const LEAK_TABLES = [
    */
   ['coupons', coupons],
   ['coupon_redemptions', couponRedemptions],
+  /*
+   * Added 7N (Task 10), same precedent as `coupons`/`coupon_redemptions`
+   * above. `reviews.forTour` counts `review_helpful_votes` per review to
+   * compute `helpfulCount`, and the public catalog's `realAggregate()`
+   * counts `reviews` rows to compute a tour's rating and review count — a
+   * leaked row in either table changes an answer another suite asserts,
+   * the same hazard `fleet_date_slots` was added for.
+   */
+  ['reviews', reviews],
+  ['review_helpful_votes', reviewHelpfulVotes],
 ] as const;
 
 /**

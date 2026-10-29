@@ -559,7 +559,7 @@ describeWithDb('a verified review cannot become unverified', () => {
         reason: 'Proving a completed trip cannot be un-run.',
       }),
       'a completed booking was cancellable, so `verified` can now go stale',
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
 
     const [row] = await getDb()
       .select({ status: bookings.status })

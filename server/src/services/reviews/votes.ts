@@ -95,6 +95,19 @@ function readOrMintVoterId(req: Request, res: Response): string {
     maxAge: VOTER_COOKIE_MAX_AGE_MS,
     path: '/',
   });
+  /*
+   * Written back onto THIS request's own cookie jar, not only onto the
+   * response (7N, Task 10). tRPC batches: a browser with no `rg_vid` yet
+   * that fires two `reviews.voteHelpful` calls in one batched HTTP request
+   * runs both resolvers against the SAME `req`/`res` pair, and `res.cookie`
+   * only reaches the BROWSER on the response that has not been sent yet —
+   * it never updates `req.cookies` for a second resolver already running
+   * inside this request. Without this line the second call's `existing` is
+   * still `undefined`, so it mints a SECOND id and hashes a second voter
+   * out of one browser's one batch. Writing back here is what makes the
+   * second call see the first call's own mint.
+   */
+  if (cookies) cookies[VOTER_COOKIE] = minted;
   return minted;
 }
 
