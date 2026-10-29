@@ -86,6 +86,12 @@ async function storedValue(key: string): Promise<unknown> {
   return row?.value;
 }
 
+/** The raw stored `updated_at` for one key. */
+async function storedUpdatedAt(key: string): Promise<Date | undefined> {
+  const [row] = await getDb().select().from(settings).where(eq(settings.key, key));
+  return row?.updatedAt;
+}
+
 /**
  * Remembers a key's stored value the first time it is about to change.
  *
@@ -207,6 +213,64 @@ describeWithDb('admin.settings', () => {
     expect(payload.faqs).toEqual(faqs);
   });
 
+  /**
+   * 7N (Task 9): `trust` was the one block with no dedicated round-trip test
+   * of its own — every assertion that touched it lived in
+   * `settings-schema.test.ts` (the schema in isolation) or
+   * `public-queries.test.ts` (reading the seeded value), never "an owner
+   * writes it, and it comes back exactly". Same shape as the `faqs` test
+   * above: through the PUBLIC query, not the row, because that is the claim
+   * an owner is making when they press Save.
+   */
+  it('lets an owner write trust, and the PUBLIC payload serves it back', async () => {
+    await remember('trust');
+    const trust = {
+      ratingAverage: null,
+      ratingCount: null,
+      guestsServed: 2400,
+      dotAccredited: true,
+      depositPercent: 25,
+      minReviewsForRating: 5,
+    };
+
+    await expect(ownerApi().admin.settings.write({ key: 'trust', value: trust })).resolves.toEqual({
+      ok: true,
+    });
+
+    const payload = await publicApi().settings.get();
+    expect(payload.trust).toEqual(trust);
+  });
+
+  /**
+   * 7N (Task 9): `writeSettingBlock` used to call `new Date()` twice — once
+   * for the `INSERT`'s `updatedAt` and once more for
+   * `onDuplicateKeyUpdate`'s — instead of reading `now` once at the request
+   * boundary (CLAUDE.md). Driving the function directly with an injected
+   * `now` far from the real clock is the only way to prove the STORED
+   * `updated_at` is that exact instant rather than whatever `new Date()`
+   * happened to read inside the service.
+   */
+  it('stamps updated_at from the single `now` it was given, not a clock read inside the service', async () => {
+    await remember('trust');
+    const now = new Date('2031-06-15T03:04:05.000Z');
+
+    await writeSettingBlock(
+      'trust',
+      {
+        ratingAverage: null,
+        ratingCount: null,
+        guestsServed: 500,
+        dotAccredited: false,
+        depositPercent: 30,
+        minReviewsForRating: 3,
+      },
+      { subjectId: ownerId },
+      now,
+    );
+
+    expect((await storedUpdatedAt('trust'))?.toISOString()).toBe(now.toISOString());
+  });
+
   /** The raw blocks, as stored — the shape the editing screen loads. */
   it('returns every settings key from admin.settings.all', async () => {
     const all = await ownerApi().admin.settings.all();
@@ -310,7 +374,7 @@ describeWithDb('admin.settings', () => {
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
 
     await expect(
-      writeSettingBlock('not_a_setting' as never, true, { subjectId: ownerId }),
+      writeSettingBlock('not_a_setting' as never, true, { subjectId: ownerId }, new Date()),
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
 
     expect(await storedValue('not_a_setting')).toBeUndefined();

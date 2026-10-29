@@ -245,6 +245,18 @@ describe('fromFormRow', () => {
   });
 
   /**
+   * 7N (Task 9): `trust` was the only settings block with no dedicated
+   * round-trip test of its own — same shape as the `contact` test above.
+   */
+  it('round-trips the real trust block', () => {
+    const block = BLOCKS_BY_KEY.get('trust')!;
+    const row = toFormRow(STORED.trust, block.fields);
+    const { record, errors } = fromFormRow(row, block.fields, 0, new Date());
+    expect(errors).toEqual({});
+    expect(record).toEqual(STORED.trust);
+  });
+
+  /**
    * The seven business-hours rows keep their weekday from their POSITION, so
    * reordering is impossible and nobody can type weekday 9.
    */
@@ -357,6 +369,31 @@ describe('AdminSettingsPage', () => {
     );
     await waitFor(() => expect(posted).toHaveLength(1));
     expect(posted[0]).toEqual({ key: 'content_unverified', value: false });
+  });
+
+  /**
+   * 7N (Task 9): `FlagBlockEditor` used to read `stored === true`, which
+   * treats anything that is NOT the literal boolean `true` — missing,
+   * `null`, a malformed value — as verified. That is fail-OPEN on a
+   * security-relevant gate (robots.txt, noindex, the production build
+   * guard) and the mirror image of `readContentUnverified`'s own rule,
+   * which fails CLOSED (an unreadable row there resolves to `true`,
+   * "unverified"). A row this screen has not loaded yet must read the
+   * same way the server already treats it.
+   */
+  it('fails CLOSED when content_unverified is missing from the loaded row', async () => {
+    const withoutFlag: Record<string, unknown> = { ...STORED };
+    delete withoutFlag.content_unverified;
+    mockOwner({ 'admin.settings.all': withoutFlag });
+    renderPage();
+
+    const details = await openBlock(/content verification/i);
+    expect(within(details).getByText(/marked UNVERIFIED/i)).toBeInTheDocument();
+    expect(within(details).queryByText(/marked verified/i)).toBeNull();
+    // The unverified branch's own action, not the "already verified" one.
+    expect(
+      within(details).getByRole('button', { name: /mark the content verified/i }),
+    ).toBeInTheDocument();
   });
 
   it('adds and removes a row on a repeating block, and sends the whole list', async () => {

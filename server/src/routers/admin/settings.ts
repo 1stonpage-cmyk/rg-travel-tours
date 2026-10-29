@@ -57,7 +57,14 @@ export const adminSettingsRouter = router({
   write: adminProcedure('usersSettings')
     .input(settingWriteInput)
     .mutation(async ({ input, ctx }) => {
-      await writeSettingBlock(input.key, input.value, { subjectId: ctx.session.subjectId });
+      // Read once, at the request boundary, and handed to the service — see
+      // `writeSettingBlock`'s own doc comment.
+      await writeSettingBlock(
+        input.key,
+        input.value,
+        { subjectId: ctx.session.subjectId },
+        new Date(),
+      );
       return { ok: true as const };
     }),
 });

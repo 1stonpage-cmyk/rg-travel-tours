@@ -116,11 +116,20 @@ function refusalMessage(
  * unrecognised key can never reach the `INSERT` — because a `settings` row
  * nothing validates is a row `readSettings()` ignores and the next reader
  * trusts.
+ *
+ * `now` is read ONCE at the request boundary and passed in (CLAUDE.md: "Every
+ * instant is a `now` read once at the request boundary, never inside the
+ * service") — this used to call `new Date()` twice, once for the `INSERT`'s
+ * `updatedAt` and once more for `onDuplicateKeyUpdate`'s, two clock reads a
+ * slow tick apart for what is supposed to be one event. Not reachable from a
+ * test today (both calls land in the same millisecond in practice), but it is
+ * the same class of bug CLAUDE.md names explicitly, and the fix costs nothing.
  */
 export async function writeSettingBlock(
   key: SettingKey,
   value: unknown,
   actor: SettingActor,
+  now: Date,
 ): Promise<void> {
   /*
    * The lookup and the parse are one expression's worth of logic on purpose:
@@ -160,8 +169,8 @@ export async function writeSettingBlock(
   await getDb().transaction(async (tx) => {
     await tx
       .insert(settings)
-      .values({ key, value: stored, updatedAt: new Date() })
-      .onDuplicateKeyUpdate({ set: { value: stored, updatedAt: new Date() } });
+      .values({ key, value: stored, updatedAt: now })
+      .onDuplicateKeyUpdate({ set: { value: stored, updatedAt: now } });
 
     await writeAudit(tx, {
       actorType: 'user',

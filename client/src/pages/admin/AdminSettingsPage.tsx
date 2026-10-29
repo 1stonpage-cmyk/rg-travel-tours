@@ -625,7 +625,19 @@ function ArrayBlockEditor({ block, stored }: { block: BlockSpec; stored: unknown
 function FlagBlockEditor({ block, stored }: { block: BlockSpec; stored: unknown }) {
   const { write, banner, notice, reset } = useSettingsWrite(block);
   const [confirming, setConfirming] = useState(false);
-  const unverified = stored === true;
+  /*
+   * FAILS CLOSED, mirroring `readContentUnverified`'s own rule (7N, Task 9):
+   * an absent or unreadable row there resolves to `true` ("treating the site
+   * as unverified"), because an unproven state must not be read as safe to
+   * publish. This editor used to read the mirror image — `stored === true`
+   * treats anything that is not the literal boolean `true` (missing,
+   * `null`, a malformed value) as VERIFIED, which is fail-OPEN on a security-
+   * relevant gate (robots.txt, noindex, the production build guard).
+   * `!== false` is the fail-closed form: only the literal `false` the
+   * server actually writes reads as "verified"; everything else, including
+   * a row this screen has not loaded yet, reads as unverified.
+   */
+  const unverified = stored !== false;
 
   function save(next: boolean) {
     reset();
