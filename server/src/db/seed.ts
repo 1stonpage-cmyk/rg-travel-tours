@@ -44,11 +44,21 @@ import {
   type SeedReview,
   type SeedTour,
 } from './seed-data';
-import { manilaCivilDate } from '@rg/shared';
-import { generateBookingRef } from '../services/booking-ref';
+import { bookingRefSchema, manilaCivilDate } from '@rg/shared';
+import { REF_ALPHABET } from '../services/booking-ref';
 import { randomInt } from 'node:crypto';
 
 type Db = ReturnType<typeof getDb>;
+
+/**
+ * What every demo booking's ref starts with (7N item 10).
+ *
+ * `RG-SEED` plus each trip's own two characters is a valid
+ * `bookingRefSchema` ref — six characters from `REF_ALPHABET` after the
+ * `RG-` — so a demo row is a real booking that merely says so in its ref,
+ * never a special-cased string the rest of the system has to tolerate.
+ */
+const DEMO_REF_PREFIX = 'RG-SEED';
 
 async function upsertDestination(db: Db, destination: SeedDestination): Promise<number> {
   const values = {
@@ -416,8 +426,17 @@ async function upsertFleet(db: Db, tourIdBySlug: Map<string, number>): Promise<v
   /*
    * Two confirmed, unstaffed trips inside the 48-hour window, so the
    * dashboard's "unassigned trips" alert and the calendar's gold dot both
-   * have a real row. Keyed on the demo ref prefix so re-seeding does not
-   * pile them up.
+   * have a real row.
+   *
+   * **Keyed on the demo REF** (7N item 10). The comment that used to sit here
+   * claimed exactly that and the code underneath it matched on
+   * `(tour_id, lead_name)` — a false comment, and a key that is wrong in both
+   * directions: a real guest booking the same tour under the same name
+   * SUPPRESSED the demo row (the seed decided it already existed), and
+   * renaming a demo lead DUPLICATED it (the old row stayed, a new one
+   * appeared). `bookings.ref` is UNIQUE and is a booking's real identity, so
+   * that is what is matched now. The ref is also what makes the row
+   * recognisable as demo data in the admin list.
    */
   let seededTrips = 0;
   for (const trip of SEED_UNASSIGNED_TRIPS) {
@@ -425,17 +444,32 @@ async function upsertFleet(db: Db, tourIdBySlug: Map<string, number>): Promise<v
     if (tourId === undefined) {
       throw new Error(`seed: unassigned trip references unknown tour "${trip.tourSlug}"`);
     }
+    const ref = `${DEMO_REF_PREFIX}${trip.refSuffix}`;
+    /*
+     * Asserted, not assumed: `RG-SEED` plus a two-character suffix is a REAL
+     * booking ref only while both characters are in `REF_ALPHABET`. A typo
+     * here would otherwise write a row the portal's own ref validation
+     * rejects, and the seed is the one place that could do that — every other
+     * ref comes from `generateBookingRef()`.
+     */
+    if (!bookingRefSchema.safeParse(ref).success) {
+      throw new Error(
+        `seed: demo ref "${ref}" is not a valid booking ref — refSuffix must be two ` +
+          `characters from REF_ALPHABET (${REF_ALPHABET})`,
+      );
+    }
+
     const tourDate = seedDate(trip.inDays);
     const [existing] = await db
       .select({ id: schema.bookings.id })
       .from(schema.bookings)
-      .where(and(eq(schema.bookings.tourId, tourId), eq(schema.bookings.leadName, trip.leadName)));
+      .where(eq(schema.bookings.ref, ref));
     if (existing) continue;
 
     const pricePerPerson = 150_000;
     const total = pricePerPerson * trip.pax;
     await db.insert(schema.bookings).values({
-      ref: generateBookingRef(),
+      ref,
       tourId,
       tourDate,
       pax: trip.pax,
@@ -499,36 +533,110 @@ async function upsertFleet(db: Db, tourIdBySlug: Map<string, number>): Promise<v
  * departures board read 0/1 for every trip. 6C was built and tested all
  * along; it was simply undemonstrable.
  *
- * Like a tour's price tiers and images, stops have no natural key, so a
- * tour's set is replaced wholesale: delete, then insert. `tour_id` carries no
- * foreign key, so a slug that is not a seeded tour throws rather than writing
- * stops against an id nobody can trace back.
+ * ## It never deletes a stop a driver has checked in at (7N, batch-3 carry-forward)
+ *
+ * This used to be the wholesale `DELETE FROM tour_itinerary_stops WHERE
+ * tour_id = ?` that `admin.tours.update` also had before Task 6 fixed it, and
+ * it had the identical bug: `trip_checkpoints.stop_id` references this table
+ * with RESTRICT, so the FIRST real driver check-in against any seeded stop
+ * broke `db:seed` for every future re-seed — against the dev database, which
+ * is the only one that ships stops. On a laptop that has been used to walk
+ * through a trip once, re-seeding would simply stop working, with a foreign-key
+ * error pointing at a table nobody was thinking about.
+ *
+ * So the set is upserted instead, matched on `sort_order` — which IS this
+ * data's natural key: the stops are a tour's call order and the seed gives
+ * each one a distinct position. Matching that way keeps each stop's `id`
+ * stable across re-seeds, which is worth more here than it is in the admin
+ * path: a checkpoint already pointing at "stop 2" keeps pointing at the stop
+ * the van actually reached.
+ *
+ * A stop the seed no longer lists is deleted ONLY when nothing has checked in
+ * there; one with history is left standing and counted in the log. The seed
+ * has nobody to refuse to, so Task 6's CONFLICT is not the right shape here —
+ * the equivalent is to never attempt the impossible delete and to say what it
+ * left behind.
+ *
+ * A slug that is not a seeded tour still throws rather than writing stops
+ * against an id nobody can trace back.
  */
 export async function upsertItineraryStops(
   db: Db,
   tourIdBySlug: Map<string, number>,
 ): Promise<void> {
   let written = 0;
+  let kept = 0;
   for (const [slug, tourId] of tourIdBySlug) {
     const tour = SEED_TOURS.find((t) => t.slug === slug);
     if (tour === undefined) {
       throw new Error(`seed: itinerary stops requested for unknown tour "${slug}"`);
     }
 
-    await db.delete(schema.tourItineraryStops).where(eq(schema.tourItineraryStops.tourId, tourId));
-    if (tour.stops.length > 0) {
-      await db.insert(schema.tourItineraryStops).values(
-        tour.stops.map((stop) => ({
+    const stored = await db
+      .select({ id: schema.tourItineraryStops.id, sortOrder: schema.tourItineraryStops.sortOrder })
+      .from(schema.tourItineraryStops)
+      .where(eq(schema.tourItineraryStops.tourId, tourId));
+    const storedBySortOrder = new Map(stored.map((row) => [row.sortOrder, row.id]));
+
+    for (const stop of tour.stops) {
+      const existingId = storedBySortOrder.get(stop.sortOrder);
+      if (existingId === undefined) {
+        await db.insert(schema.tourItineraryStops).values({
           tourId,
           sortOrder: stop.sortOrder,
           name: stop.name,
           description: stop.description,
-        })),
-      );
+        });
+      } else {
+        // Scoped by `tour_id` as well as the row id, like the admin path's own
+        // writes: one tour's save can never reach another tour's stop.
+        await db
+          .update(schema.tourItineraryStops)
+          .set({ name: stop.name, description: stop.description })
+          .where(
+            and(
+              eq(schema.tourItineraryStops.id, existingId),
+              eq(schema.tourItineraryStops.tourId, tourId),
+            ),
+          );
+        storedBySortOrder.delete(stop.sortOrder);
+      }
     }
+
+    /*
+     * Whatever the seed no longer lists. Each is removed only if no checkpoint
+     * points at it — the read is what stops the RESTRICT foreign key from
+     * turning a re-seed into a crash, and it is deliberately per-stop rather
+     * than one `NOT IN`, because the two outcomes differ per row.
+     */
+    for (const [, staleId] of storedBySortOrder) {
+      const [checkedIn] = await db
+        .select({ id: schema.tripCheckpoints.id })
+        .from(schema.tripCheckpoints)
+        .where(eq(schema.tripCheckpoints.stopId, staleId))
+        .limit(1);
+      if (checkedIn) {
+        kept += 1;
+        continue;
+      }
+      await db
+        .delete(schema.tourItineraryStops)
+        .where(
+          and(
+            eq(schema.tourItineraryStops.id, staleId),
+            eq(schema.tourItineraryStops.tourId, tourId),
+          ),
+        );
+    }
+
     written += tour.stops.length;
   }
-  console.log(`[seed] itinerary stops: ${written} across ${tourIdBySlug.size} tours`);
+  console.log(
+    `[seed] itinerary stops: ${written} across ${tourIdBySlug.size} tours` +
+      (kept > 0
+        ? ` (${kept} stop(s) the seed no longer lists were KEPT — a trip has checked in there)`
+        : ''),
+  );
 }
 
 export async function seed(context: DatabaseContext = 'app'): Promise<void> {

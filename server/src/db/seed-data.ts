@@ -970,8 +970,36 @@ export const SEED_DRIVERS: SeedDriver[] = [
  * "unassigned trips" alert and the calendar's gold dot both have something
  * true to show. Tomorrow and the day after — inside
  * `UNASSIGNED_ALERT_HOURS` either way.
+ *
+ * ## `refSuffix` is the re-seed key (7N item 10)
+ *
+ * The seed used to find an existing demo row by `(tour_id, lead_name)`, which
+ * is wrong in both directions: a real guest called "Demo Guest One" on the
+ * same tour SUPPRESSED the demo row, and renaming a demo lead DUPLICATED it.
+ * A booking's real identity is its ref, so each demo trip now carries two
+ * characters of its own and `seed.ts` matches on `RG-SEED` + those.
+ *
+ * Both characters must come from `REF_ALPHABET`
+ * (`services/booking-ref.ts` — no `0/O`, `1/I/L` or `U`, so a ref survives
+ * being read aloud), because `RG-SEED` + two of them is a REAL booking ref
+ * and not merely a recognisable string: it parses against
+ * `bookingRefSchema`, which `seed.ts` asserts rather than trusts. Written out
+ * per trip rather than derived from the array index, so reordering this list
+ * does not silently mint a second copy of every demo trip.
  */
 export const SEED_UNASSIGNED_TRIPS = [
-  { tourSlug: 'kawasan-falls-canyoneering', inDays: 1, pax: 4, leadName: 'Demo Guest One' },
-  { tourSlug: 'oslob-whale-shark-tumalog-falls', inDays: 2, pax: 2, leadName: 'Demo Guest Two' },
+  {
+    tourSlug: 'kawasan-falls-canyoneering',
+    inDays: 1,
+    pax: 4,
+    leadName: 'Demo Guest One',
+    refSuffix: '23',
+  },
+  {
+    tourSlug: 'oslob-whale-shark-tumalog-falls',
+    inDays: 2,
+    pax: 2,
+    leadName: 'Demo Guest Two',
+    refSuffix: '24',
+  },
 ] as const;
