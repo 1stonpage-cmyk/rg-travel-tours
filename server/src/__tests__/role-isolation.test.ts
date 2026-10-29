@@ -8,7 +8,7 @@
  * hand also lets a new area arrive with no test at all; generating them means
  * area twelve is covered the moment it is added to the matrix.
  *
- * Three layers, because the generated 33 on their own would prove less than
+ * Three layers, because the generated 36 on their own would prove less than
  * they appear to:
  *
  *  1. **The matrix is checked against the spec, not against a second copy of
@@ -17,7 +17,7 @@
  *     typo, a widened role list, or an edit to the spec table all fail here.
  *     (Same discipline as `no-red.test.ts` and `contrast.test.ts`: read the
  *     real source, never a fixture list.)
- *  2. **The 33 cases run through a real tRPC procedure**, not through a
+ *  2. **The 36 cases run through a real tRPC procedure**, not through a
  *     lookup. The harness below builds a router with one gated procedure per
  *     area — the shape a Week 5 admin procedure will have — and the pass/fail
  *     signal is whether the RESOLVER BODY actually ran, recorded by a
