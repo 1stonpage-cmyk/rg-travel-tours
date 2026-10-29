@@ -72,6 +72,14 @@ const FIXED_COUPON = {
   isActive: false,
 };
 
+/** `couponCreateInput.code`'s own max — the longest code the screen can ever show. */
+const LONG_CODE = 'A'.repeat(40);
+const LONG_CODE_COUPON = {
+  ...PERCENT_COUPON,
+  id: 3,
+  code: LONG_CODE,
+};
+
 const REDEMPTIONS = [
   {
     id: 11,
@@ -269,6 +277,27 @@ describe('AdminCouponsPage', () => {
     expect(sent).toHaveLength(0);
   });
 
+  /**
+   * The foot-gun half of 7N Task 8: a `10` typed as 10% must not silently
+   * become ₱10.00 the moment the owner switches the discount type, with no
+   * re-type and no warning. Clearing the field on the switch is the fix.
+   */
+  it('clears the discount value when the discount type changes units', async () => {
+    renderPage();
+    await screen.findAllByText('SAVE10');
+
+    await user.click(screen.getByRole('button', { name: /add a coupon/i }));
+    await user.type(screen.getByLabelText(/discount \(%\)/i), '10');
+    expect(screen.getByLabelText(/discount \(%\)/i)).toHaveValue('10');
+
+    await user.click(screen.getByLabelText('Discount type'));
+    await user.click(await screen.findByRole('option', { name: 'Fixed amount off' }));
+
+    // Same input, now labelled for pesos — the typed "10" must be gone, not
+    // silently reinterpreted as ₱10.00.
+    expect(screen.getByLabelText(/discount \(pesos\)/i)).toHaveValue('');
+  });
+
   it('asks before deactivating, and says "Deactivate", never "Delete"', async () => {
     const calls: unknown[] = [];
     renderPage({
@@ -286,6 +315,29 @@ describe('AdminCouponsPage', () => {
     await user.click(screen.getByRole('button', { name: /yes, deactivate SAVE10/i }));
     await waitFor(() => expect(calls).toEqual([{ id: 1, isActive: false }]));
     expect(screen.queryByText(/delete/i)).toBeNull();
+  });
+
+  /**
+   * A 40-character code (7N, Task 8) is the longest a coupon can carry
+   * (`couponCreateInput.code`'s own max). `break-all` on the code text and
+   * `whitespace-normal` on the confirm button are what keep both from
+   * pushing past the phone card's edge at 360px — asserted on the class
+   * strings the same way `'keeps the wide table inside its own horizontal
+   * scroll container'` does, since jsdom does not compute real layout.
+   */
+  it('wraps a 40-character code instead of overflowing the phone card', async () => {
+    renderPage({ 'admin.coupons.list': [LONG_CODE_COUPON] });
+    const row = await firstRowFor(LONG_CODE);
+    const codeText = within(row).getByText(LONG_CODE);
+    expect(codeText.className).toMatch(/break-all/);
+
+    await user.click(
+      within(row).getByRole('button', { name: new RegExp(`deactivate ${LONG_CODE}`, 'i') }),
+    );
+    const confirmButton = screen.getByRole('button', {
+      name: new RegExp(`yes, deactivate ${LONG_CODE}`, 'i'),
+    });
+    expect(confirmButton.className).toMatch(/whitespace-normal/);
   });
 
   it('opens the redemption log and shows the booking ref, date and discount', async () => {

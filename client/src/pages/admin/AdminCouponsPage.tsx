@@ -403,7 +403,22 @@ function CouponForm({
         errors={errors}
         pending={pending}
         submitLabel={mode === 'edit' ? 'Save changes' : 'Add coupon'}
-        onChange={(name, next) => setValues((current) => ({ ...current, [name]: next }))}
+        onChange={(name, next) =>
+          setValues((current) => ({
+            ...current,
+            [name]: next,
+            /*
+             * Switching discount type carries the typed NUMBER across units
+             * (7N, Task 8): a `10` meant as 10% silently became ₱10.00 once
+             * the type flipped to fixed, with no re-type and no warning.
+             * Clearing the value on the one field whose meaning just
+             * changed is cheaper than guessing a conversion nobody asked
+             * for, and matches `scalarValuesFromCoupon`'s own blank default
+             * for a type with no existing amount.
+             */
+            ...(name === 'discountType' ? { discountValue: '' } : {}),
+          }))
+        }
         onSubmit={submit}
       />
 
@@ -605,7 +620,11 @@ function CouponActions({
             <Button
               type="button"
               size="sm"
-              className={PRIMARY_BUTTON}
+              // `whitespace-normal` overrides the button base's own
+              // `whitespace-nowrap` (7N, Task 8): a 40-character code makes
+              // "Yes, deactivate <code>" the longest string on this screen,
+              // and nowrap pushed it past the card's edge at 360px.
+              className={`${PRIMARY_BUTTON} whitespace-normal`}
               disabled={setActive.isPending}
               onClick={() => setActive.mutate({ id: coupon.id, isActive: false })}
             >
@@ -775,8 +794,13 @@ function CouponsAdmin() {
             {coupons.map((coupon) => (
               <li key={coupon.id} className={`${CARD} p-4 text-sm`}>
                 <div className="flex flex-wrap items-start justify-between gap-2">
-                  <div>
-                    <p className="text-brand-ink font-semibold">{coupon.code}</p>
+                  <div className="min-w-0 max-w-full">
+                    {/* A code can run to 40 characters with no spaces — `break-all`
+                        so one long, unspaced token wraps instead of overflowing
+                        the card at 360px (7N, Task 8). */}
+                    <p className="text-brand-ink max-w-full break-all font-semibold">
+                      {coupon.code}
+                    </p>
                     <p className="text-brand-ink">{discountInWords(coupon)}</p>
                   </div>
                   <Badge className={STATUS_BADGE_CLASS[statusLabel(coupon.isActive)]}>
