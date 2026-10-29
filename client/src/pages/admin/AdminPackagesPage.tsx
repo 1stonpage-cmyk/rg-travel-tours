@@ -76,6 +76,9 @@ const PRIMARY_BUTTON =
 const OUTLINE_BUTTON =
   'tap-target border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 hover:text-brand-blue-800 rounded-[10px] font-semibold transition-colors';
 
+/** Same page size `AdminBookingsPage.tsx` uses for its own Prev/Next pager. */
+const INQUIRY_PAGE_SIZE = 25;
+
 const STATUS_BADGE_CLASS: Record<'Active' | 'Inactive', string> = {
   Active: 'border-0 bg-brand-blue-50 text-brand-blue-800',
   Inactive: 'border-0 bg-slate-100 text-brand-ink',
@@ -681,7 +684,11 @@ function DeniedState() {
 
 function PackagesAdmin({ isOwner }: { isOwner: boolean }) {
   const list = trpc.admin.packages.list.useQuery(undefined, { retry: false });
-  const inquiryList = trpc.admin.inquiries.list.useQuery(undefined, { retry: false });
+  const [inquiryOffset, setInquiryOffset] = useState(0);
+  const inquiryList = trpc.admin.inquiries.list.useQuery(
+    { limit: INQUIRY_PAGE_SIZE, offset: inquiryOffset },
+    { retry: false },
+  );
   const [editingId, setEditingId] = useState<number | 'new' | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -695,7 +702,13 @@ function PackagesAdmin({ isOwner }: { isOwner: boolean }) {
 
   const rows = list.data ?? [];
   const editing = typeof editingId === 'number' ? rows.find((row) => row.id === editingId) : null;
-  const inquiries = inquiryList.data ?? [];
+  const inquiries = inquiryList.data?.items ?? [];
+  /**
+   * Scoped to the page on screen, not the whole queue — `admin.inquiries.list`
+   * is paginated now (7N), so a count across every enquiry would need its own
+   * query this task did not add. The wording below says "on this page" so it
+   * never asserts a global "nothing waiting" the next page could contradict.
+   */
   const waiting = inquiries.filter((row) => row.status === 'new').length;
 
   return (
@@ -816,14 +829,47 @@ function PackagesAdmin({ isOwner }: { isOwner: boolean }) {
         <>
           <p role="status" className={NOTICE}>
             {waiting === 0
-              ? 'Nothing waiting for an answer.'
-              : `${waiting} ${waiting === 1 ? 'enquiry' : 'enquiries'} waiting for an answer.`}
+              ? 'Nothing on this page waiting for an answer.'
+              : `${waiting} ${waiting === 1 ? 'enquiry' : 'enquiries'} on this page waiting for an answer.`}
           </p>
           <ul className="space-y-3">
             {inquiries.map((row) => (
               <InquiryRow key={row.id} row={row} />
             ))}
           </ul>
+
+          {inquiryList.data ? (
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <p className="text-brand-error text-sm" role="status">
+                Showing {inquiryList.data.offset + 1}–
+                {inquiryList.data.offset + inquiryList.data.items.length} of{' '}
+                {inquiryList.data.total}
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className={OUTLINE_BUTTON}
+                  disabled={inquiryOffset === 0}
+                  onClick={() => setInquiryOffset(Math.max(inquiryOffset - INQUIRY_PAGE_SIZE, 0))}
+                >
+                  Previous
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className={OUTLINE_BUTTON}
+                  disabled={
+                    inquiryList.data.offset + inquiryList.data.items.length >=
+                    inquiryList.data.total
+                  }
+                  onClick={() => setInquiryOffset(inquiryOffset + INQUIRY_PAGE_SIZE)}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </>
       )}
 

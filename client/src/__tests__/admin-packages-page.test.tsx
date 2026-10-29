@@ -126,11 +126,19 @@ const GENERAL_INQUIRY = inquiry({
   message: 'Do you run airport transfers?',
 });
 
+/** `admin.inquiries.list`'s paginated result shape — mirrors `admin.bookings.list`. */
+function inquiryPage(
+  items: InquiryAdminRow[],
+  overrides: Partial<{ total: number; limit: number; offset: number }> = {},
+) {
+  return { items, total: items.length, limit: 25, offset: 0, ...overrides };
+}
+
 function renderPage(extra: Record<string, unknown> = {}) {
   mockTrpc({
     'staffAuth.me': { userId: 1, role: 'owner', mustChangePassword: false },
     'admin.packages.list': [ACTIVE, RETIRED],
-    'admin.inquiries.list': [NEW_INQUIRY, GENERAL_INQUIRY],
+    'admin.inquiries.list': inquiryPage([NEW_INQUIRY, GENERAL_INQUIRY]),
     ...extra,
   });
   return render(
@@ -299,7 +307,30 @@ describe('AdminPackagesPage — the enquiries', () => {
   it('counts the enquiries still waiting for an answer', async () => {
     renderPage();
     await screen.findByText('Maria Santos');
-    expect(screen.getByText(/1 enquiry waiting/i)).toBeInTheDocument();
+    expect(screen.getByText(/1 enquiry on this page waiting/i)).toBeInTheDocument();
+  });
+
+  /**
+   * **The server paginates, the browser does not re-filter.** Mirrors
+   * `admin-bookings.test.tsx`'s own pager test: assert on what was SENT
+   * (`offset`), not on a client-side slice, since the mock cannot
+   * re-slice a dataset the way the real server does.
+   */
+  it('pages forwards, and disables Previous on the first page', async () => {
+    const sent: Array<Record<string, unknown>> = [];
+    renderPage({
+      'admin.inquiries.list': (input: unknown) => {
+        sent.push(input as Record<string, unknown>);
+        return inquiryPage([NEW_INQUIRY, GENERAL_INQUIRY], { total: 60 });
+      },
+    });
+    await screen.findByText('Maria Santos');
+
+    expect(screen.getByRole('button', { name: /previous/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /next/i })).toBeEnabled();
+
+    await user.click(screen.getByRole('button', { name: /next/i }));
+    expect(sent.at(-1)).toMatchObject({ offset: 25, limit: 25 });
   });
 
   it('changes an enquiry status and says which one it set', async () => {
@@ -399,7 +430,7 @@ describe('AdminPackagesPage — denied state', () => {
     mockTrpcError('admin.packages.list', 'FORBIDDEN', 'Not permitted for this account.');
     mockTrpc({
       'staffAuth.me': { userId: 1, role: 'dispatcher', mustChangePassword: false },
-      'admin.inquiries.list': [],
+      'admin.inquiries.list': inquiryPage([]),
     });
     render(
       <TrpcProviders>

@@ -424,7 +424,9 @@ describeWithDb('a package can be deactivated but not deleted', () => {
     expect(row, 'the package row was removed rather than deactivated').toBeDefined();
     expect(row).toMatchObject({ isActive: false, newPriceCentavos: 980_000 });
     // The enquiry that pointed at it is untouched and still joined.
-    const listed = (await ownerApi().admin.inquiries.list()).find((r) => r.id === inquiry.id);
+    const listed = (await ownerApi().admin.inquiries.list({})).items.find(
+      (r) => r.id === inquiry.id,
+    );
     expect(listed).toMatchObject({ packageId: id, packageTitle: 'Camotes Islands Escape' });
   });
 
@@ -492,7 +494,7 @@ describeWithDb('admin.inquiries.list', () => {
     const about = await createInquiry({ packageId, name: 'Package Asker' });
     const general = await createInquiry({ packageId: null, name: 'General Asker' });
 
-    const rows = await ownerApi().admin.inquiries.list();
+    const { items: rows } = await ownerApi().admin.inquiries.list({ limit: 100 });
 
     expect(rows.find((row) => row.id === about.id)).toMatchObject({
       type: 'package',
@@ -519,7 +521,7 @@ describeWithDb('admin.inquiries.list', () => {
     const first = await createInquiry({ name: 'Asked First' });
     const second = await createInquiry({ name: 'Asked Second' });
 
-    const ids = (await ownerApi().admin.inquiries.list()).map((row) => row.id);
+    const ids = (await ownerApi().admin.inquiries.list({ limit: 100 })).items.map((row) => row.id);
     expect(second).toBeDefined();
     expect(ids.indexOf(second.id)).toBeLessThan(ids.indexOf(first.id));
     // And the fixture order really is what it claims to be.
@@ -528,13 +530,75 @@ describeWithDb('admin.inquiries.list', () => {
 
   it('carries the guest message, email and phone — the reason the screen exists', async () => {
     const { id, email } = await createInquiry({ message: 'Can you collect us from the pier?' });
-    const mine = (await ownerApi().admin.inquiries.list()).find((row) => row.id === id);
+    const mine = (await ownerApi().admin.inquiries.list({ limit: 100 })).items.find(
+      (row) => row.id === id,
+    );
     expect(mine).toMatchObject({
       email,
       phone: '09170000000',
       message: 'Can you collect us from the pier?',
     });
     expect(Number.isNaN(Date.parse(mine!.createdAt))).toBe(false);
+  });
+
+  /**
+   * 7N item (Group C): `admin.inquiries.list` used to return the whole table
+   * unordered-by-page. Now it pages exactly like `admin.bookings.list` — same
+   * `limit`/`offset` input, same `createdAt DESC, id DESC` order, same
+   * `{ items, total, limit, offset }` shape.
+   */
+  describeWithDb('pagination', () => {
+    /** Enough enquiries to span three pages of 10, via the real public mutation. */
+    async function createMany(count: number) {
+      const made: number[] = [];
+      for (let i = 0; i < count; i += 1) {
+        const { id } = await createInquiry({ name: `Pager Guest ${i}` });
+        made.push(id);
+      }
+      return made;
+    }
+
+    it('returns at most `limit` rows, in createdAt DESC, id DESC order', async () => {
+      const ids = await createMany(12);
+
+      const { items, total, limit, offset } = await ownerApi().admin.inquiries.list({ limit: 10 });
+
+      expect(items.length).toBe(10);
+      expect(limit).toBe(10);
+      expect(offset).toBe(0);
+      expect(total).toBeGreaterThanOrEqual(ids.length);
+      // Newest first: this fixture's own ids, which were minted in ascending
+      // order, must appear descending among the first page's rows.
+      const mineOnPage = items.map((r) => r.id).filter((id) => ids.includes(id));
+      expect(mineOnPage).toEqual([...mineOnPage].sort((a, b) => b - a));
+    });
+
+    it('a second page picks up exactly where the first left off — no overlap, no gap', async () => {
+      await createMany(25);
+
+      const whole = await ownerApi().admin.inquiries.list({ limit: 100 });
+      const pageOne = await ownerApi().admin.inquiries.list({ limit: 15, offset: 0 });
+      const pageTwo = await ownerApi().admin.inquiries.list({ limit: 15, offset: 15 });
+
+      const stitched = [...pageOne.items, ...pageTwo.items].map((r) => r.id);
+      const expected = whole.items.slice(0, 30).map((r) => r.id);
+      expect(stitched).toEqual(expected);
+
+      // No id appears twice across the two pages.
+      expect(new Set(stitched).size).toBe(stitched.length);
+    });
+
+    it('refuses a `limit` above 100 rather than silently serving a bigger page', async () => {
+      await expect(ownerApi().admin.inquiries.list({ limit: 500 })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+      });
+    });
+
+    it('defaults to limit 25, offset 0 when neither is given', async () => {
+      const result = await ownerApi().admin.inquiries.list({});
+      expect(result.limit).toBe(25);
+      expect(result.offset).toBe(0);
+    });
   });
 });
 
@@ -628,7 +692,9 @@ describeWithDb('admin.packages / admin.inquiries — who may work on them', () =
     await expect(api.admin.packages.list()).resolves.toBeInstanceOf(Array);
 
     const inquiry = await createInquiry();
-    await expect(api.admin.inquiries.list()).resolves.toBeInstanceOf(Array);
+    await expect(api.admin.inquiries.list({})).resolves.toMatchObject({
+      items: expect.any(Array),
+    });
     await expect(
       api.admin.inquiries.setStatus({ id: inquiry.id, status: 'read' }),
     ).resolves.toEqual({ ok: true });
@@ -652,7 +718,7 @@ describeWithDb('admin.packages / admin.inquiries — who may work on them', () =
         .update({ ...input, id: packageId, days: 9 } as never)
         .catch((e: unknown) => e),
       api.admin.packages.setActive({ id: packageId, isActive: false }).catch((e: unknown) => e),
-      api.admin.inquiries.list().catch((e: unknown) => e),
+      api.admin.inquiries.list({}).catch((e: unknown) => e),
       api.admin.inquiries.setStatus({ id: inquiry.id, status: 'closed' }).catch((e: unknown) => e),
     ]);
 
@@ -674,7 +740,7 @@ describeWithDb('admin.packages / admin.inquiries — who may work on them', () =
     await expect(publicApi().admin.packages.list()).rejects.toMatchObject({
       code: 'UNAUTHORIZED',
     });
-    await expect(publicApi().admin.inquiries.list()).rejects.toMatchObject({
+    await expect(publicApi().admin.inquiries.list({})).rejects.toMatchObject({
       code: 'UNAUTHORIZED',
     });
   });

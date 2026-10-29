@@ -44,6 +44,7 @@
  * an audit row that survives a rollback claims a change nobody made.
  */
 import { TRPCError } from '@trpc/server';
+import { z } from 'zod';
 import {
   inquiryStatusInput,
   packageActiveInput,
@@ -358,6 +359,20 @@ export const adminPackagesRouter = router({
     }),
 });
 
+/**
+ * `admin.inquiries.list`'s input — the same `limit`/`offset` pair
+ * `admin.bookings.list` uses (`server/src/routers/admin/bookings.ts`),
+ * capped at 100 for the same reason given there: a page of a thousand rows
+ * is not a page, and an uncapped limit is how one admin screen becomes a
+ * way to pull a whole table in a single request.
+ */
+const inquiriesListInput = z
+  .object({
+    limit: z.number().int().min(1).max(100).default(25),
+    offset: z.number().int().min(0).default(0),
+  })
+  .strict();
+
 export const adminInquiriesRouter = router({
   /**
    * Every enquiry, **newest first** — that is the queue: an office opens this
@@ -374,48 +389,72 @@ export const adminInquiriesRouter = router({
    * finance out (RA 10173: admin-only access to personal data, and only the
    * roles whose work needs it).
    *
-   * No input and no status filter, the same shape `admin.reviews.queue` uses:
-   * the screen wants all four states at once to show its counts, and a filter
-   * the client could pass would be one more thing to check against the gate.
-   * The client narrows what it renders. **Known limit:** there is no page, so a
-   * table that has grown for years is returned whole; pagination was not in
-   * this task's plan and would want a `limit`/`cursor` input of its own.
+   * **Paginated** (7N item, closing the "known limit" this comment used to
+   * record): `limit`/`offset`, mirroring `admin.bookings.list` exactly —
+   * same input shape, same `{ items, total, limit, offset }` result shape.
+   * No status filter still, the same choice `admin.reviews.queue` makes: the
+   * screen wants all four states at once to show its counts, and a filter
+   * the client could pass would be one more thing to check against the
+   * gate. The client narrows what it renders.
    */
-  list: adminProcedure('packagesInquiries').query(async (): Promise<InquiryAdminRow[]> => {
-    const rows = await getDb()
-      .select({
-        id: inquiries.id,
-        type: inquiries.type,
-        status: inquiries.status,
-        packageId: inquiries.packageId,
-        packageTitle: packages.title,
-        name: inquiries.name,
-        email: inquiries.email,
-        phone: inquiries.phone,
-        message: inquiries.message,
-        createdAt: inquiries.createdAt,
-      })
-      .from(inquiries)
-      .leftJoin(packages, eq(inquiries.packageId, packages.id))
-      // `id` after `created_at`: `created_at` is a `DATETIME` with second
-      // precision, so two enquiries can share an instant and a queue needs a
-      // total order.
-      .orderBy(desc(inquiries.createdAt), desc(inquiries.id));
+  list: adminProcedure('packagesInquiries')
+    .input(inquiriesListInput)
+    .query(
+      async ({
+        input,
+      }): Promise<{
+        items: InquiryAdminRow[];
+        total: number;
+        limit: number;
+        offset: number;
+      }> => {
+        const rows = await getDb()
+          .select({
+            id: inquiries.id,
+            type: inquiries.type,
+            status: inquiries.status,
+            packageId: inquiries.packageId,
+            packageTitle: packages.title,
+            name: inquiries.name,
+            email: inquiries.email,
+            phone: inquiries.phone,
+            message: inquiries.message,
+            createdAt: inquiries.createdAt,
+          })
+          .from(inquiries)
+          .leftJoin(packages, eq(inquiries.packageId, packages.id))
+          // `id` after `created_at`: `created_at` is a `DATETIME` with second
+          // precision, so two enquiries can share an instant and a queue needs a
+          // total order.
+          .orderBy(desc(inquiries.createdAt), desc(inquiries.id))
+          .limit(input.limit)
+          .offset(input.offset);
 
-    return rows.map((row) => ({
-      id: row.id,
-      type: row.type,
-      status: row.status,
-      packageId: row.packageId,
-      packageTitle: row.packageTitle,
-      name: row.name,
-      email: row.email,
-      phone: row.phone,
-      message: row.message,
-      // UTC instants out as UTC instants: the SCREEN converts to Manila.
-      createdAt: row.createdAt.toISOString(),
-    }));
-  }),
+        const [counted] = await getDb()
+          .select({ total: sql<number>`COUNT(*)` })
+          .from(inquiries);
+
+        return {
+          items: rows.map((row) => ({
+            id: row.id,
+            type: row.type,
+            status: row.status,
+            packageId: row.packageId,
+            packageTitle: row.packageTitle,
+            name: row.name,
+            email: row.email,
+            phone: row.phone,
+            message: row.message,
+            // UTC instants out as UTC instants: the SCREEN converts to Manila.
+            createdAt: row.createdAt.toISOString(),
+          })),
+          /** For the pager. `COUNT(*)` comes back as a string on some drivers. */
+          total: Number(counted?.total ?? 0),
+          limit: input.limit,
+          offset: input.offset,
+        };
+      },
+    ),
 
   /**
    * Moves one enquiry through `new` → `read` → `replied` → `closed`, and back.
