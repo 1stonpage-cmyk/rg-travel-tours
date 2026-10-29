@@ -250,10 +250,12 @@ each if they are missing: no owner can sign in, or every browser request is refu
       real credential on the live site the day someone forgets to change it.
 - [ ] **Remove `OWNER_PASSWORD` from the server `.env` once the first seed has run.** The
       hash is in the database from that moment and the plaintext has no further use, so
-      leaving it is a credential sitting in a file for no benefit. (Re-adding it and
-      re-seeding is also the password-reset path, which is why the seed updates an existing
-      owner rather than failing on the duplicate email — there is no reset screen until the
-      admin weeks.)
+      leaving it is a credential sitting in a file for no benefit. **Stale note, corrected
+      2026-10-30:** re-adding it and re-seeding is no longer a password-reset path — the
+      2026-10-23 owner decision made `seedFirstOwner` create-only, so it returns early when an
+      active owner exists and warns-and-skips on a duplicate email rather than updating it.
+      There is still no reset screen until the admin weeks; resetting a forgotten owner
+      password today needs a direct database update, not a re-seed.
 - [ ] **Set `APP_ORIGIN=https://travelsugbo.com`** in the deployed `.env`. It is the only
       origin allowed to make a state-changing request (CSRF, §12), and outside production the
       Vite dev server on 5180 is allowed as well — which is exactly why production must be set
@@ -328,8 +330,20 @@ Do these in order. Steps 1–4 change nothing public, so they are safe to do ear
    the code expects and the database does not have takes the whole public site down with a
    500 rather than degrading. The newest such key is `booking` (the bookable date window —
    `minLeadDays`, `nextDayCutoffTime`, `maxAdvanceDays`), added 2026-10-13, so a database
-   seeded before that date is missing it. The seed is idempotent and upserts by natural key,
-   so running it again is safe and is the fastest way to be sure.
+   seeded before that date is missing it.
+
+   **Corrected 2026-10-30 — do NOT treat re-running `db:seed` as a routine, safe "re-sync".**
+   A settings row that already exists is now never touched (it only inserts a genuinely
+   missing key), so this specific step — filling in a missing settings key — is safe. But
+   `tours`, `tour_price_tiers`, `tour_images`, `packages`, `reviews` and the fleet
+   (`vans`/`drivers`) are still upserted the OLD way: a re-seed silently reverts any
+   admin-edited tour price, title, badge or gallery image, any package price, re-publishes
+   the sample reviews this checklist tells you to hide below, and can reactivate a
+   deactivated driver or free an `on_trip` van. **Only run `db:seed` against the production
+   database for the specific gap this step exists for (a missing settings key), never as a
+   general "make sure everything's there" step once real content exists.** This is an open
+   gap, not yet fixed — see the owner's standing question about which tables the seed should
+   still own after launch.
 
 3. **Publish the build**: sync `client/dist` into `/var/www/travelsugbo/app`, confirm
    `pm2 restart` brings the API up on 3100, and smoke-test the whole flow on
