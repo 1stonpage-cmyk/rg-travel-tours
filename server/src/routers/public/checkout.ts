@@ -68,6 +68,7 @@ import { TRPCError } from '@trpc/server';
 import { and, eq, lt, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import {
+  AMOUNT_BELOW_GATEWAY_MINIMUM,
   bookableDateRange,
   bookingLookupInput,
   bookingPagePath,
@@ -80,6 +81,7 @@ import {
   isDateBookable,
   manilaCivilDate,
   PAYMENT_HOLD_MINUTES,
+  PAYMONGO_MIN_CENTAVOS,
   quoteInput,
   type BookingStatus,
   type PayMode,
@@ -109,6 +111,7 @@ import {
 import {
   CapacityRefusedError,
   createHold as createHoldService,
+  GatewayMinimumNotMetError,
   HoldContentionError,
   HoldLimitReachedError,
   PriceChangedError,
@@ -411,6 +414,16 @@ function translateHoldError(error: unknown): TRPCError {
       message: 'The price for this quote has changed. Please request a new quote.',
     });
   }
+  /*
+   * BUG-110. The refusal carries the amount and the pay mode; the guest gets
+   * neither — only the shared sentence, which names the ways round the floor.
+   * `BAD_REQUEST`, not `CONFLICT`: nothing has changed under the guest and
+   * retrying the same request will refuse again. The same message is raised
+   * directly in `startPayment` below, from the one constant.
+   */
+  if (error instanceof GatewayMinimumNotMetError) {
+    return new TRPCError({ code: 'BAD_REQUEST', message: AMOUNT_BELOW_GATEWAY_MINIMUM });
+  }
   if (error instanceof HoldLimitReachedError) {
     return new TRPCError({
       code: 'CONFLICT',
@@ -710,7 +723,9 @@ export const checkoutRouter = router({
    * gateway.** A refusal that still reached PayMongo would have created a
    * payment intent someone can complete — against a slot that is gone. The
    * guard is therefore the first thing after the read, and the gateway call
-   * is the last thing before the return.
+   * is the last thing before the return. The amount gets the same treatment:
+   * a charge under `PAYMONGO_MIN_CENTAVOS` is refused here (BUG-110), as the
+   * defensive mirror of `createHold()`'s own check.
    *
    * The success and cancel URLs are built from `bookingPagePath()` in
    * `@rg/shared` (owner Ruling 25), which is the same constant the client
@@ -782,6 +797,21 @@ export const checkoutRouter = router({
           booking.payMode === 'full'
             ? booking.totalCentavos
             : depositCentavos(booking.totalCentavos, booking.priceSnapshot.depositPercent);
+
+        /*
+         * The gateway's own floor, checked DEFENSIVELY (BUG-110, owner
+         * decision 2026-10-23 Q10). `createHold()` already refuses this shape
+         * before it writes anything, so a booking reaching here below the
+         * floor means some other path produced the hold — and the gateway is
+         * exactly where that would otherwise surface, as PayMongo's own
+         * "amount must be at least 10000" turned into this router's generic
+         * `SERVICE_UNAVAILABLE`: a guest told to try again shortly about a
+         * booking that will never go through. One sentence, one constant,
+         * both surfaces, and no payment intent created.
+         */
+        if (amountDueNowCentavos < PAYMONGO_MIN_CENTAVOS) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: AMOUNT_BELOW_GATEWAY_MINIMUM });
+        }
 
         const successUrl = `${env.PUBLIC_BASE_URL}${bookingPagePath(booking.ref)}`;
 

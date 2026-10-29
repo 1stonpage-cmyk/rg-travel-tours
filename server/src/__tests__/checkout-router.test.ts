@@ -14,7 +14,14 @@ import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 import express from 'express';
 import request from 'supertest';
-import { bookingRefSchema, DATE_BLOCKED, manilaCivilDate, quoteResultSchema } from '@rg/shared';
+import {
+  AMOUNT_BELOW_GATEWAY_MINIMUM,
+  bookingRefSchema,
+  DATE_BLOCKED,
+  manilaCivilDate,
+  PAYMONGO_MIN_CENTAVOS,
+  quoteResultSchema,
+} from '@rg/shared';
 import { createApp } from '../app';
 import { getDb, getPool } from '../db/client';
 import {
@@ -90,8 +97,12 @@ async function countBookings(): Promise<number> {
   return Number(rows[0]?.n ?? -1);
 }
 
-/** A tour with one price tier spanning [minPax, maxPax] at a round ₱1,000/person. */
-async function makeTourWithTier(minPax: number, maxPax: number) {
+/**
+ * A tour with one price tier spanning [minPax, maxPax] at a round
+ * ₱1,000/person — or at `pricePerPersonCentavos` when the caller needs a
+ * different price, which the gateway-floor test (BUG-110) does.
+ */
+async function makeTourWithTier(minPax: number, maxPax: number, pricePerPersonCentavos = 100000) {
   const db = getDb();
   const slug = `__checkout_router__${unique()}`;
   const [destination] = await db.insert(destinations).values({ name: slug, slug });
@@ -109,7 +120,7 @@ async function makeTourWithTier(minPax: number, maxPax: number) {
     tourId: tour.insertId,
     minPax,
     maxPax,
-    pricePerPersonCentavos: 100000,
+    pricePerPersonCentavos,
   });
   return { tourId: tour.insertId, slug };
 }
@@ -349,6 +360,45 @@ describeWithDb('checkout router', () => {
     created.bookingIds.push(result.bookingId);
 
     expect(bookingRefSchema.safeParse(result.ref).success).toBe(true);
+  });
+
+  /**
+   * BUG-110, at the surface a guest actually meets. The service's own
+   * refusal is pinned in `create-hold.test.ts`; what this asserts is the
+   * SENTENCE — one shared constant, guest-facing, naming what to do instead
+   * — and that nothing was written. Before this, a sub-₱100 deposit held a
+   * slot and failed later at PayMongo with "amount must be at least 10000".
+   */
+  it('refuses a deposit below the gateway minimum with the shared guest message, and writes nothing', async () => {
+    // ₱300 for one guest: a 30% deposit is ₱90, under the ₱100 floor.
+    const tour = await makeTourWithTier(1, 12, 30000);
+    await makeFleet();
+    const quote = await caller.checkout.quote({
+      tourSlug: tour.slug,
+      date: DAY,
+      pax: 1,
+      addonIds: [],
+    });
+    expect(quote.amountDueNowCentavos.deposit).toBeLessThan(PAYMONGO_MIN_CENTAVOS);
+    const before = await countBookings();
+
+    const error = await caller.checkout
+      .createHold(
+        validHoldInput({ tourSlug: tour.slug, date: DAY, pax: 1, quoteId: quote.quoteId }),
+      )
+      .catch((e: unknown) => e);
+
+    expect(error).toMatchObject({
+      code: 'BAD_REQUEST',
+      message: AMOUNT_BELOW_GATEWAY_MINIMUM,
+    });
+    // Guest-safe and actionable: it names the floor and the ways round it,
+    // and no gateway, provider or environment-variable name.
+    expect(AMOUNT_BELOW_GATEWAY_MINIMUM).toContain('₱100');
+    expect(AMOUNT_BELOW_GATEWAY_MINIMUM).toMatch(/in full/i);
+    expect(AMOUNT_BELOW_GATEWAY_MINIMUM).toMatch(/contact us/i);
+    expect(AMOUNT_BELOW_GATEWAY_MINIMUM).not.toMatch(/paymongo|gateway|centavos/i);
+    expect(await countBookings(), 'a refused hold must leave no booking row').toBe(before);
   });
 
   it('rejects a request carrying totalCentavos — the .strict() schema at the router boundary', async () => {

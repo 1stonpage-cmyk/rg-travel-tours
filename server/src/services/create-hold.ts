@@ -35,7 +35,9 @@
  *     is not already past **in Asia/Manila**, and is not in
  *     `tour_blocked_dates`.
  *  4. Recompute the quote from the database, recompute the digest with
- *     `quoteDigest()`, compare it to `input.quoteId`.
+ *     `quoteDigest()`, compare it to `input.quoteId` — then refuse an
+ *     `amount_due_now` below the gateway's own minimum (BUG-110), still
+ *     before any write.
  *  5. The hold caps (Ruling 5): at most two active unpaid holds per email
  *     AND per phone, counted **here, under the locks** — counted outside
  *     them, two concurrent submits both read "one active hold" and both win.
@@ -84,12 +86,14 @@ import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import {
   DATE_NOT_BOOKABLE,
   HOLD_MINUTES,
+  PAYMONGO_MIN_CENTAVOS,
   bookableDateRange,
   isDateBookable,
   manilaCivilDate,
   priceSnapshotSchema,
   type BookableDateRange,
   type CreateHoldInput,
+  type PayMode,
   type PriceSnapshot,
 } from '@rg/shared';
 import { SETTING_SCHEMAS } from '../content/settings-schema';
@@ -212,6 +216,35 @@ export class PriceChangedError extends Error {
   constructor() {
     super('The price changed since this quote was issued');
     this.name = 'PriceChangedError';
+  }
+}
+
+/**
+ * BUG-110 / owner decision 2026-10-23 (Q10): the amount an online payment
+ * would be for is below the gateway's own minimum, so no gateway would take
+ * it. Refused HERE, before anything is written, rather than at the gateway
+ * call — a hold that cannot be paid has already taken a slot, and the guest
+ * meets a provider error page instead of a sentence they can act on.
+ *
+ * The charge is `amount_due_now` for the mode the guest chose: the whole
+ * total for `full`, the deposit for `deposit`. Both are carried so a log or a
+ * future report can say which one was short, and the router's guest-facing
+ * copy (`AMOUNT_BELOW_GATEWAY_MINIMUM` in `@rg/shared`) names neither — it
+ * offers the ways round it instead.
+ */
+export class GatewayMinimumNotMetError extends Error {
+  readonly amountDueNowCentavos: number;
+  readonly minimumCentavos = PAYMONGO_MIN_CENTAVOS;
+  readonly payMode: PayMode;
+
+  constructor(amountDueNowCentavos: number, payMode: PayMode) {
+    super(
+      `The ${payMode} charge of ${amountDueNowCentavos} centavos is below the ` +
+        `gateway minimum of ${PAYMONGO_MIN_CENTAVOS} centavos`,
+    );
+    this.name = 'GatewayMinimumNotMetError';
+    this.amountDueNowCentavos = amountDueNowCentavos;
+    this.payMode = payMode;
   }
 }
 
@@ -626,6 +659,7 @@ async function reserveCouponUnderLock(tx: Transaction, coupon: QuoteCoupon): Pro
  * @throws TourDatePastError     the tour date is past in Asia/Manila
  * @throws TourDateBlockedError  the tour is not running that day
  * @throws PriceChangedError     the quote id no longer matches (Q3)
+ * @throws GatewayMinimumNotMetError the online charge is under ₱100 (BUG-110)
  * @throws HoldLimitReachedError this guest already holds two unpaid slots
  * @throws Error                 any coupon rule, from `validateCoupon()`
  */
@@ -694,6 +728,22 @@ export async function createHold(
           totalCentavos: quote.totalCentavos,
         });
         if (digest !== input.quoteId) throw new PriceChangedError();
+
+        /*
+         * 4b. The gateway floor (BUG-110, owner decision 2026-10-23 Q10).
+         *     The figure checked is the one a gateway would actually be asked
+         *     to charge — `amount_due_now` for the mode the guest chose, off
+         *     the recompute above and never off the request. It is taken here,
+         *     with the rest of the money step and BEFORE any write, so a
+         *     refusal leaves no booking, no slot and nothing for the expiry
+         *     sweep: a hold that can never be paid is worse than no hold.
+         *     `startPayment` repeats it defensively for the booking this
+         *     check never saw.
+         */
+        const amountDueNowCentavos = quote.amountDueNowCentavos[input.payMode];
+        if (amountDueNowCentavos < PAYMONGO_MIN_CENTAVOS) {
+          throw new GatewayMinimumNotMetError(amountDueNowCentavos, input.payMode);
+        }
 
         // 5. The hold caps, under the locks.
         await assertUnderHoldCaps(tx, input.lead.email, input.lead.phone);

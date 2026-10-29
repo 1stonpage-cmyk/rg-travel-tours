@@ -39,3 +39,23 @@ export function depositCentavos(totalCentavos: number, depositPercent: number): 
   const wholePesos = Math.ceil(raw / 100) * 100;
   return Math.min(wholePesos, totalCentavos);
 }
+
+/**
+ * The smallest amount PayMongo will accept for one charge: **₱100**
+ * (BUG-110, owner decision 2026-10-23 Q10). Its own API refuses anything
+ * below with `amount must be at least 10000`.
+ *
+ * It belongs beside {@link depositCentavos} because the two together are the
+ * rule: a 30% deposit is under this floor for any tour priced below ₱334, so
+ * a cheap tour (or a deeply couponed one) produces an `amount_due_now` no
+ * gateway will take. The SERVER refuses that at hold time
+ * (`server/src/services/create-hold.ts`) and again before the gateway call
+ * (`checkout.startPayment`) — never the browser, which computes no money at
+ * all.
+ *
+ * A gateway's own limit, not a business rule: it is NOT a minimum tour price,
+ * a minimum booking value or a minimum deposit percent, and nothing but the
+ * amount handed to an online payment may be measured against it. Cash and the
+ * manual QR / bank-transfer flows are unaffected — they never touch PayMongo.
+ */
+export const PAYMONGO_MIN_CENTAVOS = 10000;

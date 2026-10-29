@@ -16,6 +16,7 @@
  */
 import { z } from 'zod';
 import { PAY_MODES } from './booking';
+import { formatPeso, PAYMONGO_MIN_CENTAVOS } from './money';
 
 /** A civil date in Asia/Manila — the tour day, not an instant. */
 export const civilDateSchema = z
@@ -166,3 +167,30 @@ export const DATE_NOT_BOOKABLE = 'date_not_bookable' as const;
  * point of the precedence order they share.
  */
 export const DATE_BLOCKED = 'date_blocked' as const;
+
+/**
+ * The one sentence a guest sees when the amount an online payment would be
+ * for is under {@link PAYMONGO_MIN_CENTAVOS} — BUG-110, owner decision
+ * 2026-10-23 (Q10). Same WIRE-contract-with-one-definition rule as
+ * `DATE_NOT_BOOKABLE` and `DATE_BLOCKED` above: two surfaces refuse this
+ * (`createHold`, through the router's error translation, and
+ * `checkout.startPayment` defensively), and a guest must not be told two
+ * different things about one fact.
+ *
+ * **It names the way out, in plain words, because every way out exists.** A
+ * deposit under the floor on a tour whose TOTAL clears it is held normally at
+ * pay-in-full — the commonest case by far, since the floor only bites below
+ * ₱334 at a 30% deposit — and the manual QR / bank-transfer flows never touch
+ * a gateway, so the office can always take the money another way. "Online
+ * payment failed" with no alternative would lose a booking this business can
+ * actually fulfil.
+ *
+ * The amount is interpolated from the constant rather than typed, so the
+ * sentence cannot come to disagree with the floor it describes. The wording
+ * deliberately names no gateway, no provider and no internal unit: a guest
+ * has nothing to do with PayMongo or with centavos.
+ */
+export const AMOUNT_BELOW_GATEWAY_MINIMUM =
+  `Online payments must be at least ${formatPeso(PAYMONGO_MIN_CENTAVOS)}. ` +
+  `Please pay in full instead of a deposit if that reaches ${formatPeso(PAYMONGO_MIN_CENTAVOS)}, ` +
+  `or contact us to pay by bank transfer or QR code instead.`;

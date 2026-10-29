@@ -24,6 +24,7 @@ import { eq, sql } from 'drizzle-orm';
 import {
   CAPACITY_HOLDING_STATUSES,
   HOLD_MINUTES,
+  PAYMONGO_MIN_CENTAVOS,
   createHoldInput,
   phPhoneSchema,
   priceSnapshotSchema,
@@ -52,6 +53,7 @@ import { CouponUsageLimitReachedError } from '../services/coupons';
 import {
   CapacityRefusedError,
   CouponExhaustedUnderLockError,
+  GatewayMinimumNotMetError,
   HoldContentionError,
   HoldLimitReachedError,
   MAX_ACTIVE_HOLDS_PER_GUEST,
@@ -103,9 +105,20 @@ interface TourFixture {
   photographerId: number;
 }
 
-/** A tour with two price tiers and two add-ons — one per-person, one per-group. */
+/**
+ * A tour with two price tiers and two add-ons — one per-person, one per-group.
+ *
+ * `pricePerPersonCentavos` overrides BOTH tiers when given, which the gateway
+ * floor tests (BUG-110) need: a tour cheap enough that a 30% deposit is under
+ * ₱100 while the full total is not. Left out, the tiers keep their original
+ * ₱2,500 / ₱1,890 and every other test in this file is unchanged.
+ */
 async function makeTour(
-  opts: { groupsPerDay?: number; freeCancelHours?: number | null } = {},
+  opts: {
+    groupsPerDay?: number;
+    freeCancelHours?: number | null;
+    pricePerPersonCentavos?: number;
+  } = {},
 ): Promise<TourFixture> {
   const db = getDb();
   const slug = `__hold__${unique()}`;
@@ -122,8 +135,18 @@ async function makeTour(
   created.tourIds.push(tour.insertId);
 
   await db.insert(tourPriceTiers).values([
-    { tourId: tour.insertId, minPax: 1, maxPax: 3, pricePerPersonCentavos: 250000 },
-    { tourId: tour.insertId, minPax: 4, maxPax: 12, pricePerPersonCentavos: 189000 },
+    {
+      tourId: tour.insertId,
+      minPax: 1,
+      maxPax: 3,
+      pricePerPersonCentavos: opts.pricePerPersonCentavos ?? 250000,
+    },
+    {
+      tourId: tour.insertId,
+      minPax: 4,
+      maxPax: 12,
+      pricePerPersonCentavos: opts.pricePerPersonCentavos ?? 189000,
+    },
   ]);
   const [lunch] = await db.insert(tourAddons).values({
     tourId: tour.insertId,
@@ -642,6 +665,76 @@ describeWithDb('createHold', () => {
     );
     expect(stale).toBeInstanceOf(PriceChangedError);
     expect(await writtenRowCounts()).toEqual(before);
+  });
+
+  // -------------------------------------------------------------------------
+  // BUG-110 — the gateway's ₱100 floor, refused at hold time (owner decision
+  // 2026-10-23, Q10). The figure a gateway is actually asked to charge is
+  // `amount_due_now` for the mode the guest chose: the full total, or the
+  // deposit. A 30% deposit is under ₱100 for any tour under ₱334, and before
+  // this the hold was written and the guest met a raw gateway error later.
+  // -------------------------------------------------------------------------
+
+  it('refuses a deposit below the gateway minimum and writes nothing at all', async () => {
+    // ₱300 for one guest: a 30% deposit is ₱90. The TOTAL still clears the
+    // floor, which is what makes this a test of the floor rather than of a
+    // cheap tour — the same tour is held successfully in the next test.
+    const tour = await makeTour({ groupsPerDay: 1, pricePerPersonCentavos: 30000 });
+    await makeFleet(1);
+    const { quote, quoteId } = await quoteFor(tour.slug, DAY, 1);
+
+    // The premise, proven rather than assumed: a seeded deposit percent
+    // changed to 40 would otherwise quietly make this test vacuous.
+    expect(PAYMONGO_MIN_CENTAVOS).toBe(10000);
+    expect(quote.amountDueNowCentavos.deposit).toBeLessThan(PAYMONGO_MIN_CENTAVOS);
+    expect(quote.amountDueNowCentavos.full).toBeGreaterThanOrEqual(PAYMONGO_MIN_CENTAVOS);
+
+    const before = await writtenRowCounts();
+    const error = await hold(
+      holdInput({ tourSlug: tour.slug, date: DAY, pax: 1, quoteId, payMode: 'deposit' }),
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(GatewayMinimumNotMetError);
+    expect((error as GatewayMinimumNotMetError).amountDueNowCentavos).toBe(
+      quote.amountDueNowCentavos.deposit,
+    );
+    // The whole point of refusing at hold time: no booking, no slot taken,
+    // no audit row, nothing for the expiry sweep to clean up later.
+    expect(
+      await writtenRowCounts(),
+      'a hold refused by the gateway floor still wrote something',
+    ).toEqual(before);
+  });
+
+  it('still holds the SAME cheap tour at pay-in-full, because the total clears the floor', async () => {
+    const tour = await makeTour({ groupsPerDay: 1, pricePerPersonCentavos: 30000 });
+    await makeFleet(1);
+    const { quote, quoteId } = await quoteFor(tour.slug, DAY, 1);
+    expect(quote.amountDueNowCentavos.deposit).toBeLessThan(PAYMONGO_MIN_CENTAVOS);
+
+    const result = await hold(
+      holdInput({ tourSlug: tour.slug, date: DAY, pax: 1, quoteId, payMode: 'full' }),
+    );
+
+    const row = await bookingRow(result.bookingId);
+    expect(row.status).toBe('pending_payment');
+    expect(row.payMode).toBe('full');
+    expect(row.totalCentavos).toBe(quote.totalCentavos);
+  });
+
+  it('still holds a normal-priced tour on deposit — the floor refuses only what is under it', async () => {
+    const tour = await makeTour({ groupsPerDay: 1 });
+    await makeFleet(1);
+    const { quote, quoteId } = await quoteFor(tour.slug, DAY, 2);
+    expect(quote.amountDueNowCentavos.deposit).toBeGreaterThanOrEqual(PAYMONGO_MIN_CENTAVOS);
+
+    const result = await hold(
+      holdInput({ tourSlug: tour.slug, date: DAY, pax: 2, quoteId, payMode: 'deposit' }),
+    );
+
+    const row = await bookingRow(result.bookingId);
+    expect(row.status).toBe('pending_payment');
+    expect(row.payMode).toBe('deposit');
   });
 
   /**

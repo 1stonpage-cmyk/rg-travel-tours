@@ -35,11 +35,13 @@ import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { ZodError } from 'zod';
 import { eq, sql } from 'drizzle-orm';
 import {
+  AMOUNT_BELOW_GATEWAY_MINIMUM,
   BOOKING_PAGE_ROUTE,
   bookingPagePath,
   depositCentavos,
   manilaCivilDate,
   PAYMENT_HOLD_MINUTES,
+  PAYMONGO_MIN_CENTAVOS,
 } from '@rg/shared';
 import { getDb, getPool } from '../db/client';
 import { bookings, destinations, drivers, tourPriceTiers, tours, vans } from '../db/schema';
@@ -458,6 +460,42 @@ describeWithDb('checkout.startPayment', () => {
     expect((await readBooking(held.bookingId)).status).toBe('pending_payment');
     expect(createCheckout).not.toHaveBeenCalled();
     expect(transport).not.toHaveBeenCalled();
+  });
+
+  /**
+   * BUG-110's defensive half (owner decision 2026-10-23, Q10). `createHold`
+   * now refuses a sub-₱100 charge before any row is written, so the ONLY way
+   * to reach this check is a `pending_payment` booking whose `amount_due_now`
+   * fell under the floor some other way — a hand-edited row here, standing in
+   * for any future path that writes a hold without `createHold`'s check. What
+   * it buys is the thing BUG-110 described: the guest gets the same plain
+   * sentence instead of PayMongo's own "amount must be at least 10000", and
+   * no payment intent is created at all.
+   */
+  it('refuses an online charge below the gateway minimum, with no gateway call at all', async () => {
+    const { transport, createCheckout } = installGateway();
+    const held = await heldBooking('deposit', 3);
+    // ₱200 total: a 30% deposit is ₱60. The row's own snapshot still decides
+    // the percentage — nothing here supplies an amount to charge.
+    await getDb()
+      .update(bookings)
+      .set({ totalCentavos: 20000 })
+      .where(eq(bookings.id, held.bookingId));
+    const row = await readBooking(held.bookingId);
+    expect(depositCentavos(row.totalCentavos, row.priceSnapshot.depositPercent)).toBeLessThan(
+      PAYMONGO_MIN_CENTAVOS,
+    );
+
+    const error = await caller.checkout.startPayment({ ref: held.ref }).catch((e: unknown) => e);
+
+    expect(error).toMatchObject({ code: 'BAD_REQUEST', message: AMOUNT_BELOW_GATEWAY_MINIMUM });
+    // The refusal is the point only if the gateway was never asked.
+    expect(createCheckout).not.toHaveBeenCalled();
+    expect(transport).not.toHaveBeenCalled();
+    expect(networkGuard).not.toHaveBeenCalled();
+    // And it moved nothing: no hold extension, no money.
+    expect(await holdExtensionAudits(held.bookingId)).toHaveLength(0);
+    expect((await readBooking(held.bookingId)).amountPaidCentavos).toBe(0);
   });
 
   it('answers an unknown ref with a generic NOT_FOUND and no gateway call', async () => {
