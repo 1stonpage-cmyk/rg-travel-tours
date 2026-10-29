@@ -74,6 +74,7 @@ import {
   pesosFromCentavos,
   toCsv,
 } from '../services/reports/csv';
+import { civilTourDateOrThrow } from '../services/reports/money';
 import { staffContext } from './helpers/ctx';
 import { describeWithDb } from './helpers/db';
 
@@ -268,6 +269,31 @@ it('prefixes a hostile tour title and guest name but never a negative amount', (
   expect(outstanding.split('\r\n')[1]).toBe(
     "RG-7KQ4M9,2098-09-04,'@SUM(A1:A9),'-2+3+cmd|calc,confirmed,1000.00,1200.00,-200.00",
   );
+});
+
+/**
+ * 7N (Task 12): `outstandingBookings` used to silently substitute the
+ * window's own start date (`range.from`) for a row whose `tour_date` read
+ * back null — which can never happen against the real `NOT NULL` column, so
+ * this drives the extracted helper directly rather than trying to write a
+ * null into a column the database itself refuses. A loud failure naming the
+ * booking is the whole point; a report that quietly showed finance the
+ * wrong date for a real row would be worse than one that crashes.
+ */
+it('throws, naming the booking, rather than substituting the window start date for a null tour_date', () => {
+  expect(() => civilTourDateOrThrow({ bookingId: 4821, ref: 'RG-7KQ4M9', tourDate: null })).toThrow(
+    /booking 4821.*RG-7KQ4M9.*null.*tour_date/is,
+  );
+});
+
+it('reads a real tour_date normally', () => {
+  expect(
+    civilTourDateOrThrow({
+      bookingId: 1,
+      ref: 'RG-7KQ4M9',
+      tourDate: new Date('2098-09-04T00:00:00Z'),
+    }),
+  ).toBe('2098-09-04');
 });
 
 /* -------------------------------------------------------------------------

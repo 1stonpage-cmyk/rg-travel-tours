@@ -125,8 +125,16 @@ export const REFUNDED_CENTAVOS = sql<number>`COALESCE(SUM(CASE WHEN ${payments.t
  * refund — and that is the right answer. A guest who was refunded does not
  * suddenly owe the money back. Netting refunds in here would turn a
  * ₱400 goodwill refund into ₱400 of invented debt on a booking that is square.
+ *
+ * **"Not cancelled or expired" is `REPORT_NON_COLLECTABLE_STATUSES`** (7N,
+ * Task 12), the same constant `outstandingBookings`'s `notInArray` below
+ * reads — not a second, hand-typed `('cancelled', 'expired')` literal. Two
+ * copies of this rule is how the summary card and the per-booking list end
+ * up answering a different question about the same window; `notInArray`
+ * embeds the same condition object this module's `.where()` clauses use, so
+ * the two statuses live in exactly one place.
  */
-export const STILL_TO_COLLECT_CENTAVOS = sql<number>`COALESCE(SUM(CASE WHEN ${bookings.status} NOT IN ('cancelled', 'expired') THEN ${bookings.totalCentavos} - ${bookings.amountPaidCentavos} ELSE 0 END), 0)`;
+export const STILL_TO_COLLECT_CENTAVOS = sql<number>`COALESCE(SUM(CASE WHEN ${notInArray(bookings.status, [...REPORT_NON_COLLECTABLE_STATUSES])} THEN ${bookings.totalCentavos} - ${bookings.amountPaidCentavos} ELSE 0 END), 0)`;
 
 /**
  * **Bookings.** A plain `COUNT(*)` over the bookings in the window, by tour
@@ -318,13 +326,41 @@ export async function outstandingBookings(range: DateRangeInput): Promise<Outsta
 
   return rows.map((row) => ({
     ...row,
-    /*
-     * A `date()` column comes back as a `Date`; every caller of this payload
-     * wants the civil-date STRING it was stored as. `civilDateFromDate` is the
-     * one conversion in this project allowed to answer that, and it never
-     * returns null for a `notNull` column.
-     */
-    tourDate: civilDateFromDate(row.tourDate) ?? range.from,
+    tourDate: civilTourDateOrThrow(row),
     outstandingCentavos: row.totalCentavos - row.paidCentavos,
   }));
+}
+
+/**
+ * A `date()` column comes back as a `Date`; every caller of `OutstandingRow`
+ * wants the civil-date STRING it was stored as. `civilDateFromDate` is the
+ * one conversion in this project allowed to answer that, and `tour_date` is
+ * `NOT NULL`, so this should never read back null.
+ *
+ * It used to fall back to `range.from` — the window's own START date —
+ * silently substituted in for a per-row date that is supposed to be real
+ * (7N, Task 12). That fallback could never fire today, and that is exactly
+ * the problem: if a future change (a migration, a hand-written `UPDATE`)
+ * ever let `tour_date` go null, finance would be shown someone else's
+ * booking under the window's start date instead of being told the row is
+ * broken. Throwing, naming the booking, is the loud version of a bug that
+ * would otherwise look like correct data.
+ *
+ * A standalone function — rather than inlined in the `.map()` above —
+ * because that is what lets a test construct the null case directly,
+ * without needing a `NOT NULL` column in the real database to ever hold one.
+ */
+export function civilTourDateOrThrow(row: {
+  bookingId: number;
+  ref: string;
+  tourDate: Date | null;
+}): string {
+  const tourDate = civilDateFromDate(row.tourDate);
+  if (tourDate === null) {
+    throw new Error(
+      `outstandingBookings: booking ${row.bookingId} (ref ${row.ref}) has a null ` +
+        'tour_date, which the NOT NULL column should never produce.',
+    );
+  }
+  return tourDate;
 }

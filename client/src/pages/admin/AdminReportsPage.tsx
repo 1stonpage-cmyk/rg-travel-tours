@@ -72,12 +72,22 @@ const OUTLINE_BUTTON =
   'tap-target border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 hover:text-brand-blue-800 rounded-[10px] font-semibold transition-colors';
 const FIELD = 'tap-target border-brand-blue-200 rounded-[10px] bg-white';
 
-/** Is this refusal a role problem (401/403), rather than a network fault? */
+/**
+ * Is this refusal a WRONG ROLE, as opposed to an expired or missing session?
+ *
+ * 403 is the real role signal — `requireRole()` refuses with it when the
+ * session is valid but the account's role is not allowed here. 401 means
+ * something else entirely: no session, or one that has expired (7N, Task
+ * 12 — this used to treat both the same, so an owner or finance user whose
+ * session had simply timed out was told "only the owner and finance can
+ * see the money reports", a wrong-role sentence about the right role).
+ * A 401 falls through to the generic `summary.isError` branch below, whose
+ * "Sign in again, or try once more in a moment" is this screen's own
+ * existing convention for an expired session — not a special denied state
+ * invented for this narrowing.
+ */
 function isRoleRefusal(error: unknown): boolean {
-  return (
-    error instanceof TRPCClientError &&
-    (error.data?.httpStatus === 403 || error.data?.httpStatus === 401)
-  );
+  return error instanceof TRPCClientError && error.data?.httpStatus === 403;
 }
 
 /* --------------------------------------------------------------- The window */

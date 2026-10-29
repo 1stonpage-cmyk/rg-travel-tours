@@ -389,6 +389,22 @@ describe('the role gate', () => {
     expect(await screen.findByText(/Only the owner and finance can see/i)).toBeTruthy();
   });
 
+  /**
+   * 7N (Task 12): 401 means an expired or missing session, not a wrong
+   * role — an owner or finance user whose session simply timed out must
+   * not be told "only the owner and finance can see the money reports",
+   * a sentence about the role they already have. It falls through to the
+   * screen's own generic "sign in again" message instead.
+   */
+  it('does NOT show the wrong-role denied state for an expired session (401)', async () => {
+    setupMocks();
+    mockTrpcError('admin.reports.summary', 'UNAUTHORIZED', 'Admin sign-in required.');
+    renderOnly();
+
+    expect(await screen.findByText(/sign in again/i)).toBeTruthy();
+    expect(screen.queryByText(/Only the owner and finance can see/i)).toBeNull();
+  });
+
   it('admits the owner', async () => {
     renderPage({ 'staffAuth.me': { userId: 3, role: 'owner', mustChangePassword: false } });
     expect(await screen.findByText('₱3,700')).toBeTruthy();
