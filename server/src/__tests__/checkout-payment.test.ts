@@ -44,7 +44,15 @@ import {
   PAYMONGO_MIN_CENTAVOS,
 } from '@rg/shared';
 import { getDb, getPool } from '../db/client';
-import { bookings, destinations, drivers, tourPriceTiers, tours, vans } from '../db/schema';
+import {
+  bookings,
+  destinations,
+  drivers,
+  settings,
+  tourPriceTiers,
+  tours,
+  vans,
+} from '../db/schema';
 import { env } from '../env';
 import { appRouter } from '../routers/_app';
 import { CHECKOUT_PAYMENT_METHODS } from '../routers/public/checkout';
@@ -249,6 +257,19 @@ async function readBooking(bookingId: number) {
   const [row] = await getDb().select().from(bookings).where(eq(bookings.id, bookingId));
   if (!row) throw new Error('fixture booking vanished');
   return row;
+}
+
+/** The live `payment_methods` settings row, as `resolvePaymentMethods()` reads it. */
+async function readPaymentMethods(): Promise<unknown> {
+  const [row] = await getDb()
+    .select({ value: settings.value })
+    .from(settings)
+    .where(eq(settings.key, 'payment_methods'));
+  return row?.value;
+}
+
+async function writePaymentMethods(value: unknown): Promise<void> {
+  await getDb().update(settings).set({ value }).where(eq(settings.key, 'payment_methods'));
 }
 
 async function holdExtensionAudits(bookingId: number): Promise<Array<{ data: unknown }>> {
@@ -496,6 +517,54 @@ describeWithDb('checkout.startPayment', () => {
     // And it moved nothing: no hold extension, no money.
     expect(await holdExtensionAudits(held.bookingId)).toHaveLength(0);
     expect((await readBooking(held.bookingId)).amountPaidCentavos).toBe(0);
+  });
+
+  /**
+   * BUG-117. `onlinePaymentEnabled` (settings.ts) is `paymongoConfigured && at
+   * least one payment_methods entry enabled` — this is the second half's own
+   * proof, mirroring `settings.test.ts`'s `ALL_METHODS_DISABLED` fixture
+   * shape but written through a direct row update (this suite's existing
+   * isolation pattern for refusal fixtures), since `startPayment` has no
+   * admin-settings mutation of its own to call. The gateway here is
+   * genuinely configured and genuinely reachable (the happy-path tests above
+   * prove it) — so a refusal that still reached it would mean this guard
+   * does nothing.
+   */
+  it('refuses when every payment method is disabled in settings, with no gateway call at all', async () => {
+    const { transport, createCheckout } = installGateway();
+    const held = await heldBooking();
+    const before = await readPaymentMethods();
+
+    try {
+      await writePaymentMethods([
+        { key: 'gcash', label: 'GCash', enabled: false, sortOrder: 0 },
+        { key: 'maya', label: 'Maya', enabled: false, sortOrder: 1 },
+      ]);
+
+      const error = await caller.checkout.startPayment({ ref: held.ref }).catch((e: unknown) => e);
+
+      // The SAME sentence a gateway outage gets — reusing `gatewayUnavailable()`
+      // rather than a new message, per CLAUDE.md's rule on any new
+      // SERVICE_UNAVAILABLE raiser on a guest path.
+      expect(error).toMatchObject({
+        code: 'SERVICE_UNAVAILABLE',
+        message:
+          'Online payment is temporarily unavailable. ' +
+          'Please try again shortly, or contact us to pay another way.',
+      });
+      // The whole point: a refusal that still reaches the gateway has
+      // already created a payment intent someone can complete.
+      expect(createCheckout).not.toHaveBeenCalled();
+      expect(transport).not.toHaveBeenCalled();
+      expect(networkGuard).not.toHaveBeenCalled();
+      // And it moved nothing: no hold extension, no money.
+      expect(await holdExtensionAudits(held.bookingId)).toHaveLength(0);
+      expect((await readBooking(held.bookingId)).amountPaidCentavos).toBe(0);
+    } finally {
+      // Restored unconditionally so a failed assertion above cannot leak a
+      // disabled payment_methods row into every test that runs after this one.
+      await writePaymentMethods(before);
+    }
   });
 
   it('answers an unknown ref with a generic NOT_FOUND and no gateway call', async () => {

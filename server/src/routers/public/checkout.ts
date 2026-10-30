@@ -87,7 +87,7 @@ import {
   type PayMode,
   type QuoteResult,
 } from '@rg/shared';
-import { readSettingBlock } from '../../content/settings';
+import { readSettingBlock, resolvePaymentMethods } from '../../content/settings';
 import { getDb } from '../../db/client';
 import { bookings, tourBlockedDates, tours } from '../../db/schema';
 import { env } from '../../env';
@@ -828,6 +828,44 @@ export const checkoutRouter = router({
             code: 'BAD_REQUEST',
             message: gatewayMinimumMessage(booking.totalCentavos),
           });
+        }
+
+        /*
+         * BUG-117. `onlinePaymentEnabled` (`content/settings.ts`'s
+         * `toSettingsPayload`) is `paymongoConfigured && at least one
+         * payment_methods entry enabled` — and until now `startPayment` only
+         * ever re-derived the FIRST half, as a side effect of the gateway
+         * call itself throwing when no secret key is configured. It never
+         * read `settings.payment_methods`, so once PayMongo was genuinely
+         * configured, switching every method off in Settings stopped only
+         * the client's "Pay now" button — a stale tab, a back-button return,
+         * or a direct tRPC call still reached the gateway and created a real
+         * checkout session. Money still lands correctly and the webhook
+         * still confirms, but "hiding a button is not access control"
+         * (CLAUDE.md), so this re-derives the second half here, server-side.
+         *
+         * Mirrors `onlinePaymentEnabled`'s own formula exactly — zero
+         * enabled methods, full stop — rather than cross-referencing which
+         * KEYS are enabled against `CHECKOUT_PAYMENT_METHODS` above: the two
+         * vocabularies don't match 1:1 (`gcash`/`maya`/`grabpay`/`qr_ph`/
+         * `visa`/`mastercard` in settings vs. `card`/`gcash`/`maya`/
+         * `grab_pay` here), and the bug is specifically about "nothing is
+         * enabled", not about any one method. `resolvePaymentMethods()` is
+         * the same function `toSettingsPayload` calls, so the two can never
+         * disagree about what "enabled" means.
+         *
+         * Thrown through `gatewayUnavailable()` rather than a new message:
+         * from a guest's side, "no method is enabled" and "the gateway is
+         * unreachable" are the same fact — no online payment can be started
+         * right now — and reusing the helper keeps this a guest-safe
+         * `SERVICE_UNAVAILABLE` sentence by construction (CLAUDE.md: any new
+         * `SERVICE_UNAVAILABLE` raiser on a guest path must carry one).
+         */
+        const paymentMethods = await readSettingBlock('payment_methods');
+        if (resolvePaymentMethods(paymentMethods).length === 0) {
+          throw gatewayUnavailable(
+            new Error('BUG-117: every payment method is disabled in settings.'),
+          );
         }
 
         const successUrl = `${env.PUBLIC_BASE_URL}${bookingPagePath(booking.ref)}`;

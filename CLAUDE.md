@@ -584,11 +584,16 @@ payment method`; the payload deliberately carries **neither ingredient**, so the
   `<PaymentOptions>` with three states — online available / manual only / neither — and copy
   outside that component must stay **state-neutral**: the hold sentence says "arrange that", never
   "pay now", because it is rendered in all three states.
-  **Known gap, open on an owner decision (BUG-117): `checkout.startPayment` only enforces the
-  PayMongo-configured half.** It never reads `settings.payment_methods`, so with PayMongo
+  **BUG-117, fixed: `checkout.startPayment` now enforces both halves.** It used to enforce only
+  the PayMongo-configured half — it never read `settings.payment_methods`, so with PayMongo
   configured and every method switched off, a stale tab, a back-button return or a direct tRPC
-  call still creates a real checkout session. Money still lands correctly and the webhook still
-  confirms — but it is a control that fails **open**, and "hiding a button is not access control".
+  call still created a real checkout session. It now reads the same `payment_methods` block via
+  `readSettingBlock('payment_methods')` and refuses with the existing `gatewayUnavailable()`
+  guest-safe `SERVICE_UNAVAILABLE` sentence when `resolvePaymentMethods(block).length === 0` —
+  the same function `onlinePaymentEnabled` itself calls, so the two can never disagree about
+  "enabled". It deliberately does not cross-reference individual method keys against
+  `CHECKOUT_PAYMENT_METHODS` (their vocabularies don't match 1:1); it matches `onlinePaymentEnabled`'s
+  own formula exactly — zero enabled methods, full stop.
 - **A gateway outage keeps the server's own guest-safe sentence.** A `SERVICE_UNAVAILABLE` from
   the payment path is passed through, not swallowed by the generic "something went wrong" — the
   guest is told online payment is unavailable and offered another way. Any new raiser of
