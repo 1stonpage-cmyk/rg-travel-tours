@@ -169,21 +169,23 @@ export const DATE_NOT_BOOKABLE = 'date_not_bookable' as const;
 export const DATE_BLOCKED = 'date_blocked' as const;
 
 /**
- * The one sentence a guest sees when the amount an online payment would be
- * for is under {@link PAYMONGO_MIN_CENTAVOS} — BUG-110, owner decision
- * 2026-10-23 (Q10). Same WIRE-contract-with-one-definition rule as
- * `DATE_NOT_BOOKABLE` and `DATE_BLOCKED` above: two surfaces refuse this
- * (`createHold`, through the router's error translation, and
- * `checkout.startPayment` defensively), and a guest must not be told two
- * different things about one fact.
+ * The sentence a guest sees when the amount an online payment would be for is
+ * under {@link PAYMONGO_MIN_CENTAVOS} **and paying the whole total instead
+ * would clear it** — BUG-110, owner decision 2026-10-23 (Q10). The original
+ * and commonest case: a 30% deposit is under the floor on any tour priced
+ * below ₱334, while the total itself is fine.
  *
- * **It names the way out, in plain words, because every way out exists.** A
- * deposit under the floor on a tour whose TOTAL clears it is held normally at
- * pay-in-full — the commonest case by far, since the floor only bites below
- * ₱334 at a 30% deposit — and the manual QR / bank-transfer flows never touch
- * a gateway, so the office can always take the money another way. "Online
- * payment failed" with no alternative would lose a booking this business can
- * actually fulfil.
+ * Same WIRE-contract-with-one-definition rule as `DATE_NOT_BOOKABLE` and
+ * `DATE_BLOCKED` above: two surfaces refuse this (`createHold`, through the
+ * router's error translation, and `checkout.startPayment` defensively), and a
+ * guest must not be told two different things about one fact. Both go through
+ * {@link gatewayMinimumMessage} rather than picking a constant themselves.
+ *
+ * **It names the way out, in plain words, because here every way out exists.**
+ * Pay-in-full really does go through, and the manual QR / bank-transfer flows
+ * never touch a gateway, so the office can always take the money another way.
+ * "Online payment failed" with no alternative would lose a booking this
+ * business can actually fulfil.
  *
  * The amount is interpolated from the constant rather than typed, so the
  * sentence cannot come to disagree with the floor it describes. The wording
@@ -194,3 +196,58 @@ export const AMOUNT_BELOW_GATEWAY_MINIMUM =
   `Online payments must be at least ${formatPeso(PAYMONGO_MIN_CENTAVOS)}. ` +
   `Please pay in full instead of a deposit if that reaches ${formatPeso(PAYMONGO_MIN_CENTAVOS)}, ` +
   `or contact us to pay by bank transfer or QR code instead.`;
+
+/**
+ * The same refusal when the WHOLE TOTAL is under the floor too (fix round 1 of
+ * BUG-110): a 90%-off coupon on a ₱900 tour leaves ₱90 to pay, and both pay
+ * modes are then refused.
+ *
+ * So this sentence does **not** say "pay in full instead" — that is not an
+ * alternative here, it is the same refusal again. The manual flows are the one
+ * real way through, so they are stated as the answer rather than as the second
+ * of two options.
+ */
+export const TOTAL_BELOW_GATEWAY_MINIMUM =
+  `Online payments must be at least ${formatPeso(PAYMONGO_MIN_CENTAVOS)}, and this booking's ` +
+  `total comes to less than that. Please contact us to pay by bank transfer or QR code instead.`;
+
+/**
+ * The same refusal when the total is **exactly nothing** — a 100%-off coupon,
+ * or a fixed discount at or above the subtotal (`discountCentavosFor` clamps
+ * it to the subtotal, so it lands on zero rather than going negative).
+ *
+ * Neither "pay in full" nor "pay by bank transfer" means anything here: there
+ * is no amount, by any method. It names a floor no guest can act on either, so
+ * it names none — only the one thing that can actually happen next, which is
+ * the office confirming the booking by hand.
+ *
+ * **It is still a refusal.** Whether a fully discounted booking should be
+ * allowed to confirm with no payment step at all is an open owner decision
+ * (flagged in the Task 19 review); until it is taken, such a booking is
+ * refused at hold time exactly as before and only the wording is honest about
+ * why.
+ */
+export const NOTHING_TO_PAY_ONLINE =
+  `This booking's total comes to ${formatPeso(0)}, so there's nothing to pay online. ` +
+  `Please contact us directly to confirm it.`;
+
+/**
+ * Which of the three sentences above a guest gets, decided by the booking's
+ * TOTAL — the only number that settles it.
+ *
+ * The total is what makes the difference between the three bands, because
+ * `amount_due_now` for `full` IS the total (`services/pricing.ts`): a total at
+ * or above the floor means pay-in-full is a genuine alternative to a short
+ * deposit; a total below it means both modes are refused; a total of nothing
+ * means there is no payment to redirect anywhere.
+ *
+ * One chooser, called by both refusing surfaces, so neither can offer a guest
+ * an alternative that does not exist for them. `<= 0` rather than `=== 0` so a
+ * number that should be impossible still gets the sentence that cannot be
+ * wrong.
+ */
+export function gatewayMinimumMessage(totalCentavos: number): string {
+  if (totalCentavos <= 0) return NOTHING_TO_PAY_ONLINE;
+  if (totalCentavos < PAYMONGO_MIN_CENTAVOS) return TOTAL_BELOW_GATEWAY_MINIMUM;
+  return AMOUNT_BELOW_GATEWAY_MINIMUM;
+}

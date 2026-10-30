@@ -229,22 +229,32 @@ export class PriceChangedError extends Error {
  * The charge is `amount_due_now` for the mode the guest chose: the whole
  * total for `full`, the deposit for `deposit`. Both are carried so a log or a
  * future report can say which one was short, and the router's guest-facing
- * copy (`AMOUNT_BELOW_GATEWAY_MINIMUM` in `@rg/shared`) names neither — it
- * offers the ways round it instead.
+ * copy (`gatewayMinimumMessage()` in `@rg/shared`) names neither — it offers
+ * the ways round it instead.
+ *
+ * `totalCentavos` is carried for that copy and for nothing else: it is what
+ * decides WHICH way round exists (fix round 1). A short deposit on a total
+ * that clears the floor can be paid in full; a total under the floor cannot,
+ * and a total of nothing cannot be paid at all. Keeping the number on the
+ * error means the router chooses the sentence from the recomputed total rather
+ * than re-deriving money of its own.
  */
 export class GatewayMinimumNotMetError extends Error {
   readonly amountDueNowCentavos: number;
   readonly minimumCentavos = PAYMONGO_MIN_CENTAVOS;
   readonly payMode: PayMode;
+  readonly totalCentavos: number;
 
-  constructor(amountDueNowCentavos: number, payMode: PayMode) {
+  constructor(amountDueNowCentavos: number, payMode: PayMode, totalCentavos: number) {
     super(
       `The ${payMode} charge of ${amountDueNowCentavos} centavos is below the ` +
-        `gateway minimum of ${PAYMONGO_MIN_CENTAVOS} centavos`,
+        `gateway minimum of ${PAYMONGO_MIN_CENTAVOS} centavos ` +
+        `(booking total ${totalCentavos} centavos)`,
     );
     this.name = 'GatewayMinimumNotMetError';
     this.amountDueNowCentavos = amountDueNowCentavos;
     this.payMode = payMode;
+    this.totalCentavos = totalCentavos;
   }
 }
 
@@ -742,7 +752,11 @@ export async function createHold(
          */
         const amountDueNowCentavos = quote.amountDueNowCentavos[input.payMode];
         if (amountDueNowCentavos < PAYMONGO_MIN_CENTAVOS) {
-          throw new GatewayMinimumNotMetError(amountDueNowCentavos, input.payMode);
+          throw new GatewayMinimumNotMetError(
+            amountDueNowCentavos,
+            input.payMode,
+            quote.totalCentavos,
+          );
         }
 
         // 5. The hold caps, under the locks.

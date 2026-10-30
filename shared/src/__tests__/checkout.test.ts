@@ -3,13 +3,18 @@ import { dirname, extname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
+  AMOUNT_BELOW_GATEWAY_MINIMUM,
   bookingLookupInput,
   createHoldInput,
   DATE_BLOCKED,
   DATE_NOT_BOOKABLE,
+  gatewayMinimumMessage,
+  NOTHING_TO_PAY_ONLINE,
   phPhoneSchema,
   quoteInput,
+  TOTAL_BELOW_GATEWAY_MINIMUM,
 } from '../checkout';
+import { PAYMONGO_MIN_CENTAVOS } from '../money';
 
 /** A valid quoteId shape for fixtures that don't test the quoteId rule itself. */
 const QUOTE_ID = 'a'.repeat(32);
@@ -153,6 +158,72 @@ describe('bookingLookupInput', () => {
         totalCentavos: 1,
       }).success,
     ).toBe(false);
+  });
+});
+
+/**
+ * BUG-110 fix round 1. One sentence used to answer three different situations
+ * and was wrong in two of them: it told a guest to "pay in full instead" when
+ * the full total was ALSO under the floor (the same refusal again), and told a
+ * guest whose total was exactly nothing to pay it by bank transfer (there is
+ * nothing to pay, by any method).
+ *
+ * The rule this pins: **the message never names an alternative that does not
+ * exist for the guest reading it.** The total is what decides that, because
+ * `amount_due_now` for `full` IS the total.
+ */
+describe('gatewayMinimumMessage (BUG-110 fix round 1)', () => {
+  it('offers pay-in-full when the total really does clear the floor', () => {
+    // Case 1, the original BUG-110 shape: a ₱300 tour's 30% deposit is ₱90,
+    // and the ₱300 total genuinely goes through in one charge.
+    const message = gatewayMinimumMessage(30000);
+
+    expect(message).toBe(AMOUNT_BELOW_GATEWAY_MINIMUM);
+    expect(message).toMatch(/in full/i);
+    expect(message).toMatch(/contact us/i);
+    expect(message).toContain('₱100');
+  });
+
+  it('does NOT offer pay-in-full when the total is itself under the floor', () => {
+    // Case 2: a 90%-off coupon on a ₱900 tour leaves ₱90 to pay. BOTH modes
+    // are refused, so "pay in full instead" is the same refusal reworded.
+    const message = gatewayMinimumMessage(9000);
+
+    expect(message).toBe(TOTAL_BELOW_GATEWAY_MINIMUM);
+    expect(message, 'both pay modes are refused — paying in full is not a way out').not.toMatch(
+      /in full/i,
+    );
+    expect(message).toMatch(/contact us/i);
+    expect(message).toMatch(/bank transfer|QR code/i);
+    expect(message).toContain('₱100');
+  });
+
+  it('offers NEITHER payment route when the total is nothing at all', () => {
+    // Case 3: a 100%-off coupon, or a fixed discount at or above the subtotal.
+    const message = gatewayMinimumMessage(0);
+
+    expect(message).toBe(NOTHING_TO_PAY_ONLINE);
+    expect(message).toMatch(/nothing to pay/i);
+    expect(message).toMatch(/contact us/i);
+    expect(message, 'there is no amount to pay in full').not.toMatch(/in full/i);
+    expect(message, 'there is no amount to transfer either').not.toMatch(/bank transfer|QR code/i);
+    expect(message, 'a floor is meaningless when the total is zero').not.toContain('₱100');
+  });
+
+  it('bands on the floor itself, and treats an impossible total as nothing to pay', () => {
+    expect(gatewayMinimumMessage(PAYMONGO_MIN_CENTAVOS)).toBe(AMOUNT_BELOW_GATEWAY_MINIMUM);
+    expect(gatewayMinimumMessage(PAYMONGO_MIN_CENTAVOS - 1)).toBe(TOTAL_BELOW_GATEWAY_MINIMUM);
+    expect(gatewayMinimumMessage(1)).toBe(TOTAL_BELOW_GATEWAY_MINIMUM);
+    // Should be unreachable; it still must not get a sentence that lies.
+    expect(gatewayMinimumMessage(-1)).toBe(NOTHING_TO_PAY_ONLINE);
+  });
+
+  it.each([
+    ['deposit short', AMOUNT_BELOW_GATEWAY_MINIMUM],
+    ['total short', TOTAL_BELOW_GATEWAY_MINIMUM],
+    ['nothing to pay', NOTHING_TO_PAY_ONLINE],
+  ])('names no gateway, provider or internal unit: %s', (_band, message) => {
+    expect(message).not.toMatch(/paymongo|gateway|centavos/i);
   });
 });
 

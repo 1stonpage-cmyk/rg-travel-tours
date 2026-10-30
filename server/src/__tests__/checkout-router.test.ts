@@ -19,13 +19,16 @@ import {
   bookingRefSchema,
   DATE_BLOCKED,
   manilaCivilDate,
+  NOTHING_TO_PAY_ONLINE,
   PAYMONGO_MIN_CENTAVOS,
   quoteResultSchema,
+  TOTAL_BELOW_GATEWAY_MINIMUM,
 } from '@rg/shared';
 import { createApp } from '../app';
 import { getDb, getPool } from '../db/client';
 import {
   bookings,
+  coupons,
   destinations,
   drivers,
   tourBlockedDates,
@@ -85,6 +88,7 @@ const created = {
   destinationIds: [] as number[],
   vanIds: [] as number[],
   driverIds: [] as number[],
+  couponIds: [] as number[],
 };
 
 const unique = () => `${Math.floor(Math.random() * 1e9)}_${Date.now()}`;
@@ -128,6 +132,20 @@ async function makeTourWithTier(minPax: number, maxPax: number, pricePerPersonCe
 /** A tour with one price tier covering 1-12 pax at a round ₱1,000/person. */
 async function makeTour() {
   return makeTourWithTier(1, 12);
+}
+
+/**
+ * A percentage coupon with no limits — this file's first coupon fixture, added
+ * for BUG-110 fix round 1's zero-total case (a 100%-off booking, which
+ * `percent_bp` allows and which no gateway can take).
+ */
+async function makeCoupon(percentBp: number) {
+  const code = `__CRT__${unique()}`.toUpperCase().slice(0, 40);
+  const [row] = await getDb()
+    .insert(coupons)
+    .values({ code, discountType: 'percent', percentBp, usageLimit: null, isActive: true });
+  created.couponIds.push(row.insertId);
+  return { id: row.insertId, code };
 }
 
 /** One van, one driver — enough fleet that capacity is never what refuses. */
@@ -206,12 +224,20 @@ async function cleanup() {
   }
   for (const id of created.driverIds) await db.delete(drivers).where(eq(drivers.id, id));
   for (const id of created.vanIds) await db.delete(vans).where(eq(vans.id, id));
+  for (const id of created.couponIds) {
+    // Redemptions first: nothing here is expected to redeem one (the holds
+    // these coupons appear in are refused), but a leftover child row would
+    // keep the coupon alive and change the next run's counts.
+    await pool.query('DELETE FROM coupon_redemptions WHERE coupon_id = ?', [id]);
+    await db.delete(coupons).where(eq(coupons.id, id));
+  }
   await pool.query('DELETE FROM fleet_date_slots WHERE date = ?', [DAY]);
   created.bookingIds = [];
   created.tourIds = [];
   created.destinationIds = [];
   created.driverIds = [];
   created.vanIds = [];
+  created.couponIds = [];
 }
 
 describeWithDb('checkout router', () => {
@@ -398,6 +424,94 @@ describeWithDb('checkout router', () => {
     expect(AMOUNT_BELOW_GATEWAY_MINIMUM).toMatch(/in full/i);
     expect(AMOUNT_BELOW_GATEWAY_MINIMUM).toMatch(/contact us/i);
     expect(AMOUNT_BELOW_GATEWAY_MINIMUM).not.toMatch(/paymongo|gateway|centavos/i);
+    expect(await countBookings(), 'a refused hold must leave no booking row').toBe(before);
+  });
+
+  /**
+   * BUG-110 fix round 1, on the wire. The sentence above is only true while
+   * paying in full would actually work. These two are the bands where it would
+   * not, and where the shipped wording sent a guest at an alternative that
+   * refuses them identically — or, at ₱0, at one that does not exist at all.
+   *
+   * `gatewayMinimumMessage()` makes the choice (its three bands are unit-pinned
+   * in `shared/src/__tests__/checkout.test.ts`); what these assert is that the
+   * REFUSING SURFACE reaches the right band from a real request, off the
+   * server's recomputed total.
+   */
+  it('does not offer "pay in full" when the whole total is under the gateway minimum', async () => {
+    // ₱50 for one guest: there is no pay mode that reaches ₱100.
+    const tour = await makeTourWithTier(1, 12, 5000);
+    await makeFleet();
+    const quote = await caller.checkout.quote({
+      tourSlug: tour.slug,
+      date: DAY,
+      pax: 1,
+      addonIds: [],
+    });
+    expect(quote.totalCentavos).toBeGreaterThan(0);
+    expect(quote.totalCentavos).toBeLessThan(PAYMONGO_MIN_CENTAVOS);
+    const before = await countBookings();
+
+    const error = await caller.checkout
+      .createHold(
+        validHoldInput({
+          tourSlug: tour.slug,
+          date: DAY,
+          pax: 1,
+          quoteId: quote.quoteId,
+          extra: { payMode: 'full' },
+        }),
+      )
+      .catch((e: unknown) => e);
+
+    expect(error).toMatchObject({
+      code: 'BAD_REQUEST',
+      message: TOTAL_BELOW_GATEWAY_MINIMUM,
+    });
+    expect(
+      TOTAL_BELOW_GATEWAY_MINIMUM,
+      'paying in full is the charge that was just refused — offering it is a loop',
+    ).not.toMatch(/in full/i);
+    expect(TOTAL_BELOW_GATEWAY_MINIMUM).toMatch(/contact us/i);
+    expect(await countBookings(), 'a refused hold must leave no booking row').toBe(before);
+  });
+
+  it('tells a 100%-off guest there is nothing to pay, and offers no payment route at all', async () => {
+    const tour = await makeTour();
+    await makeFleet();
+    const coupon = await makeCoupon(10000); // 100% off — percent_bp allows it
+    const quote = await caller.checkout.quote({
+      tourSlug: tour.slug,
+      date: DAY,
+      pax: 2,
+      addonIds: [],
+      couponCode: coupon.code,
+    });
+    expect(quote.totalCentavos, 'the premise: a 100% coupon leaves nothing to pay').toBe(0);
+    const before = await countBookings();
+
+    const error = await caller.checkout
+      .createHold(
+        validHoldInput({
+          tourSlug: tour.slug,
+          date: DAY,
+          pax: 2,
+          quoteId: quote.quoteId,
+          extra: { payMode: 'full', couponCode: coupon.code },
+        }),
+      )
+      .catch((e: unknown) => e);
+
+    expect(error).toMatchObject({
+      code: 'BAD_REQUEST',
+      message: NOTHING_TO_PAY_ONLINE,
+    });
+    // Nothing to pay means nothing to pay by ANY method: neither clause of the
+    // original sentence can appear here.
+    expect(NOTHING_TO_PAY_ONLINE).toMatch(/nothing to pay/i);
+    expect(NOTHING_TO_PAY_ONLINE).toMatch(/contact us/i);
+    expect(NOTHING_TO_PAY_ONLINE).not.toMatch(/in full/i);
+    expect(NOTHING_TO_PAY_ONLINE).not.toMatch(/bank transfer|QR code/i);
     expect(await countBookings(), 'a refused hold must leave no booking row').toBe(before);
   });
 

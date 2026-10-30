@@ -722,6 +722,62 @@ describeWithDb('createHold', () => {
     expect(row.totalCentavos).toBe(quote.totalCentavos);
   });
 
+  /**
+   * BUG-110 fix round 1. The error carries the recomputed TOTAL as well as the
+   * charge, because the total is what decides which way round the floor exists
+   * for this guest — and the router's sentence is chosen from it. These two
+   * pin the totals the two newer bands rest on; the sentences themselves are
+   * pinned in `shared/src/__tests__/checkout.test.ts` and on the wire in
+   * `checkout-router.test.ts`.
+   */
+  it('refuses pay-in-full on a tour whose whole TOTAL is under the floor, and says so with the total', async () => {
+    // ₱50 for one guest. Not a deposit problem: there is no pay mode that
+    // reaches ₱100, which is exactly why the guest must not be told to pay in
+    // full instead.
+    const tour = await makeTour({ groupsPerDay: 1, pricePerPersonCentavos: 5000 });
+    await makeFleet(1);
+    const { quote, quoteId } = await quoteFor(tour.slug, DAY, 1);
+    expect(quote.totalCentavos).toBeGreaterThan(0);
+    expect(quote.totalCentavos).toBeLessThan(PAYMONGO_MIN_CENTAVOS);
+
+    const before = await writtenRowCounts();
+    const error = await hold(
+      holdInput({ tourSlug: tour.slug, date: DAY, pax: 1, quoteId, payMode: 'full' }),
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(GatewayMinimumNotMetError);
+    expect((error as GatewayMinimumNotMetError).totalCentavos).toBe(quote.totalCentavos);
+    expect(await writtenRowCounts()).toEqual(before);
+  });
+
+  it('refuses a 100%-off booking with a total of zero, and writes nothing', async () => {
+    // A 100% coupon is reachable today: `coupons.percent_bp` allows 10000.
+    // There is then no amount for any gateway, and nothing to transfer either.
+    const tour = await makeTour({ groupsPerDay: 1 });
+    await makeFleet(1);
+    const coupon = await makeCoupon({ percentBp: 10000 });
+    const { quote, quoteId } = await quoteFor(tour.slug, DAY, 2, [], coupon.code);
+    expect(quote.totalCentavos, 'the premise: a 100% coupon leaves nothing to pay').toBe(0);
+
+    const before = await writtenRowCounts();
+    const error = await hold(
+      holdInput({
+        tourSlug: tour.slug,
+        date: DAY,
+        pax: 2,
+        quoteId,
+        couponCode: coupon.code,
+        payMode: 'full',
+      }),
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(GatewayMinimumNotMetError);
+    expect((error as GatewayMinimumNotMetError).totalCentavos).toBe(0);
+    expect((error as GatewayMinimumNotMetError).amountDueNowCentavos).toBe(0);
+    // No booking and — the part a coupon adds — no redemption row either.
+    expect(await writtenRowCounts()).toEqual(before);
+  });
+
   it('still holds a normal-priced tour on deposit — the floor refuses only what is under it', async () => {
     const tour = await makeTour({ groupsPerDay: 1 });
     await makeFleet(1);

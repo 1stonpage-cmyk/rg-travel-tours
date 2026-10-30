@@ -68,7 +68,6 @@ import { TRPCError } from '@trpc/server';
 import { and, eq, lt, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import {
-  AMOUNT_BELOW_GATEWAY_MINIMUM,
   bookableDateRange,
   bookingLookupInput,
   bookingPagePath,
@@ -78,6 +77,7 @@ import {
   DATE_NOT_BOOKABLE,
   depositCentavos,
   formatPeso,
+  gatewayMinimumMessage,
   isDateBookable,
   manilaCivilDate,
   PAYMENT_HOLD_MINUTES,
@@ -416,13 +416,18 @@ function translateHoldError(error: unknown): TRPCError {
   }
   /*
    * BUG-110. The refusal carries the amount and the pay mode; the guest gets
-   * neither — only the shared sentence, which names the ways round the floor.
+   * neither — only the shared sentence, which names whatever way round the
+   * floor actually exists for THIS booking: the total on the error is what
+   * decides that (fix round 1), and `gatewayMinimumMessage()` owns the choice
+   * so this surface and `startPayment` cannot answer differently.
    * `BAD_REQUEST`, not `CONFLICT`: nothing has changed under the guest and
-   * retrying the same request will refuse again. The same message is raised
-   * directly in `startPayment` below, from the one constant.
+   * retrying the same request will refuse again.
    */
   if (error instanceof GatewayMinimumNotMetError) {
-    return new TRPCError({ code: 'BAD_REQUEST', message: AMOUNT_BELOW_GATEWAY_MINIMUM });
+    return new TRPCError({
+      code: 'BAD_REQUEST',
+      message: gatewayMinimumMessage(error.totalCentavos),
+    });
   }
   if (error instanceof HoldLimitReachedError) {
     return new TRPCError({
@@ -807,10 +812,16 @@ export const checkoutRouter = router({
          * "amount must be at least 10000" turned into this router's generic
          * `SERVICE_UNAVAILABLE`: a guest told to try again shortly about a
          * booking that will never go through. One sentence, one constant,
-         * both surfaces, and no payment intent created.
+         * both surfaces, and no payment intent created. The sentence is chosen
+         * from the booking's own total by the same shared chooser the hold
+         * refusal uses, so a booking whose total is itself under the floor is
+         * not told to "pay in full instead" here either.
          */
         if (amountDueNowCentavos < PAYMONGO_MIN_CENTAVOS) {
-          throw new TRPCError({ code: 'BAD_REQUEST', message: AMOUNT_BELOW_GATEWAY_MINIMUM });
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: gatewayMinimumMessage(booking.totalCentavos),
+          });
         }
 
         const successUrl = `${env.PUBLIC_BASE_URL}${bookingPagePath(booking.ref)}`;
