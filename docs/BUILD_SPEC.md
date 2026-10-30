@@ -1366,15 +1366,15 @@ Nothing in this week is built.
 > measurements). Two of these are **owner decisions and must be answered before they are built**;
 > the rest is work.
 >
-> 1. **⚠️ OWNER DECISION — `db:seed` still overwrites admin-edited content in six tables**
->    (BUG-118). A2 fixed `settings` only. Still live in `upsertTour` (incl. **`tour_price_tiers`**,
->    money-affecting and failing **open**), `tours` itself (title/badge/`alertNote`),
->    `tour_images`, `upsertPackage`, `upsertReview` (can **re-publish the `is_sample` reviews**
->    that 8D's build guard blocks on), and `upsertFleet` (can un-deactivate a driver with no audit
->    row, and reset an `on_trip` van mid-trip). All six key on admin-editable natural keys, so an
->    **edited** slug or plate yields a duplicate insert rather than an overwrite. `db:seed` is in
->    the deploy path, so this gates 8E. **The decision to take: which tables does the seed own and
->    which do Week 7's admin screens own.**
+> 1. **✅ RESOLVED (Task B2, pre-launch fixes batch) — `db:seed` still overwrites admin-edited
+>    content in six tables** (BUG-118). The owner's decision: split the seed into a BASE half
+>    (`seedBase` — the first owner, destinations, settings; insert-only forever, safe to re-run
+>    against production at any time) and a DEMO half (`seedDemo` — tours incl. `tour_price_tiers`
+>    and images, packages, reviews, and app-database-only the fleet; unchanged upsert behaviour,
+>    dev-only, refuses to run against any database name other than `rg_travel`/`rg_travel_test`
+>    on its own independent guard call). `pnpm --filter @rg/server db:seed` now runs BASE only;
+>    `db:seed:demo` is the new, separate, dev-only command for DEMO. See `docs/BUGS_LOG.md`'s
+>    Fixed row for BUG-118 and `server/src/db/seed.ts`'s module doc-comment for the detail.
 > 2. **⚠️ OWNER DECISION — BUG-117, `checkout.startPayment` does not re-check that any online
 >    payment method is enabled.** The PayMongo-unconfigured half is enforced server-side and
 >    measured; the methods-disabled half is enforced by the UI alone, so a stale tab, a

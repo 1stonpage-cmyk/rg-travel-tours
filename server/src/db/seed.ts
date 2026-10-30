@@ -5,23 +5,53 @@
  * to seed `rg_travel_test` instead, so the test suite starts from the same
  * canonical baseline.
  *
- * Idempotent: every table is upserted by a natural key (`slug` for
- * destinations/tours/packages, `name` + `tourId` for reviews). A tour's price
+ * ## BASE vs DEMO (BUG-118, Week 7 Task B2)
+ *
+ * `seed()` itself is now `await seedBase(context); await seedDemo(context);`
+ * — two halves with opposite re-run contracts, because they used to be one
+ * function with one (wrong) contract: a plain upsert on every table, which on
+ * 2026-10-28 reset a hand-entered `settings` row on the live `rg_travel`
+ * database (see `insertSettingIfMissing`) and, less visibly, could do the
+ * same to an admin-edited tour price, a deactivated driver or an `on_trip`
+ * van on every subsequent re-seed. A2 fixed `settings` alone; this task fixes
+ * the rest by giving each half its own rule instead of one rule for both:
+ *
+ *  - **`seedBase`** — `seedFirstOwner`, destinations, settings. **Insert-only,
+ *    forever**, on every table it touches: a row that already exists is left
+ *    exactly as it is, because by the time it exists it may be real,
+ *    admin-entered configuration the seed cannot tell apart from its own
+ *    default. Safe to re-run against production at any time — that is the
+ *    whole point of the split. Wired to `pnpm --filter @rg/server db:seed`.
+ *  - **`seedDemo`** — tours (incl. price tiers and images), packages, reviews,
+ *    and, app-database only, the fleet and itinerary stops. **Unchanged
+ *    upsert behaviour** — this is dev/demo content, and keeping it
+ *    overwritable on a dev box is the whole point of it existing. **Refuses
+ *    to run against anything but `rg_travel` or `rg_travel_test`** (its own
+ *    `assertDatabaseName`/`assertConnectedDatabase` call, independent of
+ *    `seedBase`'s), and must never be run against production once real
+ *    content replaces the seed. Wired to `pnpm --filter @rg/server
+ *    db:seed:demo`.
+ *
+ * Idempotent: every table `seedDemo` touches is upserted by a natural key
+ * (`slug` for tours/packages, `name` + `tourId` for reviews). A tour's price
  * tiers and images have no natural key of their own, so they are replaced
  * wholesale for that tour on every run — same fixed set in, same fixed set
  * out, never duplicated. Itinerary stops follow the same rule but are
  * app-database only (`upsertItineraryStops`).
  *
- * **`settings` is the exception: insert-only, never overwritten.** It is the
- * one table whose rows an admin edits in place rather than through a screen
- * that owns its own content, so a re-seed must leave an existing key alone.
- * See `insertSettingIfMissing` for the incident that made this a rule.
+ * **`settings` and now `destinations` are insert-only, never overwritten.**
+ * They are the tables whose rows an admin edits in place rather than through
+ * a screen that owns its own content, so a re-seed must leave an existing key
+ * alone. See `insertSettingIfMissing` for the incident that made this a rule,
+ * and `insertDestinationIfMissing` for the mirror of it.
  *
- * `assertDatabaseName` + `assertConnectedDatabase` run first (CLAUDE.md:
- * this project may only ever touch `rg_travel` for the app, `rg_travel_test`
- * for tests; Kong PMS shares the same MySQL server). Never prints
- * DATABASE_URL, TEST_DATABASE_URL or a password. Never truncates, never
- * hard-deletes.
+ * `assertDatabaseName` + `assertConnectedDatabase` run first, in BOTH halves
+ * (CLAUDE.md: this project may only ever touch `rg_travel` for the app,
+ * `rg_travel_test` for tests; Kong PMS shares the same MySQL server). Running
+ * it twice when `seed()` calls both halves in sequence is deliberate and
+ * cheap, not a defect to optimise away — it is what keeps a standalone
+ * `seedDemo()` invocation guarded on its own. Never prints DATABASE_URL,
+ * TEST_DATABASE_URL or a password. Never truncates, never hard-deletes.
  */
 import { and, eq } from 'drizzle-orm';
 import { pathToFileURL } from 'node:url';
@@ -65,8 +95,28 @@ type Db = ReturnType<typeof getDb>;
  */
 const DEMO_REF_PREFIX = 'RG-SEED';
 
-async function upsertDestination(db: Db, destination: SeedDestination): Promise<number> {
-  const values = {
+/**
+ * A destination row is INSERT-ONLY, mirroring `insertSettingIfMissing` (Week
+ * 7 Task B2 / BUG-118): a slug already in the table is left exactly as it
+ * is, never re-upserted back to the seed's own name/blurb/image/ordering.
+ * There is no destinations admin screen yet, but the same reasoning
+ * `insertSettingIfMissing` documents applies pre-emptively — a table a
+ * future admin screen edits in place must not have its rows reset by a
+ * re-seed in the meantime.
+ *
+ * Returns `true` when it inserted, so the caller can report how many slugs
+ * it left alone, same as the settings loop.
+ */
+async function insertDestinationIfMissing(db: Db, destination: SeedDestination): Promise<boolean> {
+  const existing = await db
+    .select({ id: schema.destinations.id })
+    .from(schema.destinations)
+    .where(eq(schema.destinations.slug, destination.slug));
+
+  if (existing.length > 0) return false;
+
+  await db.insert(schema.destinations).values({
+    slug: destination.slug,
     name: destination.name,
     displayName: destination.displayName,
     blurb: destination.blurb,
@@ -75,23 +125,8 @@ async function upsertDestination(db: Db, destination: SeedDestination): Promise<
     sortOrder: destination.sortOrder,
     featuredSortOrder: destination.featuredSortOrder,
     isFeatured: destination.isFeatured,
-  };
-
-  const existing = await db
-    .select({ id: schema.destinations.id })
-    .from(schema.destinations)
-    .where(eq(schema.destinations.slug, destination.slug));
-
-  if (existing.length > 0) {
-    const id = existing[0]!.id;
-    await db.update(schema.destinations).set(values).where(eq(schema.destinations.id, id));
-    return id;
-  }
-
-  const [result] = await db
-    .insert(schema.destinations)
-    .values({ slug: destination.slug, ...values });
-  return result.insertId;
+  });
+  return true;
 }
 
 async function upsertTour(db: Db, tour: SeedTour, destinationId: number): Promise<number> {
@@ -670,7 +705,21 @@ export async function upsertItineraryStops(
   );
 }
 
-export async function seed(context: DatabaseContext = 'app'): Promise<void> {
+/**
+ * Guard-then-connect, shared by `seedBase` and `seedDemo`: resolve the right
+ * URL for `context`, fail loudly if it is missing, then run the same
+ * two-step check every entry point into this database runs
+ * (`assertDatabaseName` against the URL's own declared name, then
+ * `assertConnectedDatabase` against what the live connection actually
+ * resolved to). Returns the open `Db` handle so each caller does not repeat
+ * the `getDb()` call.
+ *
+ * Called once by `seedBase` and once by `seedDemo` — twice in total when
+ * `seed()` runs both in sequence. That duplication is deliberate (see the
+ * module doc-comment): it is what keeps a standalone `seedDemo()` CLI
+ * invocation guarded even though nothing calls `seedBase()` first.
+ */
+async function guardAndConnect(context: DatabaseContext): Promise<Db> {
   const url = context === 'test' ? env.TEST_DATABASE_URL : env.DATABASE_URL;
   if (!url) {
     throw new Error(
@@ -679,16 +728,86 @@ export async function seed(context: DatabaseContext = 'app'): Promise<void> {
   }
   assertDatabaseName(databaseNameFromUrl(url), context);
   await assertConnectedDatabase(context);
+  return getDb();
+}
 
-  const db = getDb();
+/**
+ * The BASE half (Week 7 Task B2, BUG-118): the first owner, destinations,
+ * settings. Every table here is insert-only — see the module doc-comment
+ * and `insertSettingIfMissing`/`insertDestinationIfMissing` — so this is
+ * safe to re-run against the production database at any time. Wired to
+ * `pnpm --filter @rg/server db:seed`.
+ */
+export async function seedBase(context: DatabaseContext = 'app'): Promise<void> {
+  const db = await guardAndConnect(context);
 
   await seedFirstOwner(db);
 
+  /*
+   * Destinations are INSERT-ONLY, like settings (see
+   * `insertDestinationIfMissing`): a slug already in the table is left
+   * exactly as it is.
+   */
+  let destinationsInserted = 0;
+  for (const destination of SEED_DESTINATIONS) {
+    if (await insertDestinationIfMissing(db, destination)) destinationsInserted += 1;
+  }
+  console.log(
+    `[seed] destinations: ${destinationsInserted} inserted, ` +
+      `${SEED_DESTINATIONS.length - destinationsInserted} already present (left untouched)`,
+  );
+
+  /*
+   * Settings are INSERT-ONLY (see `insertSettingIfMissing`): a key already in
+   * the table is left exactly as it is, because it may be configuration an
+   * admin entered for real. The counts are printed so a re-seed's output says
+   * so out loud rather than looking identical to the old overwriting one.
+   */
+  const settingKeys = Object.keys(SEED_SETTINGS) as Array<keyof typeof SEED_SETTINGS>;
+  let settingsInserted = 0;
+  for (const key of settingKeys) {
+    if (await insertSettingIfMissing(db, key, SEED_SETTINGS[key])) settingsInserted += 1;
+  }
+  console.log(
+    `[seed] settings: ${settingsInserted} inserted, ` +
+      `${settingKeys.length - settingsInserted} already present (left untouched)`,
+  );
+}
+
+/**
+ * The DEMO half (Week 7 Task B2, BUG-118): tours (with their price tiers and
+ * images), packages, reviews, and — app database only — the fleet and
+ * itinerary stops. **Unchanged upsert behaviour**: this is dev/demo content,
+ * and keeping it overwritable on a dev box is the entire point of the split.
+ * **Must never be run against production once real content replaces the
+ * seed** — `db:seed:demo` is a dev-only command, enforced the only way a
+ * seed script can enforce anything: it guards its own database name
+ * (`guardAndConnect`, same as `seedBase`) rather than trusting the caller to
+ * remember. Wired to `pnpm --filter @rg/server db:seed:demo`.
+ */
+export async function seedDemo(context: DatabaseContext = 'app'): Promise<void> {
+  const db = await guardAndConnect(context);
+
+  /*
+   * Destinations are `seedBase`'s table now, not this one's — read the ids
+   * `seedBase` already wrote rather than re-inserting or upserting them. A
+   * missing destination means `seedBase` (or an equivalent `db:seed`) has
+   * never been run against this database; that is a real ordering error,
+   * not something this half should paper over.
+   */
   const destinationIdBySlug = new Map<string, number>();
   for (const destination of SEED_DESTINATIONS) {
-    destinationIdBySlug.set(destination.slug, await upsertDestination(db, destination));
+    const [existing] = await db
+      .select({ id: schema.destinations.id })
+      .from(schema.destinations)
+      .where(eq(schema.destinations.slug, destination.slug));
+    if (!existing) {
+      throw new Error(
+        `seedDemo: destination "${destination.slug}" does not exist — run db:seed (base) first.`,
+      );
+    }
+    destinationIdBySlug.set(destination.slug, existing.id);
   }
-  console.log(`[seed] destinations: ${SEED_DESTINATIONS.length}`);
 
   const tourIdBySlug = new Map<string, number>();
   for (const tour of SEED_TOURS) {
@@ -715,22 +834,6 @@ export async function seed(context: DatabaseContext = 'app'): Promise<void> {
     await upsertReview(db, review, tourId);
   }
   console.log(`[seed] reviews: ${SEED_REVIEWS.length}`);
-
-  /*
-   * Settings are INSERT-ONLY (see `insertSettingIfMissing`): a key already in
-   * the table is left exactly as it is, because it may be configuration an
-   * admin entered for real. The counts are printed so a re-seed's output says
-   * so out loud rather than looking identical to the old overwriting one.
-   */
-  const settingKeys = Object.keys(SEED_SETTINGS) as Array<keyof typeof SEED_SETTINGS>;
-  let settingsInserted = 0;
-  for (const key of settingKeys) {
-    if (await insertSettingIfMissing(db, key, SEED_SETTINGS[key])) settingsInserted += 1;
-  }
-  console.log(
-    `[seed] settings: ${settingsInserted} inserted, ` +
-      `${settingKeys.length - settingsInserted} already present (left untouched)`,
-  );
 
   /*
    * The fleet is APP-ONLY (controller ruling, 2026-10-15). See
@@ -764,11 +867,23 @@ export async function seed(context: DatabaseContext = 'app'): Promise<void> {
   console.log('[seed] done.');
 }
 
+/**
+ * Both halves, in order — unchanged external behaviour from before the
+ * split (Week 7 Task B2). Every existing caller that imports `seed` (test
+ * files, `global-setup.ts`, `helpers/test-db.ts`) keeps working exactly as
+ * it did; only the CLI entry points below were repointed at the two halves
+ * directly.
+ */
+export async function seed(context: DatabaseContext = 'app'): Promise<void> {
+  await seedBase(context);
+  await seedDemo(context);
+}
+
 const isMainModule =
   process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (isMainModule) {
-  seed()
+  seedBase()
     .then(async () => {
       await closeDb();
     })

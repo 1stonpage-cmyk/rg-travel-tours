@@ -332,18 +332,23 @@ Do these in order. Steps 1–4 change nothing public, so they are safe to do ear
    `minLeadDays`, `nextDayCutoffTime`, `maxAdvanceDays`), added 2026-10-13, so a database
    seeded before that date is missing it.
 
-   **Corrected 2026-10-30 — do NOT treat re-running `db:seed` as a routine, safe "re-sync".**
-   A settings row that already exists is now never touched (it only inserts a genuinely
-   missing key), so this specific step — filling in a missing settings key — is safe. But
-   `tours`, `tour_price_tiers`, `tour_images`, `packages`, `reviews` and the fleet
-   (`vans`/`drivers`) are still upserted the OLD way: a re-seed silently reverts any
-   admin-edited tour price, title, badge or gallery image, any package price, re-publishes
-   the sample reviews this checklist tells you to hide below, and can reactivate a
-   deactivated driver or free an `on_trip` van. **Only run `db:seed` against the production
-   database for the specific gap this step exists for (a missing settings key), never as a
-   general "make sure everything's there" step once real content exists.** This is an open
-   gap, not yet fixed — see the owner's standing question about which tables the seed should
-   still own after launch.
+   **Corrected 2026-10-30, then split 2026-10-30 (Task B2, BUG-118) — `pnpm --filter @rg/server
+   db:seed` is now BASE-ONLY and genuinely safe to re-run against production at any time.**
+   `db:seed` runs `seedBase()`: the first owner, destinations and settings, all insert-only
+   forever — a row that already exists (including a settings row an admin edited, or a
+   destination) is left exactly as it is, never reverted. `tours`, `tour_price_tiers`,
+   `tour_images`, `packages`, `reviews` and the fleet (`vans`/`drivers`) moved to a separate
+   command, `seedDemo()`, run by **`pnpm --filter @rg/server db:seed:demo`** — and that command
+   still upserts the old way (a re-seed reverts any admin-edited tour price, title, badge or
+   gallery image, any package price, re-publishes the sample reviews this checklist tells you to
+   hide below, and can reactivate a deactivated driver or free an `on_trip` van), because it is
+   dev/demo content and staying overwritable on a dev box is the entire point of it. **`db:seed:demo`
+   must NEVER be run against the production database, full stop — not even for "the specific gap"
+   wording this step used to carry, which no longer applies to it.** It also refuses to run
+   against any database whose name is not `rg_travel` or `rg_travel_test`, on its own guard call,
+   as a second line of defence against exactly that mistake. `db:seed` (base) carries no such
+   caveat any more: run it on production whenever a settings key or destination is genuinely
+   missing, with no "only for this one gap" qualifier needed.
 
 3. **Publish the build**: sync `client/dist` into `/var/www/travelsugbo/app`, confirm
    `pm2 restart` brings the API up on 3100, and smoke-test the whole flow on

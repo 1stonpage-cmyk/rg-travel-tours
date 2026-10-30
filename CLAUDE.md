@@ -204,26 +204,31 @@ Every page reads tours, destinations, packages, reviews, FAQs and settings from 
   exits non-zero while a published `is_sample` review exists or `content_unverified` is set.
   `ALLOW_PLACEHOLDER_BUILD=1` is the deliberate override for local builds and client demos —
   never for a launch build. It fails closed: an unreachable database blocks the build.
-- **`db:seed` is insert-only for `settings` and OVERWRITES everything else. Know which half you
-  are in before you run it.** (Owner-reported incident 2026-10-28; A2 fix `212d200`.) A re-seed
-  against `rg_travel` wiped a hand-entered `payment_qr` block back to its seed defaults — real
-  configuration, gone, from a command the launch checklist used to call safe. `insertSettingIfMissing`
-  now genuinely never touches an existing settings row, and the run prints "N inserted, M already
-  present".
-  **Only that one table is fixed.** The same overwrite shape is still live in `upsertTour`
-  (including **`tour_price_tiers`** — money, and it fails **open**: a reverted tier silently
-  undercharges every later booking), `tours` itself (title, badge, and the `alertNote` that would
-  carry a typhoon suspension), `tour_images`, `upsertPackage`, `upsertReview` (which can
-  **re-publish the six `is_sample` reviews**, blocking a production build and putting sample
-  ratings back in front of a crawler) and `upsertFleet` (which can un-deactivate a driver **with
-  no audit row**, and reset an `on_trip` van to `available` mid-trip). All six key on
-  **admin-editable natural keys** — slug, plate, code — so an **edited** key produces a
-  **duplicate insert** rather than an overwrite, i.e. a second placeholder tour live on the public
-  site. `upsertDestination` is exempt only because no destinations editor exists yet. **Logged as
-  BUG-118 and open on an owner decision: which tables the seed owns and which the Week 7 admin
-  screens own. Do not close it by making the other six insert-only on your own judgment** — the
-  dev seed is also how a fresh clone gets usable content, and insert-only means a seed change can
-  never reach an existing database again.
+- **`db:seed` is BASE, insert-only forever; `db:seed:demo` is DEMO, dev-only, and still
+  overwrites.** (Owner-reported incident 2026-10-28; A2 fix `212d200`; split into base/demo,
+  BUG-118, Task B2.) The original incident: a re-seed against `rg_travel` wiped a hand-entered
+  `payment_qr` block back to its seed defaults — real configuration, gone, from a command the
+  launch checklist used to call safe. A2 made `settings` insert-only (`insertSettingIfMissing`);
+  the identical overwrite shape was still live in five more tables (`tours`/`tour_price_tiers`
+  — money, and failing **open** — `tour_images`, `packages`, `reviews`, the fleet) until Task B2
+  split `seed(context)` into two halves with opposite re-run contracts:
+  - **`seedBase(context)`** — the first owner, destinations (`insertDestinationIfMissing`,
+    mirroring `insertSettingIfMissing`), settings. **Insert-only on every table it touches, and
+    safe to re-run against production at any time.** This is what `pnpm --filter @rg/server
+    db:seed` now runs.
+  - **`seedDemo(context)`** — tours (incl. `tour_price_tiers` and images), packages, reviews,
+    and (app-database only) the fleet and itinerary stops. **Unchanged upsert behaviour** — this
+    is dev/demo content, and staying overwritable on a dev box is the point. Guards its own
+    database name independently of `seedBase`'s own guard call (refuses anything but
+    `rg_travel`/`rg_travel_test`), and **must never be run against production once real content
+    replaces the seed.** This is the new, separate `pnpm --filter @rg/server db:seed:demo`.
+
+  `seed(context)` itself is `await seedBase(context); await seedDemo(context);` — unchanged
+  externally, so every existing caller (test files, `global-setup.ts`, `helpers/test-db.ts`)
+  keeps working without modification. All six tables that used to share one overwrite shape now
+  key on the same **admin-editable natural keys** (slug, plate, code) they always did, but only
+  `seedDemo`'s five are still upserted by them — know which command you are running before you
+  run it against anything but a dev box.
 - **Content tokens:** admin-editable content may embed `{{tokenName}}` placeholders, which the
   rendering component substitutes with live data — currently only `{{paymentMethods}}` in the
   payment FAQ answer, replaced with the enabled payment methods. Tokens are allowed **only** in
