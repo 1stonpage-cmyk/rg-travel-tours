@@ -127,8 +127,13 @@ function describeAvailability(reason: string): string {
  * alternative — a message the code thought it had placed and never rendered
  * — is the silent half of this bug rather than a fix for it.
  *
- * `lead` covers name/email/phone together; see `GuestDetails.tsx` on why
- * that one key cannot be split client-side.
+ * `lead` is still the one key this allow-list and `holdFieldErrors` carry for
+ * name/email/phone together — `GuestDetails.tsx` is given the raw `error`
+ * directly and, since BUG-120, resolves each of the three to its own leaf
+ * message itself (`lead.name` / `lead.email` / `lead.phone`) rather than
+ * reading this top-level map for them. `lead` stays in this set regardless:
+ * it is still what keeps a `lead`-keyed issue out of `unplacedFieldMessages`
+ * below, whichever of the three sub-fields it actually named.
  */
 const PLACED_HOLD_FIELDS: ReadonlySet<string> = new Set([
   'lead',
@@ -410,7 +415,7 @@ export default function CheckoutPage() {
                     payMode={payMode}
                     onPayModeChange={setPayMode}
                     amountDueNowCentavos={quote.amountDueNowCentavos}
-                    fieldErrors={holdFieldErrors}
+                    error={createHold.isError ? createHold.error : null}
                   />
 
                   {/*

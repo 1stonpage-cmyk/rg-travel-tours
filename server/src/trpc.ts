@@ -36,7 +36,11 @@
  *                                not a filesystem path
  *   - `message`                — scrubbed
  *   - `data.zodError`          — flattened field errors, so a form can say
- *                                which field failed (see below)
+ *                                which field failed (see below), PLUS
+ *                                (BUG-120) a `nestedFieldErrors` dot-path map
+ *                                so a form with a nested object input
+ *                                (`createHoldInput.lead`) can say which LEAF
+ *                                field failed
  *
  * Server-side diagnosis is untouched: nothing here suppresses logging, and
  * `TRPCError.cause` (the real error, kept for the server) was never part of
@@ -173,11 +177,36 @@ const t = initTRPC
     },
   });
 
+/**
+ * BUG-120: `z.flattenError` groups by `issue.path[0]` only, so an issue
+ * inside a nested object input (e.g. `createHoldInput.lead.phone`) arrives
+ * under `fieldErrors.lead` with no way to tell which of `lead`'s own
+ * sub-fields was actually wrong — `GuestDetails.tsx` used to mark all three
+ * (name, email, phone) invalid for a single bad phone number.
+ *
+ * `nestedFieldErrors` is built directly from the ZodError's own `issues`
+ * (each carries a full `path: (string | number)[]`) and keyed by the
+ * dot-joined path (`'lead.phone'`). It is published ALONGSIDE the existing
+ * top-level `fieldErrors`, never instead of it — every other caller of this
+ * formatter keeps reading `fieldErrors` exactly as before. Only issues with
+ * a path two or more segments deep get an entry here; a top-level issue
+ * (`path.length <= 1`) is already fully described by `fieldErrors` and would
+ * just be a duplicate under its own name.
+ */
 function flatten(error: ZodError): {
   formErrors: string[];
   fieldErrors: Record<string, string[]>;
+  nestedFieldErrors: Record<string, string[]>;
 } {
   const flat = z.flattenError(error);
+
+  const nestedFieldErrors: Record<string, string[]> = {};
+  for (const issue of error.issues) {
+    if (issue.path.length < 2) continue;
+    const key = issue.path.join('.');
+    (nestedFieldErrors[key] ??= []).push(scrubPaths(issue.message));
+  }
+
   return {
     formErrors: flat.formErrors.map(scrubPaths),
     fieldErrors: Object.fromEntries(
@@ -185,6 +214,7 @@ function flatten(error: ZodError): {
         ([field, messages]) => [field, (messages ?? []).map(scrubPaths)],
       ),
     ),
+    nestedFieldErrors,
   };
 }
 

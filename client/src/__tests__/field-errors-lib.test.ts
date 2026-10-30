@@ -25,6 +25,7 @@ import {
   firstValidationMessage,
   getFieldErrors,
   getFormErrors,
+  getNestedFieldError,
   splitFieldErrors,
 } from '@/lib/field-errors';
 
@@ -78,6 +79,66 @@ describe('getFieldErrors / getFormErrors', () => {
       zodError: { formErrors: [], fieldErrors: { email: [], name: ['   '] } },
     });
     expect(getFieldErrors(error)).toBeNull();
+  });
+});
+
+/**
+ * BUG-120: `createHoldInput.lead` is a nested object, and `fieldErrors`
+ * groups the whole thing under one `lead` key. These pin `getNestedFieldError`
+ * against the real wire shape `server/src/trpc.ts`'s `flatten()` now
+ * publishes — `nestedFieldErrors`, dot-path keyed, alongside the unchanged
+ * `fieldErrors` map.
+ */
+describe('getNestedFieldError', () => {
+  const NESTED = {
+    code: 'BAD_REQUEST',
+    httpStatus: 400,
+    zodError: {
+      formErrors: [] as string[],
+      fieldErrors: { lead: ['Enter a valid PH mobile number, like 0917 123 4567'] },
+      nestedFieldErrors: {
+        'lead.phone': ['Enter a valid PH mobile number, like 0917 123 4567'],
+      },
+    },
+  };
+
+  it("reads the leaf's own message when the server published one", () => {
+    const error = refusal(NESTED);
+    expect(getNestedFieldError(error, 'lead.phone')).toBe(
+      'Enter a valid PH mobile number, like 0917 123 4567',
+    );
+  });
+
+  it('is null for a sibling leaf that was never wrong — the whole point of the fix', () => {
+    const error = refusal(NESTED);
+    expect(getNestedFieldError(error, 'lead.name')).toBeNull();
+    expect(getNestedFieldError(error, 'lead.email')).toBeNull();
+  });
+
+  it("falls back to the parent key's grouped message when no leaf-level message exists", () => {
+    // An older server (or a refusal with no nestedFieldErrors at all) must
+    // leave every existing caller exactly as well off as before this fix.
+    const error = refusal({
+      ...NESTED,
+      zodError: {
+        formErrors: [],
+        fieldErrors: { lead: ['Enter a valid PH mobile number, like 0917 123 4567'] },
+      },
+    });
+    expect(getNestedFieldError(error, 'lead.phone')).toBe(
+      'Enter a valid PH mobile number, like 0917 123 4567',
+    );
+    // The fallback is the GROUP message, so it is not leaf-specific — every
+    // sub-field falls back to the same sentence, which is exactly today's
+    // (pre-fix) behaviour and no worse.
+    expect(getNestedFieldError(error, 'lead.name')).toBe(
+      'Enter a valid PH mobile number, like 0917 123 4567',
+    );
+  });
+
+  it('returns null for a non-validation refusal', () => {
+    const error = refusal({ code: 'FORBIDDEN', httpStatus: 403 }, 'Only the owner may do that.');
+    expect(getNestedFieldError(error, 'lead.phone')).toBeNull();
   });
 });
 

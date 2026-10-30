@@ -31,14 +31,19 @@
  * (`describeMutationError`, `describeCheckoutError`, an admin page's own
  * banner). There is deliberately no third fallback path invented here.
  *
- * ## The field NAMES are the server's, and they are only one level deep
+ * ## The field NAMES are the server's, and `getFieldErrors` is only one level deep
  *
  * `flattenError` groups by `issue.path[0]`, so a nested object reports under
  * its own key: `createHoldInput.lead.phone` failing arrives as
  * `fieldErrors.lead`, never `fieldErrors.phone`. A caller must look up the
- * key the server actually sends or it silently shows nothing — see
- * `GuestDetails.tsx`, which renders the `lead` message against the
- * name/email/phone group for exactly this reason.
+ * key the server actually sends or it silently shows nothing.
+ *
+ * **BUG-120** gave the server a second, additive map for exactly this case —
+ * `data.zodError.nestedFieldErrors`, dot-path keyed (`'lead.phone'`) — and
+ * `getNestedFieldError` below is the reader for it, with a fallback to the
+ * parent key's grouped message so a caller is never worse off than before.
+ * `getFieldErrors` itself is UNCHANGED: every existing caller that reads a
+ * top-level field name keeps working exactly as it did.
  */
 import { TRPCClientError } from '@trpc/client';
 
@@ -60,6 +65,8 @@ export type FieldErrors = Record<string, string>;
 interface WireZodError {
   formErrors?: unknown;
   fieldErrors?: unknown;
+  /** BUG-120: dot-path keyed (`'lead.phone'`), published alongside `fieldErrors`. */
+  nestedFieldErrors?: unknown;
 }
 
 function readZodError(error: unknown): WireZodError | null {
@@ -102,6 +109,41 @@ export function getFieldErrors(error: unknown): FieldErrors | null {
     if (message !== null) fields[field] = message;
   }
   return Object.keys(fields).length > 0 ? fields : null;
+}
+
+/**
+ * One leaf field's own message inside a nested object input — `'lead.phone'`,
+ * say (BUG-120). Reads `data.zodError.nestedFieldErrors[path]`, and falls
+ * back to the PARENT key's grouped message (`fieldErrors.lead`) only when
+ * the server published no `nestedFieldErrors` map AT ALL — an older
+ * deploy — so this is never worse than `getFieldErrors('lead')` would have
+ * been before this fix.
+ *
+ * **The fallback triggers on the map's ABSENCE, not on one path's absence
+ * from it.** Once a server publishes `nestedFieldErrors` at all, a path
+ * missing from it means that leaf was fine — `lead.name` and `lead.email`
+ * must come back `null` when only `lead.phone` failed, which is the whole
+ * bug this fix closes. Falling back to the grouped `lead` message for every
+ * missing key would put the old wrong-field message back on all three
+ * inputs, just one level further down.
+ *
+ * `path` is a literal dot-path, not a general accessor: callers pass exactly
+ * the string the server would key it under (`'lead.phone'`), never a
+ * computed or user-controlled path.
+ */
+export function getNestedFieldError(error: unknown, path: string): string | null {
+  const zodError = readZodError(error);
+  if (!zodError) return null;
+
+  const nested = zodError.nestedFieldErrors;
+  if (typeof nested === 'object' && nested !== null) {
+    return firstString((nested as Record<string, unknown>)[path]);
+  }
+
+  const parentKey = path.split('.')[0]!;
+  const raw = zodError.fieldErrors;
+  if (typeof raw !== 'object' || raw === null) return null;
+  return firstString((raw as Record<string, unknown>)[parentKey]);
 }
 
 /**

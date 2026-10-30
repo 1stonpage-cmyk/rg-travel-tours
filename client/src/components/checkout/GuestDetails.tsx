@@ -2,7 +2,7 @@ import { formatPeso, type PayMode } from '@rg/shared';
 import FieldError from '@/components/common/FieldError';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import type { FieldErrors } from '@/lib/field-errors';
+import { getFieldErrors, getNestedFieldError } from '@/lib/field-errors';
 import { cn } from '@/lib/utils';
 
 type Props = {
@@ -11,11 +11,14 @@ type Props = {
   /** `QuoteResult.amountDueNowCentavos` — rendered verbatim per mode, never recomputed. */
   amountDueNowCentavos: { full: number; deposit: number };
   /**
-   * `createHold`'s per-field validation messages, keyed by the field name the
-   * SERVER reported (`lib/field-errors.ts`). Null when the last submit either
-   * succeeded or failed for a reason that is not input validation.
+   * `createHold`'s rejection, raw — `null` when the last submit either
+   * succeeded or has not happened yet. Passed through rather than
+   * pre-flattened so this component can read BOTH the top-level map
+   * (`pickup`, `payMode`, …) and, since BUG-120, the `lead.name` /
+   * `lead.email` / `lead.phone` leaf messages — `lib/field-errors.ts` is
+   * the one place that knows how to read either shape off it.
    */
-  fieldErrors?: FieldErrors | null;
+  error?: unknown;
 };
 
 const PAY_MODE_ORDER: readonly PayMode[] = ['deposit', 'full'];
@@ -25,7 +28,9 @@ const PAY_MODE_LABELS: Record<PayMode, string> = {
 };
 
 /** The ids the inputs name in `aria-describedby`, so each pairing has one spelling. */
-const LEAD_ERROR_ID = 'checkout-lead-error';
+const LEAD_NAME_ERROR_ID = 'checkout-name-error';
+const LEAD_EMAIL_ERROR_ID = 'checkout-email-error';
+const LEAD_PHONE_ERROR_ID = 'checkout-phone-error';
 const PICKUP_ERROR_ID = 'checkout-pickup-error';
 const PICKUP_MAP_ERROR_ID = 'checkout-pickup-map-error';
 const REQUESTS_ERROR_ID = 'checkout-requests-error';
@@ -39,7 +44,7 @@ const PAY_MODE_ERROR_ID = 'checkout-pay-mode-error';
  * needs as live state to drive `QuoteSummary`'s display, so it is a
  * controlled pair of radios instead.
  *
- * ## Where the server's validation messages land (task A4)
+ * ## Where the server's validation messages land (task A4, then BUG-120)
  *
  * `createHold`'s refusals used to arrive as one `error.message` under the
  * submit button — and for a multi-issue `ZodError` that message is a JSON
@@ -47,26 +52,29 @@ const PAY_MODE_ERROR_ID = 'checkout-pay-mode-error';
  * Each message now renders beneath the input it belongs to, wired with
  * `aria-describedby` and announced with `role="alert"` (`FieldError`).
  *
- * **`lead` is ONE key, by construction, and so it gets one message for the
- * three inputs.** `createHoldInput.lead` is a nested object, and the server's
- * `flattenError` groups issues by `issue.path[0]` — so a bad phone number
- * arrives as `fieldErrors.lead`, with nothing on the wire to say which of
- * name/email/phone it was. Attributing it to the phone (the only one of the
- * three with a format rule the browser does not enforce itself, and so the
- * likely cause) would be a guess that is sometimes confidently wrong, which
- * is worse than a group message. So the sentence sits directly under the
- * email/phone row, all three inputs point at it, and the message itself
- * ("Enter a valid PH mobile number, like 0917 123 4567") says which field it
- * means. Closing this properly needs the server to publish nested paths,
- * which task A4 is explicitly scoped out of.
+ * **`lead` used to be ONE key, by construction, so a bad phone number alone
+ * marked all three of name/email/phone invalid.** `createHoldInput.lead` is
+ * a nested object, and the server's top-level `flattenError` groups issues
+ * by `issue.path[0]` — so every issue inside `lead`, whichever of the three
+ * sub-fields it actually named, arrived as one `fieldErrors.lead` entry with
+ * no sub-key. BUG-120 taught the server's `errorFormatter` to ALSO publish a
+ * dot-path map (`data.zodError.nestedFieldErrors`, e.g. `'lead.phone'` →
+ * message) alongside that top-level one, so `getNestedFieldError` below can
+ * resolve each of the three inputs to its own leaf message — falling back
+ * to the old grouped `lead` message only if the server ever answers without
+ * the nested map (an older deploy, say), so this component is never worse
+ * off than it was.
  */
 export default function GuestDetails({
   payMode,
   onPayModeChange,
   amountDueNowCentavos,
-  fieldErrors,
+  error,
 }: Props) {
-  const leadError = fieldErrors?.lead;
+  const leadNameError = getNestedFieldError(error, 'lead.name');
+  const leadEmailError = getNestedFieldError(error, 'lead.email');
+  const leadPhoneError = getNestedFieldError(error, 'lead.phone');
+  const fieldErrors = getFieldErrors(error);
   const pickupError = fieldErrors?.pickup;
   const pickupMapError = fieldErrors?.pickupMapUrl;
   const requestsError = fieldErrors?.requests;
@@ -81,10 +89,11 @@ export default function GuestDetails({
           name="name"
           required
           autoComplete="name"
-          aria-describedby={leadError ? LEAD_ERROR_ID : undefined}
-          aria-invalid={leadError ? true : undefined}
+          aria-describedby={leadNameError ? LEAD_NAME_ERROR_ID : undefined}
+          aria-invalid={leadNameError ? true : undefined}
           className="tap-target"
         />
+        <FieldError id={LEAD_NAME_ERROR_ID} message={leadNameError ?? undefined} />
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -96,10 +105,11 @@ export default function GuestDetails({
             type="email"
             required
             autoComplete="email"
-            aria-describedby={leadError ? LEAD_ERROR_ID : undefined}
-            aria-invalid={leadError ? true : undefined}
+            aria-describedby={leadEmailError ? LEAD_EMAIL_ERROR_ID : undefined}
+            aria-invalid={leadEmailError ? true : undefined}
             className="tap-target"
           />
+          <FieldError id={LEAD_EMAIL_ERROR_ID} message={leadEmailError ?? undefined} />
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="checkout-phone">Mobile number</Label>
@@ -110,13 +120,13 @@ export default function GuestDetails({
             required
             autoComplete="tel"
             placeholder="09XX XXX XXXX"
-            aria-describedby={leadError ? LEAD_ERROR_ID : undefined}
-            aria-invalid={leadError ? true : undefined}
+            aria-describedby={leadPhoneError ? LEAD_PHONE_ERROR_ID : undefined}
+            aria-invalid={leadPhoneError ? true : undefined}
             className="tap-target"
           />
+          <FieldError id={LEAD_PHONE_ERROR_ID} message={leadPhoneError ?? undefined} />
         </div>
       </div>
-      <FieldError id={LEAD_ERROR_ID} message={leadError} />
 
       <div className="space-y-1.5">
         <Label htmlFor="checkout-pickup">Pickup location (optional)</Label>

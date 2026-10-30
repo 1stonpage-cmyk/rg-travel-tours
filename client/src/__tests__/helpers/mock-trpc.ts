@@ -111,6 +111,14 @@ class MockTrpcError extends Error {
 export interface FlattenedZodError {
   formErrors: string[];
   fieldErrors: Record<string, string[]>;
+  /**
+   * BUG-120: `server/src/trpc.ts`'s `flatten()` also publishes this dot-path
+   * keyed map (`'lead.phone'`, say) alongside `fieldErrors`, so a nested
+   * object input can attribute a message to its own leaf. Optional here
+   * because most call sites exercise a flat (one-level) input and have
+   * nothing nested to put in it — see `mockTrpcValidationError` below.
+   */
+  nestedFieldErrors?: Record<string, string[]>;
 }
 
 let handlers: Handlers = {};
@@ -294,7 +302,12 @@ export function trpcError(message?: string, code?: string): Error {
  */
 export function mockTrpcValidationError(
   procedure: string,
-  errors: { fieldErrors?: Record<string, string[]>; formErrors?: string[] },
+  errors: {
+    fieldErrors?: Record<string, string[]>;
+    formErrors?: string[];
+    /** BUG-120: dot-path keyed (`'lead.phone'`), alongside `fieldErrors`. */
+    nestedFieldErrors?: Record<string, string[]>;
+  },
 ) {
   mockTrpc({
     [procedure]: () => {
@@ -319,9 +332,15 @@ export function mockTrpcValidationError(
 export function trpcValidationError(errors: {
   fieldErrors?: Record<string, string[]>;
   formErrors?: string[];
+  nestedFieldErrors?: Record<string, string[]>;
 }): Error {
   const fieldErrors = errors.fieldErrors ?? {};
   const formErrors = errors.formErrors ?? [];
+  // BUG-120: not mirrored into `issues` below — nothing here parses a dot
+  // path back into a nested `path` array, and nothing reading this mock's
+  // `message` needs it to. It exists purely so a call site can assert what
+  // `getNestedFieldError` reads.
+  const nestedFieldErrors = errors.nestedFieldErrors ?? {};
   const issues = [
     ...formErrors.map((message) => ({ code: 'custom', path: [] as string[], message })),
     ...Object.entries(fieldErrors).flatMap(([field, messages]) =>
@@ -331,6 +350,7 @@ export function trpcValidationError(errors: {
   return new MockTrpcError(JSON.stringify(issues, null, 2), 'BAD_REQUEST', {
     formErrors,
     fieldErrors,
+    nestedFieldErrors,
   });
 }
 

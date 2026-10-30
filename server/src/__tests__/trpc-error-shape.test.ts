@@ -198,6 +198,56 @@ describe('tRPC error shape — a Zod validation failure through the real app', (
     }
     expectNoInternals(res.text);
   });
+
+  /**
+   * BUG-120: `createHoldInput.lead` is a nested object, and the existing
+   * `fieldErrors` map (asserted below, unchanged) groups by `issue.path[0]`
+   * — so a bad phone number alone arrives as one `fieldErrors.lead` entry
+   * with no sub-key, and `GuestDetails.tsx` used to mark all three of
+   * name/email/phone invalid for it. The fix adds `nestedFieldErrors`
+   * alongside that map, dot-path keyed from the ZodError's own `issues`, so
+   * a form can resolve the message to the one leaf that actually failed.
+   *
+   * This goes through the REAL app and the REAL `createHoldInput` schema —
+   * no hand-built ZodError — so the only way this is false is if the wire
+   * shape actually changed. `tourSlug`/`date`/`pax`/`quoteId` are all
+   * well-formed (so nothing else fails validation); `createHold`'s resolver
+   * never runs, because tRPC parses the input and rejects before any
+   * handler executes, so no database row for any of them needs to exist.
+   */
+  it('BUG-120: a bad lead.phone alone publishes a lead.phone-keyed nested error, and only that leaf', async () => {
+    const res = await request(createApp())
+      .post('/trpc/checkout.createHold')
+      .set('Origin', ORIGIN)
+      .set('Content-Type', 'application/json')
+      .send({
+        tourSlug: 'fixture-tour',
+        date: '2030-01-01',
+        pax: 2,
+        quoteId: '0'.repeat(32),
+        payMode: 'deposit',
+        lead: { name: 'Juan Dela Cruz', email: 'juan@example.com', phone: 'not-a-phone' },
+        consent: true,
+      });
+
+    expect(res.status).toBe(400);
+    const zodError = res.body.error.data.zodError;
+
+    // The old top-level grouping is still there, byte-for-byte as before —
+    // this is additive, not a replacement.
+    expect(zodError.fieldErrors.lead).toEqual([expect.stringMatching(/mobile number/i)]);
+
+    // The new leaf-keyed entry exists for the one sub-field that is
+    // actually wrong...
+    expect(zodError.nestedFieldErrors['lead.phone']).toEqual([
+      expect.stringMatching(/mobile number/i),
+    ]);
+    // ...and ONLY for that one: name and email were valid, so neither gets
+    // an entry — which is the whole bug, proven absent.
+    expect(zodError.nestedFieldErrors).not.toHaveProperty('lead.name');
+    expect(zodError.nestedFieldErrors).not.toHaveProperty('lead.email');
+    expectNoInternals(res.text);
+  });
 });
 
 describe('scrubPaths', () => {

@@ -118,12 +118,24 @@ const QUOTE_FIXTURE = {
 const PHONE_MESSAGE = 'Enter a valid PH mobile number, like 0917 123 4567';
 
 describe('Checkout — createHold validation errors', () => {
-  it('puts the phone message on the element the mobile input describes, with no JSON', async () => {
+  /**
+   * BUG-120: before the fix, `lead`'s ONE grouped message was rendered
+   * beside all three of name/email/phone, so a bad phone number alone
+   * marked name and email `aria-invalid` too. The mock now carries the
+   * `nestedFieldErrors` map the real server publishes alongside the
+   * unchanged `fieldErrors.lead`, and the three new assertions at the
+   * bottom are the regression this task closes — delete them and this test
+   * still passes against the pre-fix bug, which is exactly why they were
+   * missing before.
+   */
+  it('puts the phone message on the element the mobile input describes, and ONLY there', async () => {
     mockTrpc({ 'checkout.quote': QUOTE_FIXTURE });
     mockTrpcValidationError('checkout.createHold', {
-      // `lead` is the key the server sends: `createHoldInput.lead` is a
-      // nested object and `flattenError` groups by `path[0]`.
+      // `lead` is still the key the server sends at the top level:
+      // `createHoldInput.lead` is a nested object and `flattenError` groups
+      // by `path[0]`. `nestedFieldErrors` is the new, additive map.
       fieldErrors: { lead: [PHONE_MESSAGE] },
+      nestedFieldErrors: { 'lead.phone': [PHONE_MESSAGE] },
     });
     const user = userEvent.setup();
     render(
@@ -151,6 +163,15 @@ describe('Checkout — createHold validation errors', () => {
     const phone = within(form).getByLabelText(/mobile number/i);
     expect(describedMessage(phone)).toContain(PHONE_MESSAGE);
     expect(phone).toHaveAttribute('aria-invalid', 'true');
+
+    // BUG-120's actual fix: name and email were never wrong, so neither is
+    // marked invalid and neither describes the phone message.
+    const name = within(form).getByLabelText(/full name/i);
+    const email = within(form).getByLabelText(/^email$/i);
+    expect(name).not.toHaveAttribute('aria-invalid');
+    expect(email).not.toHaveAttribute('aria-invalid');
+    expect(name.getAttribute('aria-describedby')).toBeFalsy();
+    expect(email.getAttribute('aria-describedby')).toBeFalsy();
 
     expectNoRawJson(form);
   });
