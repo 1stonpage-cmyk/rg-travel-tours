@@ -608,9 +608,14 @@ payment method`; the payload deliberately carries **neither ingredient**, so the
   `client/src/lib/field-errors.ts` and places each message beside its own field via
   `aria-describedby`. **Any new form with a multi-field Zod input uses that helper rather than
   rendering `error.message`** — and note that the trap this rule exists for was a **query**, not a
-  mutation (the coupon field), so sweep both. Known limit: `createHoldInput.lead` is nested, so
-  one grouped message lands under all three lead fields (BUG-120) — the grouping itself was
-  reviewed and ruled correct, so do not rework it casually.
+  mutation (the coupon field), so sweep both. `createHoldInput.lead` is nested, and the input shape
+  itself stays that way — a prior review ruled it correct, so do not flatten it. **BUG-120 (fixed,
+  Task B6, pre-launch fixes batch):** a bad phone no longer marks name/email invalid too. The
+  `errorFormatter` now also publishes a dot-path `nestedFieldErrors` map (`'lead.phone'`) alongside
+  the unchanged top-level `fieldErrors`; `field-errors.ts`'s `getNestedFieldError(error, path)`
+  reads the leaf message when the map is present and falls back to the parent's grouped message
+  only when the whole map is absent — never when one path is merely missing from a present map,
+  which would silently reintroduce the same cross-field bug one layer down.
 
 ## Notifications (current state)
 
