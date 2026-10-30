@@ -142,12 +142,22 @@ export function normalizeBookingRef(ref: string): string {
  * and then validated — not loosened. A string that is still the wrong length
  * or charset after normalising is refused exactly as before. Refs are still
  * *generated* uppercase; nothing about `generateBookingRef()` changes.
+ *
+ * The refusal **shows the shape** (task A4). "Not a valid booking reference"
+ * told a guest staring at their confirmation email nothing about what they
+ * should be looking for; `RG-7KQ4M9` does. The pattern and the normalising
+ * are unchanged — only the sentence.
  */
 export const bookingRefSchema = z
   .string()
   .transform(normalizeBookingRef)
   .pipe(
-    z.string().regex(/^RG-[ABCDEFGHJKMNPQRSTVWXYZ23456789]{6}$/, 'Not a valid booking reference'),
+    z
+      .string()
+      .regex(
+        /^RG-[ABCDEFGHJKMNPQRSTVWXYZ23456789]{6}$/,
+        'Enter a valid booking reference, like RG-7KQ4M9.',
+      ),
   );
 
 /** One add-on line as frozen into a booking's price snapshot. */

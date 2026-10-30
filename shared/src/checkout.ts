@@ -18,10 +18,15 @@ import { z } from 'zod';
 import { bookingRefSchema, PAY_MODES } from './booking';
 import { formatPeso, PAYMONGO_MIN_CENTAVOS } from './money';
 
-/** A civil date in Asia/Manila — the tour day, not an instant. */
-export const civilDateSchema = z
-  .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected a YYYY-MM-DD date');
+/**
+ * A civil date in Asia/Manila — the tour day, not an instant.
+ *
+ * The message is written for a GUEST, not for whoever wrote the regex (task
+ * A4). `YYYY-MM-DD` is the wire format a date input already produces; a
+ * guest who somehow sends something else needs "Enter a valid date.", not a
+ * format specification. The PATTERN is untouched — only what a failure says.
+ */
+export const civilDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Enter a valid date.');
 
 /**
  * A Philippine mobile number, in any of the forms a guest might type it.
@@ -36,11 +41,21 @@ export const civilDateSchema = z
  * Exported and reused by both checkout (`createHoldInput`) and booking
  * lookup, so the two cannot drift on what counts as a valid PH mobile
  * number.
+ *
+ * The refusal **shows the guest a number that would work** (owner's own
+ * wording, task A4). "Expected a PH mobile number" was the old text: true,
+ * and no help at all to someone who has just typed a landline or a number
+ * with a country code this schema does not take. The accepted FORMS are
+ * unchanged — only the sentence a failure carries.
  */
 export const phPhoneSchema = z
   .string()
   .transform((value) => value.replace(/[\s-]/g, ''))
-  .pipe(z.string().regex(/^(09\d{9}|\+639\d{9})$/, 'Expected a PH mobile number'))
+  .pipe(
+    z
+      .string()
+      .regex(/^(09\d{9}|\+639\d{9})$/, 'Enter a valid PH mobile number, like 0917 123 4567'),
+  )
   .transform((value) => (value.startsWith('+') ? value : `+63${value.slice(1)}`));
 
 /**
@@ -71,7 +86,13 @@ export const createHoldInput = quoteInput
     lead: z
       .object({
         name: z.string().min(1).max(160),
-        email: z.email().max(200),
+        /*
+         * The message is spelled rather than left to zod's own ("Invalid
+         * email address"), so every surface that shows this field's refusal
+         * says the same guest-facing sentence (task A4). Same rule as
+         * `bookingLookupInput` below and `shared/src/schemas/public.ts`.
+         */
+        email: z.email('Enter a valid email address.').max(200),
         phone: phPhoneSchema,
       })
       .strict(),
@@ -97,7 +118,7 @@ export type CreateHoldInput = z.infer<typeof createHoldInput>;
  * a valid ref again.
  */
 export const bookingLookupInput = z
-  .object({ ref: bookingRefSchema, email: z.email().max(200) })
+  .object({ ref: bookingRefSchema, email: z.email('Enter a valid email address.').max(200) })
   .strict();
 
 /** The tier a quote resolved to, mirroring `server/src/services/pricing.ts`'s `PriceTier`. */

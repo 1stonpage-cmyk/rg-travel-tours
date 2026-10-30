@@ -146,7 +146,13 @@ export type AvailabilityVerdict =
  * narrower, router-local `.strict()` shape is simpler than picking fields
  * off a schema built for a different consumer.
  */
-const civilDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected a YYYY-MM-DD date');
+/*
+ * The message matches `civilDateSchema`'s in `@rg/shared` (task A4) — the
+ * same guest-facing sentence, because this is the same fact about the same
+ * field. The two definitions are deliberately independent (see above), so
+ * the wording has to be kept in step by hand; the pattern is identical.
+ */
+const civilDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Enter a valid date.');
 const availabilityInput = z
   .object({
     tourSlug: z.string().min(1).max(160),

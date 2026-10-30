@@ -34,7 +34,12 @@ export const inquiryInput = z.object({
   // .max(200) matches the `varchar(200)` email column (round 1 review,
   // I4) — a format-valid but over-long address must fail Zod validation
   // here rather than the MySQL driver with ER_DATA_TOO_LONG.
-  email: z.email().max(200),
+  //
+  // The message is spelled rather than left to zod's own "Invalid email
+  // address" (task A4), so the sentence beside the field is project copy and
+  // every surface that shows it says the same thing. The FORMAT RULE is
+  // unchanged — this is the message only.
+  email: z.email('Enter a valid email address.').max(200),
   phone: z.string().max(40).optional(),
   message: z.string().min(1).max(5000),
   /**
@@ -57,7 +62,8 @@ export const inquiryInput = z.object({
 
 export const newsletterInput = z.object({
   // .max(200) matches the `varchar(200)` email column (round 1 review, I4).
-  email: z.email().max(200),
+  // Custom message for the same reason `inquiryInput` above carries one.
+  email: z.email('Enter a valid email address.').max(200),
 });
 
 export type ToursListInput = z.infer<typeof toursListInput>;
