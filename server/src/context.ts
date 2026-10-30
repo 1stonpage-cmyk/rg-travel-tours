@@ -49,10 +49,24 @@
  *
  * Each cookie is only looked up when it is actually present — most requests
  * carry at most one or two of the three, and there is no reason to query
- * `sessions` for a cookie nobody sent. Because each field already guarantees
- * its own subject type by construction, `requireRole` / `requireDriver` /
- * `requireCustomer` no longer need to re-check `subjectType` themselves —
- * they only need to check that their one field is present.
+ * `sessions` for a cookie nobody sent.
+ *
+ * **Each field already guarantees its own subject type by construction —
+ * and `requireRole` / `requireDriver` / `requireCustomer` re-check it
+ * anyway.** It would be tempting to read the guarantee above as "the gates
+ * only need to check that their one field is present", and that was this
+ * task's first draft. It was deliberately reverted: the guarantee holds for
+ * every context this factory produces, but a gate is exported and callable
+ * from anywhere (a test fixture, a script, a future refactor that builds a
+ * context some other way), and `requireRole`'s own `subjectType` re-check is
+ * the only thing standing between a fabricated
+ * `{ adminSession: { subjectType: 'driver', subjectId: 3, role: 'owner' } }`
+ * and an admitted admin call — proven by temporarily removing it (Task B5),
+ * which newly admitted exactly that shape. Each gate's own doc comment
+ * explains this re-check as defence in depth; this note exists so NEITHER
+ * comment is read in isolation as licence to delete the other's check.
+ * **Do not remove the `subjectType` check from any of the three gates on
+ * the strength of this paragraph.**
  */
 import type { CreateExpressContextOptions } from '@trpc/server/adapters/express';
 import { SESSION_COOKIE_BY_SUBJECT } from './middleware/session-cookie';

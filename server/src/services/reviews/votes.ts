@@ -13,11 +13,13 @@
  * identifier — `rg_vid`, a v4 UUID — and that identifier is the "browser" in
  * §4's rule.
  *
- * **It is NOT `SESSION_COOKIE` and must never become it.** A different name, a
- * different lifetime and a different meaning: `rg_session` is a credential and
- * revoking it signs someone out, while this is an opaque tag that authenticates
- * nothing and grants nothing. Reusing the session cookie here would make a
- * logged-out guest's vote and a logged-in guest's identity the same string.
+ * **It is NOT one of `SESSION_COOKIE_BY_SUBJECT`'s three cookies and must
+ * never become one.** A different name, a different lifetime and a
+ * different meaning: each of `rg_admin_session` / `rg_driver_session` /
+ * `rg_customer_session` is a credential and revoking it signs someone out,
+ * while this is an opaque tag that authenticates nothing and grants
+ * nothing. Reusing a session cookie here would make a logged-out guest's
+ * vote and a logged-in guest's identity the same string.
  *
  * ## `voter_hash` is a hash, and the raw IP never reaches the database
  *
@@ -49,8 +51,9 @@ import type { Request, Response } from 'express';
 import { env } from '../../env';
 
 /**
- * The cookie name. Prefixed like `rg_session` so it cannot collide with
- * anything else on the host, and deliberately a different name.
+ * The cookie name. Prefixed like the three `SESSION_COOKIE_BY_SUBJECT`
+ * cookies so it cannot collide with anything else on the host, and
+ * deliberately a different name from all three of them.
  */
 export const VOTER_COOKIE = 'rg_vid';
 

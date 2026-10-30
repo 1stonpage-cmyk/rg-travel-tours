@@ -27,6 +27,7 @@ import { createApp } from '../app';
 import { getDb } from '../db/client';
 import { auditLog, destinations, reviewHelpfulVotes, reviews, tours } from '../db/schema';
 import { VOTER_COOKIE } from '../services/reviews/votes';
+import { SESSION_COOKIE_BY_SUBJECT } from '../middleware/session-cookie';
 import { REVIEW_VOTE_MAX, REVIEW_VOTE_PROCEDURES } from '../middleware/rate-limit';
 import { appRouter } from '../routers/_app';
 import { captureResponse, testContext } from './helpers/ctx';
@@ -69,10 +70,15 @@ function voter(opts: { cookieId?: string; ip?: string; rawCookie?: string } = {}
   const value = opts.rawCookie ?? opts.cookieId;
   if (value !== undefined) cookies[VOTER_COOKIE] = value;
   const captured = captureResponse();
+  // `reviews.voteHelpful` is a public procedure and reads none of the three
+  // session fields — this is an anonymous caller with no session on any
+  // surface, not merely one that omits a stale `session` key.
   const ctx = {
     req: { cookies, ip: opts.ip ?? '203.0.113.7' } as unknown as Request,
     res: captured.res,
-    session: null,
+    adminSession: null,
+    driverSession: null,
+    customerSession: null,
   };
   return { api: appRouter.createCaller(ctx as never), set: captured.set };
 }
@@ -176,8 +182,9 @@ describeWithDb('reviews.voteHelpful — what it stores', () => {
 
     expect(set).toHaveLength(1);
     expect(set[0]!.name).toBe(VOTER_COOKIE);
-    // A distinct cookie, never the session one.
-    expect(set[0]!.name).not.toBe('rg_session');
+    // A distinct cookie, never one of the three session cookies (BUG-119
+    // split the old single `rg_session` into one per surface).
+    expect(Object.values(SESSION_COOKIE_BY_SUBJECT)).not.toContain(set[0]!.name);
     expect(set[0]!.value).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
     expect(set[0]!.options).toMatchObject({ httpOnly: true, sameSite: 'lax', path: '/' });
 
