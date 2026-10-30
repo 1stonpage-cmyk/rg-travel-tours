@@ -176,6 +176,62 @@ describe('Checkout — createHold validation errors', () => {
     expectNoRawJson(form);
   });
 
+  /**
+   * Final-review finding 1 — a depth-1 issue against `lead` itself (a
+   * missing `lead` object, or an extra key under its own `.strict()`) lands
+   * at `path: ['lead']`, which is too shallow for `nestedFieldErrors` to
+   * carry an entry (`server/src/trpc.ts`'s `flatten()` only publishes one for
+   * `path.length >= 2`). Confirmed against the REAL `createHoldInput` schema
+   * (not hand-faked): posting a payload missing `lead` entirely through
+   * `zod`'s own `safeParse` produces exactly `{ path: ['lead'], code:
+   * 'invalid_type' }`, one issue, so the wire shape mocked below —
+   * `fieldErrors.lead` present, `nestedFieldErrors` published but with no
+   * `lead.*` key in it — is the real one, not an invented one.
+   *
+   * Before this fix: `GuestDetails.tsx`'s three leaf lookups all resolved to
+   * `null` (there is no leaf-level issue to find), AND `lead` was excluded
+   * from the banner by `PLACED_HOLD_FIELDS` on the assumption `GuestDetails`
+   * always renders it. The message rendered nowhere at all — the guest saw
+   * no error anywhere and "Book now" appeared to silently do nothing.
+   */
+  it('BUG-121/finding-1: a depth-1 lead issue (missing lead / extra key) still shows its message somewhere', async () => {
+    const GROUP_MESSAGE = 'Invalid input: expected object, received undefined';
+    mockTrpc({ 'checkout.quote': QUOTE_FIXTURE });
+    mockTrpcValidationError('checkout.createHold', {
+      fieldErrors: { lead: [GROUP_MESSAGE] },
+      // Published, but empty — a depth-1 issue against `lead` itself gets no
+      // leaf-keyed entry, which is exactly what makes this case different
+      // from the phone-only case above.
+      nestedFieldErrors: {},
+    });
+    const user = userEvent.setup();
+    render(
+      <TrpcProviders>
+        <MemoryRouter initialEntries={['/checkout/oslob-tour?date=2026-11-20&pax=3']}>
+          <Routes>
+            <Route path="/checkout/:tourSlug" element={<CheckoutPage />} />
+          </Routes>
+        </MemoryRouter>
+      </TrpcProviders>,
+    );
+
+    const form = await screen.findByRole('form', { name: /checkout/i });
+    await user.type(within(form).getByLabelText(/full name/i), 'Juan Dela Cruz');
+    await user.type(within(form).getByLabelText(/^email$/i), 'juan@example.com');
+    await user.type(within(form).getByLabelText(/mobile number/i), '0917 123 4567');
+    await user.click(within(form).getByLabelText(/i agree/i));
+    await user.click(within(form).getByRole('button', { name: /book now/i }));
+
+    // The whole point of the fix: shown SOMEWHERE, rather than nowhere.
+    await waitFor(() => {
+      expect(within(form).getByText(GROUP_MESSAGE)).toBeInTheDocument();
+    });
+    // Specifically as the banner alert, since no leaf box exists to carry it.
+    const alerts = within(form).getAllByRole('alert');
+    expect(alerts.some((alert) => alert.textContent === GROUP_MESSAGE)).toBe(true);
+    expectNoRawJson(form);
+  });
+
   it('shows a form-level issue once above the inputs, not against a field', async () => {
     mockTrpc({ 'checkout.quote': QUOTE_FIXTURE });
     const FORM_MESSAGE = 'That price is out of date. Please reload and try again.';

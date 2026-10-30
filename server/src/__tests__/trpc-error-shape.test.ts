@@ -248,6 +248,77 @@ describe('tRPC error shape — a Zod validation failure through the real app', (
     expect(zodError.nestedFieldErrors).not.toHaveProperty('lead.email');
     expectNoInternals(res.text);
   });
+
+  /**
+   * Final-review finding 1 — the gap BUG-120's own fix left open. A Zod
+   * issue against `lead` ITSELF, rather than one of its three sub-fields,
+   * lands at `path: ['lead']` — depth 1, one segment — so `flatten()`'s
+   * `issue.path.length < 2` guard means `nestedFieldErrors` gets no entry
+   * for it at all. This is through the REAL app and the REAL
+   * `createHoldInput` schema, confirming the server's wire shape is exactly
+   * what `CheckoutPage.tsx`'s fix (final-review finding 1) has to cope
+   * with: `fieldErrors.lead` carries the message, `nestedFieldErrors` is
+   * published but empty, and every leaf lookup (`lead.name`, `lead.email`,
+   * `lead.phone`) has nothing to find. The server side of this is UNCHANGED
+   * by that fix — the client is what learned to fall back to the group
+   * message when this happens.
+   */
+  it('finding 1: a missing `lead` object lands at depth 1, with no nestedFieldErrors entry', async () => {
+    const res = await request(createApp())
+      .post('/trpc/checkout.createHold')
+      .set('Origin', ORIGIN)
+      .set('Content-Type', 'application/json')
+      .send({
+        tourSlug: 'fixture-tour',
+        date: '2030-01-01',
+        pax: 2,
+        quoteId: '0'.repeat(32),
+        payMode: 'deposit',
+        // `lead` omitted entirely.
+        consent: true,
+      });
+
+    expect(res.status).toBe(400);
+    const zodError = res.body.error.data.zodError;
+
+    // The group message exists...
+    expect(zodError.fieldErrors.lead).toEqual([expect.stringMatching(/object/i)]);
+    // ...but no leaf of it does — the depth-1 issue the fix has to cope with.
+    expect(zodError.nestedFieldErrors).not.toHaveProperty('lead.name');
+    expect(zodError.nestedFieldErrors).not.toHaveProperty('lead.email');
+    expect(zodError.nestedFieldErrors).not.toHaveProperty('lead.phone');
+    expectNoInternals(res.text);
+  });
+
+  it("finding 1: an extra key under lead's own .strict() also lands at depth 1", async () => {
+    const res = await request(createApp())
+      .post('/trpc/checkout.createHold')
+      .set('Origin', ORIGIN)
+      .set('Content-Type', 'application/json')
+      .send({
+        tourSlug: 'fixture-tour',
+        date: '2030-01-01',
+        pax: 2,
+        quoteId: '0'.repeat(32),
+        payMode: 'deposit',
+        lead: {
+          name: 'Juan Dela Cruz',
+          email: 'juan@example.com',
+          phone: '09171234567',
+          extra: 'not allowed',
+        },
+        consent: true,
+      });
+
+    expect(res.status).toBe(400);
+    const zodError = res.body.error.data.zodError;
+
+    expect(zodError.fieldErrors.lead).toEqual([expect.stringMatching(/unrecognized|extra/i)]);
+    expect(zodError.nestedFieldErrors).not.toHaveProperty('lead.name');
+    expect(zodError.nestedFieldErrors).not.toHaveProperty('lead.email');
+    expect(zodError.nestedFieldErrors).not.toHaveProperty('lead.phone');
+    expectNoInternals(res.text);
+  });
 });
 
 describe('scrubPaths', () => {

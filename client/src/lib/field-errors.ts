@@ -147,6 +147,29 @@ export function getNestedFieldError(error: unknown, path: string): string | null
 }
 
 /**
+ * Whether ANY of the given leaf paths resolves to a message via
+ * `getNestedFieldError`.
+ *
+ * Exists for the gap `getNestedFieldError` cannot close on its own: a Zod
+ * issue against the GROUP itself, at depth 1 — a missing `lead` object
+ * (`invalid_type`) or an extra key under `lead`'s own `.strict()`
+ * (`unrecognized_keys`). `server/src/trpc.ts`'s `nestedFieldErrors` map only
+ * gets an entry for `issue.path.length >= 2`, by design (a depth-1 issue is
+ * already fully described by `fieldErrors`) — but that design assumed every
+ * caller of `getNestedFieldError` also has `fieldErrors[group]` as a visible
+ * fallback home, and `CheckoutPage.tsx`'s `PLACED_HOLD_FIELDS` allow-list
+ * deliberately excludes `lead` from its banner precisely because
+ * `GuestDetails.tsx` was assumed to always render it. A depth-1 issue breaks
+ * that assumption: all three leaves resolve to `null` (there is no leaf-level
+ * issue to find), so the group message rendered nowhere at all. A caller uses
+ * this to detect that case and fall back to showing the group's own message
+ * some other way (see `CheckoutPage.tsx`).
+ */
+export function hasAnyNestedFieldError(error: unknown, paths: readonly string[]): boolean {
+  return paths.some((path) => getNestedFieldError(error, path) !== null);
+}
+
+/**
  * The validation issues that belong to no single field — Zod's `formErrors`,
  * i.e. a `.refine()` on the whole object, or a `.strict()` violation.
  * Rendered once above the form, never per field. Always an array, so a

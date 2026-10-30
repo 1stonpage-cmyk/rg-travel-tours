@@ -11,7 +11,12 @@ import ConsentCheckbox from '@/components/checkout/ConsentCheckbox';
 import PaymentOptions from '@/components/checkout/PaymentOptions';
 import QuoteSummary from '@/components/checkout/QuoteSummary';
 import { Button } from '@/components/ui/button';
-import { firstValidationMessage, getFieldErrors, getFormErrors } from '@/lib/field-errors';
+import {
+  firstValidationMessage,
+  getFieldErrors,
+  getFormErrors,
+  hasAnyNestedFieldError,
+} from '@/lib/field-errors';
 import { describeCheckoutError } from '@/lib/mutation-errors';
 import { trpc } from '@/lib/trpc';
 
@@ -134,7 +139,22 @@ function describeAvailability(reason: string): string {
  * reading this top-level map for them. `lead` stays in this set regardless:
  * it is still what keeps a `lead`-keyed issue out of `unplacedFieldMessages`
  * below, whichever of the three sub-fields it actually named.
+ *
+ * **Final-review finding 1 — the depth-1 exception.** That last sentence
+ * assumed `GuestDetails.tsx`'s three leaf lookups always resolve to SOME
+ * message whenever `holdFieldErrors.lead` exists. A Zod issue against `lead`
+ * itself rather than one of its sub-fields — a missing `lead` object, or an
+ * extra key under its own `.strict()` — lands at `path: ['lead']`, depth 1,
+ * so `server/src/trpc.ts`'s `nestedFieldErrors` has no entry for it (only
+ * `path.length >= 2` gets one) and all three leaves resolve to `null`. The
+ * group message then rendered NOWHERE: excluded from the banner by this
+ * allow-list, and never shown by `GuestDetails.tsx` either. `LEAD_LEAF_PATHS`
+ * and the `leadGroupUnresolved` check below are what close that: `lead` is
+ * treated as unplaced, for this one case only, when none of its three leaves
+ * resolved to a message of their own.
  */
+const LEAD_LEAF_PATHS = ['lead.name', 'lead.email', 'lead.phone'] as const;
+
 const PLACED_HOLD_FIELDS: ReadonlySet<string> = new Set([
   'lead',
   'pickup',
@@ -290,8 +310,21 @@ export default function CheckoutPage() {
    */
   const holdFieldErrors = createHold.isError ? getFieldErrors(createHold.error) : null;
   const holdFormErrors = createHold.isError ? getFormErrors(createHold.error) : [];
+  /*
+   * Final-review finding 1: `lead` is normally excluded from the banner
+   * because `GuestDetails.tsx` is assumed to always render its own message
+   * for it. That assumption fails for a depth-1 issue against `lead` itself
+   * (see `LEAD_LEAF_PATHS`'s note above) — none of the three leaves resolve,
+   * so without this the group message would render nowhere at all. Checked
+   * only when `lead` actually has a group message to lose.
+   */
+  const leadGroupUnresolved =
+    (holdFieldErrors?.lead ?? undefined) !== undefined &&
+    !hasAnyNestedFieldError(createHold.error, LEAD_LEAF_PATHS);
   const unplacedFieldMessages = Object.entries(holdFieldErrors ?? {})
-    .filter(([field]) => !PLACED_HOLD_FIELDS.has(field))
+    .filter(
+      ([field]) => !PLACED_HOLD_FIELDS.has(field) || (field === 'lead' && leadGroupUnresolved),
+    )
     .map(([, message]) => message);
   const isValidationRefusal = holdFieldErrors !== null || holdFormErrors.length > 0;
   const holdBannerMessages = !createHold.isError
