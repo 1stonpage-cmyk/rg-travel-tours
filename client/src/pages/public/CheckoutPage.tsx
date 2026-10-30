@@ -8,7 +8,7 @@ import CouponField from '@/components/checkout/CouponField';
 import GuestDetails from '@/components/checkout/GuestDetails';
 import HoldCountdown from '@/components/checkout/HoldCountdown';
 import ConsentCheckbox from '@/components/checkout/ConsentCheckbox';
-import PayNowButton from '@/components/checkout/PayNowButton';
+import PaymentOptions from '@/components/checkout/PaymentOptions';
 import QuoteSummary from '@/components/checkout/QuoteSummary';
 import { Button } from '@/components/ui/button';
 import { firstValidationMessage, getFieldErrors, getFormErrors } from '@/lib/field-errors';
@@ -45,7 +45,9 @@ import { trpc } from '@/lib/trpc';
  * The same component is reused by `BookingStatusPage` as its "try paying
  * again" affordance, so the two screens share one translation of
  * `startPayment`'s guest-safe refusals rather than two copies that could
- * drift.
+ * drift. **Whether that button is offered at all is a separate question**
+ * (task A5), asked by `<PaymentOptions>` — the two screens share that
+ * three-way choice too, for the same reason.
  *
  * **It also previews the booking window and tour availability — advisory
  * only.** `checkout.availability` (an advisory read, never authoritative —
@@ -184,12 +186,14 @@ export default function CheckoutPage() {
   );
   const createHold = trpc.checkout.createHold.useMutation();
   /*
-   * Read for ONE boolean: `manualTransferEnabled`, which decides whether the
-   * "pay by transfer instead" link is offered after a hold (Week 4 Task 8).
-   * The same cache entry every other page's `settings.get` uses — TanStack
-   * dedupes by key — so this costs no extra request.
+   * No `settings.get` here any more (task A5). This page used to read it
+   * for ONE boolean, `manualTransferEnabled`; the question has grown a
+   * second half — whether online payment works at all — and both are now
+   * asked by `<PaymentOptions>` below, which is the only thing that acts on
+   * either and is shared with `BookingStatusPage`. The query is the same
+   * cache entry the layout already holds, so moving the read costs no
+   * request.
    */
-  const settingsQuery = trpc.settings.get.useQuery();
 
   /*
    * An invalid/expired coupon fails the WHOLE quote (couponCode is part of
@@ -351,36 +355,21 @@ export default function CheckoutPage() {
                       out, and keep this reference for your records.
                     </p>
                   </div>
-                  <PayNowButton bookingRef={createHold.data.ref} />
-
                   {/*
-                   * The manual transfer alternative (§6, Week 4 Task 8).
+                   * What this held booking may actually be paid with
+                   * (components/checkout/PaymentOptions.tsx, task A5).
                    *
-                   * **Offered only when `manualTransferEnabled`** — the
-                   * `payment_qr` settings block's own flag, which is false
-                   * until R&G's QR and account details are configured
-                   * (owner decision 2026-10-14, Q3). Offering it sooner
-                   * would send a guest to a screen that could only
-                   * apologise.
-                   *
-                   * It is a LINK, not a mutation. Week 3's checkout router
-                   * has exactly two mutations and that is a tested property
-                   * (owner decision Q5, option c): paying by transfer
-                   * starts nothing on the server, so nothing here calls it.
-                   * The link carries the ref to prefill the portal sign-in,
-                   * which is where the guest session — and therefore the
-                   * amount and the account details — comes from.
+                   * This used to be `<PayNowButton>` unconditionally, plus
+                   * the manual-transfer link when `manualTransferEnabled`
+                   * — so a box with no PayMongo key offered a button that
+                   * could only throw. The three-way choice (online, manual
+                   * only, neither) is now made in one component that
+                   * `BookingStatusPage` shares, from the server's own two
+                   * booleans; the manual transfer is still a LINK and not
+                   * a mutation (owner decision Q5, option c), and nothing
+                   * about the hold above changed.
                    */}
-                  {settingsQuery.data?.manualTransferEnabled ? (
-                    <p className="text-center text-sm">
-                      <Link
-                        to={`/portal/login?ref=${encodeURIComponent(createHold.data.ref)}&next=/portal/pay`}
-                        className="text-brand-blue-700 hover:text-brand-blue-900 tap-target inline-flex items-center font-semibold underline transition-colors"
-                      >
-                        Pay by GCash, Maya or bank transfer instead
-                      </Link>
-                    </p>
-                  ) : null}
+                  <PaymentOptions bookingRef={createHold.data.ref} />
                 </div>
               ) : (
                 <form aria-label="Checkout form" onSubmit={handleSubmit} className="space-y-6">

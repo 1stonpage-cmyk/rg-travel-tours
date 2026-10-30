@@ -173,6 +173,11 @@ describe('CheckoutPage — pay now (Task 8b)', () => {
 
   it("starts payment with the held booking's ref and leaves for the redirect URL on success — and that click triggers startPayment, never a second createHold", async () => {
     mockTrpc({ 'checkout.quote': QUOTE_FIXTURE });
+    // `settings.get` is no longer optional for this page (task A5): the
+    // Pay-now button appears only on an `onlinePaymentEnabled: true` the
+    // server actually sent. SETTINGS_FIXTURE ships it true — the state a
+    // correctly configured production box is in.
+    mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
     let createHoldCalls = 0;
     let startPaymentCalls = 0;
     mockTrpc({
@@ -270,8 +275,90 @@ describe('CheckoutPage — pay now (Task 8b)', () => {
     expect(link).toHaveAttribute('href', `/portal/login?ref=${HOLD_RESULT.ref}&next=/portal/pay`);
   });
 
+  /* ====================================================================
+   * Task A5 — the launch blocker: NEVER offer online payment that cannot
+   * work.
+   *
+   * `settings.onlinePaymentEnabled` is computed on the server from two
+   * facts the browser cannot see (a PayMongo secret key, and at least one
+   * enabled payment method). Until this task, the page rendered Pay now
+   * regardless, so a box with no key — this project's dev and staging
+   * boxes, reproduced in a browser before the fix — handed a guest a
+   * button whose only outcome was a refusal.
+   *
+   * The three states below are the whole contract. Each asserts the
+   * ABSENCE of the Pay-now button by role AND by the text, because a
+   * button rendered-but-disabled would still be the wrong answer: a guest
+   * must not be shown a payment route that does not exist.
+   * ==================================================================== */
+
+  async function holdASpotWith(settings: typeof SETTINGS_FIXTURE) {
+    mockTrpc({ 'checkout.quote': QUOTE_FIXTURE });
+    mockTrpc({ 'checkout.createHold': () => HOLD_RESULT });
+    mockTrpc({ 'settings.get': settings });
+
+    const user = userEvent.setup();
+    renderCheckout();
+
+    const form = await screen.findByRole('form', { name: /checkout/i });
+    await fillGuestDetails(user, form);
+    await user.click(within(form).getByLabelText(/i agree/i));
+    await user.click(within(form).getByRole('button', { name: /book now/i }));
+
+    // The hold itself is NOT gated on any of this (the brief is explicit:
+    // a hold with "come pay us however you can" is still a reservation).
+    // Every state below waits on the same proof that it really happened.
+    await screen.findByText(new RegExp(HOLD_RESULT.ref));
+  }
+
+  it('online ON: renders Pay now (today’s behaviour, unchanged)', async () => {
+    await holdASpotWith({ ...SETTINGS_FIXTURE, onlinePaymentEnabled: true });
+    expect(await screen.findByRole('button', { name: /^pay now$/i })).toBeInTheDocument();
+  });
+
+  it('online OFF, manual ON: no Pay-now button anywhere, and the transfer is the PRIMARY path with no "instead"', async () => {
+    await holdASpotWith({
+      ...SETTINGS_FIXTURE,
+      onlinePaymentEnabled: false,
+      manualTransferEnabled: true,
+    });
+
+    const link = await screen.findByRole('link', { name: /gcash, maya or bank transfer/i });
+    expect(link).toHaveAttribute('href', `/portal/login?ref=${HOLD_RESULT.ref}&next=/portal/pay`);
+
+    // Not rendered at all — not merely disabled.
+    expect(screen.queryByRole('button', { name: /^pay now$/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/^pay now$/i)).not.toBeInTheDocument();
+
+    // "instead" pointed at a button that, in this state, was never drawn.
+    expect(link.textContent).not.toMatch(/instead/i);
+    expect(screen.queryByText(/instead/i)).not.toBeInTheDocument();
+  });
+
+  it('BOTH off: neither payment route is offered, and the guest is pointed at the office', async () => {
+    await holdASpotWith({
+      ...SETTINGS_FIXTURE,
+      onlinePaymentEnabled: false,
+      manualTransferEnabled: false,
+    });
+
+    const notice = await screen.findByText(/online payment isn't available right now/i);
+    expect(notice).toBeInTheDocument();
+
+    expect(screen.queryByRole('button', { name: /^pay now$/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('link', { name: /gcash, maya or bank transfer/i }),
+    ).not.toBeInTheDocument();
+
+    // The site's own contact route, not new copy invented for this screen.
+    const whatsapp = screen.getAllByRole('link', { name: /message us on whatsapp/i })[0]!;
+    expect(whatsapp).toHaveAttribute('href', expect.stringContaining('wa.me/'));
+    expect(whatsapp.getAttribute('href')).toContain(encodeURIComponent(HOLD_RESULT.ref));
+  });
+
   it("shows the server's own calm message, never a crash, when startPayment is refused", async () => {
     mockTrpc({ 'checkout.quote': QUOTE_FIXTURE });
+    mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
     mockTrpc({ 'checkout.createHold': () => HOLD_RESULT });
     mockTrpcError('checkout.startPayment');
 

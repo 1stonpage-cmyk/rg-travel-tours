@@ -1,6 +1,6 @@
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { formatPeso, type BookingStatus } from '@rg/shared';
-import PayNowButton from '@/components/checkout/PayNowButton';
+import PaymentOptions from '@/components/checkout/PaymentOptions';
 import QueryBoundary from '@/components/common/QueryBoundary';
 import { Skeleton } from '@/components/common/Skeleton';
 import { Button } from '@/components/ui/button';
@@ -26,9 +26,12 @@ import { trpc } from '@/lib/trpc';
  * retry was possible ("you can try paying again") with no actual way to do
  * it — a lie by omission CLAUDE.md's bug-tracking spirit does not allow
  * once the real trigger (`checkout.startPayment`) exists. The fix is
- * `<PayNowButton>` (components/checkout/PayNowButton.tsx) — the SAME
+ * `<PaymentOptions>` (components/checkout/PaymentOptions.tsx) — the SAME
  * component `CheckoutPage` uses after a fresh `createHold` — rendered only
- * inside the cancelled notice below. It does not weaken the rule above:
+ * inside the cancelled notice below. It wraps `<PayNowButton>` and shows it
+ * only when the server says online payment is actually possible (task A5),
+ * falling back to the manual transfer or to contacting the office. It does
+ * not weaken the rule above:
  * `checkout.startPayment` "starts a payment; it never records one" (its
  * own doc comment) — nothing reachable from this page can mark a booking
  * paid, cancelled, or anything else. `server/src/routers/public/
@@ -186,11 +189,22 @@ export default function BookingStatusPage() {
                     <div role="status">
                       <p className="text-sm font-semibold">Payment cancelled</p>
                       <p className="mt-1 text-sm">
-                        You cancelled before finishing payment. Your spot may still be held — pay
-                        now to try again, or contact us if you need help.
+                        You cancelled before finishing payment. Your spot may still be held — here's
+                        how to pay, or contact us if you need help.
                       </p>
                     </div>
-                    <PayNowButton bookingRef={data.ref} label="Try paying again" />
+                    {/*
+                     * The same three-way choice the checkout makes (task
+                     * A5). The retry used to be `<PayNowButton>` outright,
+                     * which on a box with no PayMongo key offered a button
+                     * that could only throw — and this is the page a guest
+                     * reaches precisely BECAUSE a payment did not finish,
+                     * so a second dead button here is the worst place for
+                     * one. `<PaymentOptions>` answers from the server's own
+                     * booleans and falls back to the manual transfer, or to
+                     * the office, exactly as the checkout does.
+                     */}
+                    <PaymentOptions bookingRef={data.ref} payLabel="Try paying again" />
                   </div>
                 )}
 

@@ -21,6 +21,7 @@ import BookingStatusPage from '@/pages/public/BookingStatusPage';
 import { bookingPagePath, BOOKING_PAGE_ROUTE } from '@rg/shared';
 import { TrpcProviders } from '@/lib/trpc';
 import { mockTrpc, mockTrpcError, resetTrpcMock } from './helpers/mock-trpc';
+import { SETTINGS_FIXTURE } from './helpers/fixtures';
 
 afterEach(() => {
   resetTrpcMock();
@@ -154,6 +155,10 @@ describe('BookingStatusPage — cancelled retry (Task 8b)', () => {
 
   it('shows a working "try paying again" button in the cancelled notice, and leaves for the redirect URL — triggering exactly one mutation, never createHold', async () => {
     mockTrpc({ 'checkout.bookingStatus': { ...BASE_STATUS, status: 'pending_payment' } });
+    // Task A5: the retry button appears only on an `onlinePaymentEnabled:
+    // true` the server actually sent, so this page now needs `settings.get`
+    // answered. SETTINGS_FIXTURE ships it true.
+    mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
     const assign = vi.fn();
     vi.stubGlobal('location', { assign, href: 'http://localhost/' });
     let createHoldCalls = 0;
@@ -189,6 +194,58 @@ describe('BookingStatusPage — cancelled retry (Task 8b)', () => {
     // <PayNowButton> or a sibling call added next to it.
     expect(startPaymentCalls).toBe(1);
     expect(createHoldCalls).toBe(0);
+  });
+
+  /* ====================================================================
+   * Task A5 — the retry affordance obeys the SAME three states the
+   * checkout does.
+   *
+   * This page is reached precisely BECAUSE a payment did not finish, so a
+   * retry button that cannot work is the worst place for one: the guest
+   * has already had one failure and is being invited into a second.
+   * `<PaymentOptions>` is shared with `CheckoutPage` so neither screen can
+   * drift from the other's answer; these tests pin that it is actually
+   * wired HERE.
+   * ==================================================================== */
+
+  async function cancelledNoticeWith(settings: typeof SETTINGS_FIXTURE) {
+    mockTrpc({ 'checkout.bookingStatus': { ...BASE_STATUS, status: 'pending_payment' } });
+    mockTrpc({ 'settings.get': settings });
+    renderStatusPage(BASE_STATUS.ref, '?cancelled=1');
+    await screen.findByText(/payment cancelled/i);
+  }
+
+  it('online ON: still offers "try paying again"', async () => {
+    await cancelledNoticeWith({ ...SETTINGS_FIXTURE, onlinePaymentEnabled: true });
+    expect(await screen.findByRole('button', { name: /try paying again/i })).toBeInTheDocument();
+  });
+
+  it('online OFF, manual ON: no retry button, the manual transfer instead', async () => {
+    await cancelledNoticeWith({
+      ...SETTINGS_FIXTURE,
+      onlinePaymentEnabled: false,
+      manualTransferEnabled: true,
+    });
+
+    const link = await screen.findByRole('link', { name: /gcash, maya or bank transfer/i });
+    expect(link).toHaveAttribute('href', `/portal/login?ref=${BASE_STATUS.ref}&next=/portal/pay`);
+    expect(screen.queryByRole('button', { name: /try paying again/i })).not.toBeInTheDocument();
+  });
+
+  it('BOTH off: no retry button, no transfer link — the office instead', async () => {
+    await cancelledNoticeWith({
+      ...SETTINGS_FIXTURE,
+      onlinePaymentEnabled: false,
+      manualTransferEnabled: false,
+    });
+
+    expect(
+      await screen.findByText(/online payment isn't available right now/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /try paying again/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('link', { name: /gcash, maya or bank transfer/i }),
+    ).not.toBeInTheDocument();
   });
 
   it('never shows the retry button without ?cancelled=1', async () => {
