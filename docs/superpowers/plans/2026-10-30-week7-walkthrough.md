@@ -559,8 +559,9 @@ owner-decision items.
 - **`rg_travel` otherwise untouched.** No settings row was written (A2's insert-only seed was not
   run either), no fleet or driver row was touched, no admin mutation was called — there was no
   session to call one with.
-- **`rg_travel_test` untouched by this pass**, and the full suite was run against it three times
-  (before the docs, and after each commit group) with the leak detector silent each time.
+- **`rg_travel_test` untouched by this pass** except by the suite itself, which was run against it
+  **twice** — once before the documents were written and once after all four commits — both times
+  `3,100 passed`, identical counts, leak detector silent.
 - **The browser tab this pass created was closed.**
 
 ---
