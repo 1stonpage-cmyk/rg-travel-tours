@@ -278,3 +278,10 @@ From `CLAUDE.md` and every batch prompt's own DO-NOT list this week:
   block the current task.
 - Report commits as `hash - short human label`. Formatting-only changes
   get their own commit. Never `git commit --amend`.
+
+---
+
+## Found 2026-10-28, mid-session (QR fix investigation, batch 5 paused)
+
+- **`/api/payment-qr` 404s on a correctly-configured QR.** `server/src/routers/payment-qr.ts`'s `QR_NAME` regex expects a bare filename (no `/`), but the live `rg_travel` settings row had `imagePath: "payment-qr/qr.png"` — the subdirectory prefix typed in by hand, when the route already joins `paymentQrStorageDir()` (which resolves to `.../uploads/payment-qr/`) onto `imagePath`. The regex fails before the file is ever looked up, so the route 404s regardless of session state. Stored value should be the bare filename only (e.g. `"qr.png"`).
+- **`db:seed` overwrites admin-edited settings — launch blocker.** Running `pnpm --filter @rg/server db:seed` against `rg_travel` reset the `payment_qr` settings block back to its seed defaults (`isConfigured: false`, every field `null`), wiping out a real, manually-entered configuration. Confirmed live: the row changed from configured to seed-default mid-session while Task 17 was testing a `seed.ts` fix. The seed must never unconditionally overwrite a settings row that already has real (non-default) content — this is a launch blocker: a re-seed on the production box would erase anything the owner has configured through Settings.
