@@ -1,10 +1,12 @@
 import { Clock, Facebook, Mail, MapPin, Phone } from 'lucide-react';
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { ViberGlyph, WhatsAppGlyph } from '@/components/common/BrandGlyphs';
+import FieldError from '@/components/common/FieldError';
 import SectionHeading from '@/components/common/SectionHeading';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { getFieldErrors, getFormErrors } from '@/lib/field-errors';
 import { describeMutationError } from '@/lib/mutation-errors';
 import { SITE, telLink, viberLink, whatsappLink } from '@/lib/site';
 import { trpc } from '@/lib/trpc';
@@ -30,6 +32,21 @@ function ChatIcon({ tone, children }: { tone: 'whatsapp' | 'viber'; children: Re
     </span>
   );
 }
+
+/**
+ * `inquiryInput`'s own top-level keys that this form puts a box on screen
+ * for (task A4). A flat `.strict()` object, so these are exactly the names
+ * the server reports. `type` and `packageId` are set by the code, never by
+ * the visitor, so a message about either has no box and falls to the generic
+ * line — see `unplacedMessages` below.
+ */
+const PLACED_INQUIRY_FIELDS: ReadonlySet<string> = new Set([
+  'name',
+  'email',
+  'phone',
+  'message',
+  'consent',
+]);
 
 export default function ContactSection() {
   const [consentError, setConsentError] = useState<string | null>(null);
@@ -90,6 +107,24 @@ export default function ContactSection() {
    * statements now come off the same settings payload.
    */
   const hoursNote = settings?.contact.hoursNote ?? null;
+
+  /*
+   * `inquiries.create`'s refusal, split the same way every other form in
+   * this task splits it (`lib/field-errors.ts`). A validation failure's
+   * messages go to their own boxes; everything else — the shared 5-per-15-min
+   * rate limit, a 5xx — still goes through `describeMutationError`, whose two
+   * approved sentences are the only thing this mutation ever had.
+   */
+  const fieldErrors = sendInquiry.isError ? getFieldErrors(sendInquiry.error) : null;
+  const formErrors = sendInquiry.isError ? getFormErrors(sendInquiry.error) : [];
+  const unplacedMessages = Object.entries(fieldErrors ?? {})
+    .filter(([field]) => !PLACED_INQUIRY_FIELDS.has(field))
+    .map(([, message]) => message);
+  const bannerMessages = !sendInquiry.isError
+    ? []
+    : fieldErrors !== null || formErrors.length > 0
+      ? [...formErrors, ...unplacedMessages]
+      : [describeMutationError(sendInquiry.error)];
 
   return (
     <section id="contact" className="bg-brand-blue-50 border-t">
@@ -253,7 +288,15 @@ export default function ContactSection() {
 
             <div className="space-y-1.5">
               <Label htmlFor="contact-name">Your name</Label>
-              <Input id="contact-name" name="name" required className="tap-target" />
+              <Input
+                id="contact-name"
+                name="name"
+                required
+                aria-describedby={fieldErrors?.name ? 'contact-name-error' : undefined}
+                aria-invalid={fieldErrors?.name ? true : undefined}
+                className="tap-target"
+              />
+              <FieldError id="contact-name-error" message={fieldErrors?.name} />
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
@@ -263,12 +306,23 @@ export default function ContactSection() {
                   name="email"
                   type="email"
                   required
+                  aria-describedby={fieldErrors?.email ? 'contact-email-error' : undefined}
+                  aria-invalid={fieldErrors?.email ? true : undefined}
                   className="tap-target"
                 />
+                <FieldError id="contact-email-error" message={fieldErrors?.email} />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="contact-phone">Mobile</Label>
-                <Input id="contact-phone" name="phone" type="tel" className="tap-target" />
+                <Input
+                  id="contact-phone"
+                  name="phone"
+                  type="tel"
+                  aria-describedby={fieldErrors?.phone ? 'contact-phone-error' : undefined}
+                  aria-invalid={fieldErrors?.phone ? true : undefined}
+                  className="tap-target"
+                />
+                <FieldError id="contact-phone-error" message={fieldErrors?.phone} />
               </div>
             </div>
             <div className="space-y-1.5">
@@ -278,8 +332,11 @@ export default function ContactSection() {
                 name="message"
                 required
                 rows={4}
+                aria-describedby={fieldErrors?.message ? 'contact-message-error' : undefined}
+                aria-invalid={fieldErrors?.message ? true : undefined}
                 className="border-input bg-background focus-visible:ring-ring w-full rounded-md border px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 md:text-sm"
               />
+              <FieldError id="contact-message-error" message={fieldErrors?.message} />
             </div>
 
             {/*
@@ -296,6 +353,8 @@ export default function ContactSection() {
                 name="consent"
                 type="checkbox"
                 onChange={() => setConsentError(null)}
+                aria-describedby={fieldErrors?.consent ? 'contact-consent-error' : undefined}
+                aria-invalid={fieldErrors?.consent ? true : undefined}
                 className="accent-brand-blue-600 border-input mt-0.5 size-5 shrink-0 rounded"
               />
               <Label
@@ -306,10 +365,17 @@ export default function ContactSection() {
                 storing my details, per the Data Privacy Act (RA 10173).
               </Label>
             </div>
-            {consentError && (
+            {/*
+             * The visitor's own un-ticked box takes priority: that message is
+             * shown BEFORE anything is sent (the handler blocks), so the two
+             * never describe the same submit.
+             */}
+            {consentError ? (
               <p role="alert" className="text-brand-error text-sm font-medium">
                 {consentError}
               </p>
+            ) : (
+              <FieldError id="contact-consent-error" message={fieldErrors?.consent} />
             )}
 
             <Button
@@ -326,11 +392,11 @@ export default function ContactSection() {
                 Message sent — we'll get back to you soon.
               </p>
             )}
-            {sendInquiry.isError && (
-              <p role="alert" className="text-brand-error text-sm font-medium">
-                {describeMutationError(sendInquiry.error)}
+            {bannerMessages.map((message) => (
+              <p key={message} role="alert" className="text-brand-error text-sm font-medium">
+                {message}
               </p>
-            )}
+            ))}
           </form>
         </div>
       </div>

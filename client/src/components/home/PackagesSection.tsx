@@ -3,16 +3,26 @@ import { Check } from 'lucide-react';
 import { useRef, useState, type FormEvent } from 'react';
 import QueryBoundary, { EmptyState } from '@/components/common/QueryBoundary';
 import { Skeleton } from '@/components/common/Skeleton';
+import FieldError from '@/components/common/FieldError';
 import SectionHeading from '@/components/common/SectionHeading';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { getFieldErrors, getFormErrors } from '@/lib/field-errors';
 import { describeMutationError } from '@/lib/mutation-errors';
 import { SITE } from '@/lib/site';
 import { trpc } from '@/lib/trpc';
 import { useCardStagger } from '@/lib/use-scroll-reveal';
 
 const SKELETON_CARD_COUNT = 3;
+
+/**
+ * The `inquiryInput` keys this form has a box for (task A4). `message` is
+ * absent on purpose: the form composes it from the chosen package and the
+ * "Preferred dates" box, so a refusal about it has no input to sit under and
+ * joins the form-level issues in the line under the button.
+ */
+const PLACED_INQUIRY_FIELDS: ReadonlySet<string> = new Set(['name', 'email', 'consent']);
 
 /**
  * Intrinsic size for the package card image's `width`/`height` attributes —
@@ -72,6 +82,25 @@ export default function PackagesSection() {
   const [selected, setSelected] = useState<string | null>(null);
   const [consentError, setConsentError] = useState<string | null>(null);
   const sendInquiry = trpc.inquiries.create.useMutation();
+
+  /*
+   * `inquiries.create`'s refusal, split as everywhere else in task A4: a
+   * validation failure's messages go beside their own boxes, and anything
+   * else (the shared 5-per-15-min rate limit, a 5xx) keeps going through
+   * `describeMutationError`'s two approved sentences.
+   */
+  const fieldErrors = sendInquiry.isError ? getFieldErrors(sendInquiry.error) : null;
+  const formErrors = sendInquiry.isError ? getFormErrors(sendInquiry.error) : [];
+  const bannerMessages = !sendInquiry.isError
+    ? []
+    : fieldErrors !== null || formErrors.length > 0
+      ? [
+          ...formErrors,
+          ...Object.entries(fieldErrors ?? {})
+            .filter(([field]) => !PLACED_INQUIRY_FIELDS.has(field))
+            .map(([, message]) => message),
+        ]
+      : [describeMutationError(sendInquiry.error)];
 
   const gridRef = useRef<HTMLUListElement>(null);
   // Re-runs once packages.list resolves and the real <li>s replace the
@@ -219,7 +248,15 @@ export default function PackagesSection() {
 
                 <div className="space-y-1.5">
                   <Label htmlFor="package-inquiry-name">Your name</Label>
-                  <Input id="package-inquiry-name" name="name" required className="tap-target" />
+                  <Input
+                    id="package-inquiry-name"
+                    name="name"
+                    required
+                    aria-describedby={fieldErrors?.name ? 'package-inquiry-name-error' : undefined}
+                    aria-invalid={fieldErrors?.name ? true : undefined}
+                    className="tap-target"
+                  />
+                  <FieldError id="package-inquiry-name-error" message={fieldErrors?.name} />
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="package-inquiry-email">Email</Label>
@@ -228,8 +265,13 @@ export default function PackagesSection() {
                     name="email"
                     type="email"
                     required
+                    aria-describedby={
+                      fieldErrors?.email ? 'package-inquiry-email-error' : undefined
+                    }
+                    aria-invalid={fieldErrors?.email ? true : undefined}
                     className="tap-target"
                   />
+                  <FieldError id="package-inquiry-email-error" message={fieldErrors?.email} />
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="package-inquiry-package">Package</Label>
@@ -264,6 +306,10 @@ export default function PackagesSection() {
                     name="consent"
                     type="checkbox"
                     onChange={() => setConsentError(null)}
+                    aria-describedby={
+                      fieldErrors?.consent ? 'package-inquiry-consent-error' : undefined
+                    }
+                    aria-invalid={fieldErrors?.consent ? true : undefined}
                     className="accent-brand-blue-600 border-input mt-0.5 size-5 shrink-0 rounded"
                   />
                   <Label
@@ -274,14 +320,19 @@ export default function PackagesSection() {
                     storing my details, per the Data Privacy Act (RA 10173).
                   </Label>
                 </div>
-                {consentError && (
+                {/* The visitor's own un-ticked box first — shown before anything is sent. */}
+                {consentError ? (
                   <p
                     role="alert"
                     className="text-brand-error -mt-2 text-sm font-medium sm:col-span-2"
                   >
                     {consentError}
                   </p>
-                )}
+                ) : fieldErrors?.consent ? (
+                  <div className="-mt-2 sm:col-span-2">
+                    <FieldError id="package-inquiry-consent-error" message={fieldErrors.consent} />
+                  </div>
+                ) : null}
 
                 <div className="sm:col-span-2">
                   <Button
@@ -297,11 +348,15 @@ export default function PackagesSection() {
                       Inquiry sent — we'll get back to you soon.
                     </p>
                   )}
-                  {sendInquiry.isError && (
-                    <p role="alert" className="text-brand-error mt-3 text-sm font-medium">
-                      {describeMutationError(sendInquiry.error)}
+                  {bannerMessages.map((message) => (
+                    <p
+                      key={message}
+                      role="alert"
+                      className="text-brand-error mt-3 text-sm font-medium"
+                    >
+                      {message}
                     </p>
-                  )}
+                  ))}
                 </div>
               </form>
             </>

@@ -1,7 +1,9 @@
 import { useState, type FormEvent } from 'react';
+import FieldError from '@/components/common/FieldError';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { getFieldErrors, getFormErrors } from '@/lib/field-errors';
 import { describeMutationError } from '@/lib/mutation-errors';
 import { SITE } from '@/lib/site';
 import { trpc } from '@/lib/trpc';
@@ -18,6 +20,13 @@ import { trpc } from '@/lib/trpc';
  * tests stay exactly as they are, and this component is not a refactor of
  * it, only a second, smaller surface sharing the same mutation shape.
  */
+
+/**
+ * The `inquiryInput` keys this form has a box for. `message` is absent on
+ * purpose — see the note beside `bannerMessages` below.
+ */
+const PLACED_FIELDS: ReadonlySet<string> = new Set(['name', 'email', 'consent']);
+
 export default function PackageInquiryForm({
   packageId,
   packageTitle,
@@ -59,6 +68,28 @@ export default function PackageInquiryForm({
     );
   }
 
+  /*
+   * Task A4. `name`, `email` and `consent` are the three `inquiryInput` keys
+   * this form actually has a box for, so those messages go beside them.
+   *
+   * `message` is NOT one of them, deliberately: this form composes it from
+   * the package title and the "Preferred dates" box, so a `message` refusal
+   * is about a string the visitor never saw and has no box to sit under —
+   * it joins the form-level issues in the banner. The banner falls back to
+   * `describeMutationError` ONLY when this was not a validation failure at
+   * all, so `error.message`'s raw JSON issue list can never reach it.
+   */
+  const fieldErrors = sendInquiry.isError ? getFieldErrors(sendInquiry.error) : null;
+  const formErrors = sendInquiry.isError ? getFormErrors(sendInquiry.error) : [];
+  const unplacedMessages = Object.entries(fieldErrors ?? {})
+    .filter(([field]) => !PLACED_FIELDS.has(field))
+    .map(([, message]) => message);
+  const bannerMessages = !sendInquiry.isError
+    ? []
+    : fieldErrors !== null || formErrors.length > 0
+      ? [...formErrors, ...unplacedMessages]
+      : [describeMutationError(sendInquiry.error)];
+
   return (
     <form
       aria-label="Package inquiry"
@@ -71,7 +102,15 @@ export default function PackageInquiryForm({
 
       <div className="space-y-1.5">
         <Label htmlFor="package-detail-inquiry-name">Your name</Label>
-        <Input id="package-detail-inquiry-name" name="name" required className="tap-target" />
+        <Input
+          id="package-detail-inquiry-name"
+          name="name"
+          required
+          aria-describedby={fieldErrors?.name ? 'package-detail-inquiry-name-error' : undefined}
+          aria-invalid={fieldErrors?.name ? true : undefined}
+          className="tap-target"
+        />
+        <FieldError id="package-detail-inquiry-name-error" message={fieldErrors?.name} />
       </div>
       <div className="space-y-1.5">
         <Label htmlFor="package-detail-inquiry-email">Email</Label>
@@ -80,8 +119,11 @@ export default function PackageInquiryForm({
           name="email"
           type="email"
           required
+          aria-describedby={fieldErrors?.email ? 'package-detail-inquiry-email-error' : undefined}
+          aria-invalid={fieldErrors?.email ? true : undefined}
           className="tap-target"
         />
+        <FieldError id="package-detail-inquiry-email-error" message={fieldErrors?.email} />
       </div>
       <div className="space-y-1.5 sm:col-span-2">
         <Label htmlFor="package-detail-inquiry-dates">Preferred dates</Label>
@@ -95,6 +137,10 @@ export default function PackageInquiryForm({
           name="consent"
           type="checkbox"
           onChange={() => setConsentError(null)}
+          aria-describedby={
+            fieldErrors?.consent ? 'package-detail-inquiry-consent-error' : undefined
+          }
+          aria-invalid={fieldErrors?.consent ? true : undefined}
           className="accent-brand-blue-600 border-input mt-0.5 size-5 shrink-0 rounded"
         />
         <Label
@@ -105,11 +151,16 @@ export default function PackageInquiryForm({
           details, per the Data Privacy Act (RA 10173).
         </Label>
       </div>
-      {consentError && (
+      {/* The visitor's own un-ticked box first — it is shown before anything is sent. */}
+      {consentError ? (
         <p role="alert" className="text-brand-error -mt-2 text-sm font-medium sm:col-span-2">
           {consentError}
         </p>
-      )}
+      ) : fieldErrors?.consent ? (
+        <div className="-mt-2 sm:col-span-2">
+          <FieldError id="package-detail-inquiry-consent-error" message={fieldErrors.consent} />
+        </div>
+      ) : null}
 
       <div className="sm:col-span-2">
         <Button
@@ -125,11 +176,11 @@ export default function PackageInquiryForm({
             Inquiry sent — we'll get back to you soon.
           </p>
         )}
-        {sendInquiry.isError && (
-          <p role="alert" className="text-brand-error mt-3 text-sm font-medium">
-            {describeMutationError(sendInquiry.error)}
+        {bannerMessages.map((message) => (
+          <p key={message} role="alert" className="text-brand-error mt-3 text-sm font-medium">
+            {message}
           </p>
-        )}
+        ))}
       </div>
     </form>
   );

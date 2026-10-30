@@ -1,10 +1,14 @@
 import { Gift } from 'lucide-react';
 import { type FormEvent } from 'react';
+import FieldError from '@/components/common/FieldError';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { getFieldErrors, getFormErrors } from '@/lib/field-errors';
 import { describeMutationError } from '@/lib/mutation-errors';
 import { trpc } from '@/lib/trpc';
+
+const EMAIL_ERROR_ID = 'newsletter-email-error';
 
 /**
  * Promo band + newsletter signup, settings-driven (spec task 6C / 3.2).
@@ -46,6 +50,20 @@ export default function PromoNewsletter() {
     subscribe.mutate({ email }, { onSuccess: () => form.reset() });
   }
 
+  /*
+   * `newsletterInput` is ONE field, so a validation refusal always has a box
+   * to sit under (task A4) — "Enter a valid email address." beside the email
+   * input, not a JSON issue list under the button. A 429 or a 5xx still goes
+   * through `describeMutationError`, which is all this mutation ever had.
+   */
+  const emailError = subscribe.isError ? getFieldErrors(subscribe.error)?.email : undefined;
+  const formErrors = subscribe.isError ? getFormErrors(subscribe.error) : [];
+  const bannerMessage = !subscribe.isError
+    ? null
+    : emailError
+      ? null
+      : (formErrors[0] ?? describeMutationError(subscribe.error));
+
   return (
     <section
       aria-label={promo ? undefined : 'Newsletter signup'}
@@ -81,8 +99,11 @@ export default function PromoNewsletter() {
               type="email"
               required
               placeholder="you@example.com"
+              aria-describedby={emailError ? EMAIL_ERROR_ID : undefined}
+              aria-invalid={emailError ? true : undefined}
               className="tap-target"
             />
+            <FieldError id={EMAIL_ERROR_ID} message={emailError} />
           </div>
           <Button
             type="submit"
@@ -109,9 +130,9 @@ export default function PromoNewsletter() {
               Thanks for signing up!
             </p>
           )}
-          {subscribe.isError && (
+          {bannerMessage !== null && (
             <p role="alert" className="text-brand-error mt-4 text-sm font-medium">
-              {describeMutationError(subscribe.error)}
+              {bannerMessage}
             </p>
           )}
         </form>

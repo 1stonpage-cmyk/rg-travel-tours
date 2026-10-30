@@ -39,31 +39,41 @@ import {
   REVIEW_SUBSCORE_LABELS,
   type ReviewSubscore,
 } from '@rg/shared';
+import FieldError from '@/components/common/FieldError';
 import { Button } from '@/components/ui/button';
+import { getFieldErrors, getFormErrors } from '@/lib/field-errors';
 import { cn } from '@/lib/utils';
 import { trpc } from '@/lib/trpc';
 
 const SCORES = [1, 2, 3, 4, 5] as const;
+const BODY_ERROR_ID = 'review-body-error';
 
 /**
  * One rating as a radio group. `name` makes the five inputs one control;
  * the legend is what a screen reader announces for the group.
+ *
+ * `error` is the server's own message for THIS score (task A4) — the
+ * `fieldset` describes it, so the message is announced with the group rather
+ * than floating above the whole form.
  */
 function StarChoice({
   name,
   legend,
   optional,
   value,
+  error,
   onChange,
 }: {
   name: string;
   legend: string;
   optional?: boolean;
   value: number | undefined;
+  error?: string;
   onChange: (next: number) => void;
 }) {
+  const errorId = `review-${name}-error`;
   return (
-    <fieldset>
+    <fieldset aria-describedby={error ? errorId : undefined}>
       <legend className="text-brand-blue-900 text-sm font-medium">
         {legend}
         {optional ? <span className="text-muted-foreground font-normal"> (optional)</span> : null}
@@ -97,6 +107,7 @@ function StarChoice({
           </label>
         ))}
       </div>
+      <FieldError id={errorId} message={error} />
     </fieldset>
   );
 }
@@ -140,7 +151,22 @@ export default function ReviewForm({ onSubmitted }: Props) {
     );
   }
 
-  const error = localError ?? (submit.isError ? submit.error.message : null);
+  /*
+   * `submitReviewInput` is a flat `.strict()` object, so every key the
+   * server reports (`rating`, `body`, and the four sub-scores) has a control
+   * on this form to sit beside (task A4). The amber notice above keeps only
+   * what has nowhere else to go: the local "choose a star rating" block, a
+   * form-level issue, and any NON-validation refusal — "you have already
+   * reviewed this booking", a role refusal, a 500 — whose `error.message` is
+   * a sentence the router wrote, not a Zod issue list.
+   */
+  const fieldErrors = submit.isError ? getFieldErrors(submit.error) : null;
+  const formErrors = submit.isError ? getFormErrors(submit.error) : [];
+  const error =
+    localError ??
+    (!submit.isError
+      ? null
+      : (formErrors[0] ?? (fieldErrors !== null ? null : submit.error.message)));
 
   return (
     <form onSubmit={onSubmit} aria-labelledby="review-heading" className="space-y-5">
@@ -162,7 +188,13 @@ export default function ReviewForm({ onSubmitted }: Props) {
         </p>
       ) : null}
 
-      <StarChoice name="rating" legend="Overall rating" value={rating} onChange={setRating} />
+      <StarChoice
+        name="rating"
+        legend="Overall rating"
+        value={rating}
+        error={fieldErrors?.rating}
+        onChange={setRating}
+      />
 
       <div className="space-y-4">
         {REVIEW_SUBSCORES.map((field) => (
@@ -172,6 +204,7 @@ export default function ReviewForm({ onSubmitted }: Props) {
             legend={REVIEW_SUBSCORE_LABELS[field]}
             optional
             value={subscores[field]}
+            error={fieldErrors?.[field]}
             onChange={(next) => setSubscores((current) => ({ ...current, [field]: next }))}
           />
         ))}
@@ -188,9 +221,12 @@ export default function ReviewForm({ onSubmitted }: Props) {
           maxLength={REVIEW_BODY_MAX}
           value={body}
           onChange={(event) => setBody(event.target.value)}
+          aria-describedby={fieldErrors?.body ? BODY_ERROR_ID : undefined}
+          aria-invalid={fieldErrors?.body ? true : undefined}
           className="border-input bg-background focus-visible:ring-brand-blue-600 w-full rounded-md border p-3 text-sm focus-visible:outline-none focus-visible:ring-2"
           placeholder="What did you enjoy? Anything we could do better?"
         />
+        <FieldError id={BODY_ERROR_ID} message={fieldErrors?.body} />
       </div>
 
       <Button type="submit" disabled={submit.isPending} className="tap-target w-full">
