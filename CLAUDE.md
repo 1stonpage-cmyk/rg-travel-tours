@@ -46,12 +46,12 @@ Five surfaces: public website, checkout, customer portal, driver portal, admin/d
 Database commands live in the **server** workspace, so they need the filter — a bare
 `pnpm db:seed` from the repo root fails with `Command "db:seed" not found` (BUG-101):
 
-| Command                                 | Does                                                               |
-| --------------------------------------- | ------------------------------------------------------------------ |
-| `pnpm --filter @rg/server db:generate`  | Write a migration from `src/db/schema.ts`                          |
-| `pnpm --filter @rg/server db:migrate`   | Apply migrations to `rg_travel` (name preflight)                   |
-| `pnpm --filter @rg/server db:seed`      | BASE: owner, destinations, settings — insert-only, safe on prod    |
-| `pnpm --filter @rg/server db:seed:demo` | DEMO: tours, packages, reviews, (app db) fleet — dev-only, upserts |
+| Command                                 | Does                                                                                                                            |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm --filter @rg/server db:generate`  | Write a migration from `src/db/schema.ts`                                                                                       |
+| `pnpm --filter @rg/server db:migrate`   | Apply migrations to `rg_travel` (name preflight)                                                                                |
+| `pnpm --filter @rg/server db:seed`      | BASE: owner, destinations, settings — insert-only, safe on prod                                                                 |
+| `pnpm --filter @rg/server db:seed:demo` | DEMO: tours, packages, reviews, (app db) fleet — dev-only, upserts; needs `ALLOW_DEMO_SEED=1` and refuses `NODE_ENV=production` |
 
 Package manager is **pnpm**. Do not introduce npm or yarn lockfiles.
 `.gitattributes` pins the whole tree to LF (`* text=auto eol=lf`) — without it a fresh clone
@@ -226,9 +226,20 @@ db:seed` now runs.
     `rg_travel`/`rg_travel_test`) — **but that guard is not what keeps it off production**:
     production's own database is named `rg_travel` too (`APP_DATABASE_NAME`), so the guard waves a
     production run straight through. It only catches a genuinely FOREIGN database (Kong PMS's,
-    say, or a `DATABASE_URL` typo). `seedDemo` **must never be run against production once real
-    content replaces the seed**, and nothing but the operator's own judgement enforces that. This
-    is the new, separate `pnpm --filter @rg/server db:seed:demo`.
+    say, or a `DATABASE_URL` typo). This is the new, separate `pnpm --filter @rg/server
+db:seed:demo`.
+    **Task C2 added the real guard**, ahead of the database-name check and before any write:
+    `seedDemo` now also refuses unless `env.ALLOW_DEMO_SEED === '1'` (a deliberate opt-in; unset,
+    empty or any other value refuses) AND `env.NODE_ENV !== 'production'` — two independent
+    checks, each with its own message naming which one failed, both enforced regardless of
+    `context`. `ALLOW_DEMO_SEED` is in `.env.example` (commented "dev only — never set on the
+    server") and in `server/src/env.ts`'s schema (optional, no default, mirroring
+    `OWNER_EMAIL`/`OWNER_PASSWORD`). The test suite's `seed('test')` callers (17+ files, via
+    `global-setup.ts`) need `ALLOW_DEMO_SEED=1` too — it is injected through
+    `server/vitest.config.ts`'s `test.env`, which Vitest sets before any test-process module
+    (globalSetup included) loads; `env.ts` parses `process.env` once at import time, so setting it
+    any later (inside `global-setup.ts`'s own body, for instance) would be too late. Their
+    `NODE_ENV` is already `'test'`, so the production check needed no loosening for them.
 
   `seed(context)` itself is `await seedBase(context); await seedDemo(context);` — unchanged
   externally, so every existing caller (test files, `global-setup.ts`, `helpers/test-db.ts`)

@@ -350,10 +350,15 @@ db:seed` is now BASE-ONLY and genuinely safe to re-run against production at any
    own database is also named `rg_travel` (same constant, same name), so the guard is a green light
    there, not a refusal. It catches a genuinely FOREIGN database — Kong PMS's own database on this
    same machine, or a typo in `DATABASE_URL` — never a production run under its correct name.
-   Nothing but the operator's own judgement stands between `db:seed:demo` and a production run;
-   read the paragraph above again before typing it anywhere near the production `.env`. `db:seed`
-   (base) carries no such caveat any more: run it on production whenever a settings key or
-   destination is genuinely missing, with no "only for this one gap" qualifier needed.
+
+   **Task C2 closed that gap with a real technical guard.** `seedDemo()` now also refuses unless
+   **both** `ALLOW_DEMO_SEED=1` is set in the environment it runs with **and** `NODE_ENV` is not
+   `production` — checked before any write, before the database-name guard even runs, each with
+   its own refusal message. `ALLOW_DEMO_SEED` has no default and ships commented `# dev only —
+never set on the server` in `.env.example`; **never set it in the production `.env`**. With it
+   absent (the production default), `db:seed:demo` now refuses outright rather than relying on
+   the operator's judgement alone. `db:seed` (base) carries no such caveat: run it on production
+   whenever a settings key or destination is genuinely missing, with no qualifier needed.
 
 3. **Publish the build**: sync `client/dist` into `/var/www/travelsugbo/app`, confirm
    `pm2 restart` brings the API up on 3100, and smoke-test the whole flow on
