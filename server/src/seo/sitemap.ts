@@ -11,13 +11,15 @@
  *
  * Two rules this file exists to keep:
  *
- *  - **A sitemap must never list a URL that says `noindex`.** It is a list of
- *    pages you are asking to have indexed; listing a page you then refuse to
- *    let be indexed is a contradiction crawlers report as an error. So the
- *    detail URLs are collected, filtered and sorted here (`detailUrls()`),
- *    split by kind (`buildTourDetailUrls`/`buildPackageDetailUrls`), and both
- *    halves are emitted (Week 7 plan, Tasks 2 and 3) — see
- *    `collectSitemapUrls`.
+ *  - **A sitemap must never list a URL whose OWN RESOLVER says `noindex`** —
+ *    the per-route decision, not the site-wide `content_unverified` gate
+ *    (CLAUDE.md's SEO section; corrected 2026-10-30, BUG-121 — the flat
+ *    absolute this used to say is literally false while the site-wide gate
+ *    is off, since it would forbid any URL at all from ever being listed).
+ *    So the detail URLs are collected, filtered and sorted here
+ *    (`detailUrls()`), split by kind (`buildTourDetailUrls`/
+ *    `buildPackageDetailUrls`), and both halves are emitted (Week 7 plan,
+ *    Tasks 2 and 3) — see `collectSitemapUrls`.
  *  - **`lastmod` is read, never invented.** Every date below comes from an
  *    `updated_at` column. A sitemap that claims today's date for every URL on
  *    every fetch trains crawlers to ignore the field.
@@ -182,10 +184,11 @@ export async function collectSitemapUrls(): Promise<SitemapEntry[]> {
     { loc: absoluteUrl('/cookies'), lastmod: null },
 
     // Tour detail pages render now and `resolveTour` answers `index,follow`
-    // (Task 2, Week 7 plan) — a sitemap may not list a noindex URL, and an
-    // indexable URL must be in the sitemap, so both changes shipped in one
-    // commit. `buildTourDetailUrls` already filters `is_active` on both
-    // sides and sorts by slug, so there is nothing else to write here.
+    // (Task 2, Week 7 plan) — a sitemap may not list a URL whose own
+    // resolver says noindex, and an indexable URL must be in the sitemap,
+    // so both changes shipped in one commit. `buildTourDetailUrls` already
+    // filters `is_active` on both sides and sorts by slug, so there is
+    // nothing else to write here.
     ...buildTourDetailUrls(rows),
 
     // Package detail pages render now too (Task 3, Week 7 plan) and
