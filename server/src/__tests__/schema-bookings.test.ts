@@ -156,8 +156,18 @@ describe('public booking refs (@rg/shared)', () => {
     }
   });
 
-  it('rejects the wrong prefix, the wrong case and the wrong length', () => {
-    for (const bad of ['rg-7kq4m9', 'RG7KQ4M9', 'RG-7KQ4M', 'RG-7KQ4M99', '7KQ4M9', '']) {
+  /**
+   * BUG-108 (owner decision 2026-10-23, Q10): a lowercase or mixed-case ref
+   * is no longer in this "rejects" list — `bookingRefSchema` now normalises
+   * (trim, then uppercase) BEFORE the shape check, so `rg-7kq4m9` is
+   * accepted and resolves to `RG-7KQ4M9`. That normalisation is asserted in
+   * `server/src/__tests__/booking-ref.test.ts`, next to the schema's other
+   * tests. What is still rejected — because normalising a ref cannot
+   * change its length or its characters — is the wrong prefix and the
+   * wrong length.
+   */
+  it('rejects the wrong prefix and the wrong length', () => {
+    for (const bad of ['RG7KQ4M9', 'RG-7KQ4M', 'RG-7KQ4M99', '7KQ4M9', '']) {
       expect(bookingRefSchema.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
     }
   });

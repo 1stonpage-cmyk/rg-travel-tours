@@ -106,6 +106,24 @@ export type PayMode = (typeof PAY_MODES)[number];
 export const payModeSchema = z.enum(PAY_MODES);
 
 /**
+ * Trims surrounding whitespace, then uppercases.
+ *
+ * BUG-108: a guest who typed or pasted a ref out of an email may bring
+ * whitespace with it, or type it lower- or mixed-case — `rg-7kq4m9`,
+ * `Rg-7KQ4m9`. Refs are *generated* uppercase-only
+ * (`generateBookingRef()` / `REF_ALPHABET`, `server/src/services/booking-ref.ts`),
+ * and `bookings.ref`'s column collation happens to compare case-insensitively,
+ * but neither fact was ever asserted in code — three procedures validated the
+ * shape three different ways before this, one of them (`bookingLookupInput`)
+ * not checking case at all. Folding this into {@link bookingRefSchema} below,
+ * ahead of the shape check, makes every input that accepts a ref agree on
+ * what counts as one, by construction rather than by accident.
+ */
+export function normalizeBookingRef(ref: string): string {
+  return ref.trim().toUpperCase();
+}
+
+/**
  * `RG-` plus six unambiguous characters: `RG-7KQ4M9`.
  *
  * The character class omits `0/O`, `1/I/L` and `U` so a ref survives being
@@ -116,10 +134,21 @@ export const payModeSchema = z.enum(PAY_MODES);
  *
  * Refs are random and non-sequential because §7 logs a guest into the portal
  * with ref + email: a guessable ref is half a credential.
+ *
+ * **Case-insensitive on lookup, normalised to uppercase on the server**
+ * (BUG-108, owner decision 2026-10-23, Q10): `.transform()` runs
+ * {@link normalizeBookingRef} BEFORE `.pipe()`'s shape check, so a lowercase
+ * or mixed-case ref, or one with surrounding whitespace, is normalised first
+ * and then validated — not loosened. A string that is still the wrong length
+ * or charset after normalising is refused exactly as before. Refs are still
+ * *generated* uppercase; nothing about `generateBookingRef()` changes.
  */
 export const bookingRefSchema = z
   .string()
-  .regex(/^RG-[ABCDEFGHJKMNPQRSTVWXYZ23456789]{6}$/, 'Not a valid booking reference');
+  .transform(normalizeBookingRef)
+  .pipe(
+    z.string().regex(/^RG-[ABCDEFGHJKMNPQRSTVWXYZ23456789]{6}$/, 'Not a valid booking reference'),
+  );
 
 /** One add-on line as frozen into a booking's price snapshot. */
 const snapshotAddonSchema = z.object({

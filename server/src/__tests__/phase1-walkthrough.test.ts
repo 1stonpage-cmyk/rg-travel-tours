@@ -650,7 +650,14 @@ describeWithDb('Phase 1, step 4 — the portal', () => {
       ref: guest.ref,
       email: 'nobody@example.test',
     });
-    const wrongRef = await mutate('portal.login', { ref: 'RG-NOPE00', email: guest.email });
+    // A validly-SHAPED ref that matches no booking — not a malformed string.
+    // `bookingRefSchema` (BUG-108) now shares its shape check with every
+    // ref input, so a string with banned characters (the old fixture,
+    // `RG-NOPE00`, contains `O` and `0`) is refused at the input stage with
+    // a 400 before the resolver's generic credential check ever runs — a
+    // different status from a wrong email, which is exactly the leak §7
+    // forbids. `RG-ZZZZZZ` is shape-valid and simply unassigned.
+    const wrongRef = await mutate('portal.login', { ref: 'RG-ZZZZZZ', email: guest.email });
 
     expect(wrongEmail.status).toBe(wrongRef.status);
     expect((wrongEmail.body as { error?: { message?: string } }).error?.message).toBe(

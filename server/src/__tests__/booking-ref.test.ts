@@ -21,7 +21,7 @@
  * assertion below is the load-bearing one.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { bookingRefSchema } from '@rg/shared';
+import { bookingRefSchema, normalizeBookingRef } from '@rg/shared';
 import { getDb, getPool, type Transaction } from '../db/client';
 import { destinations, tours } from '../db/schema';
 import { REF_ALPHABET, generateBookingRef, insertBookingWithRef } from '../services/booking-ref';
@@ -69,6 +69,77 @@ describe('generateBookingRef', () => {
     generateBookingRef();
     expect(spy, 'booking refs must not come from Math.random').not.toHaveBeenCalled();
     spy.mockRestore();
+  });
+
+  /**
+   * BUG-108's own assertion: normalising a ref before the shape check must
+   * not change what the GENERATOR produces or how it is validated.
+   * `generateBookingRef()`'s output is already uppercase, so the transform
+   * folded into `bookingRefSchema` is a no-op on it — a regression here
+   * would mean the transform somehow mangles an already-canonical ref.
+   */
+  it('is unchanged by normalisation and still matches bookingRefSchema with no transform needed', () => {
+    for (let i = 0; i < 50; i += 1) {
+      const ref = generateBookingRef();
+      expect(normalizeBookingRef(ref), ref).toBe(ref);
+      expect(bookingRefSchema.safeParse(ref).success, ref).toBe(true);
+    }
+  });
+});
+
+/**
+ * BUG-108: `bookingLookupInput` used to take `z.string().min(1).max(12)` —
+ * any length, no case rule — while `startPaymentInput` and
+ * `bookingStatusInput` took this schema, uppercase-only. A guest who typed
+ * `rg-7kq4m9` was refused by two of the three procedures before the query
+ * ever ran. All three now share this one schema, which normalises (trim,
+ * then uppercase) BEFORE checking shape — via `.transform().pipe()` — so
+ * normalising cannot loosen the shape check, only widen what reaches it in
+ * canonical form.
+ */
+describe('bookingRefSchema (BUG-108 normalisation)', () => {
+  it('accepts a lowercase ref and normalises it to the canonical uppercase form', () => {
+    const result = bookingRefSchema.safeParse('rg-7kq4m9');
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data).toBe('RG-7KQ4M9');
+  });
+
+  it('accepts a mixed-case ref and normalises it', () => {
+    const result = bookingRefSchema.safeParse('Rg-7KQ4m9');
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data).toBe('RG-7KQ4M9');
+  });
+
+  it('trims surrounding whitespace before checking shape', () => {
+    const result = bookingRefSchema.safeParse('  RG-7KQ4M9  ');
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data).toBe('RG-7KQ4M9');
+  });
+
+  it('still refuses a wrong-length string after normalising — normalising never loosens the shape check', () => {
+    expect(bookingRefSchema.safeParse('rg-7kq4m').success, 'one char short').toBe(false);
+    expect(bookingRefSchema.safeParse('rg-7kq4m99').success, 'one char long').toBe(false);
+  });
+
+  it('still refuses a wrong-charset string after normalising — the banned letters stay banned', () => {
+    // 0/O, 1/I/L and U are excluded from REF_ALPHABET; normalising cannot
+    // smuggle them past the regex.
+    expect(bookingRefSchema.safeParse('rg-0okq49').success, 'contains 0 and O').toBe(false);
+    expect(bookingRefSchema.safeParse('rg-1ilu49').success, 'contains 1, I, L, U').toBe(false);
+  });
+
+  it('refuses a ref-shaped string missing the RG- prefix', () => {
+    expect(bookingRefSchema.safeParse('xx-7kq4m9').success).toBe(false);
+  });
+});
+
+describe('normalizeBookingRef', () => {
+  it('trims and uppercases', () => {
+    expect(normalizeBookingRef('  rg-7kq4m9  ')).toBe('RG-7KQ4M9');
+  });
+
+  it('is idempotent — normalising an already-canonical ref changes nothing', () => {
+    expect(normalizeBookingRef('RG-7KQ4M9')).toBe('RG-7KQ4M9');
   });
 });
 

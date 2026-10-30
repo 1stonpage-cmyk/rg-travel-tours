@@ -15,7 +15,7 @@
  * schema or a quote id.
  */
 import { z } from 'zod';
-import { PAY_MODES } from './booking';
+import { bookingRefSchema, PAY_MODES } from './booking';
 import { formatPeso, PAYMONGO_MIN_CENTAVOS } from './money';
 
 /** A civil date in Asia/Manila — the tour day, not an instant. */
@@ -84,8 +84,20 @@ export const createHoldInput = quoteInput
   .strict();
 export type CreateHoldInput = z.infer<typeof createHoldInput>;
 
+/**
+ * BUG-108: used to be `z.string().min(1).max(12)` — any length, no case
+ * rule — while `startPaymentInput` and `bookingStatusInput`
+ * (`server/src/routers/public/checkout.ts`) took {@link bookingRefSchema},
+ * an uppercase-only regex. A guest who typed `rg-7kq4m9` was refused by two
+ * of the three procedures before the query ever ran, and accepted by the
+ * third only because `bookings.ref`'s column collation happens to compare
+ * case-insensitively — a fact nothing in the code asserted. All three now
+ * share {@link bookingRefSchema}, which normalises (trim + uppercase)
+ * before checking shape, so the three inputs cannot drift on what counts as
+ * a valid ref again.
+ */
 export const bookingLookupInput = z
-  .object({ ref: z.string().min(1).max(12), email: z.email().max(200) })
+  .object({ ref: bookingRefSchema, email: z.email().max(200) })
   .strict();
 
 /** The tier a quote resolved to, mirroring `server/src/services/pricing.ts`'s `PriceTier`. */
