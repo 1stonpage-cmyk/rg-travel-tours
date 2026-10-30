@@ -11,6 +11,7 @@ import ConsentCheckbox from '@/components/checkout/ConsentCheckbox';
 import PayNowButton from '@/components/checkout/PayNowButton';
 import QuoteSummary from '@/components/checkout/QuoteSummary';
 import { Button } from '@/components/ui/button';
+import { getFieldErrors, getFormErrors } from '@/lib/field-errors';
 import { describeCheckoutError } from '@/lib/mutation-errors';
 import { trpc } from '@/lib/trpc';
 
@@ -110,6 +111,32 @@ const CAPACITY_FALLBACK_MESSAGE =
 function describeAvailability(reason: string): string {
   return AVAILABILITY_MESSAGES[reason] ?? CAPACITY_FALLBACK_MESSAGE;
 }
+
+/**
+ * Which of `createHoldInput`'s top-level field names this form actually puts
+ * an input on screen for (task A4) — the keys `lib/field-errors.ts` can hand
+ * to a component that will render them beside their control.
+ *
+ * It is an ALLOW-LIST of the placed fields, and everything else
+ * (`tourSlug`, `date`, `pax`, `addonIds`, `quoteId`) is deliberately absent:
+ * those come from the URL and the quote, not from anything a guest typed
+ * here, so there is no box to put their message under. A validation message
+ * for one of them is shown in the banner above the form instead, because the
+ * alternative — a message the code thought it had placed and never rendered
+ * — is the silent half of this bug rather than a fix for it.
+ *
+ * `lead` covers name/email/phone together; see `GuestDetails.tsx` on why
+ * that one key cannot be split client-side.
+ */
+const PLACED_HOLD_FIELDS: ReadonlySet<string> = new Set([
+  'lead',
+  'pickup',
+  'pickupMapUrl',
+  'requests',
+  'payMode',
+  'consent',
+  'couponCode',
+]);
 
 function CheckoutSkeleton() {
   return (
@@ -219,6 +246,33 @@ export default function CheckoutPage() {
     });
   }
 
+  /*
+   * `createHold`'s refusal, split into the two kinds a guest can act on
+   * differently (task A4).
+   *
+   * `holdFieldErrors` is non-null only for an INPUT VALIDATION failure, and
+   * its messages go to the inputs below. Everything else — a capacity
+   * refusal, a stale quote, a 429, a gateway fault — keeps going through
+   * `describeCheckoutError`, which is the router's own carefully-worded
+   * sentence for each and must not be collapsed into a field message.
+   *
+   * `holdBannerMessages` is what is left over after the fields have taken
+   * their share: the form-level issues, plus any field the form does not
+   * render (see `PLACED_HOLD_FIELDS`), or — when this was not a validation
+   * failure at all — the single existing generic/specific sentence.
+   */
+  const holdFieldErrors = createHold.isError ? getFieldErrors(createHold.error) : null;
+  const holdFormErrors = createHold.isError ? getFormErrors(createHold.error) : [];
+  const unplacedFieldMessages = Object.entries(holdFieldErrors ?? {})
+    .filter(([field]) => !PLACED_HOLD_FIELDS.has(field))
+    .map(([, message]) => message);
+  const isValidationRefusal = holdFieldErrors !== null || holdFormErrors.length > 0;
+  const holdBannerMessages = !createHold.isError
+    ? []
+    : isValidationRefusal
+      ? [...holdFormErrors, ...unplacedFieldMessages]
+      : [describeCheckoutError(createHold.error)];
+
   if (!hasSelection) {
     return (
       <div className="mx-auto max-w-3xl px-4 py-16 text-center sm:px-6">
@@ -325,7 +379,7 @@ export default function CheckoutPage() {
                       setCouponInput('');
                       setCouponError(null);
                     }}
-                    error={couponError}
+                    error={couponError ?? holdFieldErrors?.couponCode ?? null}
                     isChecking={Boolean(couponCode) && quoteQuery.isFetching}
                   />
 
@@ -333,15 +387,25 @@ export default function CheckoutPage() {
                     payMode={payMode}
                     onPayModeChange={setPayMode}
                     amountDueNowCentavos={quote.amountDueNowCentavos}
+                    fieldErrors={holdFieldErrors}
                   />
 
-                  <ConsentCheckbox error={consentError} onChange={() => setConsentError(null)} />
+                  {/*
+                   * The guest's own un-ticked box takes priority over the
+                   * server's `consent` message: the local one is shown
+                   * BEFORE anything is sent (the submit handler blocks), so
+                   * the two never describe the same submit.
+                   */}
+                  <ConsentCheckbox
+                    error={consentError ?? holdFieldErrors?.consent ?? null}
+                    onChange={() => setConsentError(null)}
+                  />
 
-                  {createHold.isError && (
-                    <p role="alert" className="text-brand-error text-sm font-medium">
-                      {describeCheckoutError(createHold.error)}
+                  {holdBannerMessages.map((message) => (
+                    <p key={message} role="alert" className="text-brand-error text-sm font-medium">
+                      {message}
                     </p>
-                  )}
+                  ))}
 
                   <Button
                     type="submit"

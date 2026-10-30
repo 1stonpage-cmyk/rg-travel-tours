@@ -88,11 +88,24 @@ const CODE_STATUS: Record<string, number> = {
  */
 class MockTrpcError extends Error {
   readonly trpcCode: string;
-  constructor(message: string, trpcCode: string) {
+  /**
+   * The flattened Zod errors `server/src/trpc.ts`'s `errorFormatter` puts in
+   * `data.zodError` for an input-validation failure (task A4). Undefined for
+   * every other refusal, exactly as the real server omits the key.
+   */
+  readonly zodError?: FlattenedZodError;
+  constructor(message: string, trpcCode: string, zodError?: FlattenedZodError) {
     super(message);
     this.name = 'MockTrpcError';
     this.trpcCode = trpcCode;
+    this.zodError = zodError;
   }
+}
+
+/** The shape of `data.zodError` — `z.flattenError()`'s own return value. */
+export interface FlattenedZodError {
+  formErrors: string[];
+  fieldErrors: Record<string, string[]>;
 }
 
 let handlers: Handlers = {};
@@ -171,11 +184,16 @@ export function mockTrpc(next: Handlers) {
           // handler still means "something broke", which is a 500.
           const trpcCode = err instanceof MockTrpcError ? err.trpcCode : 'INTERNAL_SERVER_ERROR';
           const httpStatus = CODE_STATUS[trpcCode] ?? 500;
+          const zodError = err instanceof MockTrpcError ? err.zodError : undefined;
           return {
             error: {
               message,
               code: -32600,
-              data: { code: trpcCode, httpStatus },
+              // Spread-when-present, mirroring the real errorFormatter's
+              // `...(zodError ? { zodError } : {})`: a non-validation refusal
+              // must not carry the key at all, or `getFieldErrors` would read
+              // an empty object as "this was a validation failure".
+              data: { code: trpcCode, httpStatus, ...(zodError ? { zodError } : {}) },
             },
           };
         }
@@ -231,6 +249,47 @@ export function mockTrpcError(procedure: string, code?: string, message?: string
   mockTrpc({
     [procedure]: () => {
       throw new MockTrpcError(message ?? 'mock failure', code ?? 'INTERNAL_SERVER_ERROR');
+    },
+  });
+}
+
+/**
+ * Makes one named procedure refuse the way tRPC's INPUT STAGE refuses — a
+ * `BAD_REQUEST` whose `data.zodError` carries flattened field errors and
+ * whose `message` is the raw JSON issue list (task A4).
+ *
+ * Both halves matter and both were captured from the real server rather than
+ * invented:
+ *
+ *  - `data.zodError` is what `server/src/trpc.ts`'s `flatten()` publishes,
+ *    and the only thing a form should read.
+ *  - `message` is tRPC's own default for a `ZodError`
+ *    (`JSON.stringify(error.issues, null, 2)`), which is the raw blob guests
+ *    were being shown. A test that mocks a tidy sentence here would pass
+ *    against the very bug this task fixes, because the regression it must
+ *    catch is "the form rendered `error.message`".
+ *
+ * The issue list is synthesised from the field errors, so a call site names
+ * only what it cares about — the fields and their project-written sentences.
+ */
+export function mockTrpcValidationError(
+  procedure: string,
+  errors: { fieldErrors?: Record<string, string[]>; formErrors?: string[] },
+) {
+  const fieldErrors = errors.fieldErrors ?? {};
+  const formErrors = errors.formErrors ?? [];
+  const issues = [
+    ...formErrors.map((message) => ({ code: 'custom', path: [] as string[], message })),
+    ...Object.entries(fieldErrors).flatMap(([field, messages]) =>
+      messages.map((message) => ({ code: 'invalid_format', path: [field], message })),
+    ),
+  ];
+  mockTrpc({
+    [procedure]: () => {
+      throw new MockTrpcError(JSON.stringify(issues, null, 2), 'BAD_REQUEST', {
+        formErrors,
+        fieldErrors,
+      });
     },
   });
 }
