@@ -38,11 +38,18 @@ import type { SiteEnv } from '../env';
  * page whose path happens to start with these letters.
  *
  * These are also the `Disallow:` lines in the production robots.txt (see
- * seo/sitemap.ts). Add the booking surfaces here as they land: `/checkout`
- * and the confirmation pages are a thin-content, personal-data noindex for
- * exactly the same reasons.
+ * seo/sitemap.ts). `/checkout` and `/booking` (BUG-116) are the booking
+ * surfaces this comment used to say would land here: a thin-content,
+ * personal-data noindex for the same reasons as the other three, even
+ * though — unlike them — both are genuinely public, unauthenticated pages.
  */
-export const NOINDEX_PATH_PREFIXES = ['/admin', '/driver', '/portal'] as const;
+export const NOINDEX_PATH_PREFIXES = [
+  '/admin',
+  '/driver',
+  '/portal',
+  '/checkout',
+  '/booking',
+] as const;
 
 /**
  * The one header value this project emits. Spelled with the space, which is

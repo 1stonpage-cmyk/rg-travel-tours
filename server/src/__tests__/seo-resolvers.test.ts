@@ -250,6 +250,12 @@ describe('app surfaces (pure)', () => {
     ['/portal/RG-7KQ4M9', 'My booking'],
     // The same normalisation as every other route: case and trailing slash.
     ['/Driver/', 'Driver portal'],
+    // BUG-116: /checkout/:tourSlug and /booking/:ref are real public SPA
+    // routes that had no entry here, so they 404'd with "Page not found".
+    ['/checkout', 'Checkout'],
+    ['/checkout/oslob-whale-shark-tumalog-falls', 'Checkout'],
+    ['/booking', 'Booking status'],
+    ['/booking/RG-7KQ4M9', 'Booking status'],
   ] as const;
 
   it.each(cases)('%s is 200, noindex and titled as its own place', (path, titleStart) => {
@@ -279,7 +285,17 @@ describe('app surfaces (pure)', () => {
   });
 
   it('a path that merely STARTS with a surface name is not that surface', () => {
-    for (const path of ['/drivers', '/driverfoo', '/administrator', '/portalx', '/admin-panel']) {
+    for (const path of [
+      '/drivers',
+      '/driverfoo',
+      '/administrator',
+      '/portalx',
+      '/admin-panel',
+      '/checkoutfoo',
+      '/checkouts',
+      '/bookingfoo',
+      '/bookings',
+    ]) {
       expect(appSurfaceMeta(path), path).toBeNull();
     }
   });
@@ -322,15 +338,24 @@ describeWithDb('app surfaces through resolvePage', () => {
     resetContentUnverifiedCache();
   }
 
-  it.each(['/driver', '/driver/login', '/driver/trip/7', '/admin', '/admin/bookings/3', '/portal'])(
-    '%s resolves 200 and noindex, not the not-found shell',
-    async (path) => {
-      const meta = await resolvePage(path);
-      expect(meta.status).toBe(200);
-      expect(meta.robots).toBe('noindex,nofollow');
-      expect(meta.title).not.toMatch(/Page not found/);
-    },
-  );
+  it.each([
+    '/driver',
+    '/driver/login',
+    '/driver/trip/7',
+    '/admin',
+    '/admin/bookings/3',
+    '/portal',
+    // BUG-116
+    '/checkout',
+    '/checkout/oslob-whale-shark-tumalog-falls',
+    '/booking',
+    '/booking/RG-7KQ4M9',
+  ])('%s resolves 200 and noindex, not the not-found shell', async (path) => {
+    const meta = await resolvePage(path);
+    expect(meta.status).toBe(200);
+    expect(meta.robots).toBe('noindex,nofollow');
+    expect(meta.title).not.toMatch(/Page not found/);
+  });
 
   it('noindex here does not depend on the content flag', async () => {
     // These routes are noindex forever, not only while the site is
@@ -347,7 +372,14 @@ describeWithDb('app surfaces through resolvePage', () => {
   });
 
   it('a path that merely STARTS with a surface name still 404s', async () => {
-    for (const path of ['/drivers', '/driverfoo', '/administrator', '/portalx']) {
+    for (const path of [
+      '/drivers',
+      '/driverfoo',
+      '/administrator',
+      '/portalx',
+      '/checkoutfoo',
+      '/bookingfoo',
+    ]) {
       expect((await resolvePage(path)).status, path).toBe(404);
     }
   });
@@ -361,7 +393,13 @@ describeWithDb('app surfaces through resolvePage', () => {
     const query = vi.spyOn(pool, 'query');
     const execute = vi.spyOn(pool, 'execute');
     try {
-      for (const path of ['/driver/login', '/admin', '/portal/RG-7KQ4M9']) {
+      for (const path of [
+        '/driver/login',
+        '/admin',
+        '/portal/RG-7KQ4M9',
+        '/checkout',
+        '/booking',
+      ]) {
         await resolvePage(path);
       }
       expect(query.mock.calls.length + execute.mock.calls.length).toBe(0);

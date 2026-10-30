@@ -50,6 +50,20 @@ export const APP_SURFACE_TITLES = {
   '/driver': 'Driver portal',
   '/admin': 'Staff console',
   '/portal': 'My booking',
+  /*
+   * BUG-116: `/checkout/:tourSlug` and `/booking/:ref` are real public SPA
+   * routes with no entry in the route table, so they fell through to
+   * `notFoundMeta` and were served HTTP 404, "Page not found", for their
+   * entire visit. Added to `NOINDEX_PATH_PREFIXES`
+   * (`server/src/middleware/robots-header.ts`) alongside the three above —
+   * these two are genuinely public (no auth), unlike the other three, but
+   * noindexed for the same thin-content / personal-data reason
+   * (`/checkout` holds a lead guest's name, email and phone; `/booking`
+   * looks a stay up by reference). "My booking" is already `/portal`'s
+   * title, hence "Booking status" rather than a second "My booking".
+   */
+  '/checkout': 'Checkout',
+  '/booking': 'Booking status',
 } as const;
 
 /**

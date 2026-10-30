@@ -404,6 +404,23 @@ const APP_SURFACE_COPY: Record<
     title: `${APP_SURFACE_TITLES['/portal']} | ${BRAND}`,
     description: `Manage your ${BRAND} booking. Not a public page.`,
   },
+  /*
+   * BUG-116: `/checkout` and `/booking` are real public SPA routes
+   * (`client/src/App.tsx`'s `checkout/:tourSlug` and the booking-status
+   * route) that had no entry here, so they 404'd with "Page not found" —
+   * the same defect Task 9 fixed for the three surfaces above. Unlike
+   * those three, neither requires auth, so the description does not claim
+   * "Not a public page" — it would be false. They are noindexed anyway
+   * (thin-content, and both hold a guest's personal data on the wire).
+   */
+  '/checkout': {
+    title: `${APP_SURFACE_TITLES['/checkout']} | ${BRAND}`,
+    description: `Complete your ${BRAND} booking.`,
+  },
+  '/booking': {
+    title: `${APP_SURFACE_TITLES['/booking']} | ${BRAND}`,
+    description: `Track your ${BRAND} booking.`,
+  },
 };
 
 /**
