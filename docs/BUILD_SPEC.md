@@ -820,20 +820,25 @@ Use **ui-ux-pro-max** throughout; match the approved demo.
 
 - **2A** Layout, header, footer, floating WhatsApp, brand tokens (blue/gold, no red). ✅ DONE
 - **2B** Home page sections 1–13. ✅ DONE — all thirteen render from live `settings`/tRPC data.
-- **2C** Catalog with destination filter and real stats.
-  **Not done** — `/tours` is `client/src/pages/public/ToursStubPage.tsx`, which echoes the
-  hero's search params and says so. The home page's _catalog preview_ (section 3 of 2B) does
-  have the live destination filter; the standalone catalog page does not exist.
-- **2D** Tour detail page (gallery, itinerary, tiers, add-ons, date/guest picker).
-  **Not done** — no `/tours/:slug` route in `client/src/App.tsx`. The server side is already
-  built and tested ahead of it: `server/src/seo/resolvers.ts` resolves the meta and JSON-LD
-  for `/tours/:slug` and `/packages/:slug` but serves both `noindex,nofollow`, because the
-  shell would otherwise reach a crawler with correct meta over an empty body (plan decision
-  D5).
-  **When this page is built, in the same task:** delete those two `robots` lines, and add the
-  detail URLs to `/sitemap.xml` — `server/src/seo/sitemap.ts` already collects, filters by
-  `is_active` and sorts them in `detailUrls()`, with the emit commented out and marked
-  `WEEK 2D`.
+- **2C** Catalog with destination filter and real stats. ✅ DONE — **the "Not done" note that
+  stood here until 2026-10-30 was falsified by Week 7 Task 1.** `/tours` is now
+  `client/src/pages/public/ToursPage.tsx`; `ToursStubPage.tsx` is gone. It reads `tours.list`
+  with the hero's own `?destination=<slug>` param, marks the active chip with a real
+  `aria-current` (not a colour change), and forwards the hero's date/guest params onto each
+  card's links through `TourCard`'s optional `searchParams` prop. Measured 2026-10-30: `200`,
+  `Cebu Day Tours | TravelSugbo`, one `<h1>`, six cards, no horizontal overflow at 360 px.
+- **2D** Tour detail page (gallery, itinerary, tiers, add-ons, date/guest picker). ✅ DONE —
+  **also falsified by Week 7, Task 2.** `/tours/:slug` exists, and in the same task the two
+  `noindex,nofollow` lines in `server/src/seo/resolvers.ts` were deleted and the detail URLs
+  were released into `/sitemap.xml` (`buildTourDetailUrls` / `buildPackageDetailUrls` in
+  `server/src/seo/sitemap.ts` — the `WEEK 2D` commented-out emit is gone, and Task 3 released
+  the package half the same way). The picker calls `checkout.availability` first and only
+  quotes through `checkout.quote` when that answers `ok: true`, so **it never shows a total it
+  computed itself** — measured 2026-10-30: 3 guests on Kawasan rendered ₱7,050, which is
+  3 × the 3–6 tier and not 3 × the "from" price on the same page.
+  **Both pages are still served `noindex` today**, but for the site-wide reason rather than
+  this one: `settings.content_unverified` is `true`, so every route is `noindex` and
+  `robots.txt` says `Disallow: /` until an admin clears it.
 - **2E** Meta tag injection, sitemap, robots. ✅ DONE — see the SEO note in section 2. Built by
   phase 4 of the dynamic-site plan: per-route `<title>`/description/canonical/OG/Twitter and
   JSON-LD on `/`, `/tours`, `/privacy`, `/terms`, `/tours/:slug` and `/packages/:slug`,
@@ -1107,10 +1112,35 @@ driven separately for exactly that reason.
 - **6E** Payment verification queue (approve/reject → portal updates).
 - **6F** Cancel/refund flow (PayMongo refund API + manual record).
 
-### Week 7 — Growth features
+### Week 7 — Growth features — ✅ WEEK 7 COMPLETE (2026-10-30), with two owner decisions still open
 
-Nothing in this week is built. Public _display_ of reviews, packages and the newsletter form
-exists (it is part of 2B), but no submission, moderation, admin or export side of any of it.
+> **Preamble rewritten 2026-10-30.** It said "Nothing in this week is built… no submission,
+> moderation, admin or export side of any of it." All of 7A–7F and 7H–7P now is. §13's markers have
+> now been found stale three times (Weeks 4, 6 and the 2C/2D pair above), so this one is corrected
+> as the week closes rather than left for a fourth.
+>
+> **Two items are NOT closed, and "WEEK 7 COMPLETE" above does not cover them.** Both are owner
+> decisions, both are carried into Week 8 below, and neither was built unilaterally:
+>
+> 1. **`db:seed` still overwrites admin-edited content in six tables** (BUG-118). The launch
+>    blocker is fixed for `settings` only — `tours`, `tour_price_tiers`, `tour_images`, `packages`,
+>    `reviews` and the fleet still revert on a re-seed. The price-tier case is money-affecting and
+>    fails **open**; the reviews case can re-publish the `is_sample` rows the launch checklist says
+>    to hide. One of seven doors is shut.
+> 2. **BUG-117 — `checkout.startPayment` does not enforce the methods-disabled half of A5's gate.**
+>    The PayMongo-unconfigured half is enforced server-side and measured; the methods-disabled half
+>    is enforced by the UI alone, so the control fails open.
+>
+> The same treatment **7G** gets: deferred to Week 8 by the owner's own answer (Q9), named rather
+> than dropped.
+
+Plan: `docs/superpowers/plans/2026-10-23-week7.md` (21 tasks), plus the owner's 2026-10-29 batch-6
+additions (A1–A10, three of them launch blockers found after the plan was written — see
+`.superpowers/sdd/2026-10-23-week7/task-21-batch6-addendum.md`). **82 commits**,
+`f422782..5f5d900`. Evidence:
+`docs/superpowers/plans/2026-10-30-week7-walkthrough.md` — the guest half driven end to end in a
+browser against the live database; **the staff half was not, because no staff credentials exist on
+the dev box** (see 8B/8C below, where that becomes a blocker rather than a note).
 
 > **What Week 6 handed this week, and how Week 6.5 settled it: an orphaned `on_trip` van is made
 > visible, never auto-freed** (owner decision D5, 2026-10-16).
@@ -1225,32 +1255,175 @@ exists (it is part of 2B), but no submission, moderation, admin or export side o
 >     (`TripProgressStop` has no checkpoint id; label only) and item 5 (the gateway wire check, still
 >     blocking before launch).
 
-- **7A** Reviews: submit (portal + public), moderation, replies, helpful votes, verified badge.
-- **7B** Coupons admin + redemption log.
-- **7C** Packages + inquiries admin; newsletter signup + export. (The public signup and both
-  inquiry forms are live via `newsletter.subscribe` and `inquiries.create`; the admin list and
-  the CSV export are not.)
-- **7D** Reports + CSV exports.
-- **7E** Notifications: all emails; SMS provider interface (off by default); day-before
-  reminder cron.
-- **7F** Settings page — **admin editing screens for every content block the dynamic-site plan
-  made database-driven**: announcement, hero, promo, business hours, payment methods, permits,
-  how-it-works, why-book-direct, FAQ, contact, the legal markdown, and the per-tour
-  featured / sort-order / badge / alert-note fields. All of these are live on the public site
-  and editable only by SQL today.
-- **7G** Motion polish with **emilkowalski-motion** (subtle only). The home page's motion layer
-  (scroll reveal, card stagger, count-up, header shrink, hero parallax, carousel) was built
-  early with the dynamic-site plan; what is left here is the portal, driver and admin surfaces.
+- **7A** ✅ Reviews: submit (portal + public), moderation, replies, helpful votes, verified badge.
+  Submission is the **existing** `portal.submitReview` — Task 10's survey of the plan was wrong
+  about it not existing, and building a second public submit path was deliberately refused rather
+  than duplicating a correct, tested one. **A submission is always `pending`** and invisible to
+  `reviews.published`. **One browser, one helpful vote**, arbitrated by the composite primary key
+  on `review_helpful_votes`, with an anonymous voter cookie distinct from the session cookie; the
+  voter's raw IP and cookie id are never stored, only a hash. The verified badge is derived from
+  `bookingId !== null` and **the booking id itself never reaches either wire** (RA 10173).
+  A driver's rating is derived through `reviews.booking_id → bookings.driver_id` against the
+  existing `settings.trust.minReviewsForRating` rather than a second constant (owner Q4),
+  admin-only and never shown to a guest.
+- **7B** ✅ Coupons admin + redemption log. `used_count` is **not writable** through the admin
+  input, and the redemption log is append-only — nothing in this week writes
+  `coupon_redemptions` except the untouched `recordRedemption` / `releaseRedemption`. A full
+  replacement `update` is safe against rewriting money a guest was already charged because the
+  booking carries its own `price_snapshot`. Three live MySQL CHECK constraints keep a discount's
+  shape honest below Zod, and the admin list warns when a coupon's window is inverted
+  (display-only — `validateCoupon` already refuses an inverted window cleanly).
+- **7C** ✅ Packages + inquiries admin; newsletter signup + export. The owner's split (Q3, option
+  c) is built as **two gates on one screen**: inquiries and packages on a new `packagesInquiries`
+  area (owner + dispatcher), the newsletter export on `usersSettings` (owner only). §9's own table
+  grew to 12 areas / 23 allowed / 13 denied, and `role-isolation.test.ts` parses that table out of
+  this file, so the spec and the matrix cannot drift apart silently. The export is deliberately a
+  **mutation, not a query**, so it audits before it returns and goes through the origin check.
+- **7D** ✅ Reports + CSV exports. The four money figures bucket by figure (owner Q7): money
+  received and refunds by the payment row's own `created_at` in Manila, bookings and
+  still-to-collect by `tour_date`. **A refund does not reduce "still to collect"** — it reduces
+  net received — and the still-to-collect statement never references the `payments` table at all.
+  CSV text cells are neutralised against formula injection (`csvText`, applied to the four
+  guest-or-content-derived cells and never near a money cell).
+- **7E** ✅ Notifications: all emails; SMS provider interface (off by default); day-before
+  reminder cron. SMS is built and **switched off** — owner Q6 answered this file's own overdue
+  §15 question 4: no SMS credits, email only. Three new events (assignment, day-before reminder,
+  review request) join the existing set; `notify()` still cannot throw. **A reminder is sent
+  once**, and a review request **at most once ever**, both claimed by an `audit_log` row written
+  before the send. Five jobs are now registered, not four — owner Q5 required `review-requests`
+  to be its own job file and its own `schedule()` call rather than logic folded into
+  `orphaned-vans`, and `jobs-registration.test.ts` pins all five with their zones.
+- **7F** ✅ Settings page — admin editing screens for every content block the dynamic-site plan
+  made database-driven. Owner-only (`usersSettings`). **Validation strictly precedes the
+  transaction**, so a block that fails its own schema is refused and nothing is written and
+  nothing is audited; `resetContentUnverifiedCache()` fires after commit, so the noindex gate is
+  never stale after a write. `admin.settings.all` reads the raw rows rather than the throwing
+  `readSettings()`, so the one screen that can repair a broken block stays loadable. The payment
+  QR moved from a hand-typed path field to a real upload widget reusing the receipt-upload
+  safeguards.
+- **7G** ⏭ Motion polish with **emilkowalski-motion** (subtle only) — **deferred to Week 8 by
+  owner answer Q9, 2026-10-23. Not built, not dropped.** The home page's motion layer (scroll
+  reveal, card stagger, count-up, header shrink, hero parallax, carousel) was built early with the
+  dynamic-site plan; what is left is the portal, driver and admin surfaces, respecting
+  `prefers-reduced-motion`. Carried into Week 8 below.
+- **7H** ✅ Package detail page at `/packages/:slug`, and the package half of the SEO release.
+  Added `packages.bySlug` mirroring `tours.bySlug` (it did not exist), and a `PackageInquiryForm`
+  fixed to one package rather than reusing the home page's dropdown-bearing inline form.
+- **7I** ✅ The driver PIN lockout **backs off instead of escalating, and is never terminal**
+  (owner Q1, option C+E) — see `CLAUDE.md`'s driver-portal section for the full rule and why the
+  2026-10-11 terminal policy was superseded. `admin.drivers.unlock` clears a lockout **without
+  touching the PIN**, a seventh dashboard alert surfaces a locked driver, and Task 5b built the
+  Unlock button behind it. `MAX_LOCKOUTS_PER_WINDOW`, `requiresAdminUnlock` and
+  `'needs_admin_unlock'` were **removed from the types**, not set to false, so the terminal state
+  cannot be reintroduced quietly.
+- **7J** ✅ Receipts are readable by **owner and finance only** (owner Q2). A dispatcher gets the
+  **same `404` as a stranger**, asserted byte-identical — status, body and raw text against the
+  same real file — because a `403` would confirm the receipt exists. Both client links are gated
+  on the page's existing `mayVerify`, not a hand-listed role array.
+- **7K** ✅ Admin tours, price tiers, add-ons and itinerary stops (server + screens). **Two price
+  tiers can never both match a party size** — overlapping tiers are refused and nothing is
+  written. A tour is **deactivated, never deleted**. Add-ons are never deleted either (a dropped
+  one is set inactive, because `booking_addons` references it), and a stop with real
+  `trip_checkpoints` history **refuses removal** with a `CONFLICT` naming the stop rather than
+  failing on a foreign key.
+- **7L** ✅ Payment-queue card details: upload age, attempt number, method, masked phone, and an
+  inline receipt preview under the same `mayVerify` gate as the link. **A guest's phone never
+  reaches the payments screen** — `phoneMasked` carries at most the last four digits, and the real
+  `leadPhone` is destructured out before the response is built.
+- **7M** ✅ The signed-in staff name in the greeting and the sidebar, carried on the session's own
+  live join. **The name never drives an access decision** — `navFor()` still takes the role
+  string, pinned by a test that reddens if the name is passed instead.
+- **7N** ✅ The cleanup batch: migration `0014` (foreign keys on the three tour child tables,
+  orphan-checked on both databases first), one booking-status label map, one client-side role
+  mirror, `setActive` writing no audit row when nothing changes, `admin.inquiries.list`
+  pagination, the seed's own itinerary-stop delete made FK-safe, and the cron-registration test.
+- **7O** ✅ BUG-110 — the server refuses, at hold time, any online charge below the gateway's ₱100
+  minimum, before any write, so **a sub-floor booking never holds a slot it cannot pay for**. The
+  guest sentence branches three ways on the booking's **total**, which is the only number that
+  decides which way out exists: pay-in-full clears the floor, or no pay mode does, or there is
+  nothing to pay at all. All three measured guest-side 2026-10-30. **Still open:** whether a ₱0
+  booking should confirm with no payment step is an owner decision; today it is refused as before
+  and only the wording is honest about why.
+- **7P** ✅ BUG-108 — booking refs are **case-insensitive on lookup, normalised to uppercase
+  server-side**, with the normalisation folded into `bookingRefSchema` itself so it runs before
+  the shape check. Refs are still generated uppercase. All three procedures share the one schema;
+  the collation this used to rest on is now true by construction.
+- **Launch blockers added by the owner after the plan was written** (2026-10-29): ✅ **A2** —
+  `db:seed` never overwrites an existing `settings` row (**the six other tables are NOT fixed —
+  BUG-118, above**); ✅ **A4** — no guest or admin form shows raw Zod JSON; per-field messages
+  through one shared `client/src/lib/field-errors.ts` reading the server's already-structured
+  `error.data.zodError`; ✅ **A5** — online payment is never offered when it cannot work, gated
+  server-side by `onlinePaymentEnabled` (**the methods-disabled half is not enforced in
+  `startPayment` — BUG-117, above**).
 - **Phase 2 upsell** — travel guides / blog for SEO. Not in this build.
 
 ### Week 8 — QA & launch prep
 
 Nothing in this week is built.
 
+> **What Week 7 hands this week** (walkthrough, 2026-10-30:
+> `docs/superpowers/plans/2026-10-30-week7-walkthrough.md`, which carries the full list with its
+> measurements). Two of these are **owner decisions and must be answered before they are built**;
+> the rest is work.
+>
+> 1. **⚠️ OWNER DECISION — `db:seed` still overwrites admin-edited content in six tables**
+>    (BUG-118). A2 fixed `settings` only. Still live in `upsertTour` (incl. **`tour_price_tiers`**,
+>    money-affecting and failing **open**), `tours` itself (title/badge/`alertNote`),
+>    `tour_images`, `upsertPackage`, `upsertReview` (can **re-publish the `is_sample` reviews**
+>    that 8D's build guard blocks on), and `upsertFleet` (can un-deactivate a driver with no audit
+>    row, and reset an `on_trip` van mid-trip). All six key on admin-editable natural keys, so an
+>    **edited** slug or plate yields a duplicate insert rather than an overwrite. `db:seed` is in
+>    the deploy path, so this gates 8E. **The decision to take: which tables does the seed own and
+>    which do Week 7's admin screens own.**
+> 2. **⚠️ OWNER DECISION — BUG-117, `checkout.startPayment` does not re-check that any online
+>    payment method is enabled.** The PayMongo-unconfigured half is enforced server-side and
+>    measured; the methods-disabled half is enforced by the UI alone, so a stale tab, a
+>    back-button return or a direct call still creates a real PayMongo session. "Hiding a button is
+>    not access control." Fails open, not closed. **Not reproducible without a real key**, which is
+>    part of why it needs a decision rather than a quick patch.
+> 3. **7G — motion polish**, deferred here by owner answer Q9 (2026-10-23) rather than dropped.
+>    Portal, driver and admin surfaces, with **emilkowalski-motion**, subtle only, respecting
+>    `prefers-reduced-motion`, and only after the layout exists.
+> 4. **No staff session has ever existed on the dev box**, so every admin screen built in Weeks 5,
+>    6 and 7 is unverified in a browser at any width. **This blocks 8B and 8C below** and is cheap
+>    to unblock: one owner account, created once, through the UI the staff-accounts plan built.
+>    Until then every client-side task keeps reporting the same gap.
+> 5. **All three surfaces share one `rg_session` cookie** (BUG-119), so a guest signing into My
+>    Booking evicts a live staff session and vice versa. Nobody decided this; it is how the code
+>    behaves, and it is why two Week 7 tasks could not run a browser check after a driver login.
+>    **There is no session isolation between surfaces** — do not assume any.
+> 6. **BUG-116** — `/checkout/:slug` and `/booking/:ref` are served `404` with the "Page not found"
+>    title, byte-identical to a nonsense URL (measured). Same defect class Task 9 fixed for the
+>    three app surfaces; `/booking/:ref` is PayMongo's own `success_url`, the page a guest lands on
+>    after paying.
+> 7. **BUG-120** — A4's per-field messages are grouped for the nested `lead` block, so a bad phone
+>    number marks Full name and Email invalid too, with the phone's own sentence. Closed launch
+>    blocker, imprecise attribution.
+> 8. **Should a ₱0 booking confirm with no payment step at all?** A 100%-off coupon is refused at
+>    hold time today (measured) and only the wording improved. **Owner question**, split out
+>    correctly by Task 19's review.
+> 9. **~70 Minor findings are deferred in the SDD ledger**
+>    (`.superpowers/sdd/2026-10-23-week7/progress.md`), never folded into a cleanup task because
+>    7N's scope was frozen before Tasks 14–16 and A2–A7 produced theirs. A Week 8 cleanup batch
+>    should sweep them the way 7N swept Tasks 8–13's.
+> 10. **`.claude/settings.local.json` fails `format:check`** — untracked, local, harness-owned, and
+>     the sole failure in an otherwise-green run. Three agents have raised it; the fix is one line
+>     in `.prettierignore` and it needs the owner to say so rather than an agent to decide it.
+> 11. **Week 6's two still-open items stand:** `TripProgressStop` carries no checkpoint id (undo
+>     label only), and the gateway wire check — **no real payment and no real refund has ever been
+>     issued**, which also leaves BUG-109's four required `/checkout_sessions` attributes
+>     unverifiable. Still the oldest blocker on the project.
+
 - **8A** Full test pass (section 14), at least two complete rounds.
-- **8B** Role permission tests for every admin area.
+- **8B** Role permission tests for every admin area. **Blocked on carry-forward 4 above** for the
+  browser half — the API half is already covered (`role-isolation.test.ts` pins §9's own table,
+  36 role × area cases; Week 7's walkthrough measured only the anonymous refusal live).
 - **8C** Mobile pass on real phones (iOS Safari, Android Chrome). (A 360px mobile pass and a
-  motion pass were done for the public site only.)
+  motion pass were done for the public site only — and every 360px number on this project to date
+  comes from a same-origin iframe harness, because `resize_window` has never worked in this
+  environment. A real device is still unproven: no touch, no on-screen keyboard, and
+  `env(safe-area-inset-bottom)` resolves to 0 on a desktop. **The admin screens have had no 360px
+  pass at all**, per carry-forward 4.)
 - **8D** Load real content from client (photos, prices, permits). The build guard
   (`client/scripts/check-placeholders.mjs`) now **blocks** a production build until this is
   done — see `docs/LAUNCH_CHECKLIST.md`.
@@ -1314,7 +1487,10 @@ hours.
 1. **Assignment deadline:** is it "assign at least 48 hours before the tour" or "within 48 hours of booking"? (Before Week 5.)
 2. **QR payments:** static R&G QR with manual verification, gateway QR Ph (auto-confirm), or both? (Before Week 3.) — _Schema side settled 2026-10-11: both are representable. A hand-verified transfer is `provider='manual'` plus the instrument the guest used; an auto-confirmed one is `provider='paymongo', method='qrph'`. The remaining question is which to OFFER, not how to store it._
 3. **PayPal:** is it enabled on R&G's PayMongo account? If not, remove it from the checkout UI. (Before Week 3.)
-4. **SMS:** will the client pay for SMS credits? If not, email only. (Before Week 7.)
+4. **SMS:** will the client pay for SMS credits? If not, email only. (Before Week 7.) — **Answered
+   2026-10-23 (Week 7, owner Q6): no. Email only.** The SMS provider interface was still built in
+   7E and is switched off by default behind `SMS_ENABLED`, so turning it on later is configuration
+   rather than a build.
 5. **Cancellation policy:** free-cancellation window and refund rules per tour. (Before Week 6.) — _Schema side settled 2026-10-11: `free_cancel_hours` is frozen into the booking's price snapshot, so changing a tour's window never alters an existing booking's rights. The policy values themselves are still open._
 6. **Backups:** confirm weekly DB dump copied off-server (no paid backups). (Before Week 8.)
 
