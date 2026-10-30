@@ -333,7 +333,7 @@ Do these in order. Steps 1–4 change nothing public, so they are safe to do ear
    seeded before that date is missing it.
 
    **Corrected 2026-10-30, then split 2026-10-30 (Task B2, BUG-118) — `pnpm --filter @rg/server
-   db:seed` is now BASE-ONLY and genuinely safe to re-run against production at any time.**
+db:seed` is now BASE-ONLY and genuinely safe to re-run against production at any time.**
    `db:seed` runs `seedBase()`: the first owner, destinations and settings, all insert-only
    forever — a row that already exists (including a settings row an admin edited, or a
    destination) is left exactly as it is, never reverted. `tours`, `tour_price_tiers`,

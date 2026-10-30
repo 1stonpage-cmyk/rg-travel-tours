@@ -52,15 +52,15 @@ Owner answers this batch acts on (logged here per the prompt's instruction):
 
 ## Pre-flight conflict scan
 
-| Task pair | Shared surface | Conflict? |
-| --- | --- | --- |
-| B2 (seed split) × B3/B4 (checkout) | None — seed.ts vs checkout.ts/coupons.ts | none |
-| B2 × B5 (cookie split) | None — different subsystems | none |
-| B3 × B4 | Both edit `server/src/routers/public/checkout.ts` (`startPayment` vs `quote`), different procedures in the same file | sequential edits to the same file; run B3 before B4, same file, non-overlapping line ranges (startPayment vs quote) |
-| B5 × B3/B4 | `createContext`/session plumbing vs checkout router — checkout procedures are `publicProcedure`, no session dependency | none |
-| B6 × B5 | B6 touches SEO resolvers + field-errors.ts (client); B5 touches session/context — no overlap | none |
-| B6 × B3/B4 | B6's field-errors half touches `createHoldInput` consumers (client `GuestDetails.tsx`), not the server procedures B3/B4 touch | none |
-| B7 × anything | `sitemap.ts` comment-only edit | none |
+| Task pair                          | Shared surface                                                                                                                | Conflict?                                                                                                           |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| B2 (seed split) × B3/B4 (checkout) | None — seed.ts vs checkout.ts/coupons.ts                                                                                      | none                                                                                                                |
+| B2 × B5 (cookie split)             | None — different subsystems                                                                                                   | none                                                                                                                |
+| B3 × B4                            | Both edit `server/src/routers/public/checkout.ts` (`startPayment` vs `quote`), different procedures in the same file          | sequential edits to the same file; run B3 before B4, same file, non-overlapping line ranges (startPayment vs quote) |
+| B5 × B3/B4                         | `createContext`/session plumbing vs checkout router — checkout procedures are `publicProcedure`, no session dependency        | none                                                                                                                |
+| B6 × B5                            | B6 touches SEO resolvers + field-errors.ts (client); B5 touches session/context — no overlap                                  | none                                                                                                                |
+| B6 × B3/B4                         | B6's field-errors half touches `createHoldInput` consumers (client `GuestDetails.tsx`), not the server procedures B3/B4 touch | none                                                                                                                |
+| B7 × anything                      | `sitemap.ts` comment-only edit                                                                                                | none                                                                                                                |
 
 Ordering: B2 → B3 → B4 → B5 → B6 → B7 (B1 already done, commit `46ac1cb`).
 Each task is its own commit; `git add` named files only.
@@ -92,7 +92,7 @@ with checkpoint history). The CLI entry point at the bottom of the file
 
 1. Split the single `seed(context)` body into two exported functions,
    keeping `seed(context)` itself as `await seedBase(context); await
-   seedDemo(context);` so every existing caller that imports `seed` (17+
+seedDemo(context);` so every existing caller that imports `seed` (17+
    test files, `global-setup.ts`, `helpers/test-db.ts`) keeps working
    unchanged — this task must not touch those call sites.
 
@@ -149,10 +149,10 @@ with checkpoint history). The CLI entry point at the bottom of the file
      confirm it throws `DB_WRONG_DATABASE` and writes nothing (no
      `upsertTour`/etc. call happens) when pointed at a database name that is
      neither `rg_travel` nor `rg_travel_test`.
-   Also re-run every existing test in `owner-seed.test.ts`,
-   `seed-settings.test.ts`, `seed-itinerary.test.ts`, and anything else
-   calling `seed('test')` — they must all still pass unmodified, since
-   `seed()`'s external behaviour has not changed.
+     Also re-run every existing test in `owner-seed.test.ts`,
+     `seed-settings.test.ts`, `seed-itinerary.test.ts`, and anything else
+     calling `seed('test')` — they must all still pass unmodified, since
+     `seed()`'s external behaviour has not changed.
 
 5. Docs:
    - `docs/BUGS_LOG.md`: move BUG-118's row from "Open / queued" to "Fixed",
@@ -162,7 +162,7 @@ with checkpoint history). The CLI entry point at the bottom of the file
      warning that `tours`/`tour_price_tiers`/`tour_images`/`packages`/
      `reviews`/fleet "are still upserted the OLD way" and that `db:seed`
      must only ever be run for the one settings-key gap) — `pnpm --filter
-     @rg/server db:seed` is now base-only and genuinely safe to re-run
+@rg/server db:seed` is now base-only and genuinely safe to re-run
      against production at any time; `db:seed:demo` must never be run
      against production and the checklist should say so explicitly.
    - `CLAUDE.md`: correct the "Content (current state)" bullet that begins
@@ -508,7 +508,7 @@ wrong) arrives as one `fieldErrors.lead` entry with no sub-key.
 top-level map, and `GuestDetails.tsx` reads `fieldErrors?.lead` once and
 renders it beside all three inputs (`name`, `email`, `phone`), marking all
 three `aria-invalid` regardless of which one is actually wrong. The A4
-reviewer ruled the *nested `lead` input shape* correct and not to be
+reviewer ruled the _nested `lead` input shape_ correct and not to be
 reworked for its own sake — this task does not flatten `createHoldInput`;
 it teaches the error path to carry nested attribution instead, which is the
 other option CLAUDE.md names as the real fix.

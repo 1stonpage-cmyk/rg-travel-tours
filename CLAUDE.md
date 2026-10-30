@@ -46,12 +46,12 @@ Five surfaces: public website, checkout, customer portal, driver portal, admin/d
 Database commands live in the **server** workspace, so they need the filter — a bare
 `pnpm db:seed` from the repo root fails with `Command "db:seed" not found` (BUG-101):
 
-| Command                                | Does                                             |
-| -------------------------------------- | ------------------------------------------------ |
-| `pnpm --filter @rg/server db:generate` | Write a migration from `src/db/schema.ts`        |
-| `pnpm --filter @rg/server db:migrate`  | Apply migrations to `rg_travel` (name preflight) |
-| `pnpm --filter @rg/server db:seed`     | BASE: owner, destinations, settings — insert-only, safe on prod |
-| `pnpm --filter @rg/server db:seed:demo`| DEMO: tours, packages, reviews, (app db) fleet — dev-only, upserts |
+| Command                                 | Does                                                               |
+| --------------------------------------- | ------------------------------------------------------------------ |
+| `pnpm --filter @rg/server db:generate`  | Write a migration from `src/db/schema.ts`                          |
+| `pnpm --filter @rg/server db:migrate`   | Apply migrations to `rg_travel` (name preflight)                   |
+| `pnpm --filter @rg/server db:seed`      | BASE: owner, destinations, settings — insert-only, safe on prod    |
+| `pnpm --filter @rg/server db:seed:demo` | DEMO: tours, packages, reviews, (app db) fleet — dev-only, upserts |
 
 Package manager is **pnpm**. Do not introduce npm or yarn lockfiles.
 `.gitattributes` pins the whole tree to LF (`* text=auto eol=lf`) — without it a fresh clone
@@ -218,7 +218,7 @@ Every page reads tours, destinations, packages, reviews, FAQs and settings from 
   - **`seedBase(context)`** — the first owner, destinations (`insertDestinationIfMissing`,
     mirroring `insertSettingIfMissing`), settings. **Insert-only on every table it touches, and
     safe to re-run against production at any time.** This is what `pnpm --filter @rg/server
-    db:seed` now runs.
+db:seed` now runs.
   - **`seedDemo(context)`** — tours (incl. `tour_price_tiers` and images), packages, reviews,
     and (app-database only) the fleet and itinerary stops. **Unchanged upsert behaviour** — this
     is dev/demo content, and staying overwritable on a dev box is the point. Guards its own
@@ -232,6 +232,7 @@ Every page reads tours, destinations, packages, reviews, FAQs and settings from 
   key on the same **admin-editable natural keys** (slug, plate, code) they always did, but only
   `seedDemo`'s five are still upserted by them — know which command you are running before you
   run it against anything but a dev box.
+
 - **Content tokens:** admin-editable content may embed `{{tokenName}}` placeholders, which the
   rendering component substitutes with live data — currently only `{{paymentMethods}}` in the
   payment FAQ answer, replaced with the enabled payment methods. Tokens are allowed **only** in
