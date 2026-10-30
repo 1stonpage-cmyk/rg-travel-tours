@@ -600,18 +600,21 @@ export const checkoutRouter = router({
       }
 
       /*
-       * Owner decision 2026-10-30: a ₱0 total (typically a 100%-off coupon)
-       * is refused here too, not only at hold time. `createHold()` already
-       * refuses it (BUG-110's `GatewayMinimumNotMetError`, via
-       * `translateHoldError`) — but this is the PREVIEW the checkout UI
-       * calls before the guest ever submits, and it was returning a
-       * successful ₱0 quote to the browser. Same constant, same message
-       * chooser, same shape as `startPayment`'s identical defensive check
-       * below: `gatewayMinimumMessage()` picks `NOTHING_TO_PAY_ONLINE` for
-       * `totalCentavos <= 0`, and this is a `BAD_REQUEST` because nothing
-       * about retrying the same request would change the answer.
+       * Owner decision 2026-10-30 (Task C1 widens Task B4's original
+       * `totalCentavos <= 0` guard). `createHold()` has always refused the
+       * WHOLE band below the gateway floor — any `totalCentavos <
+       * PAYMONGO_MIN_CENTAVOS`, zero or not — but this is the PREVIEW the
+       * checkout UI calls before the guest ever submits, so a coupon
+       * leaving e.g. ₱50 due used to preview successfully here and only get
+       * refused once the guest tried to actually hold the booking. Same
+       * constant, same message chooser, same shape as `startPayment`'s
+       * identical defensive check below: `gatewayMinimumMessage()` picks
+       * `NOTHING_TO_PAY_ONLINE` for `totalCentavos <= 0` and
+       * `TOTAL_BELOW_GATEWAY_MINIMUM` for the rest of the band, and this is
+       * a `BAD_REQUEST` because nothing about retrying the same request
+       * would change the answer.
        */
-      if (quote.totalCentavos <= 0) {
+      if (quote.totalCentavos < PAYMONGO_MIN_CENTAVOS) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: gatewayMinimumMessage(quote.totalCentavos),

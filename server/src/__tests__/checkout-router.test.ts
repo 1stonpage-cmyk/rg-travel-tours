@@ -442,14 +442,44 @@ describeWithDb('checkout router', () => {
     // ₱50 for one guest: there is no pay mode that reaches ₱100.
     const tour = await makeTourWithTier(1, 12, 5000);
     await makeFleet();
-    const quote = await caller.checkout.quote({
-      tourSlug: tour.slug,
+
+    /*
+     * Task C1 widened `quote`'s own guard to this whole band (not only
+     * ₱0), so the PREVIEW now refuses this input too — same shape as the
+     * ₱0 test below: `quote` must throw before ever handing back a
+     * `quoteId`.
+     */
+    const quoteError = await caller.checkout
+      .quote({
+        tourSlug: tour.slug,
+        date: DAY,
+        pax: 1,
+        addonIds: [],
+      })
+      .catch((e: unknown) => e);
+
+    expect(quoteError).toMatchObject({
+      code: 'BAD_REQUEST',
+      message: TOTAL_BELOW_GATEWAY_MINIMUM,
+    });
+
+    // The preview now refuses before handing back a quoteId, so the
+    // independent createHold assertion below recomputes the SAME quote the
+    // service layer would (bypassing the router's own now-refusing `quote`
+    // procedure) — exactly the ₱0 test's own pattern below.
+    const inputs = await loadQuoteInputs(tour.slug, DAY, [], undefined);
+    const quote = priceQuote({ ...inputs, pax: 1 });
+    expect(quote.totalCentavos).toBeGreaterThan(0);
+    expect(quote.totalCentavos).toBeLessThan(PAYMONGO_MIN_CENTAVOS);
+    const quoteId = quoteDigest({
+      tourId: inputs.tourId,
       date: DAY,
       pax: 1,
       addonIds: [],
+      couponCode: undefined,
+      totalCentavos: quote.totalCentavos,
     });
-    expect(quote.totalCentavos).toBeGreaterThan(0);
-    expect(quote.totalCentavos).toBeLessThan(PAYMONGO_MIN_CENTAVOS);
+
     const before = await countBookings();
 
     const error = await caller.checkout
@@ -458,7 +488,7 @@ describeWithDb('checkout router', () => {
           tourSlug: tour.slug,
           date: DAY,
           pax: 1,
-          quoteId: quote.quoteId,
+          quoteId,
           extra: { payMode: 'full' },
         }),
       )
@@ -546,14 +576,23 @@ describeWithDb('checkout router', () => {
    * The boundary this guard must not be over-tight against — mirrors
    * `create-hold.test.ts`'s own "still holds a normal-priced tour on
    * deposit" pattern: a coupon that discounts heavily but still leaves a
-   * real amount due must keep returning a successful quote.
+   * real amount due, comfortably clearing the gateway floor, must keep
+   * returning a successful quote.
+   *
+   * Task C1 widened the guard above from `totalCentavos <= 0` to
+   * `totalCentavos < PAYMONGO_MIN_CENTAVOS`, which moved this test's
+   * original 99%-off fixture (₱10 due) INTO the new refusal band — so the
+   * fixture here is chosen to clear ₱100 with margin instead of merely
+   * clearing ₱0. The 99%-off fixture itself still exists, as the new
+   * below-the-floor test just below.
    */
-  it('still returns a successful quote when a coupon leaves ₱1 or more due', async () => {
-    // 99% off a ₱1,000 (1-pax) subtotal leaves ₱10 due — comfortably above
-    // zero, so the new `totalCentavos <= 0` guard must not catch it.
+  it('still returns a successful quote when a coupon leaves comfortably more than ₱100 due', async () => {
+    // 80% off a ₱1,000 (1-pax) subtotal leaves ₱200 due — well above the
+    // ₱100 gateway floor, so the widened `totalCentavos < PAYMONGO_MIN_CENTAVOS`
+    // guard must not catch it.
     const tour = await makeTour();
     await makeFleet();
-    const coupon = await makeCoupon(9900); // 99% off
+    const coupon = await makeCoupon(8000); // 80% off
 
     const quote = await caller.checkout.quote({
       tourSlug: tour.slug,
@@ -563,8 +602,79 @@ describeWithDb('checkout router', () => {
       couponCode: coupon.code,
     });
 
-    expect(quote.totalCentavos).toBeGreaterThanOrEqual(100); // >= ₱1
+    expect(quote.totalCentavos).toBeGreaterThanOrEqual(PAYMONGO_MIN_CENTAVOS);
     expect(quote.quoteId).toBeTruthy();
+  });
+
+  /**
+   * Task C1: `createHold()` has always refused ANY `totalCentavos <
+   * PAYMONGO_MIN_CENTAVOS`, zero or not — but until this task `quote` only
+   * refused the exact-zero case (Task B4), so a coupon leaving a non-zero
+   * amount below ₱100 due previewed successfully and was only refused once
+   * the guest tried to actually hold the booking. Mirrors the ₱0 test
+   * above: `quote` must throw the same `TOTAL_BELOW_GATEWAY_MINIMUM`
+   * sentence `createHold` already throws for the identical inputs.
+   */
+  it('quote refuses a coupon that leaves a non-zero amount below the ₱100 gateway minimum', async () => {
+    // 99% off a ₱1,000 (1-pax) subtotal leaves ₱10 due — above zero (so the
+    // old `totalCentavos <= 0` guard would have let it through) but still
+    // well under the ₱100 gateway floor.
+    const tour = await makeTour();
+    await makeFleet();
+    const coupon = await makeCoupon(9900); // 99% off
+
+    const quoteError = await caller.checkout
+      .quote({
+        tourSlug: tour.slug,
+        date: DAY,
+        pax: 1,
+        addonIds: [],
+        couponCode: coupon.code,
+      })
+      .catch((e: unknown) => e);
+
+    expect(quoteError).toMatchObject({
+      code: 'BAD_REQUEST',
+      message: TOTAL_BELOW_GATEWAY_MINIMUM,
+    });
+
+    // The preview now refuses before handing back a quoteId, so the
+    // independent createHold assertion below recomputes the SAME quote the
+    // service layer would (bypassing the router's own now-refusing `quote`
+    // procedure) — exactly the ₱0 test's own pattern above, and existing
+    // coverage that must not regress now that `quote` refuses earlier too.
+    const inputs = await loadQuoteInputs(tour.slug, DAY, [], coupon.code);
+    const quote = priceQuote({ ...inputs, pax: 1 });
+    expect(quote.totalCentavos, 'the premise: above zero, still under ₱100').toBeGreaterThan(0);
+    expect(quote.totalCentavos).toBeLessThan(PAYMONGO_MIN_CENTAVOS);
+    const quoteId = quoteDigest({
+      tourId: inputs.tourId,
+      date: DAY,
+      pax: 1,
+      addonIds: [],
+      couponCode: coupon.code,
+      totalCentavos: quote.totalCentavos,
+    });
+
+    const before = await countBookings();
+
+    const error = await caller.checkout
+      .createHold(
+        validHoldInput({
+          tourSlug: tour.slug,
+          date: DAY,
+          pax: 1,
+          quoteId,
+          extra: { payMode: 'full', couponCode: coupon.code },
+        }),
+      )
+      .catch((e: unknown) => e);
+
+    expect(error).toMatchObject({
+      code: 'BAD_REQUEST',
+      message: TOTAL_BELOW_GATEWAY_MINIMUM,
+    });
+    expect(await countBookings(), 'a refused hold must leave no booking row').toBe(before);
   });
 
   it('rejects a request carrying totalCentavos — the .strict() schema at the router boundary', async () => {
