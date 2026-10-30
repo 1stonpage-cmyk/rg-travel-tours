@@ -248,9 +248,24 @@ export function mockTrpcError(procedure: string, code?: string, message?: string
    */
   mockTrpc({
     [procedure]: () => {
-      throw new MockTrpcError(message ?? 'mock failure', code ?? 'INTERNAL_SERVER_ERROR');
+      throw trpcError(message, code);
     },
   });
+}
+
+/**
+ * {@link mockTrpcError}'s refusal as a value, for the same reason
+ * {@link trpcValidationError} exists: a handler that must refuse only SOME
+ * inputs cannot use the whole-handler helpers.
+ *
+ * Carries NO `zodError`, exactly as the real server omits the key for a
+ * refusal its router threw on the merits (an expired coupon, a sold-out
+ * date) rather than one tRPC's input stage caught — which is the difference
+ * `getFieldErrors` reads to decide whether a form may place messages by
+ * field at all.
+ */
+export function trpcError(message?: string, code?: string): Error {
+  return new MockTrpcError(message ?? 'mock failure', code ?? 'INTERNAL_SERVER_ERROR');
 }
 
 /**
@@ -276,6 +291,30 @@ export function mockTrpcValidationError(
   procedure: string,
   errors: { fieldErrors?: Record<string, string[]>; formErrors?: string[] },
 ) {
+  mockTrpc({
+    [procedure]: () => {
+      throw trpcValidationError(errors);
+    },
+  });
+}
+
+/**
+ * The same refusal as {@link mockTrpcValidationError}, as a value a handler
+ * can `throw` CONDITIONALLY (task A4 fix round 1).
+ *
+ * `mockTrpcValidationError` replaces a procedure's handler outright, which is
+ * enough for a mutation but not for a QUERY a page re-asks with different
+ * input: `CheckoutPage` reacts to a refused coupon by dropping the code and
+ * asking `checkout.quote` again WITHOUT it, so a handler that refuses
+ * unconditionally blanks the page behind `QueryBoundary` and the coupon
+ * field's error line — the thing under test — never renders. An input-aware
+ * handler (`(input) => ...`, see this module's header) can refuse the first
+ * call and answer the second, which is what the real server does.
+ */
+export function trpcValidationError(errors: {
+  fieldErrors?: Record<string, string[]>;
+  formErrors?: string[];
+}): Error {
   const fieldErrors = errors.fieldErrors ?? {};
   const formErrors = errors.formErrors ?? [];
   const issues = [
@@ -284,13 +323,9 @@ export function mockTrpcValidationError(
       messages.map((message) => ({ code: 'invalid_format', path: [field], message })),
     ),
   ];
-  mockTrpc({
-    [procedure]: () => {
-      throw new MockTrpcError(JSON.stringify(issues, null, 2), 'BAD_REQUEST', {
-        formErrors,
-        fieldErrors,
-      });
-    },
+  return new MockTrpcError(JSON.stringify(issues, null, 2), 'BAD_REQUEST', {
+    formErrors,
+    fieldErrors,
   });
 }
 

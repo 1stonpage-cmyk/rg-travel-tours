@@ -11,7 +11,7 @@ import ConsentCheckbox from '@/components/checkout/ConsentCheckbox';
 import PayNowButton from '@/components/checkout/PayNowButton';
 import QuoteSummary from '@/components/checkout/QuoteSummary';
 import { Button } from '@/components/ui/button';
-import { getFieldErrors, getFormErrors } from '@/lib/field-errors';
+import { firstValidationMessage, getFieldErrors, getFormErrors } from '@/lib/field-errors';
 import { describeCheckoutError } from '@/lib/mutation-errors';
 import { trpc } from '@/lib/trpc';
 
@@ -191,13 +191,31 @@ export default function CheckoutPage() {
    */
   const settingsQuery = trpc.settings.get.useQuery();
 
-  // An invalid/expired coupon fails the WHOLE quote (couponCode is part of
-  // its input), which would otherwise blank the rest of the page. Report
-  // the server's own reason next to the coupon field, then drop back to the
-  // coupon-free quote so the guest's progress survives a bad code.
+  /*
+   * An invalid/expired coupon fails the WHOLE quote (couponCode is part of
+   * its input), which would otherwise blank the rest of the page. Report
+   * the server's own reason next to the coupon field, then drop back to the
+   * coupon-free quote so the guest's progress survives a bad code.
+   *
+   * `firstValidationMessage` FIRST, and this is the one place in task A4's
+   * sweep that a QUERY — not a mutation — can show a guest a refusal (fix
+   * round 1, C1). `quoteInput.couponCode` is `.min(1).max(40)`, and a code
+   * over that bound (typed, or arriving in the `?coupon=` query param) is an
+   * input-validation failure whose `error.message` is tRPC's own
+   * `JSON.stringify(issues, null, 2)`. `describeCheckoutError` passes any
+   * 4xx's message straight through, so on its own it put that JSON blob in
+   * the coupon field's error line — the exact launch-blocker symptom this
+   * task exists to close, reached through the one path the mutation-only
+   * sweep never looked at. The fallback is unchanged: a coupon the SERVER
+   * refuses (expired, over its usage limit, under its minimum spend) carries
+   * no `zodError`, so `firstValidationMessage` returns null and the router's
+   * own carefully-worded sentence is still what the guest reads.
+   */
   useEffect(() => {
     if (couponCode && quoteQuery.isError) {
-      setCouponError(describeCheckoutError(quoteQuery.error));
+      setCouponError(
+        firstValidationMessage(quoteQuery.error) ?? describeCheckoutError(quoteQuery.error),
+      );
       setCouponCode(undefined);
     }
   }, [couponCode, quoteQuery.isError, quoteQuery.error]);

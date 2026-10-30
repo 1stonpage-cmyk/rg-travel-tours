@@ -53,6 +53,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
 import CheckoutPage from '@/pages/public/CheckoutPage';
+import PayNowButton from '@/components/checkout/PayNowButton';
 import PortalLoginPage from '@/pages/portal/PortalLoginPage';
 import ReceiptUpload from '@/components/portal/ReceiptUpload';
 import ReviewForm from '@/components/portal/ReviewForm';
@@ -67,6 +68,8 @@ import {
   mockTrpcRateLimited,
   mockTrpcValidationError,
   resetTrpcMock,
+  trpcError,
+  trpcValidationError,
 } from './helpers/mock-trpc';
 import { SETTINGS_FIXTURE } from './helpers/fixtures';
 
@@ -211,6 +214,157 @@ describe('Checkout — createHold validation errors', () => {
       expect(within(form).getByText('Enter a valid date.')).toBeInTheDocument();
     });
     expectNoRawJson(form);
+  });
+});
+
+/* ------------------------------- 1b. Checkout's QUERY, and the Pay now button */
+
+/**
+ * Fix round 1, C1 — the launch blocker the first sweep MISSED, and the
+ * reason its "no raw Zod issue list can reach a screen" claim was false when
+ * it was made.
+ *
+ * That sweep walked `.useMutation()` call sites. `checkout.quote` is a
+ * QUERY, and `CheckoutPage` renders ITS refusal too: a coupon the quote
+ * rejects is reported in the coupon field's own error line, because the code
+ * is part of the quote's input and so a bad one fails the whole quote. The
+ * line read `describeCheckoutError(quoteQuery.error)`, which passes any
+ * 4xx's `error.message` straight through — and `quoteInput.couponCode` is
+ * `.min(1).max(40)`, so a 41-character code is an input-validation failure
+ * whose message is tRPC's `JSON.stringify(issues, null, 2)`. A guest got the
+ * JSON blob, in the one field on this page they can type a bound-breaking
+ * value into.
+ *
+ * **Why the `?coupon=` query param and not the input box.** Both reach it,
+ * and the box now carries `maxLength={40}` so a browser will not let anyone
+ * type past the bound — which is exactly why the URL is the honest vector to
+ * test: the cap is defence in depth, the server's bound is the authority,
+ * and a link with a long `?coupon=` has no input element to cap it.
+ *
+ * **Why the mock is input-aware.** The page's whole point is that a bad code
+ * must not cost the guest their page: it drops the code and re-asks
+ * `checkout.quote` WITHOUT it. A handler that refused unconditionally would
+ * leave `QueryBoundary` in its error state and never render the coupon field
+ * at all, so the test would prove nothing. This handler refuses the
+ * over-long code and answers the coupon-free retry, as the real server does.
+ */
+const OVER_LONG_COUPON = 'R'.repeat(41);
+/** `quoteInput.couponCode`'s own message in `@rg/shared`. */
+const COUPON_BOUND_MESSAGE = 'Enter a coupon code of up to 40 characters.';
+
+/** The `couponCode` of a `checkout.quote` call, as the mock parsed it. */
+function askedCoupon(input: unknown): string | null {
+  const value = (input as { couponCode?: unknown } | undefined)?.couponCode;
+  return typeof value === 'string' ? value : null;
+}
+
+describe('Checkout — checkout.quote is a QUERY, and its refusal is rendered too', () => {
+  it('shows the coupon bound message, never the raw issue list, for an over-long ?coupon=', async () => {
+    mockTrpc({
+      'checkout.quote': (input: unknown) => {
+        const coupon = askedCoupon(input);
+        if (coupon !== null && coupon.length > 40) {
+          throw trpcValidationError({ fieldErrors: { couponCode: [COUPON_BOUND_MESSAGE] } });
+        }
+        return QUOTE_FIXTURE;
+      },
+    });
+    render(
+      <TrpcProviders>
+        <MemoryRouter
+          initialEntries={[`/checkout/oslob-tour?date=2026-11-20&pax=3&coupon=${OVER_LONG_COUPON}`]}
+        >
+          <Routes>
+            <Route path="/checkout/:tourSlug" element={<CheckoutPage />} />
+          </Routes>
+        </MemoryRouter>
+      </TrpcProviders>,
+    );
+
+    // The coupon-free retry is what brings the form — and the coupon field's
+    // error line — back on screen.
+    const form = await screen.findByRole('form', { name: /checkout/i });
+    await waitFor(() => {
+      expect(within(form).getByText(COUPON_BOUND_MESSAGE)).toBeInTheDocument();
+    });
+    // The raw-blob guard: reverting the page to the bare
+    // `describeCheckoutError(quoteQuery.error)` reddens this line.
+    expectNoRawJson(form);
+  });
+
+  /**
+   * The other half of the same guard, and why it is a `??` rather than a
+   * replacement: a coupon the SERVER refuses on its merits (expired, used
+   * up, under its minimum spend) carries no `zodError`, so the router's own
+   * sentence must still be what the guest reads.
+   */
+  it("still shows the router's own sentence for a coupon refused on its merits", async () => {
+    const SERVER_SENTENCE = 'That coupon has expired.';
+    mockTrpc({
+      'checkout.quote': (input: unknown) => {
+        if (askedCoupon(input) !== null) throw trpcError(SERVER_SENTENCE, 'BAD_REQUEST');
+        return QUOTE_FIXTURE;
+      },
+    });
+    render(
+      <TrpcProviders>
+        <MemoryRouter initialEntries={['/checkout/oslob-tour?date=2026-11-20&pax=3&coupon=GONE']}>
+          <Routes>
+            <Route path="/checkout/:tourSlug" element={<CheckoutPage />} />
+          </Routes>
+        </MemoryRouter>
+      </TrpcProviders>,
+    );
+
+    const form = await screen.findByRole('form', { name: /checkout/i });
+    await waitFor(() => {
+      expect(within(form).getByText(SERVER_SENTENCE)).toBeInTheDocument();
+    });
+    expectNoRawJson(form);
+  });
+
+  /** C1's defence in depth: the box itself cannot hold a code past the bound. */
+  it("caps the coupon box at the schema's own 40 characters", async () => {
+    mockTrpc({ 'checkout.quote': QUOTE_FIXTURE });
+    render(
+      <TrpcProviders>
+        <MemoryRouter initialEntries={['/checkout/oslob-tour?date=2026-11-20&pax=3']}>
+          <Routes>
+            <Route path="/checkout/:tourSlug" element={<CheckoutPage />} />
+          </Routes>
+        </MemoryRouter>
+      </TrpcProviders>,
+    );
+
+    const form = await screen.findByRole('form', { name: /checkout/i });
+    expect(within(form).getByLabelText(/coupon code/i)).toHaveAttribute('maxlength', '40');
+  });
+});
+
+/**
+ * Fix round 1, I1 — `PayNowButton` renders `checkout.startPayment`'s refusal
+ * through the same `describeCheckoutError`, so it had the same shape. Its
+ * `ref` is server-generated, which makes a validation failure here
+ * near-unreachable rather than impossible; the guard is the same one, so the
+ * two surfaces sharing that helper cannot differ on whether a raw issue list
+ * can reach a guest.
+ */
+describe('Pay now — checkout.startPayment validation errors', () => {
+  it('shows the ref message rather than the raw issue list', async () => {
+    mockTrpcValidationError('checkout.startPayment', {
+      fieldErrors: { ref: [REF_MESSAGE] },
+    });
+    const user = userEvent.setup();
+    const { container } = render(
+      <TrpcProviders>
+        <PayNowButton bookingRef="RG-7KQ4M9" />
+      </TrpcProviders>,
+    );
+
+    await user.click(screen.getByRole('button', { name: /pay now/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(REF_MESSAGE);
+    expectNoRawJson(container);
   });
 });
 

@@ -40,6 +40,14 @@ export default function CouponField({
           onChange={(e) => onValueChange(e.target.value)}
           placeholder="e.g. RGTOURS10"
           disabled={Boolean(applied)}
+          /*
+           * `quoteInput.couponCode`'s own `.max(40)` (@rg/shared), mirrored
+           * here so a guest cannot type past it in the first place (task A4
+           * fix round 1, C1). Defence in depth only — the SERVER's bound is
+           * still the authority, since the same code can arrive in the
+           * `?coupon=` query param where no input element exists to cap it.
+           */
+          maxLength={40}
           className="tap-target flex-1"
         />
         {applied ? (

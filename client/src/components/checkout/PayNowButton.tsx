@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button';
+import { firstValidationMessage } from '@/lib/field-errors';
 import { describeCheckoutError } from '@/lib/mutation-errors';
 import { trpc } from '@/lib/trpc';
 
@@ -69,7 +70,18 @@ export default function PayNowButton({ bookingRef, label = 'Pay now' }: Props) {
           role="alert"
           className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-lg border p-3 text-sm font-medium"
         >
-          {describeCheckoutError(startPayment.error)}
+          {/*
+           * `firstValidationMessage` first, the same guard `CheckoutPage`
+           * uses (task A4 fix round 1, I1). `startPaymentInput` is just
+           * `{ ref: bookingRefSchema }`, and that ref is server-generated,
+           * so an input-validation failure here is near-unreachable in
+           * practice — but `describeCheckoutError` alone passes any 4xx's
+           * `error.message` through, and for a `ZodError` that message is
+           * tRPC's `JSON.stringify(issues, null, 2)`. One shape, one guard:
+           * the two surfaces that share `describeCheckoutError` must not
+           * differ on whether a raw issue list can reach a guest.
+           */}
+          {firstValidationMessage(startPayment.error) ?? describeCheckoutError(startPayment.error)}
         </p>
       )}
     </div>

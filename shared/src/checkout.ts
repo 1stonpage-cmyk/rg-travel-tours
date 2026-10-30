@@ -69,7 +69,22 @@ export const quoteInput = z
     date: civilDateSchema,
     pax: z.number().int().min(1).max(12),
     addonIds: z.array(z.number().int().positive()).max(20).default([]),
-    couponCode: z.string().min(1).max(40).optional(),
+    /*
+     * The ONE field on this input a guest types, and so the one whose bound
+     * a guest can trip (task A4 fix round 1, C1): a 41-character code typed
+     * into the coupon box, or arriving in the `?coupon=` query param, is an
+     * input-validation failure that `CheckoutPage` renders in the coupon
+     * field's own error line. Zod's default there ("Too big: expected string
+     * to have <=40 characters") is written for whoever wrote the bound;
+     * this is written for the guest and names the field, the same rule Part
+     * 1 applied to the phone, the date and the booking ref. The bound is
+     * unchanged — the server stays exactly as strict.
+     */
+    couponCode: z
+      .string()
+      .min(1, 'Enter a coupon code of up to 40 characters.')
+      .max(40, 'Enter a coupon code of up to 40 characters.')
+      .optional(),
   })
   .strict();
 export type QuoteInput = z.infer<typeof quoteInput>;
@@ -83,16 +98,52 @@ export const createHoldInput = quoteInput
      * so a price cannot be replayed after an admin edits a price tier.
      */
     quoteId: z.string().regex(/^[0-9a-f]{32}$/, 'Expected a 32-character lowercase hex quote id'),
+    /**
+     * **Every message under `lead` names its own field** (task A4 fix round
+     * 1, I2).
+     *
+     * `z.flattenError` keys by `issue.path[0]`, so this nested object reports
+     * name, email and phone together under one `fieldErrors.lead` entry —
+     * deliberate (Part 2), because the client cannot tell which of the three
+     * boxes a grouped message belongs to and so renders it against the
+     * name/email/phone group as a whole (`GuestDetails.tsx`). That grouping
+     * is only honest while every message it can carry says which field it is
+     * about: Part 1 gave `phone` its own sentence, but `name`'s BOUNDS were
+     * left as Zod's own defaults ("Too big: expected string to have <=160
+     * characters"), which rendered underneath the email and phone rows
+     * naming no field at all — the "misleading message under the wrong
+     * field" this task exists to close. The bounds themselves are unchanged;
+     * only what a failure says.
+     */
     lead: z
       .object({
-        name: z.string().min(1).max(160),
+        name: z
+          .string()
+          .min(1, 'Enter your name (up to 160 characters).')
+          .max(160, 'Enter your name (up to 160 characters).'),
         /*
-         * The message is spelled rather than left to zod's own ("Invalid
-         * email address"), so every surface that shows this field's refusal
-         * says the same guest-facing sentence (task A4). Same rule as
-         * `bookingLookupInput` below and `shared/src/schemas/public.ts`.
+         * TWO sentences, because the FORMAT and the BOUND are two different
+         * facts about this one field.
+         *
+         * The format message is spelled rather than left to zod's own
+         * ("Invalid email address"), so every surface that shows this
+         * field's refusal says the same guest-facing sentence (task A4).
+         * Same rule as `bookingLookupInput` below and
+         * `shared/src/schemas/public.ts`.
+         *
+         * The bound needs its own, and it is NOT the defect the fix-round
+         * review expected to find here (measured): in Zod 4 the string a
+         * format constructor is given is a SCHEMA-level error inherited by
+         * every check added after it, so `z.email('Enter a valid email
+         * address.').max(200)` answered a perfectly well-formed 202-character
+         * address with "Enter a valid email address." — field-naming, but
+         * untrue, and a guest who retypes a valid address is refused again.
+         * Zod's `Too big: expected string to have <=200 characters` never
+         * reached a guest from this line.
          */
-        email: z.email('Enter a valid email address.').max(200),
+        email: z
+          .email('Enter a valid email address.')
+          .max(200, 'Enter a shorter email address (up to 200 characters).'),
         phone: phPhoneSchema,
       })
       .strict(),
