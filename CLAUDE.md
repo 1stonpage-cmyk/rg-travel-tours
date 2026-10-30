@@ -574,9 +574,12 @@ Every page reads tours, destinations, packages, reviews, FAQs and settings from 
   does not exist. Total at or above the floor → name pay-in-full, which genuinely works. Total
   below the floor but above zero → **do not** name pay-in-full; that is the same refusal again.
   Total of nothing (a 100%-off coupon) → name no payment method at all, because there is no
-  amount. All three measured guest-side. **Still open:** whether a ₱0 booking should confirm with
-  no payment step at all is an owner decision; today it is refused exactly as before and only the
-  wording is honest about it.
+  amount. All three measured guest-side. **Owner decision 2026-10-30: a ₱0 booking is always
+  refused, never confirmed with no payment step.** It is enforced in two places now — at hold time
+  (`createHold()`, as above) and in the public `checkout.quote` preview the checkout UI calls
+  before the guest ever submits: `quote` throws the same `BAD_REQUEST` /
+  `gatewayMinimumMessage()` refusal the instant its own computed `totalCentavos` is `<= 0`, rather
+  than handing the browser a successful ₱0 quote it would only be refused on at hold time.
 - **Whether "Pay now" may be offered is the SERVER's decision, published as one boolean.**
   `onlinePaymentEnabled` on the settings payload is `paymongoConfigured && at least one enabled
 payment method`; the payload deliberately carries **neither ingredient**, so the browser cannot

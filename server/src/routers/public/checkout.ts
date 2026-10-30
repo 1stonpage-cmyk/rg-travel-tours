@@ -368,8 +368,16 @@ function translateCouponError(error: unknown): TRPCError | null {
  * two throw sites produce, which is as stable as a typed class would be:
  * changing either message is changing this file's contract with them, not
  * an incidental edit.
+ *
+ * `quote` itself now also raises a `TRPCError` directly (the ₱0 guard
+ * below), so — exactly as `translateStartPaymentError` already does for
+ * `startPayment`'s own inline throws — a `TRPCError` is passed through
+ * untouched here first. Without this line that deliberate `BAD_REQUEST`
+ * would be re-wrapped into a generic `INTERNAL_SERVER_ERROR` by the final
+ * `internalError()` fallback below.
  */
 function translateQuoteError(error: unknown): TRPCError {
+  if (error instanceof TRPCError) return error;
   const coupon = translateCouponError(error);
   if (coupon) return coupon;
   if (error instanceof Error && /No active tour found for slug/.test(error.message)) {
@@ -589,6 +597,25 @@ export const checkoutRouter = router({
       // silent lookup.
       if (input.couponCode) {
         await validateCoupon(input.couponCode, quote.subtotalCentavos, new Date());
+      }
+
+      /*
+       * Owner decision 2026-10-30: a ₱0 total (typically a 100%-off coupon)
+       * is refused here too, not only at hold time. `createHold()` already
+       * refuses it (BUG-110's `GatewayMinimumNotMetError`, via
+       * `translateHoldError`) — but this is the PREVIEW the checkout UI
+       * calls before the guest ever submits, and it was returning a
+       * successful ₱0 quote to the browser. Same constant, same message
+       * chooser, same shape as `startPayment`'s identical defensive check
+       * below: `gatewayMinimumMessage()` picks `NOTHING_TO_PAY_ONLINE` for
+       * `totalCentavos <= 0`, and this is a `BAD_REQUEST` because nothing
+       * about retrying the same request would change the answer.
+       */
+      if (quote.totalCentavos <= 0) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: gatewayMinimumMessage(quote.totalCentavos),
+        });
       }
 
       const quoteId = quoteDigest({

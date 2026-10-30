@@ -36,7 +36,7 @@ import {
   tours,
   vans,
 } from '../db/schema';
-import { loadQuoteInputs, priceQuote } from '../services/pricing';
+import { loadQuoteInputs, priceQuote, quoteDigest } from '../services/pricing';
 import {
   BOOKING_LOOKUP_MAX,
   BOOKING_LOOKUP_PROCEDURES,
@@ -480,14 +480,41 @@ describeWithDb('checkout router', () => {
     const tour = await makeTour();
     await makeFleet();
     const coupon = await makeCoupon(10000); // 100% off — percent_bp allows it
-    const quote = await caller.checkout.quote({
-      tourSlug: tour.slug,
+
+    // 2026-10-30 owner decision: a ₱0 total is refused in the preview too,
+    // not only at hold time — `checkout.quote` must throw here, the same
+    // refusal `createHold` already gives below.
+    const quoteError = await caller.checkout
+      .quote({
+        tourSlug: tour.slug,
+        date: DAY,
+        pax: 2,
+        addonIds: [],
+        couponCode: coupon.code,
+      })
+      .catch((e: unknown) => e);
+
+    expect(quoteError).toMatchObject({
+      code: 'BAD_REQUEST',
+      message: NOTHING_TO_PAY_ONLINE,
+    });
+
+    // The preview now refuses before handing back a quoteId, so the
+    // independent createHold assertion below recomputes the SAME quote the
+    // service layer would (bypassing the router's own now-refusing `quote`
+    // procedure) — exactly `create-hold.test.ts`'s own `quoteFor()` helper.
+    const inputs = await loadQuoteInputs(tour.slug, DAY, [], coupon.code);
+    const quote = priceQuote({ ...inputs, pax: 2 });
+    expect(quote.totalCentavos, 'the premise: a 100% coupon leaves nothing to pay').toBe(0);
+    const quoteId = quoteDigest({
+      tourId: inputs.tourId,
       date: DAY,
       pax: 2,
       addonIds: [],
       couponCode: coupon.code,
+      totalCentavos: quote.totalCentavos,
     });
-    expect(quote.totalCentavos, 'the premise: a 100% coupon leaves nothing to pay').toBe(0);
+
     const before = await countBookings();
 
     const error = await caller.checkout
@@ -496,7 +523,7 @@ describeWithDb('checkout router', () => {
           tourSlug: tour.slug,
           date: DAY,
           pax: 2,
-          quoteId: quote.quoteId,
+          quoteId,
           extra: { payMode: 'full', couponCode: coupon.code },
         }),
       )
@@ -513,6 +540,31 @@ describeWithDb('checkout router', () => {
     expect(NOTHING_TO_PAY_ONLINE).not.toMatch(/in full/i);
     expect(NOTHING_TO_PAY_ONLINE).not.toMatch(/bank transfer|QR code/i);
     expect(await countBookings(), 'a refused hold must leave no booking row').toBe(before);
+  });
+
+  /**
+   * The boundary this guard must not be over-tight against — mirrors
+   * `create-hold.test.ts`'s own "still holds a normal-priced tour on
+   * deposit" pattern: a coupon that discounts heavily but still leaves a
+   * real amount due must keep returning a successful quote.
+   */
+  it('still returns a successful quote when a coupon leaves ₱1 or more due', async () => {
+    // 99% off a ₱1,000 (1-pax) subtotal leaves ₱10 due — comfortably above
+    // zero, so the new `totalCentavos <= 0` guard must not catch it.
+    const tour = await makeTour();
+    await makeFleet();
+    const coupon = await makeCoupon(9900); // 99% off
+
+    const quote = await caller.checkout.quote({
+      tourSlug: tour.slug,
+      date: DAY,
+      pax: 1,
+      addonIds: [],
+      couponCode: coupon.code,
+    });
+
+    expect(quote.totalCentavos).toBeGreaterThanOrEqual(100); // >= ₱1
+    expect(quote.quoteId).toBeTruthy();
   });
 
   it('rejects a request carrying totalCentavos — the .strict() schema at the router boundary', async () => {
