@@ -4,3 +4,4 @@ coverage
 pnpm-lock.yaml
 client/public/placeholders
 demo
+.claude/settings.local.json
