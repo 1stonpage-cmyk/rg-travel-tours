@@ -242,7 +242,7 @@ export const adminRefundsRouter = router({
           reason: input.reason,
           // The gate's validated session, never a value from the payload:
           // "who cancelled this" is not a question a client may answer.
-          actorUserId: ctx.session.subjectId,
+          actorUserId: ctx.adminSession.subjectId,
           // The clock, read once here at the request boundary.
           now: new Date(),
         });
@@ -269,7 +269,7 @@ export const adminRefundsRouter = router({
           amountCentavos: input.amountCentavos,
           reason: input.reason,
           offline: input.offline,
-          actorUserId: ctx.session.subjectId,
+          actorUserId: ctx.adminSession.subjectId,
         });
       } catch (error) {
         throw asTrpcError(error);

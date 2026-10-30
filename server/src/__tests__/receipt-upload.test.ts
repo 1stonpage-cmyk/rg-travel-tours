@@ -24,7 +24,7 @@ import { createApp } from '../app';
 import { getDb, getPool } from '../db/client';
 import { auditLog, bookings, destinations, payments, tours, users } from '../db/schema';
 import { RECEIPT_UPLOAD_MAX_PER_IP } from '../middleware/rate-limit';
-import { SESSION_COOKIE } from '../middleware/session-cookie';
+import { SESSION_COOKIE_BY_SUBJECT } from '../middleware/session-cookie';
 import { generateBookingRef } from '../services/booking-ref';
 import { resetTransportForTests, setTransportForTests } from '../services/notify';
 import { createSession } from '../services/sessions';
@@ -139,7 +139,14 @@ function upload(
     .post(`/api/receipts/upload?${search}`)
     .set('Origin', ORIGIN)
     .set('Content-Type', contentType);
-  if (token) req.set('Cookie', `${SESSION_COOKIE}=${token}`);
+  /*
+   * BUG-119: the upload is customer-only, so the token — whatever subject it
+   * actually resolves to — is sent under the customer cookie's name. For the
+   * "and one with a STAFF session" refusal test below this deliberately
+   * exercises the route's own `session.subjectType !== 'customer'` check
+   * rather than merely "no cookie was sent at all", which would prove less.
+   */
+  if (token) req.set('Cookie', `${SESSION_COOKIE_BY_SUBJECT.customer}=${token}`);
   return req.send(body);
 }
 

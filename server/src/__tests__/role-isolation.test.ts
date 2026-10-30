@@ -73,11 +73,11 @@ function gated(area: AdminArea) {
   return publicProcedure
     .use(({ ctx, next }) => {
       const session = requireRole(...ROLE_MATRIX[area])(ctx);
-      return next({ ctx: { session } });
+      return next({ ctx: { adminSession: session } });
     })
     .query(({ ctx }) => {
       resolverRuns.push(area);
-      return { area, actor: (ctx as { session: StaffSession }).session.subjectId };
+      return { area, actor: (ctx as { adminSession: StaffSession }).adminSession.subjectId };
     });
 }
 
@@ -103,7 +103,7 @@ const adminHarness = router({
 
 /** An authenticated staff session, as the Week 5 session service will build it. */
 function staffSession(role: unknown) {
-  return { session: { subjectType: 'user', subjectId: 7, role } };
+  return { adminSession: { subjectType: 'user', subjectId: 7, role } };
 }
 
 /** Calls one area with one context and reports what happened. */
@@ -259,16 +259,24 @@ describe('requireRole fails closed', () => {
 
   const denied: readonly { what: string; ctx: unknown; code: string }[] = [
     { what: 'no session on the context', ctx: {}, code: 'UNAUTHORIZED' },
-    { what: 'an explicitly null session', ctx: { session: null }, code: 'UNAUTHORIZED' },
-    { what: 'an undefined session', ctx: { session: undefined }, code: 'UNAUTHORIZED' },
+    { what: 'an explicitly null session', ctx: { adminSession: null }, code: 'UNAUTHORIZED' },
+    { what: 'an undefined session', ctx: { adminSession: undefined }, code: 'UNAUTHORIZED' },
     {
+      /*
+       * BUG-119: in the real request path this shape cannot arise —
+       * `context.ts` only ever populates `ctx.adminSession` when the
+       * cookie resolved to `subjectType === 'user'` — but `requireRole`
+       * still re-checks the subject type itself as defence in depth, so a
+       * context built some OTHER way (a bug, a future caller) that hands
+       * it a wrong-subject session is refused here too.
+       */
       what: 'a DRIVER session carrying an owner role',
-      ctx: { session: { subjectType: 'driver', subjectId: 3, role: 'owner' } },
+      ctx: { adminSession: { subjectType: 'driver', subjectId: 3, role: 'owner' } },
       code: 'UNAUTHORIZED',
     },
     {
       what: 'a CUSTOMER session carrying an owner role',
-      ctx: { session: { subjectType: 'customer', subjectId: 42, role: 'owner' } },
+      ctx: { adminSession: { subjectType: 'customer', subjectId: 42, role: 'owner' } },
       code: 'UNAUTHORIZED',
     },
     { what: 'a session with no role at all', ctx: staffSession(undefined), code: 'FORBIDDEN' },
@@ -282,7 +290,7 @@ describe('requireRole fails closed', () => {
     { what: 'a prototype-shaped role', ctx: staffSession('__proto__'), code: 'FORBIDDEN' },
     { what: 'a role that is an object', ctx: staffSession({ role: 'owner' }), code: 'FORBIDDEN' },
     { what: 'a role that is an array of roles', ctx: staffSession(['owner']), code: 'FORBIDDEN' },
-    { what: 'a session that is a string', ctx: { session: 'owner' }, code: 'UNAUTHORIZED' },
+    { what: 'a session that is a string', ctx: { adminSession: 'owner' }, code: 'UNAUTHORIZED' },
   ];
 
   for (const { what, ctx, code } of denied) {

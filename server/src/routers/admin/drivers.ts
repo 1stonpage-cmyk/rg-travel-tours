@@ -330,7 +330,7 @@ export const adminDriversRouter = router({
           const [result] = await tx.insert(drivers).values({ ...toInsertValues(input), pinHash });
           await writeAudit(tx, {
             actorType: 'user',
-            actorId: ctx.session.subjectId,
+            actorId: ctx.adminSession.subjectId,
             action: 'driver_created',
             entity: 'driver',
             entityId: result.insertId,
@@ -359,7 +359,7 @@ export const adminDriversRouter = router({
           }
           await writeAudit(tx, {
             actorType: 'user',
-            actorId: ctx.session.subjectId,
+            actorId: ctx.adminSession.subjectId,
             action: 'driver_updated',
             entity: 'driver',
             entityId: input.id,
@@ -424,7 +424,7 @@ export const adminDriversRouter = router({
 
         await writeAudit(tx, {
           actorType: 'user',
-          actorId: ctx.session.subjectId,
+          actorId: ctx.adminSession.subjectId,
           action: input.isActive ? 'driver.reactivated' : 'driver.deactivated',
           entity: 'driver',
           entityId: input.id,
@@ -492,7 +492,7 @@ export const adminDriversRouter = router({
         });
         await writeAudit(tx, {
           actorType: 'user',
-          actorId: ctx.session.subjectId,
+          actorId: ctx.adminSession.subjectId,
           action: 'driver_leave_added',
           entity: 'driver',
           entityId: input.driverId,
@@ -517,7 +517,7 @@ export const adminDriversRouter = router({
         await tx.delete(driverLeaves).where(eq(driverLeaves.id, input.id));
         await writeAudit(tx, {
           actorType: 'user',
-          actorId: ctx.session.subjectId,
+          actorId: ctx.adminSession.subjectId,
           action: 'driver_leave_removed',
           entity: 'driver',
           entityId: existing.driverId,
@@ -635,7 +635,7 @@ export const adminDriversRouter = router({
 
         await writeAudit(tx, {
           actorType: 'user',
-          actorId: ctx.session.subjectId,
+          actorId: ctx.adminSession.subjectId,
           action: 'driver.unlocked',
           entity: 'driver',
           entityId: input.id,
@@ -694,7 +694,7 @@ export const adminDriversRouter = router({
         }
         await writeAudit(tx, {
           actorType: 'user',
-          actorId: ctx.session.subjectId,
+          actorId: ctx.adminSession.subjectId,
           action: 'driver_pin_reset',
           entity: 'driver',
           entityId: input.id,

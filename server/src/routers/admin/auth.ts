@@ -49,7 +49,7 @@ import { users } from '../../db/schema';
 import {
   clearSessionCookie,
   setSessionCookie,
-  SESSION_COOKIE,
+  SESSION_COOKIE_BY_SUBJECT,
 } from '../../middleware/session-cookie';
 import { writeAudit } from '../../services/audit';
 import { hashPassword, verifyPassword } from '../../services/password';
@@ -112,7 +112,7 @@ export const staffAuthRouter = router({
     }
 
     const { token, expiresAt } = await createSession('user', identity.userId, now);
-    setSessionCookie(ctx.res, token, expiresAt);
+    setSessionCookie(ctx.res, 'user', token, expiresAt);
 
     await getDb().transaction(async (tx) => {
       await writeAudit(tx, {
@@ -141,12 +141,12 @@ export const staffAuthRouter = router({
    */
   logout: publicProcedure.mutation(async ({ ctx }) => {
     const cookies = ctx.req.cookies as Record<string, string | undefined> | undefined;
-    const token = cookies?.[SESSION_COOKIE];
+    const token = cookies?.[SESSION_COOKIE_BY_SUBJECT.user];
 
     if (token) {
-      const session = ctx.session;
+      const session = ctx.adminSession;
       await revokeSession(token);
-      if (session && session.subjectType === 'user') {
+      if (session) {
         await getDb().transaction((tx) =>
           writeAudit(tx, {
             actorType: 'user',
@@ -159,7 +159,7 @@ export const staffAuthRouter = router({
       }
     }
 
-    clearSessionCookie(ctx.res);
+    clearSessionCookie(ctx.res, 'user');
     return { ok: true as const };
   }),
 
@@ -171,13 +171,13 @@ export const staffAuthRouter = router({
    * and, until Task 1, none of it had ever run.
    */
   me: adminProcedureAllowingPasswordChange('dashboard').query(({ ctx }) => ({
-    userId: ctx.session.subjectId,
-    role: ctx.session.role,
+    userId: ctx.adminSession.subjectId,
+    role: ctx.adminSession.role,
     // Tells the client to send this person to "Set a new password" first.
-    mustChangePassword: ctx.session.mustChangePassword === true,
+    mustChangePassword: ctx.adminSession.mustChangePassword === true,
     // Read live off the `users` row by `readSession` (Task 16, 7M), same as
     // `role` above: a rename mid-session shows up on the very next request.
-    name: ctx.session.name,
+    name: ctx.adminSession.name,
   })),
 
   /**
@@ -199,7 +199,7 @@ export const staffAuthRouter = router({
     .input(changePasswordInputSchema)
     .mutation(async ({ input, ctx }) => {
       const now = new Date();
-      const userId = ctx.session.subjectId;
+      const userId = ctx.adminSession.subjectId;
 
       if (isChangePasswordThrottled(userId, now)) {
         throw new TRPCError({
@@ -233,7 +233,7 @@ export const staffAuthRouter = router({
 
       const newHash = await hashPassword(input.newPassword);
       const cookies = ctx.req.cookies as Record<string, string | undefined> | undefined;
-      const token = cookies?.[SESSION_COOKIE];
+      const token = cookies?.[SESSION_COOKIE_BY_SUBJECT.user];
 
       await getDb().transaction(async (tx) => {
         const [updated] = await tx

@@ -44,12 +44,25 @@ export function captureResponse() {
 }
 
 /**
- * A context with no session — the anonymous caller, which is what every
- * public procedure is meant to be exercised as.
+ * A context with no session at all on any of the three surfaces — the
+ * anonymous caller, which is what every public procedure is meant to be
+ * exercised as.
  *
- * `session` defaults to `null` rather than being omitted: `null` is what
- * `createContext` produces for an anonymous request, and a test that passed
- * `undefined` would be exercising a state the real factory never emits.
+ * **BUG-119:** `createContext` used to resolve one `session` field from one
+ * shared cookie; it now resolves three independent, surface-scoped fields
+ * (`adminSession`, `driverSession`, `customerSession`) from three separate
+ * cookies. This helper takes the single `ResolvedSession` every existing
+ * caller already passes and sorts it onto the ONE field matching its own
+ * `subjectType`, leaving the other two `null` — exactly what the real
+ * factory would produce for a browser carrying only that one surface's
+ * cookie. `staffContext`, `customerContext` and `driverContext` below are
+ * unchanged by this: they still build one `ResolvedSession` and hand it
+ * here.
+ *
+ * `null` rather than omitting a field: `null` is what `createContext`
+ * produces for a cookie that is absent, invalid or the wrong subject, and a
+ * test that passed `undefined` would be exercising a state the real factory
+ * never emits.
  */
 export function testContext(
   session: ResolvedSession | null = null,
@@ -58,7 +71,9 @@ export function testContext(
   return {
     req: { cookies } as unknown as Request,
     res: captureResponse().res,
-    session,
+    adminSession: session?.subjectType === 'user' ? session : null,
+    driverSession: session?.subjectType === 'driver' ? session : null,
+    customerSession: session?.subjectType === 'customer' ? session : null,
   };
 }
 

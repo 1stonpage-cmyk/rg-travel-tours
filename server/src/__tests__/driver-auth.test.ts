@@ -46,7 +46,7 @@ import { attemptDriverLogin } from '../services/driver-auth';
 import { LOCKOUT_SCHEDULE_MINUTES, MAX_FAILED_ATTEMPTS } from '../services/driver-lockout';
 import { hashPassword } from '../services/password';
 import { SESSION_TTL_MS_BY_SUBJECT, createSession, readSession } from '../services/sessions';
-import { SESSION_COOKIE } from '../middleware/session-cookie';
+import { SESSION_COOKIE_BY_SUBJECT } from '../middleware/session-cookie';
 import { driverProcedure, router } from '../trpc';
 import { captureResponse, customerContext, staffContext, testContext } from './helpers/ctx';
 import { describeWithDb } from './helpers/db';
@@ -581,7 +581,11 @@ describeWithDb('driver.login / driver.logout (resolvers)', () => {
   it('sets the session cookie on success, expiring at the exact instant the service minted', async () => {
     const { code, pin, driverId } = await makeDriverWithPin();
     const { res, set } = captureResponse();
-    const api = appRouter.createCaller({ req: { cookies: {} }, res, session: null } as never);
+    const api = appRouter.createCaller({
+      req: { cookies: {} },
+      res,
+      driverSession: null,
+    } as never);
 
     /*
      * A spy, not a mock — `attemptDriverLogin` runs for real, and this just
@@ -600,7 +604,7 @@ describeWithDb('driver.login / driver.logout (resolvers)', () => {
     });
 
     expect(set).toHaveLength(1);
-    expect(set[0]!.name).toBe(SESSION_COOKIE);
+    expect(set[0]!.name).toBe(SESSION_COOKIE_BY_SUBJECT.driver);
     expect(set[0]!.options.httpOnly).toBe(true);
 
     expect(spy).toHaveBeenCalledTimes(1);
@@ -622,7 +626,11 @@ describeWithDb('driver.login / driver.logout (resolvers)', () => {
   it('sets no cookie when the login is refused', async () => {
     const { code } = await makeDriverWithPin();
     const { res, set } = captureResponse();
-    const api = appRouter.createCaller({ req: { cookies: {} }, res, session: null } as never);
+    const api = appRouter.createCaller({
+      req: { cookies: {} },
+      res,
+      driverSession: null,
+    } as never);
 
     await expect(api.driver.login({ code, pin: '000000' })).rejects.toMatchObject({
       code: 'UNAUTHORIZED',
@@ -665,9 +673,9 @@ describeWithDb('driver.login / driver.logout (resolvers)', () => {
     const { token } = await createSession('driver', driverId, NOW);
     const { res } = captureResponse();
     const api = appRouter.createCaller({
-      req: { cookies: { [SESSION_COOKIE]: token } },
+      req: { cookies: { [SESSION_COOKIE_BY_SUBJECT.driver]: token } },
       res,
-      session: { subjectType: 'driver', subjectId: driverId },
+      driverSession: { subjectType: 'driver', subjectId: driverId },
     } as never);
 
     await expect(api.driver.logout()).resolves.toEqual({ ok: true });
@@ -771,10 +779,10 @@ it('refuses a CUSTOMER session', async () => {
  */
 it('refuses a driver session with no usable id', async () => {
   await expect(
-    callMine({ session: { subjectType: 'driver', subjectId: 'seven' } }),
+    callMine({ driverSession: { subjectType: 'driver', subjectId: 'seven' } }),
   ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
   await expect(
-    callMine({ session: { subjectType: 'driver', subjectId: 1.5 } }),
+    callMine({ driverSession: { subjectType: 'driver', subjectId: 1.5 } }),
   ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
 });
 

@@ -26,7 +26,7 @@ import { bookings, destinations, payments, settings, tours, users } from '../db/
 import { createApp } from '../app';
 import { paymentQrStorageDir } from '../routers/payment-qr';
 import { appRouter } from '../routers/_app';
-import { SESSION_COOKIE } from '../middleware/session-cookie';
+import { SESSION_COOKIE_BY_SUBJECT } from '../middleware/session-cookie';
 import { createSession } from '../services/sessions';
 import { generateBookingRef } from '../services/booking-ref';
 import { customerContext, staffContext, testContext } from './helpers/ctx';
@@ -370,7 +370,7 @@ describeWithDb('GET /api/payment-qr', () => {
 
   async function guestCookie(bookingId: number): Promise<string> {
     const { token } = await createSession('customer', bookingId, new Date());
-    return `${SESSION_COOKIE}=${token}`;
+    return `${SESSION_COOKIE_BY_SUBJECT.customer}=${token}`;
   }
 
   it('REFUSES an anonymous request with the same 404 as everything else', async () => {
@@ -400,7 +400,7 @@ describeWithDb('GET /api/payment-qr', () => {
 
     const res = await request(createApp())
       .get('/api/payment-qr')
-      .set('Cookie', `${SESSION_COOKIE}=not-a-real-session-token`);
+      .set('Cookie', `${SESSION_COOKIE_BY_SUBJECT.customer}=not-a-real-session-token`);
     expect(res.status, 'an invented session token was served the QR').toBe(404);
 
     await removeImage(CONFIGURED.imagePath);
@@ -433,7 +433,7 @@ describeWithDb('GET /api/payment-qr', () => {
 
     const res = await request(createApp())
       .get('/api/payment-qr')
-      .set('Cookie', `${SESSION_COOKIE}=${token}`);
+      .set('Cookie', `${SESSION_COOKIE_BY_SUBJECT.user}=${token}`);
     expect(res.status).toBe(200);
 
     await removeImage(CONFIGURED.imagePath);
@@ -453,7 +453,9 @@ describeWithDb('GET /api/payment-qr', () => {
     const staffId = await makeStaff();
     const { token } = await createSession('user', staffId, new Date());
     const get = () =>
-      request(createApp()).get('/api/payment-qr').set('Cookie', `${SESSION_COOKIE}=${token}`);
+      request(createApp())
+        .get('/api/payment-qr')
+        .set('Cookie', `${SESSION_COOKIE_BY_SUBJECT.user}=${token}`);
 
     await getPool().query('UPDATE users SET must_change_password = 1 WHERE id = ?', [staffId]);
     const owing = await get();

@@ -241,7 +241,7 @@ export const adminPackagesRouter = router({
           const [result] = await tx.insert(packages).values(columns);
           await writeAudit(tx, {
             actorType: 'user',
-            actorId: ctx.session.subjectId,
+            actorId: ctx.adminSession.subjectId,
             action: 'package.created',
             entity: PACKAGE_ENTITY,
             entityId: result.insertId,
@@ -283,7 +283,7 @@ export const adminPackagesRouter = router({
           }
           await writeAudit(tx, {
             actorType: 'user',
-            actorId: ctx.session.subjectId,
+            actorId: ctx.adminSession.subjectId,
             action: 'package.updated',
             entity: PACKAGE_ENTITY,
             entityId: input.id,
@@ -348,7 +348,7 @@ export const adminPackagesRouter = router({
 
         await writeAudit(tx, {
           actorType: 'user',
-          actorId: ctx.session.subjectId,
+          actorId: ctx.adminSession.subjectId,
           action: input.isActive ? 'package.reactivated' : 'package.deactivated',
           entity: PACKAGE_ENTITY,
           entityId: input.id,
@@ -496,7 +496,7 @@ export const adminInquiriesRouter = router({
 
         await writeAudit(tx, {
           actorType: 'user',
-          actorId: ctx.session.subjectId,
+          actorId: ctx.adminSession.subjectId,
           action: 'inquiry.status_changed',
           entity: INQUIRY_ENTITY,
           entityId: input.id,

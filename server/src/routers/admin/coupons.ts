@@ -212,7 +212,7 @@ export const adminCouponsRouter = router({
           const [result] = await tx.insert(coupons).values(columns);
           await writeAudit(tx, {
             actorType: 'user',
-            actorId: ctx.session.subjectId,
+            actorId: ctx.adminSession.subjectId,
             action: 'coupon.created',
             entity: 'coupon',
             entityId: result.insertId,
@@ -257,7 +257,7 @@ export const adminCouponsRouter = router({
           }
           await writeAudit(tx, {
             actorType: 'user',
-            actorId: ctx.session.subjectId,
+            actorId: ctx.adminSession.subjectId,
             action: 'coupon.updated',
             entity: 'coupon',
             entityId: input.id,
@@ -301,7 +301,7 @@ export const adminCouponsRouter = router({
 
         await writeAudit(tx, {
           actorType: 'user',
-          actorId: ctx.session.subjectId,
+          actorId: ctx.adminSession.subjectId,
           action: input.isActive ? 'coupon.reactivated' : 'coupon.deactivated',
           entity: 'coupon',
           entityId: input.id,

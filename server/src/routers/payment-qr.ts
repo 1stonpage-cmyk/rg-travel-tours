@@ -52,7 +52,7 @@ import { getDb } from '../db/client';
 import { settings } from '../db/schema';
 import { env } from '../env';
 import { ROLE_MATRIX } from '../middleware/require-role';
-import { SESSION_COOKIE } from '../middleware/session-cookie';
+import { SESSION_COOKIE_BY_SUBJECT } from '../middleware/session-cookie';
 import { writeAudit } from '../services/audit';
 import { readSession } from '../services/sessions';
 import {
@@ -114,7 +114,7 @@ export function createPaymentQrRouter(): Router {
         res.status(status).json({ error: message });
 
       const cookies = req.cookies as Record<string, string | undefined> | undefined;
-      const token = cookies?.[SESSION_COOKIE];
+      const token = cookies?.[SESSION_COOKIE_BY_SUBJECT.user];
       const session = token ? await readSession(token, new Date()) : null;
       if (!session || session.subjectType !== 'user') {
         return refuse(401, 'Please sign in again and retry the upload.');
@@ -188,15 +188,27 @@ export function createPaymentQrRouter(): Router {
     /** The single refusal. Identical for every reason. */
     const refuse = () => res.status(404).json({ error: 'Not found' });
 
+    /*
+     * BUG-119: this route is read by TWO different surfaces — a signed-in
+     * guest viewing the manual-payment QR and any staff session — so, like
+     * `receipts.ts`'s GET, it is not "single-surface" the way the upload
+     * above is. Both cookies are read and resolved independently; reading
+     * only one would silently drop the other surface's access.
+     */
     const cookies = req.cookies as Record<string, string | undefined> | undefined;
-    const token = cookies?.[SESSION_COOKIE];
-    if (!token) return refuse();
+    const customerToken = cookies?.[SESSION_COOKIE_BY_SUBJECT.customer];
+    const staffToken = cookies?.[SESSION_COOKIE_BY_SUBJECT.user];
+    if (!customerToken && !staffToken) return refuse();
 
-    const session = await readSession(token, new Date());
-    if (!session) return refuse();
-    if (session.subjectType !== 'customer' && session.subjectType !== 'user') return refuse();
+    const now = new Date();
+    const customerSession = customerToken ? await readSession(customerToken, now) : null;
+    const staffSession = staffToken ? await readSession(staffToken, now) : null;
+
+    const isCustomer = customerSession?.subjectType === 'customer';
     // A staff member still on a temporary password has not finished signing in.
-    if (session.mustChangePassword === true) return refuse();
+    const isStaff =
+      staffSession?.subjectType === 'user' && staffSession.mustChangePassword !== true;
+    if (!isCustomer && !isStaff) return refuse();
 
     const qr = await readSettingBlock('payment_qr');
     if (!qr.isConfigured || !qr.imagePath || !QR_NAME.test(qr.imagePath)) return refuse();

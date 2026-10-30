@@ -138,9 +138,11 @@ export type ProcedureAccess =
  * resolver can set a cookie — which is how typecheck caught the gap rather
  * than it being discovered when `portal.login` silently had no `res`.
  *
- * It is also what gives `ctx.session` a type for `requireRole` to narrow.
- * The runtime gate still re-validates the role rather than trusting it:
- * a type is an assumption, and this one arrives from a cookie.
+ * It is also what gives `ctx.adminSession` (and `ctx.driverSession`,
+ * `ctx.customerSession` — BUG-119 split the one field into three) a type
+ * for `requireRole` to narrow. The runtime gate still re-validates the role
+ * rather than trusting it: a type is an assumption, and this one arrives
+ * from a cookie.
  */
 const t = initTRPC
   .context<Context>()
@@ -212,10 +214,16 @@ export const mergeRouters = t.mergeRouters;
  * procedure SAYS, in the codebase, next to the code — rather than something a
  * test file remembers about it in a list somewhere else.
  *
- * Its context stays `object`: no `session` field exists on it, so a resolver
- * built here that reaches for `ctx.session` is a TYPE ERROR, not a runtime
- * surprise. Any admin handler needs the actor (an audit row, a
- * `verified_by`), which is exactly the thing this builder cannot give it.
+ * Its context carries the three raw, per-surface fields `context.ts`
+ * resolves (`adminSession`, `driverSession`, `customerSession`), each a
+ * `ResolvedSession | null` straight off its own cookie and none of them
+ * validated against a role or an area. A resolver built here that wants an
+ * AUTHORISED actor (an audit row, a `verified_by`) must go through
+ * `adminProcedure` / `driverProcedure` / `customerProcedure`, which replace
+ * the relevant field with its gate's validated, narrower shape — reaching
+ * for e.g. `ctx.adminSession.role` here gets whatever the cookie resolved to,
+ * unchecked against `ADMIN_ROLES`, which is exactly the gap those builders
+ * close.
  */
 export const publicProcedure = t.procedure.meta({ access: 'public' });
 
@@ -223,10 +231,10 @@ export const publicProcedure = t.procedure.meta({ access: 'public' });
  * A procedure only a signed-in GUEST may call (Week 4, Task 8).
  *
  * The portal's counterpart to `adminProcedure`, and it exists for the same
- * reason: so the gate cannot be forgotten. `requireCustomer` replaces
- * `ctx.session` with a narrowed `CustomerSession` whose `subjectId` IS the
- * booking id, so a resolver downstream reaches exactly one booking and has
- * no input field through which to ask for another. That is what makes "a
+ * reason: so the gate cannot be forgotten. `requireCustomer` replaces the
+ * raw `ctx.customerSession` with a narrowed `CustomerSession` whose
+ * `subjectId` IS the booking id, so a resolver downstream reaches exactly
+ * one booking and has no input field through which to ask for another. That is what makes "a
  * portal session reaches one booking" structural rather than a rule every
  * future resolver has to remember (CLAUDE.md, RA 10173).
  *
@@ -236,7 +244,7 @@ export const publicProcedure = t.procedure.meta({ access: 'public' });
  */
 export const customerProcedure = t.procedure
   .meta({ access: 'customer' })
-  .use(({ ctx, next }) => next({ ctx: { session: requireCustomer(ctx) } }));
+  .use(({ ctx, next }) => next({ ctx: { customerSession: requireCustomer(ctx) } }));
 
 /**
  * A procedure only a signed-in DRIVER may call (Week 6, Task 1 — §8).
@@ -249,7 +257,7 @@ export const customerProcedure = t.procedure
  * guest reaching it would be an RA 10173 disclosure with a 200 status code.
  *
  * The validated driver arrives as `ctx.driver = { driverId }` rather than
- * replacing `ctx.session`, so a resolver downstream says what it means:
+ * replacing `ctx.driverSession`, so a resolver downstream says what it means:
  * `ctx.driver.driverId` is the only driver it can ever reach, and there is
  * no input field through which to ask for another. A resolver that reached
  * for `ctx.driver` without this builder is `error TS2339`.
@@ -283,9 +291,10 @@ export const driverProcedure = t.procedure
  *     but got 0` — the gate cannot be omitted, only mis-chosen.
  *   - `adminProcedure('tours')` (a typo, or an area §9 does not have) is
  *     `error TS2345` — the area cannot be invented.
- *   - the resolver receives `ctx.session` typed as `StaffSession`, already
- *     validated by the gate, which is the only place on this server such a
- *     value exists. An ungated copy of the same handler cannot type-check.
+ *   - the resolver receives `ctx.adminSession` typed as `StaffSession`,
+ *     already validated by the gate, which is the only place on this server
+ *     such a value exists. An ungated copy of the same handler cannot
+ *     type-check.
  *
  * What types cannot reach — somebody building a procedure that IS
  * administrative out of `publicProcedure` and never touching `ctx` — is the
@@ -295,7 +304,7 @@ export const driverProcedure = t.procedure
  * comes from. `verifyCashPayment()` (A5b) takes a
  * `verifier: { type, id, role }` and re-checks the role itself; its Week 5
  * procedure is `adminProcedure('verifyPayments')` and passes
- * `{ type: 'user', id: ctx.session.subjectId, role: ctx.session.role }` —
+ * `{ type: 'user', id: ctx.adminSession.subjectId, role: ctx.adminSession.role }` —
  * from this gate, never from the request payload. The service keeps its own
  * check (it is also callable from a job or a script, where there is no tRPC
  * context); this builder is what guarantees the HTTP door cannot supply a
@@ -323,7 +332,7 @@ export function adminProcedure(area: AdminArea) {
     ({ ctx, next }) => {
       const session = requireRole(...ROLE_MATRIX[area])(ctx);
       if (session.mustChangePassword === true) throw passwordChangeRequired();
-      return next({ ctx: { session } });
+      return next({ ctx: { adminSession: session } });
     },
   );
 }
@@ -339,7 +348,9 @@ export function adminProcedure(area: AdminArea) {
 export function adminProcedureAllowingPasswordChange(area: AdminArea) {
   return t.procedure
     .meta({ access: 'admin', area, roles: ROLE_MATRIX[area], allowsPasswordChange: true })
-    .use(({ ctx, next }) => next({ ctx: { session: requireRole(...ROLE_MATRIX[area])(ctx) } }));
+    .use(({ ctx, next }) =>
+      next({ ctx: { adminSession: requireRole(...ROLE_MATRIX[area])(ctx) } }),
+    );
 }
 
 /** `message` IS the reason string, as the driver login's refusals are. */

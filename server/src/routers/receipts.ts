@@ -73,7 +73,7 @@ import { readSettingBlock } from '../content/settings';
 import { getDb } from '../db/client';
 import { bookings, payments, tours } from '../db/schema';
 import { ROLE_MATRIX } from '../middleware/require-role';
-import { SESSION_COOKIE } from '../middleware/session-cookie';
+import { SESSION_COOKIE_BY_SUBJECT } from '../middleware/session-cookie';
 import { createReceiptUploadLimiter } from '../middleware/rate-limit';
 import { notify } from '../services/notify';
 import { ReceiptLimitReachedError, ReceiptNotAcceptedError } from '../services/payments/errors';
@@ -144,7 +144,7 @@ export function createReceiptRouter(): Router {
        * around it. `subject_id` on a customer session IS the booking id.
        */
       const cookies = req.cookies as Record<string, string | undefined> | undefined;
-      const token = cookies?.[SESSION_COOKIE];
+      const token = cookies?.[SESSION_COOKIE_BY_SUBJECT.customer];
       const session = token ? await readSession(token, new Date()) : null;
       if (!session || session.subjectType !== 'customer') {
         return refuse(401, 'Please sign in to your booking again and re-try the upload.');
@@ -225,12 +225,26 @@ export function createReceiptRouter(): Router {
     const name = req.params.name;
     if (!RECEIPT_NAME.test(name)) return refuse();
 
+    /*
+     * BUG-119: this route is read by TWO different surfaces — the guest who
+     * uploaded the receipt (their own booking) and owner/finance staff
+     * (`ROLE_MATRIX.verifyPayments`) — so it is not "single-surface" the way
+     * the upload above is. With one shared cookie, whichever subject the
+     * cookie resolved to was checked against both the `isVerifier` and
+     * `isOwner` rules below and only one could ever be true. Now that each
+     * surface has its own cookie, both must be read and resolved
+     * independently — reading only one would silently drop the other
+     * surface's access.
+     */
     const cookies = req.cookies as Record<string, string | undefined> | undefined;
-    const token = cookies?.[SESSION_COOKIE];
-    if (!token) return refuse();
+    const customerToken = cookies?.[SESSION_COOKIE_BY_SUBJECT.customer];
+    const staffToken = cookies?.[SESSION_COOKIE_BY_SUBJECT.user];
+    if (!customerToken && !staffToken) return refuse();
 
-    const session = await readSession(token, new Date());
-    if (!session) return refuse();
+    const now = new Date();
+    const customerSession = customerToken ? await readSession(customerToken, now) : null;
+    const staffSession = staffToken ? await readSession(staffToken, now) : null;
+    if (!customerSession && !staffSession) return refuse();
 
     const [payment] = await getDb()
       .select({ bookingId: payments.bookingId, status: payments.status })
@@ -257,10 +271,12 @@ export function createReceiptRouter(): Router {
      * contradicts its value is the next reader's trap.
      */
     const isVerifier =
-      session.subjectType === 'user' &&
-      session.mustChangePassword !== true &&
-      ROLE_MATRIX.verifyPayments.some((allowed) => allowed === session.role);
-    const isOwner = session.subjectType === 'customer' && session.subjectId === payment.bookingId;
+      staffSession?.subjectType === 'user' &&
+      staffSession.mustChangePassword !== true &&
+      ROLE_MATRIX.verifyPayments.some((allowed) => allowed === staffSession.role);
+    const isOwner =
+      customerSession?.subjectType === 'customer' &&
+      customerSession.subjectId === payment.bookingId;
     // A superseded receipt is kept for the people who verify payments. The
     // guest has the one that replaced it; the same 404 as any other
     // stranger's file, so this does not announce that the file exists.

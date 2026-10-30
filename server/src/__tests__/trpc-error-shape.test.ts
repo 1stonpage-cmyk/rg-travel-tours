@@ -72,7 +72,18 @@ function throwingApp() {
     '/trpc',
     createExpressMiddleware({
       router: throwingRouter,
-      createContext: ({ req, res }) => ({ req, res, session: null }),
+      // BUG-119: the real `Context` carries three per-surface fields now,
+      // not one `session`. Every throwing procedure here is public and
+      // reads none of them; all three are `null` for the same reason the
+      // comment above explains — a fixed anonymous context is the honest
+      // stand-in.
+      createContext: ({ req, res }) => ({
+        req,
+        res,
+        adminSession: null,
+        driverSession: null,
+        customerSession: null,
+      }),
     }),
   );
   return app;

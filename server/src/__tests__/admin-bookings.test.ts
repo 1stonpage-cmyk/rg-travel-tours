@@ -7,8 +7,10 @@
  * only, which is why the two sit in different areas — a dispatcher opens
  * the screen and finds no buttons on it. There is a test per role per
  * procedure (CLAUDE.md), plus the one that matters most: a customer
- * session is refused, because the admin surface and the guest portal share
- * one cookie and only `subject_type` separates them.
+ * session is refused. BUG-119 moved the admin and guest-portal surfaces onto
+ * separate cookies, but `requireRole` still refuses a `ctx.adminSession` that
+ * is not a `'user'` subject — this is the proof that the admin surface
+ * cannot be reached by a guest's identity under any context shape.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import request from 'supertest';
@@ -26,7 +28,7 @@ import {
   tours,
   users,
 } from '../db/schema';
-import { SESSION_COOKIE } from '../middleware/session-cookie';
+import { SESSION_COOKIE_BY_SUBJECT } from '../middleware/session-cookie';
 import { appRouter } from '../routers/_app';
 import { generateBookingRef } from '../services/booking-ref';
 import { maskPhone, paymentMethodLabel } from '../routers/admin/bookings';
@@ -259,8 +261,11 @@ describeWithDb('admin.bookings.list — who may call it', () => {
   });
 
   /**
-   * **A guest's portal session must never reach the admin surface.** Both
-   * arrive in the same cookie and only `subject_type` separates them.
+   * **A guest's portal session must never reach the admin surface.** Since
+   * BUG-119 the two resolve from separate cookies into separate context
+   * fields (`ctx.customerSession` vs `ctx.adminSession`), so this fixture
+   * context — whose only field is a customer session — never populates
+   * `ctx.adminSession` at all, and `requireRole` refuses accordingly.
    */
   it('REFUSES a customer session', async () => {
     const api = appRouter.createCaller(customerContext(queued.bookingId) as never);
@@ -436,7 +441,7 @@ describeWithDb('the receipt an admin is asked to verify', () => {
     const { token } = await createSession('user', finance, new Date());
     const res = await request(createApp())
       .get(`/api/receipts/${name}`)
-      .set('Cookie', `${SESSION_COOKIE}=${token}`);
+      .set('Cookie', `${SESSION_COOKIE_BY_SUBJECT.user}=${token}`);
 
     expect(res.status, 'an admin cannot open the receipt they must verify').toBe(200);
     expect(res.headers['content-type']).toBe('image/jpeg');

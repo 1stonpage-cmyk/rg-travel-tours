@@ -141,7 +141,7 @@ export const adminVansRouter = router({
           const id = result.insertId;
           await writeAudit(tx, {
             actorType: 'user',
-            actorId: ctx.session.subjectId,
+            actorId: ctx.adminSession.subjectId,
             action: 'van_created',
             entity: 'van',
             entityId: id,
@@ -181,7 +181,7 @@ export const adminVansRouter = router({
           }
           await writeAudit(tx, {
             actorType: 'user',
-            actorId: ctx.session.subjectId,
+            actorId: ctx.adminSession.subjectId,
             action: 'van_updated',
             entity: 'van',
             entityId: input.id,
@@ -210,7 +210,7 @@ export const adminVansRouter = router({
         }
         await writeAudit(tx, {
           actorType: 'user',
-          actorId: ctx.session.subjectId,
+          actorId: ctx.adminSession.subjectId,
           action: 'van_status_changed',
           entity: 'van',
           entityId: input.id,

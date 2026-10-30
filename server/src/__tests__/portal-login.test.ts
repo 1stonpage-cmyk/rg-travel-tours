@@ -33,7 +33,7 @@ import { appRouter } from '../routers/_app';
 import { generateBookingRef } from '../services/booking-ref';
 import { findBookingByCredentials } from '../services/portal-auth';
 import { readSession } from '../services/sessions';
-import { SESSION_COOKIE } from '../middleware/session-cookie';
+import { SESSION_COOKIE_BY_SUBJECT } from '../middleware/session-cookie';
 import { describeWithDb } from './helpers/db';
 
 const created = { bookingIds: [] as number[], tourIds: [] as number[], destIds: [] as number[] };
@@ -86,19 +86,23 @@ function fakeResponse() {
   return { res, cookies };
 }
 
-const caller = (session: unknown = null) =>
+const caller = (customerSession: unknown = null) =>
   appRouter.createCaller({
     req: {} as unknown as Request,
     res: fakeResponse().res,
-    session,
+    customerSession,
   } as never);
 
 /** A caller whose Set-Cookie calls are observable. */
-function callerWithCookies(session: unknown = null) {
+function callerWithCookies(customerSession: unknown = null) {
   const { res, cookies } = fakeResponse();
   return {
     cookies,
-    api: appRouter.createCaller({ req: {} as unknown as Request, res, session } as never),
+    api: appRouter.createCaller({
+      req: {} as unknown as Request,
+      res,
+      customerSession,
+    } as never),
   };
 }
 
@@ -183,7 +187,7 @@ describeWithDb('portal.login', () => {
     });
 
     expect(cookies).toHaveLength(1);
-    expect(cookies[0]!.name).toBe(SESSION_COOKIE);
+    expect(cookies[0]!.name).toBe(SESSION_COOKIE_BY_SUBJECT.customer);
     expect(await readSession(cookies[0]!.value, new Date())).toEqual({
       subjectType: 'customer',
       subjectId: bookingId,
@@ -259,7 +263,9 @@ describeWithDb('portal.logout', () => {
     await out.api.portal.logout({ token });
 
     expect(await readSession(token, new Date()), 'the session survived a logout').toBeNull();
-    expect(out.cookies.some((c) => c.name === SESSION_COOKIE && c.value === '')).toBe(true);
+    expect(
+      out.cookies.some((c) => c.name === SESSION_COOKIE_BY_SUBJECT.customer && c.value === ''),
+    ).toBe(true);
   });
 
   it('is harmless with no session at all', async () => {

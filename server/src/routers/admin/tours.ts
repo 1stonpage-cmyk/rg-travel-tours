@@ -296,7 +296,7 @@ export const adminToursRouter = router({
           const result = await upsertTourContent(tx, input);
           await writeAudit(tx, {
             actorType: 'user',
-            actorId: ctx.session.subjectId,
+            actorId: ctx.adminSession.subjectId,
             action: 'tour.created',
             entity: 'tour',
             entityId: result.id,
@@ -318,7 +318,7 @@ export const adminToursRouter = router({
           const result = await upsertTourContent(tx, input);
           await writeAudit(tx, {
             actorType: 'user',
-            actorId: ctx.session.subjectId,
+            actorId: ctx.adminSession.subjectId,
             action: 'tour.updated',
             entity: 'tour',
             entityId: input.id,
@@ -365,7 +365,7 @@ export const adminToursRouter = router({
 
         await writeAudit(tx, {
           actorType: 'user',
-          actorId: ctx.session.subjectId,
+          actorId: ctx.adminSession.subjectId,
           action: input.isActive ? 'tour.reactivated' : 'tour.deactivated',
           entity: 'tour',
           entityId: input.id,

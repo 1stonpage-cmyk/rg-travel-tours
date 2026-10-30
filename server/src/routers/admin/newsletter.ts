@@ -98,7 +98,7 @@ export const adminNewsletterRouter = router({
     await getDb().transaction(async (tx) => {
       await writeAudit(tx, {
         actorType: 'user',
-        actorId: ctx.session.subjectId,
+        actorId: ctx.adminSession.subjectId,
         action: 'newsletter.exported',
         entity: NEWSLETTER_ENTITY,
         entityId: NEWSLETTER_ENTITY_ID,

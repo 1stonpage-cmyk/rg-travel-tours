@@ -19,7 +19,7 @@ import { eq, inArray, sql } from 'drizzle-orm';
 import { createApp } from '../app';
 import { getDb, getPool } from '../db/client';
 import { auditLog, users } from '../db/schema';
-import { SESSION_COOKIE } from '../middleware/session-cookie';
+import { SESSION_COOKIE_BY_SUBJECT } from '../middleware/session-cookie';
 import { STAFF_LOGIN_MAX_PER_IP } from '../middleware/rate-limit';
 import { hashPassword } from '../services/password';
 import { resetEmailThrottleForTests } from '../services/staff-auth';
@@ -93,7 +93,13 @@ function callerWithCookies(session: Parameters<typeof testContext>[0] = null) {
   return {
     set,
     cleared,
-    api: appRouter.createCaller({ req: { cookies: {} }, res, session } as never),
+    api: appRouter.createCaller({
+      req: { cookies: {} },
+      res,
+      adminSession: session,
+      driverSession: null,
+      customerSession: null,
+    } as never),
   };
 }
 
@@ -107,7 +113,7 @@ describeWithDb('staffAuth.login', () => {
     });
 
     expect(set).toHaveLength(1);
-    expect(set[0]!.name).toBe(SESSION_COOKIE);
+    expect(set[0]!.name).toBe(SESSION_COOKIE_BY_SUBJECT.user);
     expect(set[0]!.options.httpOnly).toBe(true);
     expect(await readSession(set[0]!.value, new Date())).toEqual({
       subjectType: 'user',
@@ -129,9 +135,11 @@ describeWithDb('staffAuth.login', () => {
     const planted = await createSession('user', ownerId, new Date());
     const { res, set } = captureResponse();
     const api = appRouter.createCaller({
-      req: { cookies: { [SESSION_COOKIE]: planted.token } },
+      req: { cookies: { [SESSION_COOKIE_BY_SUBJECT.user]: planted.token } },
       res,
-      session: null,
+      adminSession: null,
+      driverSession: null,
+      customerSession: null,
     } as never);
 
     await api.staffAuth.login({ email: EMAIL.owner, password: PASSWORD });
@@ -255,15 +263,17 @@ describeWithDb('staffAuth.logout', () => {
     const { token } = await createSession('user', ownerId, new Date());
     const { res, cleared } = captureResponse();
     const api = appRouter.createCaller({
-      req: { cookies: { [SESSION_COOKIE]: token } },
+      req: { cookies: { [SESSION_COOKIE_BY_SUBJECT.user]: token } },
       res,
-      session: { subjectType: 'user', subjectId: ownerId, role: 'owner' },
+      adminSession: { subjectType: 'user', subjectId: ownerId, role: 'owner' },
+      driverSession: null,
+      customerSession: null,
     } as never);
 
     await expect(api.staffAuth.logout()).resolves.toEqual({ ok: true });
 
     expect(await readSession(token, new Date()), 'the session survived logout').toBeNull();
-    expect(cleared.some((c) => c.name === SESSION_COOKIE)).toBe(true);
+    expect(cleared.some((c) => c.name === SESSION_COOKIE_BY_SUBJECT.user)).toBe(true);
 
     const [row] = await authAudit();
     expect(row!.action).toBe('auth.logout');
@@ -273,7 +283,7 @@ describeWithDb('staffAuth.logout', () => {
   it('is harmless with no session, so a lapsed cookie can still be cleared', async () => {
     const { api, cleared } = callerWithCookies();
     await expect(api.staffAuth.logout()).resolves.toEqual({ ok: true });
-    expect(cleared.some((c) => c.name === SESSION_COOKIE)).toBe(true);
+    expect(cleared.some((c) => c.name === SESSION_COOKIE_BY_SUBJECT.user)).toBe(true);
   });
 });
 
@@ -330,9 +340,12 @@ describeWithDb('staffAuth.me', () => {
   });
 
   /**
-   * **A portal session must never reach an admin procedure.** Both arrive
-   * in the same cookie and only `subject_type` separates them, so this is
-   * the assertion that the separation is real rather than assumed.
+   * **A portal session must never reach an admin procedure.** BUG-119 split
+   * the two onto separate cookies (`rg_admin_session` / `rg_customer_session`),
+   * so a customer cookie no longer even reaches `ctx.adminSession` — this
+   * asserts that `requireRole` still refuses the session passed here as a
+   * context fixture, which is what a misrouted or forged context would look
+   * like.
    */
   it('REFUSES a customer session', async () => {
     const api = appRouter.createCaller(

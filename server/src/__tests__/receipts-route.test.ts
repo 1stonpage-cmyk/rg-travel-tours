@@ -21,7 +21,8 @@ import { eq } from 'drizzle-orm';
 import { createApp } from '../app';
 import { getDb, getPool } from '../db/client';
 import { bookings, destinations, payments, tours } from '../db/schema';
-import { SESSION_COOKIE } from '../middleware/session-cookie';
+import { SESSION_COOKIE_BY_SUBJECT } from '../middleware/session-cookie';
+import type { SessionSubject } from '../services/sessions';
 import { generateBookingRef } from '../services/booking-ref';
 import { users } from '../db/schema';
 import { createSession } from '../services/sessions';
@@ -94,7 +95,15 @@ async function makeBookingWithReceipt() {
   return { bookingId: booking.insertId, path };
 }
 
-const cookie = (token: string) => `${SESSION_COOKIE}=${token}`;
+/**
+ * BUG-119: the receipt GET route now reads TWO different cookies — the
+ * customer cookie for the booking owner, the staff cookie for an
+ * owner/finance verifier — rather than one shared `rg_session`. This test
+ * file exercises both surfaces against the same route, so the helper takes
+ * the subject type explicitly rather than assuming one cookie name.
+ */
+const cookie = (subjectType: SessionSubject, token: string) =>
+  `${SESSION_COOKIE_BY_SUBJECT[subjectType]}=${token}`;
 
 const staffIds: number[] = [];
 
@@ -158,7 +167,7 @@ describeWithDb('GET /api/receipts/:name', () => {
 
     const res = await request(createApp())
       .get(`/api/receipts/${path}`)
-      .set('Cookie', cookie(token));
+      .set('Cookie', cookie('customer', token));
 
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toBe('image/jpeg');
@@ -186,7 +195,7 @@ describeWithDb('GET /api/receipts/:name', () => {
 
     const res = await request(createApp())
       .get(`/api/receipts/${path}`)
-      .set('Cookie', cookie(token));
+      .set('Cookie', cookie('user', token));
     expect(res.status, 'an owner cannot read a receipt').toBe(200);
     expect(res.headers['content-type']).toBe('image/jpeg');
   });
@@ -197,7 +206,7 @@ describeWithDb('GET /api/receipts/:name', () => {
 
     const res = await request(createApp())
       .get(`/api/receipts/${path}`)
-      .set('Cookie', cookie(token));
+      .set('Cookie', cookie('user', token));
     expect(res.status, 'finance cannot read the receipt they must verify').toBe(200);
     expect(res.headers['content-type']).toBe('image/jpeg');
   });
@@ -214,7 +223,9 @@ describeWithDb('GET /api/receipts/:name', () => {
     const { token } = await createSession('user', await makeStaff('dispatcher'), new Date());
     const app = createApp();
 
-    const dispatcher = await request(app).get(`/api/receipts/${path}`).set('Cookie', cookie(token));
+    const dispatcher = await request(app)
+      .get(`/api/receipts/${path}`)
+      .set('Cookie', cookie('user', token));
     const stranger = await request(app).get(`/api/receipts/${path}`);
 
     expect(dispatcher.status, 'a dispatcher was served a guest’s bank receipt').toBe(404);
@@ -234,7 +245,7 @@ describeWithDb('GET /api/receipts/:name', () => {
 
     const res = await request(createApp())
       .get(`/api/receipts/${path}`)
-      .set('Cookie', cookie(token));
+      .set('Cookie', cookie('driver', token));
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: 'Not found' });
   });
@@ -252,7 +263,7 @@ describeWithDb('GET /api/receipts/:name', () => {
     const staffId = await makeStaff();
     const { token } = await createSession('user', staffId, new Date());
     const get = () =>
-      request(createApp()).get(`/api/receipts/${path}`).set('Cookie', cookie(token));
+      request(createApp()).get(`/api/receipts/${path}`).set('Cookie', cookie('user', token));
 
     await getPool().query('UPDATE users SET must_change_password = 1 WHERE id = ?', [staffId]);
     const owing = await get();
@@ -282,13 +293,17 @@ describeWithDb('GET /api/receipts/:name', () => {
       // No session at all.
       await request(app).get(`/api/receipts/${mine.path}`),
       // A session for a DIFFERENT booking.
-      await request(app).get(`/api/receipts/${mine.path}`).set('Cookie', cookie(other.token)),
+      await request(app)
+        .get(`/api/receipts/${mine.path}`)
+        .set('Cookie', cookie('customer', other.token)),
       // A driver session, which has no business with a bank receipt.
-      await request(app).get(`/api/receipts/${mine.path}`).set('Cookie', cookie(driver.token)),
+      await request(app)
+        .get(`/api/receipts/${mine.path}`)
+        .set('Cookie', cookie('driver', driver.token)),
       // A well-formed name that is not a real receipt.
       await request(app)
         .get(`/api/receipts/${'a'.repeat(32)}.jpg`)
-        .set('Cookie', cookie(other.token)),
+        .set('Cookie', cookie('customer', other.token)),
     ];
 
     for (const res of responses) {
@@ -301,7 +316,9 @@ describeWithDb('GET /api/receipts/:name', () => {
     const app = createApp();
     const { token } = await createSession('user', await makeStaff(), new Date());
     for (const name of ['../../.env', '..%2f..%2f.env', 'x.jpg', 'ABCDEF.jpg']) {
-      const res = await request(app).get(`/api/receipts/${name}`).set('Cookie', cookie(token));
+      const res = await request(app)
+        .get(`/api/receipts/${name}`)
+        .set('Cookie', cookie('user', token));
       expect(res.status, `${name} was not refused`).toBe(404);
     }
   });
@@ -340,7 +357,7 @@ describeWithDb('GET /api/receipts/:name', () => {
 
     const res = await request(createApp())
       .get(`/api/receipts/${encodeURIComponent(escaping)}`)
-      .set('Cookie', cookie(token));
+      .set('Cookie', cookie('user', token));
 
     expect(res.status, 'a traversal path with a payments row behind it was served').toBe(404);
     /*
@@ -364,7 +381,11 @@ describeWithDb('GET /api/receipts/:name', () => {
     );
 
     expect(
-      (await request(createApp()).get(`/api/receipts/${path}`).set('Cookie', cookie(token))).status,
+      (
+        await request(createApp())
+          .get(`/api/receipts/${path}`)
+          .set('Cookie', cookie('customer', token))
+      ).status,
     ).toBe(404);
   });
 
@@ -398,8 +419,11 @@ describeWithDb('GET /api/receipts/:name', () => {
 
     const { token } = await createSession('user', await makeStaff(), new Date());
     expect(
-      (await request(createApp()).get(`/api/receipts/${first}`).set('Cookie', cookie(token)))
-        .status,
+      (
+        await request(createApp())
+          .get(`/api/receipts/${first}`)
+          .set('Cookie', cookie('user', token))
+      ).status,
       'a verifier cannot read the receipt they are being asked to compare against',
     ).toBe(200);
   });
@@ -431,12 +455,16 @@ describeWithDb('GET /api/receipts/:name', () => {
 
     const superseded = await request(app)
       .get(`/api/receipts/${first}`)
-      .set('Cookie', cookie(token));
+      .set('Cookie', cookie('customer', token));
     expect(superseded.status).toBe(404);
     expect(superseded.body).toEqual({ error: 'Not found' });
 
     expect(
-      (await request(app).get(`/api/receipts/${second.path}`).set('Cookie', cookie(token))).status,
+      (
+        await request(app)
+          .get(`/api/receipts/${second.path}`)
+          .set('Cookie', cookie('customer', token))
+      ).status,
       'the guest lost access to the receipt they just uploaded',
     ).toBe(200);
   });
@@ -452,7 +480,7 @@ describeWithDb('GET /api/receipts/:name', () => {
 
     const res = await request(createApp())
       .get(`/api/receipts/${path}`)
-      .set('Cookie', cookie(token));
+      .set('Cookie', cookie('customer', token));
 
     expect(res.headers['cache-control']).toBe('private, no-store');
     expect(res.headers['x-content-type-options']).toBe('nosniff');

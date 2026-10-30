@@ -20,7 +20,7 @@ import { createApp } from '../app';
 import { getDb, getPool } from '../db/client';
 import { auditLog, settings, users } from '../db/schema';
 import { paymentQrStorageDir } from '../routers/payment-qr';
-import { SESSION_COOKIE } from '../middleware/session-cookie';
+import { SESSION_COOKIE_BY_SUBJECT } from '../middleware/session-cookie';
 import { createSession } from '../services/sessions';
 import { describeWithDb } from './helpers/db';
 
@@ -84,7 +84,7 @@ function upload(
     .post(`/api/payment-qr/upload?${new URLSearchParams({ filename }).toString()}`)
     .set('Origin', ORIGIN)
     .set('Content-Type', contentType);
-  if (token) req.set('Cookie', `${SESSION_COOKIE}=${token}`);
+  if (token) req.set('Cookie', `${SESSION_COOKIE_BY_SUBJECT.user}=${token}`);
   return req.send(body);
 }
 

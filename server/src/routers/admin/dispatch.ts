@@ -159,7 +159,7 @@ export const adminDispatchRouter = router({
               // The LIVE session identity, never a value the request body
               // could claim — same discipline `approveReceipt` uses for
               // `verifier`.
-              actorUserId: ctx.session.subjectId,
+              actorUserId: ctx.adminSession.subjectId,
             }),
           ),
         {

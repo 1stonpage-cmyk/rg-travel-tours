@@ -49,7 +49,7 @@ import {
   vans,
 } from '../db/schema';
 import { expireHolds } from '../jobs/expire-holds';
-import { SESSION_COOKIE } from '../middleware/session-cookie';
+import { SESSION_COOKIE_BY_SUBJECT } from '../middleware/session-cookie';
 import { hashPassword } from '../services/password';
 import { resetEmailThrottleForTests } from '../services/staff-auth';
 import { resetTransportForTests, setTransportForTests } from '../services/notify';
@@ -158,11 +158,21 @@ function unwrap(res: { status: number; body: unknown }): unknown {
   return body?.result?.data;
 }
 
-/** The session cookie a login handed back, ready to send on the next call. */
+/**
+ * The session cookie a login handed back, ready to send on the next call.
+ *
+ * **BUG-119:** this walkthrough drives both `portal.login` (customer) and
+ * `staffAuth.login` (staff), each now setting a differently-named cookie
+ * (`rg_customer_session` / `rg_admin_session`). Rather than a second helper
+ * per surface, this matches whichever of the three known names the login
+ * actually set — there is only ever one Set-Cookie per login response, so
+ * this stays unambiguous.
+ */
 function sessionCookie(res: { headers: Record<string, unknown> }): string {
   const raw = res.headers['set-cookie'];
   const list = Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : [];
-  const found = list.find((value) => value.startsWith(`${SESSION_COOKIE}=`));
+  const names = Object.values(SESSION_COOKIE_BY_SUBJECT);
+  const found = list.find((value) => names.some((name) => value.startsWith(`${name}=`)));
   if (!found) throw new Error('no session cookie was set');
   return found.split(';')[0]!;
 }

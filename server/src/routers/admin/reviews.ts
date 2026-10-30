@@ -162,7 +162,7 @@ export const adminReviewsRouter = router({
 
         await writeAudit(tx, {
           actorType: 'user',
-          actorId: ctx.session.subjectId,
+          actorId: ctx.adminSession.subjectId,
           action: input.status === 'published' ? 'review.published' : 'review.hidden',
           entity: AUDIT_ENTITY,
           entityId: input.id,
@@ -217,7 +217,7 @@ export const adminReviewsRouter = router({
 
         await writeAudit(tx, {
           actorType: 'user',
-          actorId: ctx.session.subjectId,
+          actorId: ctx.adminSession.subjectId,
           action: 'review.replied',
           entity: AUDIT_ENTITY,
           entityId: input.id,

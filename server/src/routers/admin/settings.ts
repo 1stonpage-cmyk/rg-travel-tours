@@ -62,7 +62,7 @@ export const adminSettingsRouter = router({
       await writeSettingBlock(
         input.key,
         input.value,
-        { subjectId: ctx.session.subjectId },
+        { subjectId: ctx.adminSession.subjectId },
         new Date(),
       );
       return { ok: true as const };

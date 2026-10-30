@@ -128,7 +128,7 @@ export const adminStaffUsersRouter = router({
 
         await writeAudit(tx, {
           actorType: 'user',
-          actorId: ctx.session.subjectId,
+          actorId: ctx.adminSession.subjectId,
           action: 'staff.created',
           entity: 'users',
           entityId: insertId,
@@ -147,7 +147,7 @@ export const adminStaffUsersRouter = router({
         const { target, otherActiveOwners } = await lockTarget(tx, input.id);
         const roleChanged = target.role !== input.role;
 
-        if (roleChanged && target.id === ctx.session.subjectId) {
+        if (roleChanged && target.id === ctx.adminSession.subjectId) {
           throw new TRPCError({
             code: 'FORBIDDEN',
             message: 'You cannot change your own role.',
@@ -165,7 +165,7 @@ export const adminStaffUsersRouter = router({
 
         await writeAudit(tx, {
           actorType: 'user',
-          actorId: ctx.session.subjectId,
+          actorId: ctx.adminSession.subjectId,
           action: roleChanged ? 'staff.role_changed' : 'staff.updated',
           entity: 'users',
           entityId: input.id,
@@ -178,7 +178,7 @@ export const adminStaffUsersRouter = router({
   setActive: adminProcedure('staffAccounts')
     .input(setStaffUserActiveInputSchema)
     .mutation(async ({ input, ctx }) => {
-      if (!input.isActive && input.id === ctx.session.subjectId) {
+      if (!input.isActive && input.id === ctx.adminSession.subjectId) {
         throw new TRPCError({
           code: 'FORBIDDEN',
           message: 'You cannot deactivate your own account.',
@@ -231,7 +231,7 @@ export const adminStaffUsersRouter = router({
 
         await writeAudit(tx, {
           actorType: 'user',
-          actorId: ctx.session.subjectId,
+          actorId: ctx.adminSession.subjectId,
           action: input.isActive ? 'staff.reactivated' : 'staff.deactivated',
           entity: 'users',
           entityId: input.id,
@@ -244,7 +244,7 @@ export const adminStaffUsersRouter = router({
   resetPassword: adminProcedure('staffAccounts')
     .input(resetStaffPasswordInputSchema)
     .mutation(async ({ input, ctx }) => {
-      if (input.id === ctx.session.subjectId) {
+      if (input.id === ctx.adminSession.subjectId) {
         throw new TRPCError({
           code: 'FORBIDDEN',
           message: 'Use "Change password" in the menu to change your own password.',
@@ -267,7 +267,7 @@ export const adminStaffUsersRouter = router({
 
         await writeAudit(tx, {
           actorType: 'user',
-          actorId: ctx.session.subjectId,
+          actorId: ctx.adminSession.subjectId,
           action: 'staff.password_reset',
           entity: 'users',
           entityId: input.id,

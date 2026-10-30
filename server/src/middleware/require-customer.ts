@@ -28,9 +28,20 @@
  */
 import { TRPCError } from '@trpc/server';
 
-/** What the context carries, as far as this gate is concerned. */
+/**
+ * What the context carries, as far as this gate is concerned.
+ *
+ * **BUG-119:** `ctx.customerSession` resolves from its own
+ * `rg_customer_session` cookie (`context.ts`) and is `null` unless that
+ * cookie resolved to a `subjectType === 'customer'` session — so in the
+ * real request path a staff or driver cookie never reaches this gate as
+ * "the wrong subject type" on this field; it simply never populates
+ * `ctx.customerSession` at all. The `subjectType` check below is kept
+ * anyway as defence in depth, the same reasoning the numeric-id re-check
+ * right after it already gives.
+ */
 interface CustomerContext {
-  session?: { subjectType?: unknown; subjectId?: unknown } | null;
+  customerSession?: { subjectType?: unknown; subjectId?: unknown } | null;
 }
 
 export interface CustomerSession {
@@ -51,7 +62,7 @@ export interface CustomerSession {
  * refuse, and a staff or driver session is not a guest identity either.
  */
 export function requireCustomer(ctx: unknown): CustomerSession {
-  const session = (ctx as CustomerContext | null | undefined)?.session;
+  const session = (ctx as CustomerContext | null | undefined)?.customerSession;
 
   if (!session || session.subjectType !== 'customer') {
     throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Sign in to your booking to see this.' });

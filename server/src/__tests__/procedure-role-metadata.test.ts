@@ -11,7 +11,7 @@
  *
  *  1. **The builder** (`adminProcedure(area)` in `../trpc.ts`). The area is a
  *     required argument, so forgetting the gate is a COMPILE error, and the
- *     validated `ctx.session` only exists downstream of it, so an admin
+ *     validated `ctx.adminSession` only exists downstream of it, so an admin
  *     handler that needs the actor cannot be written without it.
  *  2. **This enumeration**, for what types cannot reach: a procedure built out
  *     of `publicProcedure` that is administrative in substance. Every
@@ -122,11 +122,13 @@ function accessOf(procedure: ProcedureLike): ProcedureAccess | undefined {
 const weekFiveShaped = router({
   admin: router({
     pricing: adminProcedure('toursPricing').query(({ ctx }) => ({
-      // Compile-time proof: `ctx.session` exists here and nowhere else. The
-      // same body on `publicProcedure` is `error TS2339: Property 'session'
-      // does not exist on type 'object'`.
-      actor: ctx.session.subjectId,
-      role: ctx.session.role,
+      // Compile-time proof: `ctx.adminSession` is validated and non-null
+      // ONLY downstream of `adminProcedure`'s gate. The raw, pre-gate
+      // `ctx.adminSession` on `publicProcedure` is `ResolvedSession | null`
+      // (BUG-119) — reaching for `.subjectId` on it there is a nullability
+      // TYPE ERROR, not a runtime surprise.
+      actor: ctx.adminSession.subjectId,
+      role: ctx.adminSession.role,
     })),
     queue: adminProcedure('verifyPayments').query(() => ({ ok: true as const })),
   }),
@@ -265,8 +267,12 @@ for (const target of TARGETS) {
           `${path} is labelled customer but answered a caller with no session`,
         ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
         await expect(
+          // BUG-119: a staff session now resolves onto `ctx.adminSession`
+          // (its own cookie), never `ctx.customerSession` — so this fixture
+          // carries an admin session and NO customer session, which is
+          // exactly what a browser signed into staff only would send.
           callerFor(target.router, path, {
-            session: { subjectType: 'user', subjectId: 1, role: 'owner' },
+            adminSession: { subjectType: 'user', subjectId: 1, role: 'owner' },
           })(),
           `${path} let a STAFF session through the guest-portal gate`,
         ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
@@ -287,15 +293,18 @@ for (const target of TARGETS) {
      * enumerates the router rather than naming the procedures it knows.
      */
     it('refuses an anonymous caller, a staff session and a customer session on every driver procedure', async () => {
+      // BUG-119: each fake context below carries the OTHER surface's own
+      // field — never `driverSession` — so it mirrors what a browser signed
+      // into that surface and NOT the driver portal would actually send.
       const refused = [
         ['a caller with no session', {}],
-        ['a caller with an explicitly null session', { session: null }],
-        ['a STAFF session', { session: { subjectType: 'user', subjectId: 1, role: 'owner' } }],
+        ['a caller with an explicitly null driver session', { driverSession: null }],
+        ['a STAFF session', { adminSession: { subjectType: 'user', subjectId: 1, role: 'owner' } }],
         [
           'a DISPATCHER session',
-          { session: { subjectType: 'user', subjectId: 2, role: 'dispatcher' } },
+          { adminSession: { subjectType: 'user', subjectId: 2, role: 'dispatcher' } },
         ],
-        ['a CUSTOMER session', { session: { subjectType: 'customer', subjectId: 1 } }],
+        ['a CUSTOMER session', { customerSession: { subjectType: 'customer', subjectId: 1 } }],
       ] as const;
 
       for (const path of driverPaths) {
@@ -404,7 +413,7 @@ describe('only server/src/trpc.ts calls initTRPC', () => {
 
 describe('adminProcedure(area) is a gate, not a label', () => {
   function callAs(session: unknown) {
-    return callerFor(weekFiveShaped, 'admin.pricing', { session })();
+    return callerFor(weekFiveShaped, 'admin.pricing', { adminSession: session })();
   }
 
   it('stamps the area and §9 row into the procedure metadata', () => {

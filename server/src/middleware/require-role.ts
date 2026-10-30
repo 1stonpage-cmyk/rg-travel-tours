@@ -119,9 +119,31 @@ export interface StaffSession {
   name?: string;
 }
 
-/** The session-bearing slice of a tRPC context, as admin procedures will have it. */
+/**
+ * The admin-session-bearing slice of a tRPC context, as admin procedures
+ * will have it.
+ *
+ * **BUG-119:** this used to be a single `session` field shared with the
+ * driver and customer surfaces, narrowed here by checking
+ * `session.subjectType === 'user'`. Each surface now resolves from its own
+ * cookie (`context.ts`), so `ctx.adminSession` is `null` whenever the admin
+ * cookie is absent, invalid, expired, OR resolves to a non-`'user'` subject
+ * — in the REAL request path the field's mere presence already is the
+ * subject-type guarantee. The `subjectType` check below is kept anyway, as
+ * defence in depth against a context built some OTHER way (a test fixture,
+ * a future caller of this gate that is not `context.ts`) that populates
+ * `ctx.adminSession` without going through the per-surface cookie split —
+ * exactly the same reasoning `requireDriver`/`requireCustomer` give for
+ * re-checking a numeric id that "cannot happen today".
+ */
 export interface RoleContext {
-  session?: StaffSession | null;
+  adminSession?: {
+    subjectType?: unknown;
+    subjectId: number;
+    role?: string;
+    mustChangePassword?: boolean;
+    name?: string;
+  } | null;
 }
 
 /** The one `subject_type` that can hold an admin role. */
@@ -138,23 +160,25 @@ const STAFF_SUBJECT = 'user';
  * Returns the validated session so a procedure can attribute an audit row to
  * `session.subjectId` without re-reading the context.
  *
- * @throws TRPCError `UNAUTHORIZED` when there is no staff session at all,
- *         `FORBIDDEN` when there is one and its role is not in `allowed`.
- *         Neither message names a role, an area or the allow-list.
+ * @throws TRPCError `UNAUTHORIZED` when there is no admin session at all —
+ *         including a driver or customer cookie presented to this gate,
+ *         which resolves no `ctx.adminSession` at all (see `RoleContext`
+ *         above) — `FORBIDDEN` when there is one and its role is not in
+ *         `allowed`. Neither message names a role, an area or the
+ *         allow-list.
  */
 export function requireRole(...allowed: AdminRole[]) {
   return function gate(ctx: unknown): StaffSession {
-    const session = (ctx as RoleContext | null | undefined)?.session;
+    const session = (ctx as RoleContext | null | undefined)?.adminSession;
 
     /*
-     * No session, or one that is not staff. UNAUTHORIZED rather than
-     * FORBIDDEN: there is no admin identity here to refuse, and a driver or
-     * customer session is not an admin identity either.
-     *
-     * Two clauses, not three: a `typeof session === 'object'` check was tried
-     * and removed, because nothing can get past it that the subject-type
-     * check does not already refuse — a string, a number or an array has no
-     * `subjectType` — and an unfalsifiable branch is worse than no branch.
+     * No admin session at all, or one that is not staff-shaped. UNAUTHORIZED
+     * rather than FORBIDDEN: there is no admin identity here to refuse. In
+     * the real request path a driver or customer cookie never even reaches
+     * this branch as "the wrong subject type" — it simply never populates
+     * `ctx.adminSession` in the first place (context.ts) — but the check
+     * stays so this gate fails closed on its own, independent of that
+     * upstream guarantee.
      */
     if (!session || session.subjectType !== STAFF_SUBJECT) {
       throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Admin sign-in required.' });
@@ -170,6 +194,6 @@ export function requireRole(...allowed: AdminRole[]) {
       throw new TRPCError({ code: 'FORBIDDEN', message: 'Not permitted for this account.' });
     }
 
-    return { ...session, role: role.data };
+    return { ...session, subjectType: 'user', role: role.data };
   };
 }

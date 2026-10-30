@@ -654,11 +654,11 @@ export const adminBookingsRouter = router({
           decision: 'approve',
           verifier: {
             type: 'user',
-            id: ctx.session.subjectId,
+            id: ctx.adminSession.subjectId,
             // The LIVE role from the session, which `readSession` resolves
             // from `users` on every request — so a demoted admin's open tab
             // cannot approve a payment.
-            role: ctx.session.role,
+            role: ctx.adminSession.role,
           },
           now: new Date(),
         });
@@ -686,7 +686,7 @@ export const adminBookingsRouter = router({
           paymentId: input.paymentId,
           decision: 'reject',
           reason: input.reason,
-          verifier: { type: 'user', id: ctx.session.subjectId, role: ctx.session.role },
+          verifier: { type: 'user', id: ctx.adminSession.subjectId, role: ctx.adminSession.role },
           now: new Date(),
         });
       } catch (error) {
@@ -733,9 +733,9 @@ export const adminBookingsRouter = router({
           paymentId: input.paymentId,
           verifier: {
             type: 'user',
-            id: ctx.session.subjectId,
+            id: ctx.adminSession.subjectId,
             // The LIVE role from the session, as the receipt pair does.
-            role: ctx.session.role,
+            role: ctx.adminSession.role,
           },
         });
         return {
@@ -781,7 +781,7 @@ export const adminBookingsRouter = router({
           paymentId: input.paymentId,
           reason: input.reason,
           // The LIVE role from the session, as every other decision here.
-          verifier: { type: 'user', id: ctx.session.subjectId, role: ctx.session.role },
+          verifier: { type: 'user', id: ctx.adminSession.subjectId, role: ctx.adminSession.role },
         });
         return { ref: result.ref };
       } catch (error) {
@@ -827,7 +827,7 @@ export const adminBookingsRouter = router({
 
         const [inserted] = await tx.insert(bookingNotes).values({
           bookingId: booking.id,
-          userId: ctx.session.subjectId,
+          userId: ctx.adminSession.subjectId,
           note: input.note,
           visibleToDriver: input.visibleToDriver,
         });
@@ -835,7 +835,7 @@ export const adminBookingsRouter = router({
 
         await writeAudit(tx, {
           actorType: 'user',
-          actorId: ctx.session.subjectId,
+          actorId: ctx.adminSession.subjectId,
           action: 'booking.note_added',
           entity: 'bookings',
           entityId: booking.id,

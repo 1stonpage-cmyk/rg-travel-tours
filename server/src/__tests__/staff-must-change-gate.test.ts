@@ -26,7 +26,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import { PASSWORD_CHANGE_REQUIRED } from '@rg/shared';
 import { getDb, getPool } from '../db/client';
 import { auditLog, sessions, users } from '../db/schema';
-import { SESSION_COOKIE } from '../middleware/session-cookie';
+import { SESSION_COOKIE_BY_SUBJECT } from '../middleware/session-cookie';
 import * as passwordModule from '../services/password';
 import { hashPassword, verifyPassword } from '../services/password';
 import { createSession, readSession } from '../services/sessions';
@@ -102,7 +102,7 @@ describeWithDb('the forced change, against real accounts', () => {
   const ctxFor = (userId: number, role: 'owner' | 'dispatcher' | 'finance', token?: string) =>
     testContext(
       { subjectType: 'user', subjectId: userId, role, mustChangePassword: true },
-      token ? { [SESSION_COOKIE]: token } : {},
+      token ? { [SESSION_COOKIE_BY_SUBJECT.user]: token } : {},
     );
 
   beforeAll(async () => {
@@ -214,7 +214,9 @@ describeWithDb('the forced change, against real accounts', () => {
     const token = await newSession(personId);
     const session = await readSession(token, new Date());
     expect(session?.mustChangePassword).toBe(false);
-    const api = appRouter.createCaller(testContext(session, { [SESSION_COOKIE]: token }) as never);
+    const api = appRouter.createCaller(
+      testContext(session, { [SESSION_COOKIE_BY_SUBJECT.user]: token }) as never,
+    );
     await expect(api.admin.dashboard.alerts()).resolves.toBeDefined();
   });
 
@@ -224,7 +226,7 @@ describeWithDb('the forced change, against real accounts', () => {
     const call = async () => {
       const session = await readSession(token, new Date());
       return appRouter
-        .createCaller(testContext(session, { [SESSION_COOKIE]: token }) as never)
+        .createCaller(testContext(session, { [SESSION_COOKIE_BY_SUBJECT.user]: token }) as never)
         .admin.dashboard.alerts();
     };
     await expect(call()).resolves.toBeDefined();
@@ -249,14 +251,16 @@ describeWithDb('the forced change, against real accounts', () => {
     // Sign in with the temporary password: the real login, a captured cookie.
     const cap = captureResponse();
     const login = await appRouter
-      .createCaller({ req: { cookies: {} }, res: cap.res, session: null } as never)
+      .createCaller({ req: { cookies: {} }, res: cap.res, adminSession: null } as never)
       .staffAuth.login({ email: emailOf('newcomer'), password: CURRENT });
     expect(login).toEqual({ role: 'dispatcher', mustChangePassword: true });
-    const token = cap.set.find((c) => c.name === SESSION_COOKIE)!.value;
+    const token = cap.set.find((c) => c.name === SESSION_COOKIE_BY_SUBJECT.user)!.value;
 
     const as = async () =>
       appRouter.createCaller(
-        testContext(await readSession(token, new Date()), { [SESSION_COOKIE]: token }) as never,
+        testContext(await readSession(token, new Date()), {
+          [SESSION_COOKIE_BY_SUBJECT.user]: token,
+        }) as never,
       );
 
     await expect((await as()).admin.dashboard.alerts()).rejects.toMatchObject({
@@ -458,7 +462,7 @@ describeWithDb('the forced change, against real accounts', () => {
       const api = appRouter.createCaller(
         testContext(
           { subjectType: 'user', subjectId: personId, role: 'dispatcher' },
-          { [SESSION_COOKIE]: mine },
+          { [SESSION_COOKIE_BY_SUBJECT.user]: mine },
         ) as never,
       );
 
@@ -480,7 +484,7 @@ describeWithDb('the forced change, against real accounts', () => {
           .createCaller({
             req: { cookies: {} },
             res: captureResponse().res,
-            session: null,
+            adminSession: null,
           } as never)
           .staffAuth.login({ email: emailOf('person'), password });
       await expect(login(NEXT)).resolves.toEqual({ role: 'dispatcher', mustChangePassword: false });

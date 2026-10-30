@@ -692,14 +692,22 @@ payment method`; the payload deliberately carries **neither ingredient**, so the
   **outside** the session gate: a mutation with no `Origin`, or a foreign one, is `403`'d before
   anything looks for a cookie, so a cross-origin attempt never reaches the role layer (measured
   2026-10-30).
-- **There is NO session isolation between the three surfaces** (BUG-119, open on an owner
-  decision). `server/src/middleware/session-cookie.ts` issues `rg_session` with one name and one
-  path for admin, driver and portal subjects alike, so a guest signing into My Booking in the same
-  browser **overwrites a live staff session**, and vice versa. Nobody decided this; it is how the
-  code happens to behave. It is **not** a privilege escalation — each session row carries its own
-  subject type and the gates read that, so the evicted user is signed out, not impersonated — but
-  do not write anything that assumes two surfaces can be signed in at once, and expect a browser
-  check of one surface to destroy the session you had on another.
+- **Session isolation between the three surfaces now exists** (BUG-119, fixed Pre-launch Task B5).
+  `server/src/middleware/session-cookie.ts` issues one cookie PER SURFACE —
+  `SESSION_COOKIE_BY_SUBJECT`: `rg_admin_session`, `rg_driver_session`, `rg_customer_session`, same
+  flags on all three — so a guest signing into My Booking no longer overwrites a live staff
+  session, and a browser can legitimately hold all three at once. `context.ts` resolves three
+  independent fields accordingly — `ctx.adminSession`, `ctx.driverSession`, `ctx.customerSession`
+  — each from its own cookie and kept only if it resolves to that surface's own subject type;
+  `requireRole` / `requireDriver` / `requireCustomer` each read only their own field. The two
+  standalone Express routes that read a session cookie directly (`/api/receipts/:name`,
+  `/api/payment-qr`) read the same map by name — both read BOTH the customer and the staff cookie,
+  because both are genuinely dual-surface (a guest reads their own file; owner/finance read either
+  for verification), not single-surface as first assumed. **This was never a privilege
+  escalation** even before the fix — each session row always carried its own subject type and the
+  gates always read that, so the evicted user was signed out, not impersonated — but it is the
+  reason a browser check of one surface used to destroy the session held on another, which no
+  longer happens.
 - Rate limits on logins, coupon checks, review submissions, inquiry forms, helpful votes.
 - Uploads: validate MIME + extension + size, rename to random IDs, store outside the web
   root, serve via an authenticated route.

@@ -45,7 +45,11 @@ import {
 import { readSettingBlock } from '../../content/settings';
 import { getDb, type Transaction } from '../../db/client';
 import { bookings, drivers, payments, reviews, tours, vans } from '../../db/schema';
-import { clearSessionCookie, setSessionCookie } from '../../middleware/session-cookie';
+import {
+  SESSION_COOKIE_BY_SUBJECT,
+  clearSessionCookie,
+  setSessionCookie,
+} from '../../middleware/session-cookie';
 import { findBookingByCredentials } from '../../services/portal-auth';
 import { createSession, revokeSession } from '../../services/sessions';
 import { writeAudit } from '../../services/audit';
@@ -84,7 +88,7 @@ export const portalRouter = router({
     if (!booking) throw refused();
 
     const { token, expiresAt } = await createSession('customer', booking.id, new Date());
-    setSessionCookie(ctx.res, token, expiresAt);
+    setSessionCookie(ctx.res, 'customer', token, expiresAt);
 
     return { ok: true as const };
   }),
@@ -94,12 +98,16 @@ export const portalRouter = router({
    * clearing only the cookie would leave a live session that any copy of
    * the token still opens, and revoking only the row would leave a browser
    * sending a token that is refused on every request.
+   *
+   * **BUG-119 fix:** this used to read `cookies?.rg_session` — a hardcoded
+   * literal that bypassed the shared cookie-name constant even before the
+   * cookie split. It now reads the customer surface's own named cookie.
    */
   logout: publicProcedure.input(logoutInput).mutation(async ({ input, ctx }) => {
     const cookies = ctx.req.cookies as Record<string, string | undefined> | undefined;
-    const token = input.token ?? cookies?.rg_session;
+    const token = input.token ?? cookies?.[SESSION_COOKIE_BY_SUBJECT.customer];
     if (token) await revokeSession(token);
-    clearSessionCookie(ctx.res);
+    clearSessionCookie(ctx.res, 'customer');
     return { ok: true as const };
   }),
 
@@ -149,7 +157,7 @@ export const portalRouter = router({
       })
       .from(bookings)
       .innerJoin(tours, eq(tours.id, bookings.tourId))
-      .where(eq(bookings.id, ctx.session.subjectId))
+      .where(eq(bookings.id, ctx.customerSession.subjectId))
       .limit(1);
 
     /*
@@ -171,7 +179,7 @@ export const portalRouter = router({
     const receipts = await getDb()
       .select({ id: payments.id })
       .from(payments)
-      .where(eq(payments.bookingId, ctx.session.subjectId));
+      .where(eq(payments.bookingId, ctx.customerSession.subjectId));
 
     return {
       ref: booking.ref,
@@ -251,7 +259,7 @@ export const portalRouter = router({
       })
       .from(bookings)
       .innerJoin(tours, eq(tours.id, bookings.tourId))
-      .where(eq(bookings.id, ctx.session.subjectId))
+      .where(eq(bookings.id, ctx.customerSession.subjectId))
       .limit(1);
 
     if (!row) {
@@ -273,7 +281,7 @@ export const portalRouter = router({
       .from(payments)
       .where(
         and(
-          eq(payments.bookingId, ctx.session.subjectId),
+          eq(payments.bookingId, ctx.customerSession.subjectId),
           eq(payments.provider, 'manual'),
           eq(payments.type, 'payment'),
           isNotNull(payments.receiptPath),
@@ -289,7 +297,7 @@ export const portalRouter = router({
     const [existingReview] = await getDb()
       .select({ id: reviews.id })
       .from(reviews)
-      .where(eq(reviews.bookingId, ctx.session.subjectId))
+      .where(eq(reviews.bookingId, ctx.customerSession.subjectId))
       .limit(1);
     const hasReview = existingReview !== undefined;
 
@@ -415,7 +423,7 @@ export const portalRouter = router({
           leadName: bookings.leadName,
         })
         .from(bookings)
-        .where(eq(bookings.id, ctx.session.subjectId))
+        .where(eq(bookings.id, ctx.customerSession.subjectId))
         .for('update')
         .limit(1);
 

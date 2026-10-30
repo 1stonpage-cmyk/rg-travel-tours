@@ -26,7 +26,7 @@
 import { TRPCError } from '@trpc/server';
 import { type DriverLoginRefusal, driverLoginSchema } from '@rg/shared';
 import {
-  SESSION_COOKIE,
+  SESSION_COOKIE_BY_SUBJECT,
   clearSessionCookie,
   setSessionCookie,
 } from '../../middleware/session-cookie';
@@ -102,7 +102,7 @@ export const driverAuthRouter = router({
 
     if (!result.ok) throw asTrpcError(result.reason);
 
-    setSessionCookie(ctx.res, result.token, result.expiresAt);
+    setSessionCookie(ctx.res, 'driver', result.token, result.expiresAt);
 
     // The token is in the httpOnly cookie and nowhere else: it is never in
     // this payload, so no script on the page can read it back.
@@ -121,9 +121,9 @@ export const driverAuthRouter = router({
    */
   logout: publicProcedure.mutation(async ({ ctx }) => {
     const cookies = ctx.req.cookies as Record<string, string | undefined> | undefined;
-    const token = cookies?.[SESSION_COOKIE];
+    const token = cookies?.[SESSION_COOKIE_BY_SUBJECT.driver];
     if (token) await revokeSession(token);
-    clearSessionCookie(ctx.res);
+    clearSessionCookie(ctx.res, 'driver');
     return { ok: true as const };
   }),
 });
