@@ -38,13 +38,20 @@
  * the server would never send would make a test that passes while the real
  * form shows nothing.
  */
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
 import CheckoutPage from '@/pages/public/CheckoutPage';
+import PortalLoginPage from '@/pages/portal/PortalLoginPage';
+import ReceiptUpload from '@/components/portal/ReceiptUpload';
 import { TrpcProviders } from '@/lib/trpc';
-import { mockTrpc, mockTrpcValidationError, resetTrpcMock } from './helpers/mock-trpc';
+import {
+  mockTrpc,
+  mockTrpcError,
+  mockTrpcValidationError,
+  resetTrpcMock,
+} from './helpers/mock-trpc';
 
 afterEach(() => {
   resetTrpcMock();
@@ -187,5 +194,152 @@ describe('Checkout — createHold validation errors', () => {
       expect(within(form).getByText('Enter a valid date.')).toBeInTheDocument();
     });
     expectNoRawJson(form);
+  });
+});
+
+/* ------------------------------------------------------- 2. My Booking lookup */
+
+/** From `bookingRefSchema` in `@rg/shared`. */
+const REF_MESSAGE = 'Enter a valid booking reference, like RG-7KQ4M9.';
+
+function renderPortalLogin() {
+  return render(
+    <TrpcProviders>
+      <MemoryRouter initialEntries={['/portal/login']}>
+        <Routes>
+          <Route path="/portal/login" element={<PortalLoginPage />} />
+          <Route path="/portal/booking" element={<p>booking screen</p>} />
+        </Routes>
+      </MemoryRouter>
+    </TrpcProviders>,
+  );
+}
+
+describe('My Booking lookup — portal.login validation errors', () => {
+  it('puts the ref message under the reference box and the email message under the email box', async () => {
+    mockTrpcValidationError('portal.login', {
+      fieldErrors: {
+        ref: [REF_MESSAGE],
+        email: ['Enter a valid email address.'],
+      },
+    });
+    const user = userEvent.setup();
+    renderPortalLogin();
+
+    await user.type(screen.getByLabelText(/booking reference/i), 'nope');
+    await user.type(screen.getByLabelText(/email/i), 'not-an-email');
+    await user.click(screen.getByRole('button', { name: /view my booking/i }));
+
+    const refInput = screen.getByLabelText(/booking reference/i);
+    const emailInput = screen.getByLabelText(/email/i);
+    await waitFor(() => {
+      expect(describedMessage(refInput)).toContain(REF_MESSAGE);
+    });
+    expect(describedMessage(emailInput)).toContain('Enter a valid email address.');
+    // Each one got its own, not the other's.
+    expect(describedMessage(refInput)).not.toContain('email address');
+
+    expectNoRawJson(document.body);
+  });
+
+  /**
+   * The §7 oracle rule, unchanged by this task. A REFUSED credential pair
+   * still produces exactly one notice and names neither half — because that
+   * refusal carries no `zodError`, so `getFieldErrors` returns null and the
+   * page falls through to the shared notice it always had.
+   */
+  it('still shows ONE notice, naming neither field, for a refused credential pair', async () => {
+    mockTrpcError(
+      'portal.login',
+      'UNAUTHORIZED',
+      'That booking reference and email do not match a booking.',
+    );
+    const user = userEvent.setup();
+    renderPortalLogin();
+
+    await user.type(screen.getByLabelText(/booking reference/i), 'RG-NOPE00');
+    await user.type(screen.getByLabelText(/email/i), 'wrong@example.test');
+    await user.click(screen.getByRole('button', { name: /view my booking/i }));
+
+    const alerts = await screen.findAllByRole('alert');
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toHaveTextContent(/do not match a booking/i);
+    expect(screen.getByLabelText(/booking reference/i)).not.toHaveAttribute('aria-invalid');
+    expect(screen.getByLabelText(/email/i)).not.toHaveAttribute('aria-invalid');
+  });
+});
+
+/* ---------------------------------------------------------- 3. Receipt upload */
+
+/**
+ * The one of the six that is NOT a tRPC mutation (it posts file bytes to
+ * `/api/receipts/upload`), so its per-field messages come from the SHARED
+ * `transferReferenceSchema` checked before the request — see the component's
+ * own note. The assertion is the same one every other form here makes: the
+ * right sentence, on the element the right input describes.
+ *
+ * **Both tests submit with `fireEvent.submit` rather than a button click**,
+ * and that is a jsdom limitation worth naming: jsdom reports `required` on a
+ * FILE input as unsatisfied even when `input.files` holds one (measured —
+ * `checkValidity()` stays false after `user.upload`), so the form never
+ * validates and a clicked submit never reaches React's handler. Firing the
+ * submit event is how the handler under test gets to run at all; it changes
+ * nothing about what the handler then does.
+ */
+describe('Receipt upload — per-field messages from the shared schema', () => {
+  it('puts the reference message under the reference box and never posts', async () => {
+    const calls: unknown[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (...args: unknown[]) => {
+      calls.push(args);
+      return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as typeof globalThis.fetch;
+    try {
+      const user = userEvent.setup();
+      const { container } = render(<ReceiptUpload uploadsRemaining={5} />);
+
+      // A real file, so the reference is the only thing wrong: three
+      // characters, under `transferReferenceSchema`'s min of 4.
+      await user.upload(
+        screen.getByLabelText(/photo or pdf of the receipt/i),
+        new File(['x'], 'receipt.png', { type: 'image/png' }),
+      );
+      await user.type(screen.getByLabelText(/reference number from your transfer/i), '123');
+      fireEvent.submit(container.querySelector('form')!);
+
+      const refInput = screen.getByLabelText(/reference number from your transfer/i);
+      await waitFor(() => {
+        expect(describedMessage(refInput)).toContain(
+          'Please enter the reference number from your transfer.',
+        );
+      });
+      expect(refInput).toHaveAttribute('aria-invalid', 'true');
+      // Nothing was sent: the guest fixes the box, not a failed upload.
+      expect(calls).toHaveLength(0);
+      // And the file, which was fine, was not blamed for it.
+      expect(screen.getByLabelText(/photo or pdf of the receipt/i)).not.toHaveAttribute(
+        'aria-invalid',
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('wires the missing-file message to the file input, not to the notice', async () => {
+    const user = userEvent.setup();
+    const { container } = render(<ReceiptUpload uploadsRemaining={5} />);
+
+    await user.type(screen.getByLabelText(/reference number from your transfer/i), 'GC1234567890');
+    fireEvent.submit(container.querySelector('form')!);
+
+    const fileInput = screen.getByLabelText(/photo or pdf of the receipt/i);
+    await waitFor(() => {
+      expect(describedMessage(fileInput)).toContain(
+        'Please choose the photo or PDF of your transfer receipt.',
+      );
+    });
+    expect(screen.getByLabelText(/reference number from your transfer/i)).not.toHaveAttribute(
+      'aria-invalid',
+    );
   });
 });

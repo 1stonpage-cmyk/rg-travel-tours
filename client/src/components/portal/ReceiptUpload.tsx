@@ -29,10 +29,33 @@
  * shown verbatim rather than translated into something vaguer, and in amber
  * — never red (CLAUDE.md), because a receipt that needs re-taking is a
  * normal step, not a failure.
+ *
+ * ## Per-field messages here come from the SHARED schema, not from zodError
+ *
+ * Task A4 asks for the reference-number message beside the reference box and
+ * the file message beside the file box. This form is the one of the six that
+ * is **not a tRPC mutation**, so there is no `error.data.zodError` to read —
+ * the route answers `{ error: <one sentence> }` (`refuse()` in
+ * `server/src/routers/receipts.ts`) and nothing in it says which field a 400
+ * was about.
+ *
+ * So the two fields are checked here, before the request, against
+ * {@link transferReferenceSchema} — the SAME schema the server parses with,
+ * imported rather than reimplemented, so there is no second rule and no
+ * second wording. The server still validates exactly as it did; this only
+ * decides where the sentence appears. Anything the server refuses for a
+ * reason the browser could not know (the five-upload cap, a file that is too
+ * large once read, an expired session) keeps the amber notice above the
+ * form, unchanged.
  */
 import { useRef, useState, type FormEvent } from 'react';
 import { CheckCircle2, Loader2, Upload } from 'lucide-react';
-import { MANUAL_TRANSFER_METHODS, type ManualTransferMethod } from '@rg/shared';
+import {
+  MANUAL_TRANSFER_METHODS,
+  transferReferenceSchema,
+  type ManualTransferMethod,
+} from '@rg/shared';
+import FieldError from '@/components/common/FieldError';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -52,6 +75,8 @@ type Props = {
 };
 
 const ERROR_ID = 'receipt-upload-error';
+const REF_ERROR_ID = 'receipt-ref-error';
+const FILE_ERROR_ID = 'receipt-file-error';
 
 export default function ReceiptUpload({ uploadsRemaining, onUploaded }: Props) {
   const [method, setMethod] = useState<ManualTransferMethod>('gcash');
@@ -59,16 +84,33 @@ export default function ReceiptUpload({ uploadsRemaining, onUploaded }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [state, setState] = useState<'idle' | 'sending' | 'done'>('idle');
   const [error, setError] = useState<string | null>(null);
+  const [refError, setRefError] = useState<string | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+    setRefError(null);
+    setFileError(null);
 
-    if (!file) {
-      setError('Please choose the photo or PDF of your transfer receipt.');
-      return;
+    /*
+     * Both fields are checked before anything is sent, so each message lands
+     * under its own box. The reference's rule and its wording are the shared
+     * schema's ("Please enter the reference number from your transfer." /
+     * "Please use only the characters your transfer receipt shows.") — this
+     * reads them, it does not restate them.
+     */
+    const parsedRef = transferReferenceSchema.safeParse(txnRef);
+    if (!parsedRef.success) {
+      setRefError(
+        parsedRef.error.issues[0]?.message ?? 'Please check the reference number and try again.',
+      );
     }
+    if (!file) {
+      setFileError('Please choose the photo or PDF of your transfer receipt.');
+    }
+    if (!parsedRef.success || !file) return;
 
     setState('sending');
     try {
@@ -170,18 +212,25 @@ export default function ReceiptUpload({ uploadsRemaining, onUploaded }: Props) {
           id="receipt-ref"
           name="txnRef"
           value={txnRef}
-          onChange={(event) => setTxnRef(event.target.value)}
+          onChange={(event) => {
+            setTxnRef(event.target.value);
+            setRefError(null);
+          }}
           placeholder="e.g. 1234567890123"
           autoComplete="off"
           autoCorrect="off"
           spellCheck={false}
           required
-          aria-describedby={error ? ERROR_ID : 'receipt-ref-help'}
+          aria-describedby={
+            refError ? `${REF_ERROR_ID} receipt-ref-help` : error ? ERROR_ID : 'receipt-ref-help'
+          }
+          aria-invalid={refError ? true : undefined}
           className="tap-target font-mono"
         />
         <p id="receipt-ref-help" className="text-muted-foreground text-xs">
           Your GCash, Maya or bank app shows this on the receipt.
         </p>
+        <FieldError id={REF_ERROR_ID} message={refError ?? undefined} />
       </div>
 
       <div className="space-y-1.5">
@@ -193,7 +242,12 @@ export default function ReceiptUpload({ uploadsRemaining, onUploaded }: Props) {
           type="file"
           accept="image/jpeg,image/png,image/webp,application/pdf"
           required
-          onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+          onChange={(event) => {
+            setFile(event.target.files?.[0] ?? null);
+            setFileError(null);
+          }}
+          aria-describedby={fileError ? FILE_ERROR_ID : undefined}
+          aria-invalid={fileError ? true : undefined}
           className="tap-target file:text-brand-blue-900 py-2 file:mr-3 file:font-medium"
         />
         <p className="text-muted-foreground text-xs">
@@ -202,6 +256,7 @@ export default function ReceiptUpload({ uploadsRemaining, onUploaded }: Props) {
             ? 'This is your last upload for this booking.'
             : `${uploadsRemaining} uploads left for this booking.`}
         </p>
+        <FieldError id={FILE_ERROR_ID} message={fileError ?? undefined} />
       </div>
 
       <Button type="submit" disabled={state === 'sending'} className="tap-target w-full">

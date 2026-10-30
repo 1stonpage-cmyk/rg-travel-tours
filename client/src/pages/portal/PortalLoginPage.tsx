@@ -7,7 +7,7 @@
  * a session: the owner's decision is that a booking reference alone reveals
  * nothing, so the amount due and the account details sit behind this form.
  *
- * ## ONE error, and it is a security decision
+ * ## ONE error for a REFUSED credential, and it is a security decision
  *
  * The server refuses a wrong reference and a wrong email with a
  * byte-identical message (§7), because telling them apart tells an attacker
@@ -15,6 +15,22 @@
  * both inputs point at it with `aria-describedby` — the accessible wiring
  * the forms guidance asks for, without the oracle a per-field error would
  * reintroduce. The same departure `AdminLoginPage` documents.
+ *
+ * ## A MALFORMED field is a different question, and gets its own message
+ *
+ * Task A4. `bookingLookupInput` validates the ref's shape
+ * (`bookingRefSchema`) and the email's format before any lookup runs, and a
+ * failure there says nothing whatever about which bookings exist — it is a
+ * fact about the characters in the box, decided with no database read. Those
+ * messages now render beneath their own input ("Enter a valid booking
+ * reference, like RG-7KQ4M9."), which is what they are for.
+ *
+ * The oracle rule is untouched: the moment the server actually looks a
+ * booking up, the refusal carries no `zodError` at all, so it lands in the
+ * single shared notice exactly as before. **Validation and credential
+ * failures are told apart by the presence of `data.zodError`, never by
+ * reading the message** — that is the distinction the server already draws,
+ * and the page reads it rather than re-deciding it.
  *
  * ## Mobile first, and the keyboard matters
  *
@@ -31,11 +47,15 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { APP_SURFACE_TITLES } from '@rg/shared';
+import FieldError from '@/components/common/FieldError';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
+import { getFieldErrors, getFormErrors } from '@/lib/field-errors';
 import { SITE } from '@/lib/site';
 import { trpc } from '@/lib/trpc';
 
 const ERROR_ID = 'portal-login-error';
+const REF_ERROR_ID = 'portal-login-ref-error';
+const EMAIL_ERROR_ID = 'portal-login-email-error';
 
 /**
  * Where to go after signing in. Taken from `?next=`, but **only when it is
@@ -74,6 +94,24 @@ export default function PortalLoginPage() {
     login.mutate({ ref: ref.trim(), email: email.trim() });
   }
 
+  /*
+   * `bookingLookupInput`'s own field names, keyed as the server sends them
+   * (`ref`, `email`) — a flat `.strict()` object, so there is no nested key
+   * to unpick here the way checkout's `lead` needs.
+   */
+  const fieldErrors = login.isError ? getFieldErrors(login.error) : null;
+  const formErrors = login.isError ? getFormErrors(login.error) : [];
+  const refError = fieldErrors?.ref;
+  const emailError = fieldErrors?.email;
+  /*
+   * A validation failure is NOT shown in the shared notice as well — the
+   * field messages are the whole of it, and repeating them above the form
+   * would be the second copy of the same sentence. A form-level issue has no
+   * field to sit beside, so that one does go in the notice.
+   */
+  const noticeMessage =
+    !login.isError || fieldErrors !== null ? null : (formErrors[0] ?? login.error.message);
+
   return (
     <main className="bg-brand-blue-50 flex min-h-screen items-center justify-center px-4 py-10">
       <div className="w-full max-w-sm">
@@ -105,14 +143,14 @@ export default function PortalLoginPage() {
             Sign in to your booking
           </h2>
 
-          {/* ONE notice for the pair — see the file note. Amber, never red. */}
-          {login.isError ? (
+          {/* ONE notice for a refused credential pair — see the file note. Amber, never red. */}
+          {noticeMessage !== null ? (
             <p
               id={ERROR_ID}
               role="alert"
               className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-lg border p-3 text-sm font-medium"
             >
-              {login.error.message}
+              {noticeMessage}
             </p>
           ) : null}
 
@@ -129,9 +167,13 @@ export default function PortalLoginPage() {
               autoCorrect="off"
               spellCheck={false}
               required
-              aria-describedby={login.isError ? ERROR_ID : undefined}
+              aria-describedby={
+                refError ? REF_ERROR_ID : noticeMessage !== null ? ERROR_ID : undefined
+              }
+              aria-invalid={refError ? true : undefined}
               className="tap-target font-mono uppercase tracking-wide"
             />
+            <FieldError id={REF_ERROR_ID} message={refError} />
           </div>
 
           <div className="space-y-1.5">
@@ -145,9 +187,13 @@ export default function PortalLoginPage() {
               required
               value={email}
               onChange={(event) => setEmail(event.target.value)}
-              aria-describedby={login.isError ? ERROR_ID : undefined}
+              aria-describedby={
+                emailError ? EMAIL_ERROR_ID : noticeMessage !== null ? ERROR_ID : undefined
+              }
+              aria-invalid={emailError ? true : undefined}
               className="tap-target"
             />
+            <FieldError id={EMAIL_ERROR_ID} message={emailError} />
           </div>
 
           <Button type="submit" disabled={login.isPending} className="tap-target w-full">
