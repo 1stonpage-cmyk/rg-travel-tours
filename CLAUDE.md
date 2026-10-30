@@ -223,8 +223,12 @@ db:seed` now runs.
     and (app-database only) the fleet and itinerary stops. **Unchanged upsert behaviour** — this
     is dev/demo content, and staying overwritable on a dev box is the point. Guards its own
     database name independently of `seedBase`'s own guard call (refuses anything but
-    `rg_travel`/`rg_travel_test`), and **must never be run against production once real content
-    replaces the seed.** This is the new, separate `pnpm --filter @rg/server db:seed:demo`.
+    `rg_travel`/`rg_travel_test`) — **but that guard is not what keeps it off production**:
+    production's own database is named `rg_travel` too (`APP_DATABASE_NAME`), so the guard waves a
+    production run straight through. It only catches a genuinely FOREIGN database (Kong PMS's,
+    say, or a `DATABASE_URL` typo). `seedDemo` **must never be run against production once real
+    content replaces the seed**, and nothing but the operator's own judgement enforces that. This
+    is the new, separate `pnpm --filter @rg/server db:seed:demo`.
 
   `seed(context)` itself is `await seedBase(context); await seedDemo(context);` — unchanged
   externally, so every existing caller (test files, `global-setup.ts`, `helpers/test-db.ts`)

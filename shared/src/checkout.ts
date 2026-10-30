@@ -305,11 +305,15 @@ export const TOTAL_BELOW_GATEWAY_MINIMUM =
  * it names none — only the one thing that can actually happen next, which is
  * the office confirming the booking by hand.
  *
- * **It is still a refusal.** Whether a fully discounted booking should be
- * allowed to confirm with no payment step at all is an open owner decision
- * (flagged in the Task 19 review); until it is taken, such a booking is
- * refused at hold time exactly as before and only the wording is honest about
- * why.
+ * **It is still a refusal, and that is now the resolved, final answer** (owner
+ * decision 2026-10-30, pre-launch fixes batch Task B4 — superseding the "open
+ * owner decision" note this comment carried from the Task 19 review). A fully
+ * discounted booking never confirms with no payment step at all: it is
+ * refused, always, the office completes it by hand. The refusal fires in BOTH
+ * places that can reach ₱0 — `createHold` (`server/src/services/create-hold.ts`)
+ * and the `checkout.quote` preview (`server/src/routers/public/checkout.ts`,
+ * Task B4) — via this same `gatewayMinimumMessage()`, so a guest cannot reach
+ * a different answer through the preview than through the hold.
  */
 export const NOTHING_TO_PAY_ONLINE =
   `This booking's total comes to ${formatPeso(0)}, so there's nothing to pay online. ` +

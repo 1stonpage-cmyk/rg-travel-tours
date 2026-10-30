@@ -344,11 +344,16 @@ db:seed` is now BASE-ONLY and genuinely safe to re-run against production at any
    hide below, and can reactivate a deactivated driver or free an `on_trip` van), because it is
    dev/demo content and staying overwritable on a dev box is the entire point of it. **`db:seed:demo`
    must NEVER be run against the production database, full stop — not even for "the specific gap"
-   wording this step used to carry, which no longer applies to it.** It also refuses to run
-   against any database whose name is not `rg_travel` or `rg_travel_test`, on its own guard call,
-   as a second line of defence against exactly that mistake. `db:seed` (base) carries no such
-   caveat any more: run it on production whenever a settings key or destination is genuinely
-   missing, with no "only for this one gap" qualifier needed.
+   wording this step used to carry, which no longer applies to it.** It also refuses to run against
+   any database whose name is not `rg_travel` or `rg_travel_test`, on its own guard call (`server/src/db/guard.ts`'s
+   `APP_DATABASE_NAME`) — but **that guard is not a safety net against THIS mistake**: production's
+   own database is also named `rg_travel` (same constant, same name), so the guard is a green light
+   there, not a refusal. It catches a genuinely FOREIGN database — Kong PMS's own database on this
+   same machine, or a typo in `DATABASE_URL` — never a production run under its correct name.
+   Nothing but the operator's own judgement stands between `db:seed:demo` and a production run;
+   read the paragraph above again before typing it anywhere near the production `.env`. `db:seed`
+   (base) carries no such caveat any more: run it on production whenever a settings key or
+   destination is genuinely missing, with no "only for this one gap" qualifier needed.
 
 3. **Publish the build**: sync `client/dist` into `/var/www/travelsugbo/app`, confirm
    `pm2 restart` brings the API up on 3100, and smoke-test the whole flow on

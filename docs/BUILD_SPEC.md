@@ -1112,15 +1112,18 @@ driven separately for exactly that reason.
 - **6E** Payment verification queue (approve/reject → portal updates).
 - **6F** Cancel/refund flow (PayMongo refund API + manual record).
 
-### Week 7 — Growth features — ✅ WEEK 7 COMPLETE (2026-10-30), with two owner decisions still open
+### Week 7 — Growth features — ✅ WEEK 7 COMPLETE (2026-10-30)
 
 > **Preamble rewritten 2026-10-30.** It said "Nothing in this week is built… no submission,
 > moderation, admin or export side of any of it." All of 7A–7F and 7H–7P now is. §13's markers have
 > now been found stale three times (Weeks 4, 6 and the 2C/2D pair above), so this one is corrected
 > as the week closes rather than left for a fourth.
 >
-> **Two items are NOT closed, and "WEEK 7 COMPLETE" above does not cover them.** Both are owner
-> decisions, both are carried into Week 8 below, and neither was built unilaterally:
+> **Reframed 2026-10-30 (pre-launch fixes batch).** This section originally shipped saying two
+> items were NOT closed and that "WEEK 7 COMPLETE" above did not cover them — both owner decisions,
+> both carried into Week 8. **Both have since been resolved**, in the same batch that corrected this
+> framing, and are marked so in place below rather than rewritten away — the historical finding text
+> is left exactly as it was found:
 >
 > 1. **`db:seed` still overwrites admin-edited content in six tables** (BUG-118). The launch
 >    blocker is fixed for `settings` only — `tours`, `tour_price_tiers`, `tour_images`, `packages`,
@@ -1132,6 +1135,9 @@ driven separately for exactly that reason.
 >    The PayMongo-unconfigured half is enforced server-side and measured; the methods-disabled half
 >    is enforced by the UI alone, so the control fails open.
 >    **✅ RESOLVED (Task B3, pre-launch fixes batch)** — see the Week 8 carry-forward list below.
+>
+> So "WEEK 7 COMPLETE" above now stands without qualification: both of its carve-outs are resolved,
+> and the heading no longer needs "with two owner decisions still open" attached to it.
 >
 > The same treatment **7G** gets: deferred to Week 8 by the owner's own answer (Q9), named rather
 > than dropped.
@@ -1367,8 +1373,10 @@ Nothing in this week is built.
 
 > **What Week 7 hands this week** (walkthrough, 2026-10-30:
 > `docs/superpowers/plans/2026-10-30-week7-walkthrough.md`, which carries the full list with its
-> measurements). One of these is an **owner decision and must be answered before it is built**;
-> the rest is work.
+> measurements). **Corrected 2026-10-30 (pre-launch fixes batch):** this used to say one of these
+> was an owner decision that had to be answered before it could be built — item 1 below (BUG-118).
+> That decision has since been taken and built (✅ RESOLVED, Task B2); nothing in this list is still
+> waiting on an owner decision, and the rest is work (plus item 4's one-time setup step).
 >
 > 1. **✅ RESOLVED (Task B2, pre-launch fixes batch) — `db:seed` still overwrites admin-edited
 >    content in six tables** (BUG-118). The owner's decision: split the seed into a BASE half
