@@ -75,6 +75,7 @@ import {
   type BlockSpec,
   type FieldSpec,
 } from '@/components/admin/settings-blocks';
+import { firstValidationMessage } from '@/lib/field-errors';
 import { trpc } from '@/lib/trpc';
 
 const CARD = 'border-brand-blue-100 rounded-[14px] border bg-white';
@@ -93,6 +94,15 @@ const SUMMARY =
 
 /** The server's own sentence for a refusal under 500; a calm fallback otherwise. */
 function describeSettingsError(error: unknown, fallback: string): string {
+  /*
+   * Task A4. An input-validation failure's `message` is tRPC's own default
+   * for a `ZodError` — `JSON.stringify(issues, null, 2)` — so returning it
+   * here put a JSON blob in the banner. The schema's own sentence is the
+   * thing a human can act on, and the per-field messages go to the form's
+   * `errors` map in `onError` besides.
+   */
+  const validation = firstValidationMessage(error);
+  if (validation !== null) return validation;
   if (
     error instanceof TRPCClientError &&
     typeof error.data?.httpStatus === 'number' &&

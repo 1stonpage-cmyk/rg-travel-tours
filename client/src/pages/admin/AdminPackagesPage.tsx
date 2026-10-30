@@ -64,6 +64,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import EntityForm, { type EntityFormField } from '@/components/admin/EntityForm';
 import { centavosToPesosInput, pesosToCentavos } from '@/lib/money-input';
 import { utcIsoToManilaLabel } from '@/lib/manila-datetime';
+import { firstValidationMessage, splitFieldErrors } from '@/lib/field-errors';
 import { trpc } from '@/lib/trpc';
 
 const CARD = 'border-brand-blue-100 rounded-[14px] border bg-white';
@@ -94,6 +95,15 @@ const INQUIRY_BADGE_CLASS: Record<InquiryStatus, string> = {
 
 /** The server's own sentence for any refusal under 500; a calm fallback otherwise. */
 function describeError(error: unknown, fallback: string): string {
+  /*
+   * Task A4. An input-validation failure's `message` is tRPC's own default
+   * for a `ZodError` — `JSON.stringify(issues, null, 2)` — so returning it
+   * here put a JSON blob in the banner. The schema's own sentence is the
+   * thing a human can act on, and the per-field messages go to the form's
+   * `errors` map in `onError` besides.
+   */
+  const validation = firstValidationMessage(error);
+  if (validation !== null) return validation;
   if (
     error instanceof TRPCClientError &&
     typeof error.data?.httpStatus === 'number' &&
@@ -173,6 +183,9 @@ const PACKAGE_FIELDS: readonly EntityFormField[] = [
   { name: 'seoDescription', label: 'SEO description', type: 'textarea' },
   { name: 'ogImage', label: 'Social share image', type: 'text' },
 ];
+
+/** The names `EntityForm` renders here, for `splitFieldErrors` (task A4). */
+const PACKAGE_FIELD_NAMES: ReadonlySet<string> = new Set(PACKAGE_FIELDS.map((field) => field.name));
 
 function valuesFromPackage(row: PackageAdminRow | null): Record<string, string> {
   if (!row) {
@@ -267,19 +280,36 @@ function PackageForm({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [banner, setBanner] = useState<string | null>(null);
 
+  /*
+   * Task A4. A validation refusal's messages go to the inputs they name;
+   * anything the form has no box for stays in the banner rather than being
+   * dropped. The money fields are exactly that case: the form's boxes are
+   * `newPrice`/`oldPrice` in pesos while the server's keys are
+   * `newPriceCentavos`/`oldPriceCentavos`, so those land in the banner.
+   */
+  function reportSaveError(error: unknown, fallback: string) {
+    const validation = splitFieldErrors(error, PACKAGE_FIELD_NAMES);
+    if (validation) {
+      setErrors(validation.fields);
+      setBanner(validation.banner);
+      return;
+    }
+    setBanner(describeError(error, fallback));
+  }
+
   const create = trpc.admin.packages.create.useMutation({
     onSuccess: () => {
       void utils.admin.packages.list.invalidate();
       onSaved('Package added.');
     },
-    onError: (error) => setBanner(describeError(error, 'Could not add this package.')),
+    onError: (error) => reportSaveError(error, 'Could not add this package.'),
   });
   const update = trpc.admin.packages.update.useMutation({
     onSuccess: () => {
       void utils.admin.packages.list.invalidate();
       onSaved('Changes saved.');
     },
-    onError: (error) => setBanner(describeError(error, 'Could not save this package.')),
+    onError: (error) => reportSaveError(error, 'Could not save this package.'),
   });
   const pending = create.isPending || update.isPending;
 

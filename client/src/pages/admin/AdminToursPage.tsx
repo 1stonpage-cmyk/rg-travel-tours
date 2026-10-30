@@ -80,6 +80,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import EntityForm, { type EntityFormField } from '@/components/admin/EntityForm';
 import { centavosToPesosInput, pesosToCentavos } from '@/lib/money-input';
+import { firstValidationMessage, splitFieldErrors } from '@/lib/field-errors';
 import { trpc } from '@/lib/trpc';
 
 const CARD = 'border-brand-blue-100 rounded-[14px] border bg-white';
@@ -109,6 +110,15 @@ const STATUS_BADGE_CLASS: Record<'Active' | 'Inactive', string> = {
 
 /** The server's own sentence for any refusal under 500; a calm fallback otherwise. */
 function describeTourError(error: unknown, fallback: string): string {
+  /*
+   * Task A4. An input-validation failure's `message` is tRPC's own default
+   * for a `ZodError` — `JSON.stringify(issues, null, 2)` — so returning it
+   * here put a JSON blob in the banner. The schema's own sentence is the
+   * thing a human can act on, and the per-field messages go to the form's
+   * `errors` map in `onError` besides.
+   */
+  const validation = firstValidationMessage(error);
+  if (validation !== null) return validation;
   if (
     error instanceof TRPCClientError &&
     typeof error.data?.httpStatus === 'number' &&
@@ -292,6 +302,9 @@ const SCALAR_NAMES = [
   'seoDescription',
   'ogImage',
 ] as const;
+
+/** The same names as a Set, for `splitFieldErrors` (task A4). */
+const SCALAR_NAME_SET: ReadonlySet<string> = new Set(SCALAR_NAMES);
 
 interface DestinationOption {
   id: number;
@@ -779,12 +792,28 @@ function TourForm({
   const [addonErrors, setAddonErrors] = useState<Record<number, Record<string, string>>>({});
   const [banner, setBanner] = useState<string | null>(null);
 
+  /*
+   * Task A4. A validation refusal's messages go to the scalar fields they
+   * name; anything the form cannot place against an input (a `priceTiers` or
+   * `images` message, whose own errors are keyed by ROW here, not by field)
+   * stays in the banner rather than being dropped.
+   */
+  function reportSaveError(error: unknown, fallback: string) {
+    const validation = splitFieldErrors(error, SCALAR_NAME_SET);
+    if (validation) {
+      setScalarErrors(validation.fields);
+      setBanner(validation.banner);
+      return;
+    }
+    setBanner(describeTourError(error, fallback));
+  }
+
   const create = trpc.admin.tours.create.useMutation({
     onSuccess: () => {
       void utils.admin.tours.list.invalidate();
       onSaved('Tour added.');
     },
-    onError: (error) => setBanner(describeTourError(error, 'Could not add this tour.')),
+    onError: (error) => reportSaveError(error, 'Could not add this tour.'),
   });
   const update = trpc.admin.tours.update.useMutation({
     onSuccess: () => {
@@ -792,7 +821,7 @@ function TourForm({
       void utils.admin.tours.detail.invalidate();
       onSaved('Changes saved.');
     },
-    onError: (error) => setBanner(describeTourError(error, 'Could not save this tour.')),
+    onError: (error) => reportSaveError(error, 'Could not save this tour.'),
   });
   const pending = create.isPending || update.isPending;
 

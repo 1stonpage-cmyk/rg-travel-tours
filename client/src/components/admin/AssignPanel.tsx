@@ -44,6 +44,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { firstValidationMessage } from '@/lib/field-errors';
 import { trpc } from '@/lib/trpc';
 
 /**
@@ -90,6 +91,20 @@ function isRefusal(value: string): value is AssignRefusal {
  * genuinely unexpected.
  */
 function refusalMessage(error: unknown): string {
+  /*
+   * Task A4. `error.message` for an INPUT-VALIDATION failure is tRPC's own
+   * `JSON.stringify(issues, null, 2)`, and the `reason.length < 200`
+   * pass-through below would have shown a short one of those verbatim. A
+   * validation failure is never one of the six §9 refusal reasons, so it is
+   * answered first, with the schema's own sentence.
+   *
+   * There is no per-field display here on purpose: this panel's input is a
+   * booking id and two ids chosen from dropdowns the server itself filled
+   * (plus an optional reason), so the only field a dispatcher could get
+   * wrong is already the one this message sits beside.
+   */
+  const validation = firstValidationMessage(error);
+  if (validation !== null) return validation;
   if (error instanceof TRPCClientError) {
     const reason = typeof error.message === 'string' ? error.message.trim() : '';
     if (isRefusal(reason)) return REFUSAL_COPY[reason];

@@ -27,6 +27,7 @@ import { useState } from 'react';
 import { formatPeso } from '@rg/shared';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import { firstValidationMessage } from '@/lib/field-errors';
 import { trpc } from '@/lib/trpc';
 import { findPendingCash, findPendingReceipt, type DecidablePayment } from './pending-payments';
 
@@ -82,7 +83,18 @@ export default function PaymentDecisions({
 
   const pendingReceipt = findPendingReceipt(payments);
   const pendingCash = findPendingCash(payments);
-  const decisionError = approve.error?.message ?? reject.error?.message ?? null;
+  /*
+   * Task A4. A validation refusal's `error.message` is tRPC's raw JSON issue
+   * list, so the schema's own sentence is used for those. No per-field split
+   * on this panel: `approveReceipt` takes only a `paymentId`, and
+   * `rejectReceipt`/`rejectCash`'s one typed field is the reason box each
+   * message already sits with.
+   */
+  const describeDecision = (error: unknown): string | null => {
+    if (!error) return null;
+    return firstValidationMessage(error) ?? (error as { message?: string }).message ?? null;
+  };
+  const decisionError = describeDecision(approve.error) ?? describeDecision(reject.error);
 
   if (!mayVerify || (!pendingReceipt && pendingCash.length === 0)) return null;
 
@@ -165,7 +177,7 @@ export default function PaymentDecisions({
           {/* SCOPED to the claim whose mutation failed. Amber, never red. */}
           {approveCash.error && approveCash.variables?.paymentId === claim.id ? (
             <p role="alert" className={ALERT}>
-              {approveCash.error.message}
+              {describeDecision(approveCash.error)}
             </p>
           ) : null}
 
@@ -204,7 +216,7 @@ export default function PaymentDecisions({
 
             {rejectCash.error && rejectCash.variables?.paymentId === claim.id ? (
               <p role="alert" className={ALERT}>
-                {rejectCash.error.message}
+                {describeDecision(rejectCash.error)}
               </p>
             ) : null}
 

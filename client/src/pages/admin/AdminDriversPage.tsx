@@ -116,6 +116,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import EntityForm, { type EntityFormField } from '@/components/admin/EntityForm';
+import { firstValidationMessage, splitFieldErrors } from '@/lib/field-errors';
 import { trpc } from '@/lib/trpc';
 
 const DRIVER_STATUS_LABELS: Record<string, string> = {
@@ -166,6 +167,14 @@ const LEAVE_FIELDS: readonly EntityFormField[] = [
 const EMPTY_DRIVER_VALUES: Record<string, string> = Object.fromEntries(
   DRIVER_FIELDS.map((field) => [field.name, '']),
 );
+
+/**
+ * Which field names each form here can actually show a message against
+ * (task A4). Derived from the field lists rather than retyped, so a field
+ * added to a form is placeable without anyone remembering a second list.
+ */
+const DRIVER_FIELD_NAMES: ReadonlySet<string> = new Set(DRIVER_FIELDS.map((field) => field.name));
+const LEAVE_FIELD_NAMES: ReadonlySet<string> = new Set(LEAVE_FIELDS.map((field) => field.name));
 
 /** Today, in Asia/Manila — a leave form that validates the moment it opens. */
 function defaultLeaveValues(): Record<string, string> {
@@ -243,6 +252,15 @@ function fieldErrors(
 
 /** The server's own sentence when there is one — same technique as `AdminBookingDetailPage.tsx`. */
 function errorMessage(error: unknown, fallback: string): string {
+  /*
+   * Task A4. `error.message` for an input-validation failure is tRPC's own
+   * default for a `ZodError` — `JSON.stringify(issues, null, 2)` — and this
+   * helper would have put that blob straight in a banner. The schema's own
+   * sentence is what a dispatcher can act on; the per-field messages go to
+   * `createErrors`/`editErrors` in `onError` besides.
+   */
+  const validation = firstValidationMessage(error);
+  if (validation !== null) return validation;
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
@@ -446,9 +464,13 @@ export default function AdminDriversPage() {
       setPinPanel({ kind: 'create', name: variables.name, pin: data.pin });
     },
     onError: (error) => {
+      const validation = splitFieldErrors(error, DRIVER_FIELD_NAMES);
       if (error instanceof TRPCClientError && error.data?.code === 'CONFLICT') {
         setCreateErrors((current) => ({ ...current, code: error.message }));
         setCreateBanner(null);
+      } else if (validation) {
+        setCreateErrors((current) => ({ ...current, ...validation.fields }));
+        setCreateBanner(validation.banner);
       } else {
         setCreateBanner(errorMessage(error, 'Could not add this driver. Please try again.'));
       }
@@ -466,9 +488,13 @@ export default function AdminDriversPage() {
     },
     onError: (error) => {
       setEditNotice(null);
+      const validation = splitFieldErrors(error, DRIVER_FIELD_NAMES);
       if (error instanceof TRPCClientError && error.data?.code === 'CONFLICT') {
         setEditErrors((current) => ({ ...current, code: error.message }));
         setEditBanner(null);
+      } else if (validation) {
+        setEditErrors((current) => ({ ...current, ...validation.fields }));
+        setEditBanner(validation.banner);
       } else {
         setEditBanner(errorMessage(error, 'Could not save this driver. Please try again.'));
       }
@@ -553,11 +579,18 @@ export default function AdminDriversPage() {
       // unconditionally, so the full list (soonest first, past leaves
       // included) stays visible right alongside this banner, not hidden
       // behind the pending/error state.
+      //
+      // Task A4: a validation refusal's messages go to the leave form's own
+      // `errors` map instead, beside the date or reason that caused them.
+      // `driverId` is never one of them — it is the row's own id, not typed.
+      const validation = splitFieldErrors(error, LEAVE_FIELD_NAMES);
       setLeaveForms((current) => ({
         ...current,
         [variables.driverId]: {
           ...(current[variables.driverId] ?? freshLeaveFormState()),
-          banner: errorMessage(error, 'Could not add that leave. Please try again.'),
+          ...(validation
+            ? { errors: validation.fields, banner: validation.banner }
+            : { banner: errorMessage(error, 'Could not add that leave. Please try again.') }),
         },
       }));
     },

@@ -51,6 +51,7 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { pesosInWords } from '@/lib/peso-words';
 import { MONEY_ROLES, roleMay } from '@/lib/roles';
+import { firstValidationMessage } from '@/lib/field-errors';
 import { trpc } from '@/lib/trpc';
 
 /**
@@ -221,9 +222,15 @@ export default function CancelRefundPanel({
               />
             </div>
 
+            {/*
+             * Task A4. A validation refusal's `error.message` is tRPC's raw
+             * JSON issue list, so the schema's own sentence is used for
+             * those. No per-field split: this panel's only typed field is
+             * `reason`, and this message already sits directly beneath it.
+             */}
             {cancel.error ? (
               <p role="alert" className={WARNING_BOX}>
-                {cancel.error.message}
+                {firstValidationMessage(cancel.error) ?? cancel.error.message}
               </p>
             ) : null}
 
@@ -406,9 +413,10 @@ export default function CancelRefundPanel({
                   </div>
                 ) : null}
 
+                {/* Same rule as the cancel notice above: never the raw issue list. */}
                 {showError ? (
                   <p role="alert" className={WARNING_BOX}>
-                    {refund.error?.message}
+                    {firstValidationMessage(refund.error) ?? refund.error?.message}
                   </p>
                 ) : null}
 

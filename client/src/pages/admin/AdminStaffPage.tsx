@@ -44,6 +44,7 @@ import PasswordField from '@/components/admin/PasswordField';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { firstValidationMessage, splitFieldErrors } from '@/lib/field-errors';
 import { trpc } from '@/lib/trpc';
 
 const ROLE_LABELS: Record<AdminRole, string> = {
@@ -82,6 +83,14 @@ const SELECT_CLASS =
 
 /** The server's own sentence for a refusal it chose; calm fixed text for everything else. */
 function describeStaffError(error: unknown, fallback: string): string {
+  /*
+   * Task A4. The 400 branch below already kept tRPC's raw JSON issue list out
+   * of the banner, but "Please check the details and try again." says nothing
+   * about WHICH detail. The schema's own sentence does, and the per-field
+   * messages go to the form's `errors` map in `onError` besides.
+   */
+  const validation = firstValidationMessage(error);
+  if (validation !== null) return validation;
   if (error instanceof TRPCClientError) {
     const status = error.data?.httpStatus;
     if (status === 403 || status === 401) return 'Only the owner can manage staff accounts.';
@@ -91,6 +100,14 @@ function describeStaffError(error: unknown, fallback: string): string {
   }
   return fallback;
 }
+
+/**
+ * The three forms' own field names, for `splitFieldErrors` (task A4) — so a
+ * server validation message lands on the box it is about and anything else
+ * (a `role` the select could not have produced, an `id`) stays in the
+ * banner rather than being dropped.
+ */
+const STAFF_FIELD_NAMES: ReadonlySet<string> = new Set(['name', 'email', 'role', 'tempPassword']);
 
 /** First issue per field from a Zod parse, keyed by the field it belongs to. */
 function fieldErrors(issues: readonly { path: PropertyKey[]; message: string }[]) {
@@ -163,6 +180,12 @@ function AddStaffForm({ onCreated }: { onCreated: (name: string) => void }) {
       // The password is not kept after a failed attempt either way: the
       // owner retypes it rather than leaving it sitting in the field.
       setTempPassword('');
+      const validation = splitFieldErrors(error, STAFF_FIELD_NAMES);
+      if (validation) {
+        setErrors(validation.fields);
+        setBanner(validation.banner);
+        return;
+      }
       setBanner(describeStaffError(error, 'Could not add this person. Nothing was changed.'));
     },
   });
@@ -297,8 +320,15 @@ function EditPanel({
       void utils.admin.staffUsers.list.invalidate();
       onSaved(`Saved changes to ${name.trim()}.`);
     },
-    onError: (error) =>
-      setBanner(describeStaffError(error, 'Could not save these changes. Nothing was changed.')),
+    onError: (error) => {
+      const validation = splitFieldErrors(error, STAFF_FIELD_NAMES);
+      if (validation) {
+        setErrors(validation.fields);
+        setBanner(validation.banner);
+        return;
+      }
+      setBanner(describeStaffError(error, 'Could not save these changes. Nothing was changed.'));
+    },
   });
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
@@ -394,6 +424,15 @@ function ResetPanel({
     },
     onError: (err) => {
       setTempPassword('');
+      // One typed field here, so its message goes to that field and anything
+      // else (an `id` the panel supplied itself) stays in the banner.
+      const validation = splitFieldErrors(err, STAFF_FIELD_NAMES);
+      if (validation) {
+        setError(validation.fields.tempPassword);
+        setBanner(validation.banner);
+        return;
+      }
+      setError(undefined);
       setBanner(describeStaffError(err, 'Could not reset this password. Nothing was changed.'));
     },
   });

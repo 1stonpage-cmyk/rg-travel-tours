@@ -24,12 +24,28 @@ import { TRPCClientError } from '@trpc/client';
 import { STAFF_PASSWORD_MIN_LENGTH, staffPasswordSchema } from '@rg/shared';
 import PasswordField from '@/components/admin/PasswordField';
 import { Button } from '@/components/ui/button';
+import { firstValidationMessage, splitFieldErrors } from '@/lib/field-errors';
 import { trpc } from '@/lib/trpc';
 
 const NOTICE_CLASS =
   'border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-xl border p-3 text-sm font-medium';
 
+/**
+ * The two `staffAuth.changePassword` input keys this form has a box for
+ * (task A4). `confirmPassword` is deliberately absent: it is this page's own
+ * check and never reaches the server, so no response can place a message on
+ * it.
+ */
+const CHANGE_FIELD_NAMES: ReadonlySet<string> = new Set(['currentPassword', 'newPassword']);
+
 function describeChangeError(error: unknown): string {
+  /*
+   * Task A4. The 400 branch below already kept tRPC's raw JSON issue list out
+   * of the banner, but `staffPasswordSchema`'s own sentence names the actual
+   * rule. The per-field messages go to `errors` in `onError` besides.
+   */
+  const validation = firstValidationMessage(error);
+  if (validation !== null) return validation;
   if (error instanceof TRPCClientError) {
     const status = error.data?.httpStatus;
     if (status === 429) return 'Too many attempts. Wait a few minutes and try again.';
@@ -69,6 +85,20 @@ export default function AdminChangePasswordPage() {
     },
     onError: (error) => {
       setDone(false);
+      /*
+       * Task A4. `changePassword`'s input names exactly the two boxes this
+       * form has for it, so a validation message goes beside the one it is
+       * about. `confirmPassword` is this page's own field and never the
+       * server's, so it is not in the placed set and nothing can land on it
+       * from a response.
+       */
+      const validation = splitFieldErrors(error, CHANGE_FIELD_NAMES);
+      if (validation) {
+        setErrors(validation.fields);
+        setBanner(validation.banner);
+        return;
+      }
+      setErrors({});
       setBanner(describeChangeError(error));
     },
   });

@@ -137,3 +137,36 @@ export function firstValidationMessage(error: unknown): string | null {
   const first = Object.values(fields)[0];
   return first ?? null;
 }
+
+/**
+ * The admin screens' version of the split every public form does inline:
+ * which messages a form can place beside an input, and what is left over.
+ *
+ * It exists because the admin pages share one shape — an
+ * `errors: Record<string, string>` map wired to `EntityForm` (or to their own
+ * rows) plus one banner — eight times over, and because the thing that goes
+ * wrong when this is written eight times is the LEFTOVER: a message keyed on
+ * a field the form does not render is dropped, and the screen then says
+ * nothing at all about a failed save. That is the quiet half of this bug, not
+ * a fix for it.
+ *
+ * `placed` is the set of field names the caller will actually render against
+ * an input. Returns `null` when the error is not an input-validation failure,
+ * which is the caller's cue to use its existing `describe*Error` path.
+ */
+export function splitFieldErrors(
+  error: unknown,
+  placed: ReadonlySet<string>,
+): { fields: FieldErrors; banner: string | null } | null {
+  const all = getFieldErrors(error);
+  const formErrors = getFormErrors(error);
+  if (all === null && formErrors.length === 0) return null;
+
+  const fields: FieldErrors = {};
+  const leftover: string[] = [];
+  for (const [field, message] of Object.entries(all ?? {})) {
+    if (placed.has(field)) fields[field] = message;
+    else leftover.push(message);
+  }
+  return { fields, banner: formErrors[0] ?? leftover[0] ?? null };
+}

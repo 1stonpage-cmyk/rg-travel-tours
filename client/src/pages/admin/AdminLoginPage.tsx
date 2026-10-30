@@ -42,6 +42,7 @@ import { Eye, EyeOff, Loader2, Lock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { firstValidationMessage } from '@/lib/field-errors';
 import { SITE } from '@/lib/site';
 import { trpc } from '@/lib/trpc';
 
@@ -111,7 +112,16 @@ export default function AdminLoginPage() {
               role="alert"
               className="border-l-4 border-amber-600 bg-amber-50 p-3 text-sm font-medium text-amber-900"
             >
-              {login.error.message}
+              {/*
+               * Task A4. A validation failure's `error.message` is tRPC's raw
+               * JSON issue list, so the schema's own sentence is used for
+               * those. It still goes in the ONE notice rather than beside a
+               * field: the credential-pair rule above is about not telling an
+               * attacker which half was wrong, and a form that splits its
+               * messages per field for some refusals and not others says more
+               * than it means to.
+               */}
+              {firstValidationMessage(login.error) ?? login.error.message}
             </p>
           ) : null}
 

@@ -68,6 +68,7 @@ import {
   basisPointsToPercentLabel,
   percentToBasisPoints,
 } from '@/lib/percent-input';
+import { firstValidationMessage, splitFieldErrors } from '@/lib/field-errors';
 import { trpc } from '@/lib/trpc';
 
 const CARD = 'border-brand-blue-100 rounded-[14px] border bg-white';
@@ -90,6 +91,15 @@ const STATUS_BADGE_CLASS: Record<'Active' | 'Inactive', string> = {
 
 /** The server's own sentence for any refusal under 500; a calm fallback otherwise. */
 function describeCouponError(error: unknown, fallback: string): string {
+  /*
+   * Task A4. An input-validation failure's `message` is tRPC's own default
+   * for a `ZodError` — `JSON.stringify(issues, null, 2)` — so returning it
+   * here put a JSON blob in the banner. The schema's own sentence is the
+   * thing a human can act on, and the per-field messages go to the form's
+   * `errors` map in `onError` besides.
+   */
+  const validation = firstValidationMessage(error);
+  if (validation !== null) return validation;
   if (
     error instanceof TRPCClientError &&
     typeof error.data?.httpStatus === 'number' &&
@@ -174,6 +184,19 @@ function windowWarningInWords(coupon: CouponAdminRow): string | null {
 /* ------------------------------------------------------------------- The form */
 
 type DiscountType = 'percent' | 'fixed';
+
+/**
+ * The field names `EntityForm` renders here, for `splitFieldErrors` (task
+ * A4). `scalarFields()` builds the same list per discount type and the names
+ * never vary with it, so this is written once rather than derived per call.
+ */
+const COUPON_FIELD_NAMES: ReadonlySet<string> = new Set([
+  'code',
+  'discountType',
+  'discountValue',
+  'minSpend',
+  'usageLimit',
+]);
 
 function scalarFields(discountType: DiscountType): EntityFormField[] {
   return [
@@ -302,19 +325,36 @@ function CouponForm({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [banner, setBanner] = useState<string | null>(null);
 
+  /*
+   * Task A4. A validation refusal's messages go to the inputs they name;
+   * anything the form has no box for stays in the banner rather than being
+   * dropped. `percentBp`/`amountCentavos` are that case — the form has one
+   * `discountValue` box in human units — and so are `startsAt`/`endsAt`,
+   * which are their own datetime controls outside `EntityForm`.
+   */
+  function reportSaveError(error: unknown, fallback: string) {
+    const validation = splitFieldErrors(error, COUPON_FIELD_NAMES);
+    if (validation) {
+      setErrors(validation.fields);
+      setBanner(validation.banner);
+      return;
+    }
+    setBanner(describeCouponError(error, fallback));
+  }
+
   const create = trpc.admin.coupons.create.useMutation({
     onSuccess: () => {
       void utils.admin.coupons.list.invalidate();
       onSaved('Coupon added.');
     },
-    onError: (error) => setBanner(describeCouponError(error, 'Could not add this coupon.')),
+    onError: (error) => reportSaveError(error, 'Could not add this coupon.'),
   });
   const update = trpc.admin.coupons.update.useMutation({
     onSuccess: () => {
       void utils.admin.coupons.list.invalidate();
       onSaved('Changes saved.');
     },
-    onError: (error) => setBanner(describeCouponError(error, 'Could not save this coupon.')),
+    onError: (error) => reportSaveError(error, 'Could not save this coupon.'),
   });
   const pending = create.isPending || update.isPending;
 

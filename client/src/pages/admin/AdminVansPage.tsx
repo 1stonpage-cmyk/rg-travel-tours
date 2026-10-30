@@ -62,6 +62,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import EntityForm, { type EntityFormField } from '@/components/admin/EntityForm';
+import { firstValidationMessage, splitFieldErrors } from '@/lib/field-errors';
 import { trpc } from '@/lib/trpc';
 
 /**
@@ -117,6 +118,13 @@ const VAN_FIELDS: readonly EntityFormField[] = [
 const EMPTY_VALUES: Record<string, string> = Object.fromEntries(
   VAN_FIELDS.map((field) => [field.name, '']),
 );
+
+/**
+ * Which field names this screen can actually show a message against (task
+ * A4) — derived from `VAN_FIELDS` rather than retyped, so a field added to
+ * the form is placeable without anyone remembering a second list.
+ */
+const VAN_FIELD_NAMES: ReadonlySet<string> = new Set(VAN_FIELDS.map((field) => field.name));
 
 /** The typed-but-unparsed shape `vanInputSchema` expects, built from the form's strings. */
 function rawFromValues(values: Record<string, string>) {
@@ -195,6 +203,15 @@ function buildPatch(next: VanInput, original: VanRow): Partial<VanInput> {
 
 /** Any refusal under 500 carries the server's own human sentence; anything else is generic. */
 function describeVanError(error: unknown): string {
+  /*
+   * Task A4. An input-validation failure's `message` is tRPC's own default
+   * for a `ZodError` — `JSON.stringify(issues, null, 2)` — so returning it
+   * here put a JSON blob in the banner. The schema's own sentence is what a
+   * human can act on; the per-field messages go to `createErrors`/`editErrors`
+   * in `onError` besides.
+   */
+  const validation = firstValidationMessage(error);
+  if (validation !== null) return validation;
   if (
     error instanceof TRPCClientError &&
     typeof error.data?.httpStatus === 'number' &&
@@ -277,9 +294,13 @@ export default function AdminVansPage() {
     },
     onError: (error) => {
       setCreateNotice(null);
+      const validation = splitFieldErrors(error, VAN_FIELD_NAMES);
       if (error instanceof TRPCClientError && error.data?.code === 'CONFLICT') {
         setCreateErrors((current) => ({ ...current, plate: error.message }));
         setCreateBanner(null);
+      } else if (validation) {
+        setCreateErrors((current) => ({ ...current, ...validation.fields }));
+        setCreateBanner(validation.banner);
       } else {
         setCreateBanner(describeVanError(error));
       }
@@ -296,9 +317,13 @@ export default function AdminVansPage() {
     },
     onError: (error) => {
       setEditNotice(null);
+      const validation = splitFieldErrors(error, VAN_FIELD_NAMES);
       if (error instanceof TRPCClientError && error.data?.code === 'CONFLICT') {
         setEditErrors((current) => ({ ...current, plate: error.message }));
         setEditBanner(null);
+      } else if (validation) {
+        setEditErrors((current) => ({ ...current, ...validation.fields }));
+        setEditBanner(validation.banner);
       } else {
         setEditBanner(describeVanError(error));
       }

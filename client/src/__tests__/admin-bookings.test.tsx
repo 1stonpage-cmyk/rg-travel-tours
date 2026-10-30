@@ -20,7 +20,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 import AdminBookingDetailPage from '@/pages/admin/AdminBookingDetailPage';
 import AdminBookingsPage from '@/pages/admin/AdminBookingsPage';
 import { TrpcProviders } from '@/lib/trpc';
-import { mockTrpc, mockTrpcError, resetTrpcMock } from './helpers/mock-trpc';
+import {
+  mockTrpc,
+  mockTrpcError,
+  mockTrpcValidationError,
+  resetTrpcMock,
+} from './helpers/mock-trpc';
 
 afterEach(() => {
   resetTrpcMock();
@@ -451,6 +456,38 @@ describe('AdminBookingDetailPage', () => {
     expect(await within(verification).findByRole('alert')).toHaveTextContent(
       /already been handled/i,
     );
+  });
+
+  /**
+   * Task A4. `addNote`'s refusal used to render `addNote.error.message`, and
+   * for an input-validation failure that message is tRPC's own default for a
+   * `ZodError` — `JSON.stringify(issues, null, 2)`. The schema's own sentence
+   * now sits under the textarea instead, wired with `aria-describedby`.
+   *
+   * The raw-JSON guard is the second half and the one that catches a
+   * regression: `mockTrpcValidationError` sends the real envelope, raw
+   * `message` included, so a form that went back to rendering it would put a
+   * brace on screen.
+   */
+  it('puts a note refusal under the note box, never the raw Zod JSON', async () => {
+    mockTrpc({ 'admin.bookings.detail': DETAIL, 'staffAuth.me': { userId: 1, role: 'owner' } });
+    mockTrpcValidationError('admin.bookings.addNote', {
+      fieldErrors: { note: ['Write the note first.'] },
+    });
+    renderDetail();
+
+    const box = await screen.findByLabelText(/add a note/i);
+    await userEvent.type(box, 'x');
+    await userEvent.click(screen.getByRole('button', { name: /save note/i }));
+
+    await waitFor(() => {
+      expect(box).toHaveAttribute('aria-invalid', 'true');
+    });
+    const ids = (box.getAttribute('aria-describedby') ?? '').split(/\s+/).filter(Boolean);
+    expect(ids).toContain('booking-note-error');
+    const message = document.getElementById('booking-note-error');
+    expect(message).toHaveTextContent('Write the note first.');
+    expect(message?.textContent ?? '').not.toMatch(/[{}[\]]/);
   });
 
   it('says so plainly when the booking cannot be loaded', async () => {

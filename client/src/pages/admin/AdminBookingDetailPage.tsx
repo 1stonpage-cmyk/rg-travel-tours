@@ -47,14 +47,19 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ExternalLink, Loader2 } from 'lucide-react';
 import { BOOKING_NOTE_MAX_LENGTH, formatPeso } from '@rg/shared';
+import FieldError from '@/components/common/FieldError';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import { splitFieldErrors } from '@/lib/field-errors';
 import { trpc } from '@/lib/trpc';
 import AssignPanel from '@/components/admin/AssignPanel';
 import CancelRefundPanel from '@/components/admin/CancelRefundPanel';
 import PaymentDecisions from '@/components/admin/PaymentDecisions';
 import BookingStatusPill from '@/components/admin/BookingStatusPill';
 import { BOOKING_VIEW_ROLES, MONEY_ROLES, roleMay } from '@/lib/roles';
+
+/** The one `addBookingNoteInputSchema` key this form has a box for (task A4). */
+const NOTE_FIELD_NAMES: ReadonlySet<string> = new Set(['note']);
 
 const CARD = 'border-brand-blue-100 rounded-[14px] border bg-white p-5 text-sm';
 const HEADING = 'text-brand-ink text-lg font-bold';
@@ -119,6 +124,24 @@ export default function AdminBookingDetailPage() {
   const mayVerify = roleMay(me.data?.role, MONEY_ROLES);
   const mayWriteNotes = roleMay(me.data?.role, BOOKING_VIEW_ROLES);
   const noteIsEmpty = noteText.trim() === '';
+
+  /*
+   * `addNote`'s refusal, split so the note's own message sits under the
+   * textarea (task A4). It used to render `addNote.error.message`, which for
+   * a validation failure is tRPC's raw JSON issue list.
+   *
+   * `note` is the only one of `addBookingNoteInputSchema`'s three keys this
+   * form has a box for: `bookingId` comes from the loaded booking and
+   * `visibleToDriver` is a checkbox that cannot be anything but a boolean, so
+   * a message about either goes to the banner rather than nowhere.
+   */
+  const noteValidation = addNote.isError ? splitFieldErrors(addNote.error, NOTE_FIELD_NAMES) : null;
+  const noteFieldError = noteValidation?.fields.note;
+  const noteBanner = !addNote.isError
+    ? null
+    : noteValidation
+      ? noteValidation.banner
+      : addNote.error.message;
 
   return (
     <div className="flex flex-col gap-6">
@@ -359,8 +382,11 @@ export default function AdminBookingDetailPage() {
                   maxLength={BOOKING_NOTE_MAX_LENGTH}
                   rows={3}
                   onChange={(event) => setNoteText(event.target.value)}
+                  aria-describedby={noteFieldError ? 'booking-note-error' : undefined}
+                  aria-invalid={noteFieldError ? true : undefined}
                   className="border-brand-blue-200 focus-visible:ring-brand-blue-600 min-h-24 w-full rounded-[10px] border bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2"
                 />
+                <FieldError id="booking-note-error" message={noteFieldError} />
               </div>
 
               <div>
@@ -384,12 +410,12 @@ export default function AdminBookingDetailPage() {
                 </p>
               </div>
 
-              {addNote.isError ? (
+              {noteBanner !== null ? (
                 <p
                   role="alert"
                   className="border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-xl border p-3 text-sm font-medium"
                 >
-                  {addNote.error.message}
+                  {noteBanner}
                 </p>
               ) : null}
 
