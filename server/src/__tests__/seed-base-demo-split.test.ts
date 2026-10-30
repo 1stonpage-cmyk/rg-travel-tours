@@ -142,3 +142,89 @@ describeWithDb('seedDemo refuses a non-dev database name', () => {
     expect(after!.updatedAt).toEqual(before!.updatedAt);
   }, 30_000);
 });
+
+/**
+ * Task C2 — the real guard behind `seedDemo()`/`db:seed:demo`. The
+ * database-name guard above does NOT protect production (production's own
+ * database is also named `rg_travel`), so these two checks are the actual
+ * technical barrier. `env` is the parsed, frozen snapshot `env.ts` exports —
+ * like `owner-seed.test.ts` and the database-name test above, these tests
+ * write to it directly (never `process.env`, which is already read and has
+ * no further effect) and restore it in a `finally`.
+ *
+ * Each check is proven independent: mutating ONLY `ALLOW_DEMO_SEED` away
+ * from `'1'` refuses on its own message even with a correct, non-production
+ * `NODE_ENV`; mutating ONLY `NODE_ENV` to `'production'` refuses on its own
+ * message even with `ALLOW_DEMO_SEED` correctly set to `'1'`.
+ */
+describeWithDb('seedDemo refuses without ALLOW_DEMO_SEED and outside dev (Task C2)', () => {
+  it('refuses when ALLOW_DEMO_SEED is not exactly "1", even against the correct test database', async () => {
+    const [before] = await getDb()
+      .select({ updatedAt: tours.updatedAt })
+      .from(tours)
+      .where(eq(tours.slug, TOUR_SLUG));
+    expect(before, `seed tour "${TOUR_SLUG}" is missing`).toBeDefined();
+
+    const originalAllow = env.ALLOW_DEMO_SEED;
+    (env as { ALLOW_DEMO_SEED?: string }).ALLOW_DEMO_SEED = undefined;
+    try {
+      const error = await seedDemo('test').catch((e: unknown) => e);
+      expect(
+        error,
+        'seedDemo resolved instead of refusing with ALLOW_DEMO_SEED unset',
+      ).toBeInstanceOf(Error);
+      expect((error as Error).message).toMatch(/ALLOW_DEMO_SEED/);
+    } finally {
+      (env as { ALLOW_DEMO_SEED?: string }).ALLOW_DEMO_SEED = originalAllow;
+    }
+
+    // Also refused with a non-"1" value, not merely an unset one.
+    (env as { ALLOW_DEMO_SEED?: string }).ALLOW_DEMO_SEED = 'true';
+    try {
+      const error = await seedDemo('test').catch((e: unknown) => e);
+      expect((error as Error).message).toMatch(/ALLOW_DEMO_SEED/);
+    } finally {
+      (env as { ALLOW_DEMO_SEED?: string }).ALLOW_DEMO_SEED = originalAllow;
+    }
+
+    // Nothing was written: the guard throws before any query runs.
+    const [after] = await getDb()
+      .select({ updatedAt: tours.updatedAt })
+      .from(tours)
+      .where(eq(tours.slug, TOUR_SLUG));
+    expect(after!.updatedAt).toEqual(before!.updatedAt);
+  }, 30_000);
+
+  it('refuses when NODE_ENV is "production", even with ALLOW_DEMO_SEED=1 and the correct test database', async () => {
+    const [before] = await getDb()
+      .select({ updatedAt: tours.updatedAt })
+      .from(tours)
+      .where(eq(tours.slug, TOUR_SLUG));
+    expect(before, `seed tour "${TOUR_SLUG}" is missing`).toBeDefined();
+
+    expect(env.ALLOW_DEMO_SEED, 'the test environment must already set ALLOW_DEMO_SEED=1').toBe(
+      '1',
+    );
+
+    const originalNodeEnv = env.NODE_ENV;
+    (env as { NODE_ENV?: string }).NODE_ENV = 'production';
+    try {
+      const error = await seedDemo('test').catch((e: unknown) => e);
+      expect(
+        error,
+        'seedDemo resolved instead of refusing with NODE_ENV=production',
+      ).toBeInstanceOf(Error);
+      expect((error as Error).message).toMatch(/NODE_ENV/);
+      expect((error as Error).message).toMatch(/production/);
+    } finally {
+      (env as { NODE_ENV?: string }).NODE_ENV = originalNodeEnv;
+    }
+
+    // Nothing was written: the guard throws before any query runs.
+    const [after] = await getDb()
+      .select({ updatedAt: tours.updatedAt })
+      .from(tours)
+      .where(eq(tours.slug, TOUR_SLUG));
+    expect(after!.updatedAt).toEqual(before!.updatedAt);
+  }, 30_000);
+});

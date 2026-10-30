@@ -789,8 +789,44 @@ export async function seedBase(context: DatabaseContext = 'app'): Promise<void> 
  * seed script can enforce anything: it guards its own database name
  * (`guardAndConnect`, same as `seedBase`) rather than trusting the caller to
  * remember. Wired to `pnpm --filter @rg/server db:seed:demo`.
+ *
+ * ## Task C2 — the real guard, on top of the database-name one
+ *
+ * `guardAndConnect`'s `assertDatabaseName`/`assertConnectedDatabase` call
+ * does NOT protect production: production's own database is also named
+ * `rg_travel` (`APP_DATABASE_NAME`), so that guard waves a production run
+ * straight through. Before anything else — ahead of `guardAndConnect`, so
+ * no connection is even opened — two independent checks, each refusing with
+ * its own distinct message naming which one failed:
+ *
+ *  - `ALLOW_DEMO_SEED` must be the exact string `'1'`. Unset, empty, or any
+ *    other value refuses. This is a deliberate opt-in a deployer must set
+ *    by hand; there is no default that makes this command runnable.
+ *  - `NODE_ENV` must not be `'production'`. A command this overwrite-happy
+ *    (BUG-118) must never run on a production box regardless of what else
+ *    is configured there.
+ *
+ * Both checks apply regardless of `context` — they guard the DEMO half
+ * specifically, not `seedBase`/the base seed, and both run for a standalone
+ * `seedDemo('test')` call exactly as they do for `seedDemo('app')`. The test
+ * suite's own `seed('test')` callers need `ALLOW_DEMO_SEED=1` in the test
+ * process's environment (see `server/vitest.config.ts`'s `test.env`) — their
+ * `NODE_ENV` is already `'test'`, so the production check never has to be
+ * loosened for them.
  */
 export async function seedDemo(context: DatabaseContext = 'app'): Promise<void> {
+  if (env.ALLOW_DEMO_SEED !== '1') {
+    throw new Error(
+      'seedDemo: refusing to run — set ALLOW_DEMO_SEED=1 to run this. Dev-only; never set this ' +
+        'on a production server.',
+    );
+  }
+  if (env.NODE_ENV === 'production') {
+    throw new Error(
+      'seedDemo: refusing to run — this command must never run with NODE_ENV=production.',
+    );
+  }
+
   const db = await guardAndConnect(context);
 
   /*

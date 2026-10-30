@@ -74,6 +74,16 @@ const schema = z.object({
   // paid. Never logged, never sent to the client, never stored.
   PAYMONGO_SECRET_KEY: z.string().optional(),
   PAYMONGO_WEBHOOK_SECRET: z.string().optional(),
+  /*
+   * Task C2 — the real guard behind `seedDemo()`/`db:seed:demo`. The
+   * database-name guard (`assertDatabaseName`) does NOT protect production:
+   * production's own database is also named `rg_travel`. This is the
+   * technical barrier that actually does. No default, optional, mirroring
+   * `OWNER_EMAIL`/`OWNER_PASSWORD`'s pattern: unset means "refused", not
+   * "defaulted on". Must be the exact string `'1'` — `seedDemo()` checks
+   * for that, nothing looser.
+   */
+  ALLOW_DEMO_SEED: z.string().optional(),
 });
 
 /**
