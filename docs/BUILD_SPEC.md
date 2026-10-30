@@ -1127,9 +1127,11 @@ driven separately for exactly that reason.
 >    `reviews` and the fleet still revert on a re-seed. The price-tier case is money-affecting and
 >    fails **open**; the reviews case can re-publish the `is_sample` rows the launch checklist says
 >    to hide. One of seven doors is shut.
+>    **✅ RESOLVED (Task B2, pre-launch fixes batch)** — see the Week 8 carry-forward list below.
 > 2. **BUG-117 — `checkout.startPayment` does not enforce the methods-disabled half of A5's gate.**
 >    The PayMongo-unconfigured half is enforced server-side and measured; the methods-disabled half
 >    is enforced by the UI alone, so the control fails open.
+>    **✅ RESOLVED (Task B3, pre-launch fixes batch)** — see the Week 8 carry-forward list below.
 >
 > The same treatment **7G** gets: deferred to Week 8 by the owner's own answer (Q9), named rather
 > than dropped.
@@ -1341,20 +1343,22 @@ the dev box** (see 8B/8C below, where that becomes a blocker rather than a note)
   minimum, before any write, so **a sub-floor booking never holds a slot it cannot pay for**. The
   guest sentence branches three ways on the booking's **total**, which is the only number that
   decides which way out exists: pay-in-full clears the floor, or no pay mode does, or there is
-  nothing to pay at all. All three measured guest-side 2026-10-30. **Still open:** whether a ₱0
-  booking should confirm with no payment step is an owner decision; today it is refused as before
-  and only the wording is honest about why.
+  nothing to pay at all. All three measured guest-side 2026-10-30. **Resolved (Task B4, pre-launch
+  fixes batch, owner decision 2026-10-30): refuse, always.** A ₱0 booking never confirms with no
+  payment step; the refusal now also fires in the `checkout.quote` preview, not only at hold time,
+  so the browser is never handed a quote it would only be refused on later.
 - **7P** ✅ BUG-108 — booking refs are **case-insensitive on lookup, normalised to uppercase
   server-side**, with the normalisation folded into `bookingRefSchema` itself so it runs before
   the shape check. Refs are still generated uppercase. All three procedures share the one schema;
   the collation this used to rest on is now true by construction.
 - **Launch blockers added by the owner after the plan was written** (2026-10-29): ✅ **A2** —
-  `db:seed` never overwrites an existing `settings` row (**the six other tables are NOT fixed —
-  BUG-118, above**); ✅ **A4** — no guest or admin form shows raw Zod JSON; per-field messages
-  through one shared `client/src/lib/field-errors.ts` reading the server's already-structured
-  `error.data.zodError`; ✅ **A5** — online payment is never offered when it cannot work, gated
-  server-side by `onlinePaymentEnabled` (**the methods-disabled half is not enforced in
-  `startPayment` — BUG-117, above**).
+  `db:seed` never overwrites an existing `settings` row (**the six other tables were fixed by
+  Task B2, pre-launch fixes batch — BUG-118, above**); ✅ **A4** — no guest or admin form shows raw
+  Zod JSON; per-field messages through one shared `client/src/lib/field-errors.ts` reading the
+  server's already-structured `error.data.zodError` (**BUG-120's nested-field misattribution fixed
+  by Task B6, pre-launch fixes batch**); ✅ **A5** — online payment is never offered when it cannot
+  work, gated server-side by `onlinePaymentEnabled` (**the methods-disabled half is now also
+  enforced in `startPayment` itself — fixed by Task B3, pre-launch fixes batch, BUG-117, above**).
 - **Phase 2 upsell** — travel guides / blog for SEO. Not in this build.
 
 ### Week 8 — QA & launch prep
@@ -1375,12 +1379,12 @@ Nothing in this week is built.
 >    on its own independent guard call). `pnpm --filter @rg/server db:seed` now runs BASE only;
 >    `db:seed:demo` is the new, separate, dev-only command for DEMO. See `docs/BUGS_LOG.md`'s
 >    Fixed row for BUG-118 and `server/src/db/seed.ts`'s module doc-comment for the detail.
-> 2. **⚠️ OWNER DECISION — BUG-117, `checkout.startPayment` does not re-check that any online
->    payment method is enabled.** The PayMongo-unconfigured half is enforced server-side and
->    measured; the methods-disabled half is enforced by the UI alone, so a stale tab, a
->    back-button return or a direct call still creates a real PayMongo session. "Hiding a button is
->    not access control." Fails open, not closed. **Not reproducible without a real key**, which is
->    part of why it needs a decision rather than a quick patch.
+> 2. **✅ RESOLVED (Task B3, pre-launch fixes batch) — BUG-117, `checkout.startPayment` did not
+>    re-check that any online payment method is enabled.** The owner's decision: enforce it.
+>    `startPayment` now reads `settings.payment_methods` via the same `resolvePaymentMethods()`
+>    `onlinePaymentEnabled` already uses, and refuses with the existing guest-safe
+>    `SERVICE_UNAVAILABLE` sentence (`gatewayUnavailable()`) when zero methods are enabled — before
+>    the gateway is ever called. See `docs/BUGS_LOG.md`'s Fixed row for BUG-117.
 > 3. **7G — motion polish**, deferred here by owner answer Q9 (2026-10-23) rather than dropped.
 >    Portal, driver and admin surfaces, with **emilkowalski-motion**, subtle only, respecting
 >    `prefers-reduced-motion`, and only after the layout exists.
@@ -1388,27 +1392,36 @@ Nothing in this week is built.
 >    6 and 7 is unverified in a browser at any width. **This blocks 8B and 8C below** and is cheap
 >    to unblock: one owner account, created once, through the UI the staff-accounts plan built.
 >    Until then every client-side task keeps reporting the same gap.
-> 5. **All three surfaces share one `rg_session` cookie** (BUG-119), so a guest signing into My
->    Booking evicts a live staff session and vice versa. Nobody decided this; it is how the code
->    behaves, and it is why two Week 7 tasks could not run a browser check after a driver login.
->    **There is no session isolation between surfaces** — do not assume any.
-> 6. **BUG-116** — `/checkout/:slug` and `/booking/:ref` are served `404` with the "Page not found"
->    title, byte-identical to a nonsense URL (measured). Same defect class Task 9 fixed for the
->    three app surfaces; `/booking/:ref` is PayMongo's own `success_url`, the page a guest lands on
->    after paying.
-> 7. **BUG-120** — A4's per-field messages are grouped for the nested `lead` block, so a bad phone
->    number marks Full name and Email invalid too, with the phone's own sentence. Closed launch
->    blocker, imprecise attribution.
-> 8. **Should a ₱0 booking confirm with no payment step at all?** A 100%-off coupon is refused at
->    hold time today (measured) and only the wording improved. **Owner question**, split out
->    correctly by Task 19's review.
+> 5. **✅ RESOLVED (Task B5, pre-launch fixes batch) — all three surfaces shared one `rg_session`
+>    cookie** (BUG-119), so a guest signing into My Booking evicted a live staff session and vice
+>    versa. The owner's decision: split it. Three cookies now, one per surface
+>    (`SESSION_COOKIE_BY_SUBJECT`), each independently validated into its own `ctx.adminSession` /
+>    `ctx.driverSession` / `ctx.customerSession` — a browser can legitimately hold all three live
+>    sessions at once. **Session isolation between surfaces now exists** — see `CLAUDE.md`'s
+>    Security section and `docs/BUGS_LOG.md`'s Fixed row for BUG-119.
+> 6. **✅ RESOLVED (Task B6, pre-launch fixes batch) — BUG-116** — `/checkout/:slug` and
+>    `/booking/:ref` were served `404` with the "Page not found" title, byte-identical to a
+>    nonsense URL. Same defect class Task 9 fixed for the three app surfaces; `/booking/:ref` is
+>    PayMongo's own `success_url`, the page a guest lands on after paying. Both now serve a real
+>    title (`appSurfaceMeta`), 200, `noindex,nofollow`.
+> 7. **✅ RESOLVED (Task B6, pre-launch fixes batch) — BUG-120** — A4's per-field messages were
+>    grouped for the nested `lead` block, so a bad phone number marked Full name and Email invalid
+>    too, with the phone's own sentence. The server's error formatter now also publishes a
+>    dot-path-keyed `nestedFieldErrors` map alongside the unchanged top-level `fieldErrors`;
+>    `client/src/lib/field-errors.ts` reads the leaf message when present, falling back to the
+>    parent only when the whole map is absent. Only the actually-wrong field is marked invalid now.
+> 8. **✅ RESOLVED (Task B4, pre-launch fixes batch, owner decision) — should a ₱0 booking confirm
+>    with no payment step at all?** No. A 100%-off coupon was already refused at hold time; the
+>    same refusal now also fires in the `checkout.quote` preview, so the guest is never handed a
+>    quote the server would only refuse once they tried to pay.
 > 9. **~70 Minor findings are deferred in the SDD ledger**
 >    (`.superpowers/sdd/2026-10-23-week7/progress.md`), never folded into a cleanup task because
 >    7N's scope was frozen before Tasks 14–16 and A2–A7 produced theirs. A Week 8 cleanup batch
 >    should sweep them the way 7N swept Tasks 8–13's.
-> 10. **`.claude/settings.local.json` fails `format:check`** — untracked, local, harness-owned, and
->     the sole failure in an otherwise-green run. Three agents have raised it; the fix is one line
->     in `.prettierignore` and it needs the owner to say so rather than an agent to decide it.
+> 10. **✅ RESOLVED (Task B1, pre-launch fixes batch) — `.claude/settings.local.json` failed
+>     `format:check`** — untracked, local, harness-owned, and the sole failure in an otherwise-green
+>     run. Three agents had raised it; the owner approved the one-line `.prettierignore` fix
+>     (answer 5).
 > 11. **Week 6's two still-open items stand:** `TripProgressStop` carries no checkpoint id (undo
 >     label only), and the gateway wire check — **no real payment and no real refund has ever been
 >     issued**, which also leaves BUG-109's four required `/checkout_sessions` attributes
