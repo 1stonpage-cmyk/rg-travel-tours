@@ -3,7 +3,39 @@
 Spec: `docs/BUILD_SPEC.md` (wins any disagreement with this plan). Standing
 conventions: `CLAUDE.md`. Bug tracker: `docs/BUGS_LOG.md`.
 
-Owner answers this batch acts on (logged here per the prompt's instruction):
+## Follow-up owner answers, 2026-10-31 (tasks C1–C3)
+
+Answering the three QUESTIONS the B1–B7 batch's final report raised:
+
+1. **The ₱0.01–₱99.99 `quote`/`createHold` asymmetry:** keep it simple and
+   consistent with the ₱0 fix (Task B4) rather than building the
+   manual-transfer-aware branch first proposed — `checkout.quote` refuses a
+   total below the ₱100 gateway minimum exactly the way `createHold` already
+   does, with a friendly guest message. `createHold` and `PaymentOptions`
+   are **not** touched; this is a `quote`-only extension of B4's existing
+   `totalCentavos <= 0` guard to `totalCentavos < PAYMONGO_MIN_CENTAVOS`.
+   (An earlier draft of this answer considered letting a below-floor total
+   through when manual transfer is configured — the owner rejected that in
+   favour of the simpler, already-proven-in-createHold shape.) Own reviewer
+   subagent on opus.
+2. **`db:seed:demo`'s production safety net:** YES — add a real technical
+   guard. `db:seed:demo` must refuse unless `ALLOW_DEMO_SEED=1` is set AND
+   `NODE_ENV` is not `"production"` (both checks, abort with a clear
+   message naming which one failed). Add `ALLOW_DEMO_SEED` to
+   `.env.example`, empty, with the comment "dev only — never set on the
+   server". Each refusal path gets its own test, proven able to fail.
+3. **README.md / .env.example staleness:** YES — update both to match the
+   base/demo seed split (Task B2), including documenting `ALLOW_DEMO_SEED`
+   from answer 2 above.
+
+Global Constraints from the original batch (below) still bind all three
+tasks. Additional constraint for this follow-up: do not touch
+production/the VPS or Kong PMS; no new npm/yarn dependencies; no red.
+
+---
+
+Owner answers the original B1–B7 batch acted on (logged here per the
+prompt's instruction):
 
 1. BUG-118: after launch the ADMIN owns all content. Split `db:seed` into
    (a) BASE — settings defaults, destinations, first owner from
@@ -565,3 +597,144 @@ executable to prove able to fail).
 `main` to `origin`. If the push is rejected for permissions, stop and tell
 the user to run it themselves — do not retry with elevated credentials or
 force.
+
+---
+
+## Task C1 — `checkout.quote` refuses any total below the ₱100 gateway minimum
+
+**File:** `server/src/routers/public/checkout.ts` (the `quote` procedure —
+the same guard B4 already added, one line above it), test file
+`server/src/__tests__/checkout-router.test.ts`.
+
+**Current state:** since Task B4, `quote` refuses when
+`quote.totalCentavos <= 0` (a 100%-off coupon), via `throw new TRPCError({
+code: 'BAD_REQUEST', message: gatewayMinimumMessage(quote.totalCentavos)
+})`. `createHold()` has always refused more broadly — ANY
+`amountDueNowCentavos < PAYMONGO_MIN_CENTAVOS` (₱100), zero or not — so a
+coupon leaving e.g. ₱50 due previews successfully today and is only refused
+once the guest tries to actually hold the booking.
+
+**What to build:** widen `quote`'s existing check from `quote.totalCentavos
+<= 0` to `quote.totalCentavos < PAYMONGO_MIN_CENTAVOS` (import
+`PAYMONGO_MIN_CENTAVOS` from `@rg/shared`/`shared/src/money.ts` if not
+already imported in this file — check first, `startPayment` in the same
+file already uses it). Keep reusing the exact same
+`gatewayMinimumMessage(quote.totalCentavos)` call — it already branches
+correctly: `<= 0` → `NOTHING_TO_PAY_ONLINE`, `0 < total < ₱100` →
+`TOTAL_BELOW_GATEWAY_MINIMUM` — so no new message text is needed anywhere.
+Do not touch `createHold()`, `PaymentOptions.tsx`, or
+`settings.manualTransferEnabled` — this task is scoped to `quote` only, by
+explicit owner decision (an earlier, broader design — letting a
+below-floor total through when manual transfer is configured — was
+considered and rejected in favour of this simpler, already-proven shape).
+
+**Tests:** extend `checkout-router.test.ts` with a case for a coupon
+leaving a non-zero amount below ₱100 due (e.g. 1 pax, a coupon leaving
+₱50) — assert `quote` throws `{ code: 'BAD_REQUEST', message:
+TOTAL_BELOW_GATEWAY_MINIMUM }` (import the constant from
+`shared/src/checkout.ts` rather than hardcoding the string) and that
+`createHold` for the same inputs still independently refuses too (the
+existing coverage shouldn't regress). Confirm the existing `₱1 or more due
+still succeeds` boundary test from B4 is unaffected by the widened
+threshold (it should still pass since it uses a total above the floor —
+reread it and adjust its fixture if the floor change makes its math land
+in the new refusal band). Prove the new test can fail (temporarily revert
+the widened check, confirm red, restore).
+
+**Docs:** no `docs/BUGS_LOG.md` row (this is a refinement of B4's existing
+fix, not a new tracked bug); no CLAUDE.md change needed (CLAUDE.md's ₱0
+paragraph already describes the general pattern and doesn't claim the
+non-zero band is unhandled — reread it once you're done and correct it
+only if it's now actually wrong).
+
+---
+
+## Task C2 — `db:seed:demo` refuses without `ALLOW_DEMO_SEED=1` and outside dev
+
+**Files:** `server/src/env.ts` (add `ALLOW_DEMO_SEED` to the schema),
+`server/src/db/seed.ts` (`seedDemo`'s guard), `.env.example`, new/edited
+tests in `server/src/__tests__/`.
+
+**Current state:** `seedDemo(context)` already refuses on a non-dev
+database name (`assertDatabaseName`/`assertConnectedDatabase`, Task B2) —
+but as the final whole-branch review found, that guard does NOT protect
+against a production run, because production's own database is also named
+`rg_travel`. There is currently no other technical barrier.
+
+**What to build:**
+
+1. `server/src/env.ts`: add `ALLOW_DEMO_SEED: z.string().optional(),` to
+   the schema (mirroring `OWNER_EMAIL`/`OWNER_PASSWORD`'s pattern — no
+   default, optional).
+2. `seedDemo(context)` in `server/src/db/seed.ts`: before anything else
+   (ahead of or alongside its existing database-name guard — your call on
+   exact ordering, but both must run before any write), add two checks,
+   each throwing a clear, distinct error message naming which check
+   failed:
+   - `env.ALLOW_DEMO_SEED !== '1'` → refuse (message should say to set
+     `ALLOW_DEMO_SEED=1` to run this, and that it's dev-only).
+   - `env.NODE_ENV === 'production'` → refuse (message should say this
+     command must never run with `NODE_ENV=production`).
+     Both checks apply regardless of `context` (`'app'` or `'test'`) — this
+     guards the DEMO half specifically, not the base seed, and the test
+     suite's own calls to `seed('test')` (which internally calls
+     `seedDemo('test')`) will need `ALLOW_DEMO_SEED=1` set in the test
+     environment for the existing 17+ test files to keep working. Find
+     wherever the test environment's env vars are configured (e.g. a
+     `.env.test` file, `vitest.config.ts`'s `env` option, or
+     `global-setup.ts`) and set it there — do not weaken the production
+     check to accommodate tests; `NODE_ENV` in the test run is already
+     `'test'`, not `'production'`, so only `ALLOW_DEMO_SEED` needs adding to
+     the test environment.
+3. `.env.example`: add `ALLOW_DEMO_SEED=` (empty) with a comment directly
+   above or beside it: `# dev only — never set on the server`.
+
+**Tests:** two new cases, each proven able to fail (break the code, confirm
+red, restore):
+
+- `seedDemo` refuses when `ALLOW_DEMO_SEED` is unset (or not exactly
+  `'1'`), even against the correct test database name, and writes
+  nothing.
+- `seedDemo` refuses when `NODE_ENV` is `'production'`, even with
+  `ALLOW_DEMO_SEED=1` set and the correct test database name, and
+  writes nothing.
+  You'll need to manipulate `process.env` directly in the test (save and
+  restore the original values in a `finally`/`afterEach`, matching
+  whatever pattern `owner-seed.test.ts` or similar already uses for
+  env-var-dependent tests — check first rather than inventing a new
+  pattern). Also re-run (don't need to rewrite) the existing suite to
+  confirm `seed('test')`'s 17+ callers still pass once the test
+  environment sets `ALLOW_DEMO_SEED=1` globally.
+
+**Docs:** this closes QUESTION 2 from the batch's final report — no new
+`docs/BUGS_LOG.md` row needed (it was a question, not a tracked bug), but
+correct `docs/LAUNCH_CHECKLIST.md`'s and `CLAUDE.md`'s `db:seed:demo`
+description (corrected by the final-review fix wave to stop _overclaiming_
+protection) to now accurately describe the REAL guard this task adds.
+
+---
+
+## Task C3 — update README.md and .env.example for the base/demo seed split
+
+**Files:** `README.md`, `.env.example`.
+
+**Current state:** flagged as an unrelated-but-found gap in the B1–B7
+batch's final report — README.md and `.env.example` still describe the
+pre-B2 single `db:seed` command and don't mention `db:seed:demo` or (once
+C2 lands) `ALLOW_DEMO_SEED`.
+
+**What to build:** read both files' current `db:seed`-related sections and
+update them to match `CLAUDE.md`'s Commands table (base = insert-only,
+safe on prod; demo = dev-only, requires `ALLOW_DEMO_SEED=1` and non-production
+`NODE_ENV`, upserts). If C2 is done first, this task documents its real
+behaviour; if done in parallel/first, coordinate so the description matches
+what C2 actually builds rather than what this plan merely proposes — reread
+`server/src/db/seed.ts`'s own module doc-comment before writing, and treat
+it as the source of truth over this plan text. Comment-only/doc-only — no
+test needed.
+
+---
+
+**Then:** run the five checks one final time, and push `main` to `origin`.
+If the push is rejected for permissions, stop and tell the user to run it
+themselves.
