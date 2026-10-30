@@ -184,6 +184,25 @@ describeWithDb('portal.booking — who may read it', () => {
     await expect(api.portal.booking()).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
   });
 
+  /**
+   * Final-review finding 4. `'REFUSES a staff session'` above goes through
+   * `staffContext`, which — per BUG-119 — always leaves `ctx.customerSession`
+   * itself `null`: it proves `requireCustomer`'s ABSENCE branch (`!session`),
+   * never the `session.subjectType !== 'customer'` branch right beside it,
+   * kept as defence in depth for a context some other caller might build.
+   * Nothing anywhere constructed a `customerSession` that is itself populated
+   * with the wrong subject type, so that second branch had no test proving
+   * it would actually bite. Mirrors `role-isolation.test.ts`'s `'a DRIVER
+   * session carrying an owner role'` row and `driver-auth.test.ts`'s
+   * equivalent for `requireDriver`.
+   */
+  it('REFUSES a context whose customerSession itself carries the wrong subject type', async () => {
+    const api = appRouter.createCaller({
+      customerSession: { subjectType: 'driver', subjectId: 3 },
+    } as never);
+    await expect(api.portal.booking()).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+  });
+
   it('answers ONLY the booking the session names', async () => {
     const mine = await makeBooking();
     const theirs = await makeBooking();

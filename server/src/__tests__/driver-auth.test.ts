@@ -786,6 +786,29 @@ it('refuses a driver session with no usable id', async () => {
   ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
 });
 
+/**
+ * Final-review finding 4. Every refusal above (`'refuses a STAFF session'`,
+ * `'refuses a CUSTOMER session'`) goes through `testContext`/`staffContext`/
+ * `customerContext`, which — per BUG-119 — always leave `ctx.driverSession`
+ * itself `null` for a non-driver caller; those prove the ABSENCE branch
+ * (`!session`), never the `session.subjectType !== 'driver'` branch right
+ * beside it in `requireDriver`. Nothing anywhere constructed a context whose
+ * `driverSession` field is itself populated with the WRONG subject type, so
+ * that second branch — kept deliberately as defence in depth, per its own
+ * comment in `require-driver.ts` — had no test proving it would actually
+ * fire if a context were ever built some other way (a bug, a future caller).
+ * This is `role-isolation.test.ts`'s `'a DRIVER session carrying an owner
+ * role'` row, mirrored onto this gate.
+ */
+it('refuses a context whose driverSession itself carries the wrong subject type', async () => {
+  await expect(
+    callMine({ driverSession: { subjectType: 'user', subjectId: 7 } }),
+  ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+  await expect(
+    callMine({ driverSession: { subjectType: 'customer', subjectId: 3 } }),
+  ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+});
+
 it('stamps the driver access kind into the procedure metadata', () => {
   const procedures = (
     driverShaped as unknown as {
