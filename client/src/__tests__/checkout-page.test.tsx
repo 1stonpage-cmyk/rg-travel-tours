@@ -356,6 +356,35 @@ describe('CheckoutPage — pay now (Task 8b)', () => {
     expect(whatsapp.getAttribute('href')).toContain(encodeURIComponent(HOLD_RESULT.ref));
   });
 
+  /*
+   * Fix round 1 (review finding I1). The hold-confirmation sentence lives
+   * OUTSIDE `<PaymentOptions>`, so the gate the three tests above pin cannot
+   * reach it — and it used to read "pay now to confirm it" in all three
+   * states, including the two where no Pay-now control is drawn anywhere.
+   * The wording is now state-neutral, and this reads the SENTENCE's own
+   * text, not the page's: a page-wide `queryByText(/pay now/i)` is already
+   * satisfied by the button's absence in states 2 and 3, and in state 1
+   * could never be asserted at all, because the button is supposed to be
+   * there.
+   */
+  it.each([
+    ['online available', { onlinePaymentEnabled: true, manualTransferEnabled: false }],
+    ['manual only', { onlinePaymentEnabled: false, manualTransferEnabled: true }],
+    ['neither available', { onlinePaymentEnabled: false, manualTransferEnabled: false }],
+  ])(
+    'the hold sentence names no action the state is not offering — %s',
+    async (_state, settings) => {
+      await holdASpotWith({ ...SETTINGS_FIXTURE, ...settings });
+
+      // The paragraph itself — `getByText` matches an element's own text
+      // nodes, so this is the sentence beside the ref, never the whole box.
+      const sentence = screen.getByText(/we've reserved your spot/i);
+      expect(sentence.textContent).not.toMatch(/pay now/i);
+      // And the urgency it exists to carry is still there in every state.
+      expect(sentence.textContent).toMatch(/before the hold below runs out/i);
+    },
+  );
+
   it("shows the server's own calm message, never a crash, when startPayment is refused", async () => {
     mockTrpc({ 'checkout.quote': QUOTE_FIXTURE });
     mockTrpc({ 'settings.get': SETTINGS_FIXTURE });

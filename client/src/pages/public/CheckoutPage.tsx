@@ -346,13 +346,29 @@ export default function CheckoutPage() {
                 <div className="border-brand-blue-200 bg-background space-y-4 rounded-2xl border p-6">
                   <div className="space-y-3">
                     <p className="text-brand-blue-900 text-lg font-semibold">Your spot is held!</p>
+                    {/*
+                     * This sentence is deliberately STATE-NEUTRAL (A5 fix
+                     * round 1). It sits outside `<PaymentOptions>`, so the
+                     * gate below cannot reach it, and it used to read "pay
+                     * now to confirm it" in all three states — including
+                     * manual-only, where the only control is a transfer
+                     * link, and neither-available, where there is no payment
+                     * control on the page at all. It names no action that a
+                     * given state might not be offering; the urgency about
+                     * the hold is true in every state, and WHICH action to
+                     * take is said once, by the component that knows.
+                     * Branching it would mean reading `settings.get` here
+                     * again, which this task deliberately removed (see the
+                     * note by the queries above).
+                     */}
                     <p className="text-muted-foreground text-sm">
                       Booking reference{' '}
                       <span className="text-brand-blue-900 font-semibold">
                         {createHold.data.ref}
                       </span>
-                      . We've reserved your spot — pay now to confirm it before the hold below runs
-                      out, and keep this reference for your records.
+                      . We've reserved your spot — it's confirmed once we've received payment, so
+                      please arrange that before the hold below runs out, and keep this reference
+                      for your records.
                     </p>
                   </div>
                   {/*
