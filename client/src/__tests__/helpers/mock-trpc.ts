@@ -73,6 +73,11 @@ const CODE_STATUS: Record<string, number> = {
   TOO_MANY_REQUESTS: 429,
   CLIENT_CLOSED_REQUEST: 499,
   INTERNAL_SERVER_ERROR: 500,
+  // 503, and the one 5xx whose message is guest-safe copy — `startPayment`'s
+  // `gatewayUnavailable()` (task A5). Without the entry here a simulated
+  // gateway outage arrived as the default 500 and `describeCheckoutError`'s
+  // one 5xx pass-through could not be exercised through a real component.
+  SERVICE_UNAVAILABLE: 503,
 };
 
 /**

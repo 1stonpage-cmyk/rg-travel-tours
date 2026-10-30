@@ -49,15 +49,31 @@ export function describeMutationError(error: unknown): string {
  * Shared by `CheckoutPage` (createHold) and `PayNowButton`
  * (components/checkout/PayNowButton.tsx, startPayment) — both talk to the
  * same router and so share the same translation rule (Task 8b).
+ *
+ * **`SERVICE_UNAVAILABLE` is the one 5xx that passes through** (task A5).
+ * `startPayment`'s `gatewayUnavailable()` raises exactly that code with
+ * "Online payment is temporarily unavailable…" — a sentence written FOR a
+ * guest, by the same router and for the same reason as its 4xx ones. It
+ * maps to HTTP 503, so the `< 500` rule above was swallowing it and showing
+ * the generic "Something went wrong sending this" line instead: the one
+ * failure where the server knew precisely what was wrong and had already
+ * said it safely.
+ *
+ * Matched on the CODE, deliberately, rather than by moving the numeric
+ * threshold: an `INTERNAL_SERVER_ERROR` is a crash, its message is whatever
+ * threw (a driver name, a SQL fragment, BUG-021's echoed email address),
+ * and it must keep falling through to the generic sentence. "Which 5xx
+ * carries guest-safe copy" is a list of one, and it is written here rather
+ * than inferred from a number.
  */
+const GUEST_SAFE_5XX_CODES: ReadonlySet<string> = new Set(['SERVICE_UNAVAILABLE']);
+
 export function describeCheckoutError(error: unknown): string {
-  if (
-    error instanceof TRPCClientError &&
-    typeof error.data?.httpStatus === 'number' &&
-    error.data.httpStatus < 500 &&
-    error.data.httpStatus !== 429
-  ) {
-    return error.message;
+  if (error instanceof TRPCClientError && typeof error.data?.httpStatus === 'number') {
+    const { httpStatus, code } = error.data;
+    const passesThrough =
+      httpStatus < 500 ? httpStatus !== 429 : GUEST_SAFE_5XX_CODES.has(String(code));
+    if (passesThrough) return error.message;
   }
   return describeMutationError(error);
 }
