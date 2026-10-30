@@ -64,7 +64,8 @@ on Windows fails `pnpm format:check` on every text file (BUG-099). Do not relax 
   src/components | src/lib
 /server   Express + tRPC
   src/routers | services | db | seo | content | middleware   (built)
-  src/jobs                                                   (built: expire-holds, orphaned-vans, prune-sessions)
+  src/jobs                                                   (5 registered: expire-holds, prune-sessions,
+                                                              orphaned-vans, review-requests, trip-reminders)
   src/routers/webhooks                                       (built)
 /shared   Zod schemas, types, constants
 /uploads  OUTSIDE the web root; receipts served via an authenticated route
@@ -203,6 +204,26 @@ Every page reads tours, destinations, packages, reviews, FAQs and settings from 
   exits non-zero while a published `is_sample` review exists or `content_unverified` is set.
   `ALLOW_PLACEHOLDER_BUILD=1` is the deliberate override for local builds and client demos —
   never for a launch build. It fails closed: an unreachable database blocks the build.
+- **`db:seed` is insert-only for `settings` and OVERWRITES everything else. Know which half you
+  are in before you run it.** (Owner-reported incident 2026-10-28; A2 fix `212d200`.) A re-seed
+  against `rg_travel` wiped a hand-entered `payment_qr` block back to its seed defaults — real
+  configuration, gone, from a command the launch checklist used to call safe. `insertSettingIfMissing`
+  now genuinely never touches an existing settings row, and the run prints "N inserted, M already
+  present".
+  **Only that one table is fixed.** The same overwrite shape is still live in `upsertTour`
+  (including **`tour_price_tiers`** — money, and it fails **open**: a reverted tier silently
+  undercharges every later booking), `tours` itself (title, badge, and the `alertNote` that would
+  carry a typhoon suspension), `tour_images`, `upsertPackage`, `upsertReview` (which can
+  **re-publish the six `is_sample` reviews**, blocking a production build and putting sample
+  ratings back in front of a crawler) and `upsertFleet` (which can un-deactivate a driver **with
+  no audit row**, and reset an `on_trip` van to `available` mid-trip). All six key on
+  **admin-editable natural keys** — slug, plate, code — so an **edited** key produces a
+  **duplicate insert** rather than an overwrite, i.e. a second placeholder tour live on the public
+  site. `upsertDestination` is exempt only because no destinations editor exists yet. **Logged as
+  BUG-118 and open on an owner decision: which tables the seed owns and which the Week 7 admin
+  screens own. Do not close it by making the other six insert-only on your own judgment** — the
+  dev seed is also how a fresh clone gets usable content, and insert-only means a seed change can
+  never reach an existing database again.
 - **Content tokens:** admin-editable content may embed `{{tokenName}}` placeholders, which the
   rendering component substitutes with live data — currently only `{{paymentMethods}}` in the
   payment FAQ answer, replaced with the enabled payment methods. Tokens are allowed **only** in
@@ -240,9 +261,19 @@ Every page reads tours, destinations, packages, reviews, FAQs and settings from 
   via `realAggregate()`) and the key is **omitted entirely** when there are none — never a
   zero, never `settings.trust.ratingAverage`. With the current seed, no rating is emitted
   anywhere.
-- `/sitemap.xml` and `/robots.txt` are generated from the database per request. A sitemap must
-  never list a URL that says `noindex`, and `lastmod` is read from `updated_at`, never
-  invented.
+- `/sitemap.xml` and `/robots.txt` are generated from the database per request, and `lastmod` is
+  read from `updated_at`, never invented.
+- **A sitemap must never list a URL whose OWN RESOLVER says `noindex`** — the per-route decision,
+  not the site-wide gate. The distinction is load-bearing and this sentence used to be written as
+  a flat absolute, which is **literally false today** (measured 2026-10-30: 15 URLs listed while
+  every one of them is served `noindex`). While `settings.content_unverified` is true the
+  site-wide gate noindexes every route and `robots.txt` answers `Disallow: /`, which is what keeps
+  the sitemap unreachable rather than contradictory. The guard test
+  (`sitemap-robots.test.ts`, "lists no URL that says noindex") **clears the flag first on
+  purpose**, because the site-wide gate would otherwise make it pass no matter what each resolver
+  asked for. So: when you release a detail route from `noindex`, add it to the sitemap in the same
+  task — and do not "fix" the sitemap by filtering on `content_unverified`, which would empty it
+  and prove nothing.
 - **Two independent noindex gates, both fail closed.** While `settings.content_unverified` is
   true, `robots.txt` says `Disallow: /` and every route is served `noindex,nofollow`. And
   `SITE_ENV` must be `production` in the deployed `.env` or `robots.txt` fails closed the same
@@ -512,12 +543,146 @@ Every page reads tours, destinations, packages, reviews, FAQs and settings from 
   driver's trip further out surfaces as its date approaches rather than immediately. That is the
   alert's existing design, not a new gap.
 
+## Checkout & payments (current state)
+
+- **A booking ref is CASE-INSENSITIVE on lookup and normalised to uppercase on the server; refs
+  are still GENERATED uppercase** (owner decision 2026-10-23, Q10; BUG-108). The normalisation
+  (trim, then uppercase) is folded into `bookingRefSchema` itself via `.transform().pipe()`, so it
+  runs **before** the shape check rather than after, and all three procedures that take a ref
+  (`bookingLookupInput`, `startPaymentInput`, `bookingStatusInput`) share that **one** schema.
+  Nothing about `generateBookingRef()` changed. The point is that this used to work on one
+  procedure only, and only because `bookings.ref`'s `_ci_` collation matched case-insensitively on
+  its own — a guarantee nothing asserted. **Do not add a second ref schema, and do not lean on the
+  collation again** (BUG-107 is the same shape on `coupons.code`).
+- **An online charge below the gateway's ₱100 minimum is refused at HOLD time, before any write**
+  (`PAYMONGO_MIN_CENTAVOS` in `shared/src/money.ts`; BUG-110). It is taken in `createHold()`'s
+  money step, not at the gateway call, because **a hold that can never be paid has already taken a
+  slot** — and a refusal therefore leaves no booking, no slot and nothing for the expiry sweep
+  (measured 2026-10-30, including the absence of the `tour_date_slots` row). `startPayment`
+  repeats it defensively for a booking the hold check never saw.
+- **The guest sentence for that refusal branches three ways on the booking's TOTAL, and the total
+  is the only number that can decide it** — `gatewayMinimumMessage()` in `shared/src/checkout.ts`
+  is the one chooser, called by both refusing surfaces, so neither can offer an alternative that
+  does not exist. Total at or above the floor → name pay-in-full, which genuinely works. Total
+  below the floor but above zero → **do not** name pay-in-full; that is the same refusal again.
+  Total of nothing (a 100%-off coupon) → name no payment method at all, because there is no
+  amount. All three measured guest-side. **Still open:** whether a ₱0 booking should confirm with
+  no payment step at all is an owner decision; today it is refused exactly as before and only the
+  wording is honest about it.
+- **Whether "Pay now" may be offered is the SERVER's decision, published as one boolean.**
+  `onlinePaymentEnabled` on the settings payload is `paymongoConfigured && at least one enabled
+payment method`; the payload deliberately carries **neither ingredient**, so the browser cannot
+  re-derive or disagree. Checkout and the booking-status retry page both render one shared
+  `<PaymentOptions>` with three states — online available / manual only / neither — and copy
+  outside that component must stay **state-neutral**: the hold sentence says "arrange that", never
+  "pay now", because it is rendered in all three states.
+  **Known gap, open on an owner decision (BUG-117): `checkout.startPayment` only enforces the
+  PayMongo-configured half.** It never reads `settings.payment_methods`, so with PayMongo
+  configured and every method switched off, a stale tab, a back-button return or a direct tRPC
+  call still creates a real checkout session. Money still lands correctly and the webhook still
+  confirms — but it is a control that fails **open**, and "hiding a button is not access control".
+- **A gateway outage keeps the server's own guest-safe sentence.** A `SERVICE_UNAVAILABLE` from
+  the payment path is passed through, not swallowed by the generic "something went wrong" — the
+  guest is told online payment is unavailable and offered another way. Any new raiser of
+  `SERVICE_UNAVAILABLE` on a guest path inherits that and must therefore carry a guest-safe
+  message.
+- **No form, public or admin, may show raw Zod JSON.** The server's `errorFormatter` already
+  publishes structured `error.data.zodError`; the client reads it through the one shared helper
+  `client/src/lib/field-errors.ts` and places each message beside its own field via
+  `aria-describedby`. **Any new form with a multi-field Zod input uses that helper rather than
+  rendering `error.message`** — and note that the trap this rule exists for was a **query**, not a
+  mutation (the coupon field), so sweep both. Known limit: `createHoldInput.lead` is nested, so
+  one grouped message lands under all three lead fields (BUG-120) — the grouping itself was
+  reviewed and ruled correct, so do not rework it casually.
+
+## Notifications (current state)
+
+- **Email only. No SMS** (owner decision 2026-10-23, Q6, answering the spec's own overdue §15
+  question). The SMS provider interface exists behind `SMS_ENABLED` and is off by default, so
+  turning it on is configuration rather than a build.
+- **`notify()` can never throw**, template rendering included — a notification failure must not
+  roll back the thing it was reporting. Sends happen **after** the commit.
+- **Five jobs are registered**, each with its own `schedule()` call and its zone passed
+  explicitly, pinned by `jobs-registration.test.ts`: `expire-holds` every minute,
+  `prune-sessions` 03:30, `orphaned-vans` 07:00, `review-requests` 07:00, `trip-reminders` 16:00,
+  the last four Asia/Manila. The two staff-facing sweeps sit at 07:00 and the one guest-facing
+  reminder at 16:00, deliberately. A sixth job needs its own file and its own registration, not
+  logic folded into a neighbour (owner Q5).
+- **A reminder is sent once and a review request at most once EVER**, both claimed by an
+  `audit_log` row written **before** the send (`hasAuditRow`). `review-requests` uses a **7-day
+  lookback rather than "yesterday only"**, deliberately: a one-day window would make
+  "at most once ever" pass vacuously, since yesterday's booking falls out of range today whether
+  the audit row fired or not. It is self-healing against a missed run, and its one cost is a
+  first-run burst on whatever system first deploys it — a launch-day backfill note, not a cap.
+
+## Admin & content editing (current state)
+
+- **A settings write validates BEFORE it opens a transaction, so a refusal provably writes
+  nothing and audits nothing**, and `resetContentUnverifiedCache()` fires **after** commit so the
+  noindex gate is never stale against the flag that was just saved. `admin.settings.all` reads the
+  raw rows rather than the throwing `readSettings()` — the one screen that can repair a broken
+  block has to stay loadable. Owner-only (`usersSettings`). The audit row carries `{key}` only.
+- **The reports' money predicates are the week's most quotable rule, and they are split by
+  figure** (owner decision 2026-10-23, Q7). Money received and refunds bucket by the
+  payment/refund row's own `created_at` in **Manila**; bookings and still-to-collect bucket by
+  **`tour_date`**. **A refund does not reduce "still to collect"** — it reduces net received —
+  and the still-to-collect statement never references the `payments` table at all. One shared
+  `REPORT_NON_COLLECTABLE_STATUSES` feeds both spellings of the cancelled/expired list.
+- **Every CSV cell that can contain guest-entered or content-entered text goes through
+  `csvText()`** (`server/src/services/reports/csv.ts`), which neutralises a leading `=+-@`, TAB
+  and CR so a spreadsheet cannot parse a guest's name as a formula. Applied to the text cells
+  only, never near a money cell — a negative figure must stay a number. It composes with
+  `csvField`'s RFC-4180 quoting; both escapes apply.
+- **Only owner and finance may read a receipt** (owner decision 2026-10-23, Q2). A dispatcher gets
+  the **same `404` a stranger gets** — asserted byte-identical in status, body and raw text —
+  because a `403` would confirm the receipt exists. Gated on `ROLE_MATRIX.verifyPayments`, and
+  both client links read the page's existing `mayVerify` rather than a hand-listed role array.
+- **A submitted review is never published.** Submission is the **existing** `portal.submitReview`
+  (there is deliberately no second public submit path); a submission is `pending` and invisible to
+  `reviews.published`. **One browser, one helpful vote** — the composite primary key on
+  `review_helpful_votes` _is_ the rule, arbitrated by an anonymous voter cookie distinct from the
+  session cookie, and the raw IP and cookie id are never stored, only a hash. The verified badge
+  is derived from `bookingId !== null` and **the booking id reaches neither the public nor the
+  moderation wire** (RA 10173). A driver's rating comes through
+  `reviews.booking_id → bookings.driver_id` against the existing `settings.trust.minReviewsForRating`
+  — not a second constant (owner Q4) — and is admin-only, never shown to a guest.
+- **`coupons.used_count` is not writable through any admin input**, and `coupon_redemptions` is
+  append-only: `recordRedemption` / `releaseRedemption` are its only writers. A full-replacement
+  `admin.coupons.update` is safe against rewriting money a guest was already charged **because the
+  booking carries its own `price_snapshot`** — that is what makes it safe, so do not remove the
+  snapshot to "simplify".
+- **A tour, package, van, driver or coupon is deactivated, never deleted — and neither are a
+  tour's children.** A dropped add-on is set `isActive: false` (`booking_addons` references it),
+  and an itinerary stop with real `trip_checkpoints` history **refuses removal** with a `CONFLICT`
+  naming the stop, so the whole mutation writes nothing rather than dying on a foreign key.
+  **Two price tiers can never both match a party size:** overlapping tiers are refused and nothing
+  is written.
+- **§9's role table in `docs/BUILD_SPEC.md` is PARSED BY A TEST.** `role-isolation.test.ts` reads
+  that markdown table and pins the exact area / allowed / denied counts (12 areas, 23 allowed, 13
+  denied as of `packagesInquiries`). So adding a `ROLE_MATRIX` area means editing the spec's table,
+  the area-label mapping **and** the counts in one commit — the matrix and the spec cannot drift
+  apart quietly, by design.
+- **The staff name is display only.** It rides on the session's own live join, and **never drives
+  an access decision** — `navFor()` still takes the role string, pinned by a test that reddens if
+  the name is passed instead.
+
 ## Security
 
 - HTTPS only; HSTS; secure, httpOnly, sameSite=lax cookies.
 - Malformed request URLs (e.g. `/trpc/%zz`) return a plain 400, never a 500 with a stack
   trace (`server/src/middleware/malformed-url.ts`).
-- CSRF protection on state-changing requests (sameSite + origin check).
+- CSRF protection on state-changing requests (sameSite + origin check). The origin check sits
+  **outside** the session gate: a mutation with no `Origin`, or a foreign one, is `403`'d before
+  anything looks for a cookie, so a cross-origin attempt never reaches the role layer (measured
+  2026-10-30).
+- **There is NO session isolation between the three surfaces** (BUG-119, open on an owner
+  decision). `server/src/middleware/session-cookie.ts` issues `rg_session` with one name and one
+  path for admin, driver and portal subjects alike, so a guest signing into My Booking in the same
+  browser **overwrites a live staff session**, and vice versa. Nobody decided this; it is how the
+  code happens to behave. It is **not** a privilege escalation — each session row carries its own
+  subject type and the gates read that, so the evicted user is signed out, not impersonated — but
+  do not write anything that assumes two surfaces can be signed in at once, and expect a browser
+  check of one surface to destroy the session you had on another.
 - Rate limits on logins, coupon checks, review submissions, inquiry forms, helpful votes.
 - Uploads: validate MIME + extension + size, rename to random IDs, store outside the web
   root, serve via an authenticated route.
