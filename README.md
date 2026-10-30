@@ -37,7 +37,8 @@ test database, and refuses to touch Kong's.
 
 ```bash
 pnpm --filter @rg/server db:migrate    # apply migrations to rg_travel (preflight asserts the name)
-pnpm --filter @rg/server db:seed       # load the development content from src/db/seed-data.ts
+pnpm --filter @rg/server db:seed       # base: owner, destinations, settings (insert-only)
+pnpm --filter @rg/server db:seed:demo  # demo: tours, packages, reviews, fleet (dev-only, upserts)
 pnpm dev                               # client on 5180, server on 3100, in parallel
 ```
 

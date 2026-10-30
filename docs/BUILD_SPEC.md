@@ -1363,7 +1363,7 @@ Nothing in this week is built.
 
 > **What Week 7 hands this week** (walkthrough, 2026-10-30:
 > `docs/superpowers/plans/2026-10-30-week7-walkthrough.md`, which carries the full list with its
-> measurements). Two of these are **owner decisions and must be answered before they are built**;
+> measurements). One of these is an **owner decision and must be answered before it is built**;
 > the rest is work.
 >
 > 1. **✅ RESOLVED (Task B2, pre-launch fixes batch) — `db:seed` still overwrites admin-edited

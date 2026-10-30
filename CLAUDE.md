@@ -50,7 +50,8 @@ Database commands live in the **server** workspace, so they need the filter — 
 | -------------------------------------- | ------------------------------------------------ |
 | `pnpm --filter @rg/server db:generate` | Write a migration from `src/db/schema.ts`        |
 | `pnpm --filter @rg/server db:migrate`  | Apply migrations to `rg_travel` (name preflight) |
-| `pnpm --filter @rg/server db:seed`     | Load development content from `src/db/seed-data` |
+| `pnpm --filter @rg/server db:seed`     | BASE: owner, destinations, settings — insert-only, safe on prod |
+| `pnpm --filter @rg/server db:seed:demo`| DEMO: tours, packages, reviews, (app db) fleet — dev-only, upserts |
 
 Package manager is **pnpm**. Do not introduce npm or yarn lockfiles.
 `.gitattributes` pins the whole tree to LF (`* text=auto eol=lf`) — without it a fresh clone
@@ -189,7 +190,9 @@ There is no `tailwind.config.js`.
 The public site is fully database-backed (task 3.7 deleted the last hardcoded module).
 Every page reads tours, destinations, packages, reviews, FAQs and settings from the
 `rg_travel` MySQL database via tRPC, seeded for local development by
-`pnpm --filter @rg/server db:seed` from `server/src/db/seed-data.ts`.
+`pnpm --filter @rg/server db:seed` (owner, destinations, settings) followed by
+`pnpm --filter @rg/server db:seed:demo` (tours, packages, reviews, fleet) — both from
+`server/src/db/seed-data.ts`.
 
 - `settings.content_unverified` (exposed to the client as `contentUnverified`) drives the
   on-site amber banner (`PlaceholderBadge.tsx`), gates production builds, **and keeps the
@@ -347,8 +350,8 @@ Every page reads tours, destinations, packages, reviews, FAQs and settings from 
   a boundary without faking timers globally, which is how a timezone bug survives its own suite. The
   procedure takes no time from the client.
 - **The test database keeps an EMPTY fleet.** `capacity.test.ts` counts the whole fleet, so
-  `db:seed` puts vans, drivers and demo bookings in `rg_travel` only (`seed(context)` gates on
-  `'app'`). Do not loosen that assertion to fit a seed.
+  `db:seed:demo` puts vans, drivers and demo bookings in `rg_travel` only (`seedDemo(context)`
+  gates on `'app'`). Do not loosen that assertion to fit a seed.
 - **Cancelling a trip does not retract the check-ins already recorded** (owner ruling 2026-10-16,
   Task 13). `admin.refunds.cancelBooking` sets `cancelled` and leaves every checkpoint standing —
   the van really did reach those stops, and erasing that would be the worse record. Because

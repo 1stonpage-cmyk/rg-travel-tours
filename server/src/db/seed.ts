@@ -106,6 +106,11 @@ const DEMO_REF_PREFIX = 'RG-SEED';
  *
  * Returns `true` when it inserted, so the caller can report how many slugs
  * it left alone, same as the settings loop.
+ *
+ * The flip side of insert-only: once a slug exists, editing its fixture in
+ * `SEED_DESTINATIONS` (a new blurb, a corrected image) is a silent no-op
+ * against any database that already has that row — the same trade
+ * `insertSettingIfMissing` makes, accepted for the same reason.
  */
 async function insertDestinationIfMissing(db: Db, destination: SeedDestination): Promise<boolean> {
   const existing = await db
