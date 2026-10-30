@@ -423,8 +423,39 @@ function extractErrorDetail(payload: unknown): string {
     .slice(0, 300);
 }
 
+/**
+ * The secret key this process would actually authenticate with — the ONE
+ * place `env.PAYMONGO_SECRET_KEY` is read and trimmed.
+ *
+ * Extracted (task A5) because a second reader arrived: `isPaymongoConfigured()`
+ * below answers the UI's "may we offer Pay now at all?" question, and it has
+ * to agree with `authorization()`'s refusal byte for byte. Two copies of
+ * "is there a key" is how a checkout offers a button that throws.
+ */
+function resolveSecretKey(config: PaymongoConfig = {}): string {
+  return (config.secretKey ?? env.PAYMONGO_SECRET_KEY ?? '').trim();
+}
+
+/**
+ * Is online payment through PayMongo even possible right now?
+ *
+ * The same question `authorization()` asks before every call, asked ahead of
+ * time so a surface can decline to offer what it knows cannot work (task
+ * A5: an unset `PAYMONGO_SECRET_KEY` used to be discovered only by a guest
+ * clicking "Pay now"). It reads the key but **never returns, logs or
+ * otherwise exposes it** — the answer is one boolean, which is the whole
+ * point: this value is safe to publish in the public settings payload and
+ * the key never is.
+ *
+ * Read at CALL time, not at module load, so it reflects the environment the
+ * request is actually served in.
+ */
+export function isPaymongoConfigured(): boolean {
+  return resolveSecretKey() !== '';
+}
+
 export function createPaymongoProvider(config: PaymongoConfig = {}): PaymentProvider {
-  const secretKey = (config.secretKey ?? env.PAYMONGO_SECRET_KEY ?? '').trim();
+  const secretKey = resolveSecretKey(config);
   const webhookSecret = (config.webhookSecret ?? env.PAYMONGO_WEBHOOK_SECRET ?? '').trim();
   const doFetch = config.fetchImpl;
 

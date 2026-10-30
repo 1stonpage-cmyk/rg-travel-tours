@@ -235,6 +235,20 @@ export const SETTINGS_FIXTURE: SettingsPayload = {
    * of what a default should do.
    */
   manualTransferEnabled: false,
+  /*
+   * TRUE, which is what a correctly configured production box says and what
+   * every test written before task A5 implicitly assumed: the checkout
+   * offered "Pay now" unconditionally, so a fixture that said `false` would
+   * silently delete the Pay-now button from every existing test. The
+   * gateway-off states are opted into per test by overriding this, exactly
+   * as `manualTransferEnabled` above is overridden the other way.
+   *
+   * It does NOT match today's dev `.env` (which ships a blank
+   * `PAYMONGO_SECRET_KEY`, so the real payload says false) — a fixture
+   * tracks the shape and the default-interesting case, not one machine's
+   * environment.
+   */
+  onlinePaymentEnabled: true,
   legal: {
     privacy: {
       markdown:

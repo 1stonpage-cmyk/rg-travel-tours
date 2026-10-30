@@ -1,8 +1,10 @@
-import { afterAll, beforeEach, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { getDb } from '../db/client';
 import { settings } from '../db/schema';
-import { readSettings, readRawSettings } from '../content/settings';
-import { SETTING_KEYS } from '../content/settings-schema';
+import { readSettings, readRawSettings, toSettingsPayload } from '../content/settings';
+import { SETTING_KEYS, type SettingsBlocks } from '../content/settings-schema';
+import { env } from '../env';
+import { isPaymongoConfigured } from '../services/payments/paymongo';
 import { describeWithDb } from './helpers/db';
 import { resetTestDb } from './helpers/test-db';
 
@@ -170,5 +172,118 @@ describeWithDb('readSettings()', () => {
     const raw = await readRawSettings();
 
     expect(raw.content_unverified).toBe(true);
+  });
+});
+
+/* =======================================================================
+ * `onlinePaymentEnabled` — task A5's launch blocker.
+ *
+ * The checkout used to offer "Pay now" unconditionally, so a dev or staging
+ * box with no `PAYMONGO_SECRET_KEY` (and a production box with every
+ * payment method switched off in Settings) sent a guest to a button that
+ * could only throw. The flag is computed HERE, from two independent facts,
+ * and the browser only renders what it is told.
+ *
+ * No database: `toSettingsPayload` is pure by design, and these four tests
+ * are the reason the `paymongoConfigured` argument is passed in rather than
+ * read from `env` inside it — all four branches are reachable with no
+ * environment to fake.
+ * ======================================================================= */
+
+/** Every settings key at its valid fixture value, so one block can be overridden per test. */
+function blocksFixture(overrides: Partial<Record<string, unknown>> = {}): SettingsBlocks {
+  const blocks: Record<string, unknown> = {};
+  for (const key of SETTING_KEYS) {
+    blocks[key] = key in overrides ? overrides[key] : validValueFor(key);
+  }
+  return blocks as SettingsBlocks;
+}
+
+const NOW = new Date('2026-07-01T04:00:00.000Z');
+
+/** Every entry in `payment_methods` is a GATEWAY method — see the field's own note. */
+const ALL_METHODS_DISABLED = [
+  { key: 'gcash', label: 'GCash', enabled: false, sortOrder: 0 },
+  { key: 'maya', label: 'Maya', enabled: false, sortOrder: 1 },
+];
+
+describe('toSettingsPayload() — onlinePaymentEnabled (task A5)', () => {
+  it('is TRUE when PayMongo is configured and at least one method is enabled', () => {
+    const payload = toSettingsPayload(blocksFixture(), NOW, true);
+    expect(payload.paymentMethods.length).toBeGreaterThan(0);
+    expect(payload.onlinePaymentEnabled).toBe(true);
+  });
+
+  it('is FALSE when PayMongo is configured but every payment method is disabled', () => {
+    const payload = toSettingsPayload(
+      blocksFixture({ payment_methods: ALL_METHODS_DISABLED }),
+      NOW,
+      true,
+    );
+    // The same enabled-only list the browser is shown is what the flag reads.
+    expect(payload.paymentMethods).toEqual([]);
+    expect(payload.onlinePaymentEnabled).toBe(false);
+  });
+
+  it('is FALSE when a method is enabled but PayMongo is NOT configured', () => {
+    const payload = toSettingsPayload(blocksFixture(), NOW, false);
+    expect(payload.paymentMethods.length).toBeGreaterThan(0);
+    expect(payload.onlinePaymentEnabled).toBe(false);
+  });
+
+  it('is FALSE when neither half is in place', () => {
+    const payload = toSettingsPayload(
+      blocksFixture({ payment_methods: ALL_METHODS_DISABLED }),
+      NOW,
+      false,
+    );
+    expect(payload.onlinePaymentEnabled).toBe(false);
+  });
+
+  /**
+   * The flag is one boolean and nothing more. `manualTransferEnabled`'s own
+   * note explains why that matters for the QR details; the same discipline
+   * applies here — the secret key, and even "which half is missing", stay
+   * on the server.
+   */
+  it('publishes the boolean only — no key, no reason, no per-method `enabled` flag', () => {
+    const payload = toSettingsPayload(blocksFixture(), NOW, true);
+    const serialised = JSON.stringify(payload);
+    expect(serialised).toContain('"onlinePaymentEnabled":true');
+    expect(serialised).not.toContain('PAYMONGO');
+    expect(serialised).not.toContain('secretKey');
+    // The published methods carry a key and a label and nothing else — the
+    // `enabled` flag that decided the boolean above stays server-side.
+    for (const method of payload.paymentMethods) {
+      expect(Object.keys(method).sort()).toEqual(['key', 'label']);
+    }
+  });
+});
+
+/**
+ * `isPaymongoConfigured()` is the server's half of the same question, and it
+ * must answer exactly what `createCheckout` would: a blank or whitespace-only
+ * `PAYMONGO_SECRET_KEY` is NOT configured. `.env` ships it blank, which is
+ * the state this whole task was reported against.
+ */
+describe('isPaymongoConfigured()', () => {
+  const original = env.PAYMONGO_SECRET_KEY;
+
+  afterEach(() => {
+    env.PAYMONGO_SECRET_KEY = original;
+  });
+
+  it('is false when the key is unset, blank, or only whitespace', () => {
+    env.PAYMONGO_SECRET_KEY = undefined;
+    expect(isPaymongoConfigured()).toBe(false);
+    env.PAYMONGO_SECRET_KEY = '';
+    expect(isPaymongoConfigured()).toBe(false);
+    env.PAYMONGO_SECRET_KEY = '   ';
+    expect(isPaymongoConfigured()).toBe(false);
+  });
+
+  it('is true once a key is set', () => {
+    env.PAYMONGO_SECRET_KEY = 'sk_test_notarealkey';
+    expect(isPaymongoConfigured()).toBe(true);
   });
 });

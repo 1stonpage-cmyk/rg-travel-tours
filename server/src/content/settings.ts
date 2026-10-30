@@ -12,6 +12,7 @@ import { bookableDateRange, type BookableDateRange } from '@rg/shared';
 import { getDb } from '../db/client';
 import { settings } from '../db/schema';
 import { resolveOpenState, type OpenState } from '../services/hours';
+import { isPaymongoConfigured } from '../services/payments/paymongo';
 import { isWithinWindow } from '../services/schedule';
 import {
   SETTING_KEYS,
@@ -211,6 +212,26 @@ export interface SettingsPayload {
    * one boolean is what it gets.
    */
   manualTransferEnabled: boolean;
+  /**
+   * Whether the GATEWAY path may be offered at all — "is there a working
+   * online payment to send this guest to", answered server-side (task A5).
+   *
+   * Two independent facts, and it takes BOTH: PayMongo has a secret key in
+   * the server environment (`isPaymongoConfigured()`, the same check
+   * `createCheckout` itself makes), **and** at least one `payment_methods`
+   * entry is enabled (every entry in that block is a gateway method —
+   * manual transfer is the separate `payment_qr` block above). Either half
+   * missing means `checkout.startPayment` can only refuse, so the button
+   * must not be on screen.
+   *
+   * It is the SIBLING of `manualTransferEnabled`, not a replacement: a
+   * checkout reads both and picks one of three states (online, manual-only,
+   * neither). Like that flag, it publishes a boolean and nothing else — no
+   * key, no method list, no reason. A guest can act on none of those, and
+   * "which half is misconfigured" is not a fact the public payload owes
+   * anyone.
+   */
+  onlinePaymentEnabled: boolean;
   legal: {
     privacy: SettingsBlocks['legal_privacy'];
     terms: SettingsBlocks['legal_terms'];
@@ -250,8 +271,23 @@ export function resolvePaymentMethods(
     .map((method) => ({ key: method.key, label: method.label }));
 }
 
-/** Pure — takes already-parsed blocks plus the instant to resolve schedules against, so it's testable with no DB and no real clock. */
-export function toSettingsPayload(blocks: SettingsBlocks, now: Date): SettingsPayload {
+/**
+ * Pure — takes already-parsed blocks plus the instant to resolve schedules
+ * against, so it's testable with no DB and no real clock.
+ *
+ * `paymongoConfigured` is passed IN rather than read here (task A5) to keep
+ * that promise: an `env` read inside this function would make the whole
+ * payload depend on process state, and the gateway-off branch would then be
+ * untestable without faking the environment. Deliberately has **no
+ * default** — a caller that forgets it fails to compile, rather than
+ * quietly publishing "online payment is on".
+ */
+export function toSettingsPayload(
+  blocks: SettingsBlocks,
+  now: Date,
+  paymongoConfigured: boolean,
+): SettingsPayload {
+  const enabledPaymentMethods = resolvePaymentMethods(blocks.payment_methods);
   return {
     contentUnverified: blocks.content_unverified,
     siteSeo: blocks.site_seo,
@@ -260,7 +296,7 @@ export function toSettingsPayload(blocks: SettingsBlocks, now: Date): SettingsPa
     announcement: resolveAnnouncement(blocks.announcement, now),
     promo: resolvePromo(blocks.promo, now),
     openState: resolveOpenState(blocks.business_hours, now),
-    paymentMethods: resolvePaymentMethods(blocks.payment_methods),
+    paymentMethods: enabledPaymentMethods,
     permits: blocks.permits,
     howItWorks: blocks.how_it_works,
     whyBookDirect: blocks.why_book_direct,
@@ -271,11 +307,18 @@ export function toSettingsPayload(blocks: SettingsBlocks, now: Date): SettingsPa
     bookingWindow: bookableDateRange(blocks.booking, now),
     // The flag only. See the field's own note on why the details are not here.
     manualTransferEnabled: blocks.payment_qr.isConfigured,
+    /*
+     * BOTH halves, and the enabled-only list is reused rather than
+     * re-filtered — the question "is there an online method to offer" and
+     * the list the browser is shown must be the same answer.
+     */
+    onlinePaymentEnabled: paymongoConfigured && enabledPaymentMethods.length > 0,
     legal: { privacy: blocks.legal_privacy, terms: blocks.legal_terms },
   };
 }
 
 /** `readSettings()` + `toSettingsPayload()` against the current instant — what `settings.get` calls. */
 export async function getSettingsPayload(now: Date = new Date()): Promise<SettingsPayload> {
-  return toSettingsPayload(await readSettings(), now);
+  // The only real caller, and so the one place the environment is consulted.
+  return toSettingsPayload(await readSettings(), now, isPaymongoConfigured());
 }
