@@ -57,9 +57,24 @@ import { describeWithDb } from './helpers/db';
  * 2026-11, and all three assert exact counts on their own days — so this file
  * stays well clear of them rather than relying on teardown ordering.
  */
-const TRIP_DATE = '2098-07-15';
+/**
+ * **A year this file claims, checked against the whole suite rather than
+ * assumed** (T6 review finding I1): `grep -rn 2097 server/src` matches nothing
+ * but this file.
+ *
+ * 2098 — the first choice here — was WRONG, and worth naming so it is not
+ * picked again. `admin-reports.test.ts` reserves `2098-07-01…2098-07-31` as
+ * `EMPTY_MONTH`, its all-zero control, and asserts `bookingCount: 0`,
+ * `stillToCollectCentavos: 0` and empty `byTour` / `outstanding` over it.
+ * Fixtures here are non-cancelled bookings carrying real money, so they would
+ * have populated all four — and the only reason they did not was
+ * `fileParallelism: false` in `server/vitest.config.ts` plus this file's own
+ * `afterEach`. That is accidental isolation resting on an unrelated config
+ * flag, not a property of the dates.
+ */
+const TRIP_DATE = '2097-07-15';
 /** 04:00 on `TRIP_DATE` in Manila — so the departures board's "today" is it. */
-const NOW = new Date('2098-07-14T20:00:00Z');
+const NOW = new Date('2097-07-14T20:00:00Z');
 
 const asDate = (civilDate: string) => new Date(`${civilDate}T00:00:00Z`);
 const unique = () => `${Math.floor(Math.random() * 1e9)}_${Date.now()}`;
@@ -255,7 +270,9 @@ describeWithDb('T6: no surface silently drops a transfer booking', () => {
   it('puts a transfer on the dispatch calendar, with its assignment state intact', async () => {
     const transfer = await makeBooking({ transfer: true, assignDriver: false });
 
-    const { days } = await ownerCaller().admin.calendar.month({ year: 2098, month: 7 });
+    // The month `TRIP_DATE` sits in — kept in step with it by hand, because
+    // `admin.calendar.month` takes a year and a month, not a date.
+    const { days } = await ownerCaller().admin.calendar.month({ year: 2097, month: 7 });
     const day = days.find((d) => d.date === TRIP_DATE)!;
 
     const trip = day.trips.find((t) => t.ref === transfer.ref);
