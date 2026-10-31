@@ -40,6 +40,15 @@ import { describeWithDb } from './helpers/db';
 const unique = () => `${Math.floor(Math.random() * 1e9)}_${Date.now()}`;
 
 /**
+ * A unique, URL-shaped route slug.
+ *
+ * `unique()` joins its two halves with an underscore, which
+ * `transferRouteSlugSchema`'s regex does not allow (fix round, review finding
+ * I2), so the separator is swapped for the hyphen the pattern does allow.
+ */
+const uniqueSlug = () => `adtr-${unique().replace('_', '-')}`;
+
+/**
  * Both vehicle types, both products, all four figures different.
  *
  * Four distinct numbers on purpose: a bug that copied one vehicle type's card
@@ -86,7 +95,7 @@ function routeInput(
 ): TransferRouteCreateInput {
   return {
     destinationId,
-    slug: `adtr-${unique()}`,
+    slug: uniqueSlug(),
     estimatedDurationMinutes: 180,
     freeCancelHours: 24,
     inclusionsText: 'Fuel, driver, tolls',
@@ -142,29 +151,57 @@ beforeAll(async () => {
 afterAll(async () => {
   const db = getDb();
   const pool = getPool();
-  if (created.routeIds.length > 0) {
-    // `audit_log.entity_id` is polymorphic — a booking and a route can share
-    // the same numeric id, so the entity column is part of the filter too.
-    await db
-      .delete(auditLog)
-      .where(
-        and(eq(auditLog.entity, 'transfer_route'), inArray(auditLog.entityId, created.routeIds)),
-      );
-    // Children before parents: the FK is RESTRICT, like every other in this schema.
-    await db
-      .delete(transferRouteVehiclePrices)
-      .where(inArray(transferRouteVehiclePrices.routeId, created.routeIds));
-    await db.delete(transferRoutes).where(inArray(transferRoutes.id, created.routeIds));
-  }
-  if (created.destIds.length > 0) {
-    await db.delete(destinations).where(inArray(destinations.id, created.destIds));
-  }
+
+  /*
+   * Users FIRST, before the route and destination deletes that can fail on a
+   * foreign key. `users` is one of `global-setup.ts`'s LEAK_TABLES — a stray
+   * row there fails the whole run by name — and nothing on `users` depends on
+   * anything else this suite created, so taking it out of the blast radius of
+   * a later failing statement costs nothing. (Measured during this file's own
+   * mutation proving: an earlier delete threw, and the three staff rows were
+   * still sitting in `rg_travel_test` afterwards.)
+   */
   for (const id of created.userIds) {
     await pool.query('DELETE FROM sessions WHERE subject_type = ? AND subject_id = ?', [
       'user',
       id,
     ]);
     await pool.query('DELETE FROM users WHERE id = ?', [id]);
+  }
+
+  /*
+   * Every route anchored on one of this suite's destinations, not only the ids
+   * `createRoute` pushed. A REFUSAL test that unexpectedly SUCCEEDS leaves a
+   * route nothing tracked — which is precisely what happens while
+   * mutation-proving one of them (dropping the slug regex let
+   * `"Mactan Airport"` through, and the untracked row then blocked the
+   * destination delete on its foreign key and aborted the rest of this
+   * teardown). Asking the database which routes exist makes the cleanup
+   * independent of the tests having behaved.
+   */
+  const strays =
+    created.destIds.length === 0
+      ? []
+      : await db
+          .select({ id: transferRoutes.id })
+          .from(transferRoutes)
+          .where(inArray(transferRoutes.destinationId, created.destIds));
+  const routeIds = [...new Set([...created.routeIds, ...strays.map((row) => row.id)])];
+
+  if (routeIds.length > 0) {
+    // `audit_log.entity_id` is polymorphic — a booking and a route can share
+    // the same numeric id, so the entity column is part of the filter too.
+    await db
+      .delete(auditLog)
+      .where(and(eq(auditLog.entity, 'transfer_route'), inArray(auditLog.entityId, routeIds)));
+    // Children before parents: the FK is RESTRICT, like every other in this schema.
+    await db
+      .delete(transferRouteVehiclePrices)
+      .where(inArray(transferRouteVehiclePrices.routeId, routeIds));
+    await db.delete(transferRoutes).where(inArray(transferRoutes.id, routeIds));
+  }
+  if (created.destIds.length > 0) {
+    await db.delete(destinations).where(inArray(destinations.id, created.destIds));
   }
 });
 
@@ -272,6 +309,66 @@ describeWithDb('admin.transferRoutes', () => {
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
 
+  /**
+   * Fix round, review finding I2. This slug keys a public URL in a later task
+   * (`/transfers/:slug`, its canonical and its `/sitemap.xml` entry), so a
+   * string that cannot BE a URL segment has to be refused where an owner can
+   * see why — not discovered later as a canonical full of `%20` or a path the
+   * SPA router 404s on.
+   */
+  it('refuses a slug that could not go in a URL', async () => {
+    const destinationId = await makeDestination();
+    const api = ownerApi().admin.transferRoutes;
+    const malformed = [
+      'Mactan Airport', // a space
+      'Oslob/Sumilon', // a path separator
+      'mactan_airport', // an underscore — allowed in a filename, not here
+      'mactan--airport', // a doubled hyphen
+      '-mactan-airport', // a leading hyphen
+      'mactan-airport-', // a trailing hyphen
+      'mactan.airport', // a dot
+      'cebu—airport', // an em dash, which reads as a hyphen and is not one
+    ];
+    for (const slug of malformed) {
+      await expect(
+        api.create({ ...routeInput(destinationId), slug }),
+        `"${slug}" was accepted as a route slug`,
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    }
+  });
+
+  /**
+   * Fix round, review finding I2 — and the ORDER is the whole point.
+   *
+   * The slug below is submitted in upper case with surrounding whitespace. The
+   * schema's regex accepts lowercase only, so this can succeed at all **only
+   * because `.transform()` runs BEFORE `.pipe()`'s shape check** — the
+   * `bookingRefSchema` ordering (CLAUDE.md, BUG-108). Move the normalisation
+   * after the check, or drop it, and this call becomes a `BAD_REQUEST`.
+   *
+   * What it buys is that `transfer_routes.slug`'s UNIQUE never has to rely on
+   * the `_ci` collation to tell `Moalboal` from `moalboal`: both reach the
+   * column as the same bytes. CLAUDE.md names leaning on the collation twice
+   * as a thing not to repeat (BUG-108 on `bookings.ref`, BUG-107 on
+   * `coupons.code`) — this is the third place it could have happened.
+   */
+  it('lowercases and trims a slug BEFORE checking its shape, and stores that form', async () => {
+    const destinationId = await makeDestination();
+    const slug = uniqueSlug();
+    const { id } = await ownerApi().admin.transferRoutes.create({
+      ...routeInput(destinationId),
+      slug: `  ${slug.toUpperCase()}  `,
+    });
+    created.routeIds.push(id);
+
+    const row = (await ownerApi().admin.transferRoutes.list()).find((r) => r.id === id);
+    expect(row?.slug).toBe(slug);
+    // Spelled out rather than left to the equality above: the failure this
+    // guards against is the stored value keeping the case it was typed in.
+    expect(row?.slug).not.toBe(slug.toUpperCase());
+    expect(row?.slug.trim()).toBe(row?.slug);
+  });
+
   it('refuses a second route for the same destination with CONFLICT', async () => {
     const destinationId = await makeDestination();
     const { id } = await ownerApi().admin.transferRoutes.create(routeInput(destinationId));
@@ -357,6 +454,61 @@ describeWithDb('admin.transferRoutes', () => {
     const row = (await ownerApi().admin.transferRoutes.list()).find((r) => r.id === id);
     expect(row?.prices.van).toEqual(repricedVan);
     expect(row?.prices.suv).toEqual(VALID_PRICES.suv);
+  });
+
+  /**
+   * **The fail-closed path** (fix round, review finding I1).
+   *
+   * `update`'s `missing.length > 0 → CONFLICT` is the one money-safety control
+   * this task invented, and it is unreachable through the router API — every
+   * save writes both price rows — so nothing exercised it. CLAUDE.md is
+   * explicit that a control which fails closed needs a test FOR the failure
+   * path; without one, a later "simplification" to
+   * `card[vt] ?? { oneWayPriceCentavos: 0, … }` removes the refusal with the
+   * whole suite staying green, and the consequence is a route silently priced
+   * at ₱0 after an edit to its DURATION — which every quote then refuses by
+   * the gateway-minimum rule, with nothing anywhere naming the cause.
+   *
+   * Raw SQL to set it up, because that is the only way the state can arise:
+   * someone repairing a row by hand, or a later `seedDemo` addition that
+   * inserts a route without its prices. The suite already reaches for
+   * `getPool().query(...)` in `afterAll`.
+   */
+  it('refuses an update that would have to invent a missing price, and writes nothing', async () => {
+    const { id } = await createRoute();
+    await getPool().query(
+      "DELETE FROM transfer_route_vehicle_prices WHERE route_id = ? AND vehicle_type = 'suv'",
+      [id],
+    );
+
+    await expect(
+      ownerApi().admin.transferRoutes.update({ id, patch: { estimatedDurationMinutes: 210 } }),
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+
+    // The van row it refused to touch is still exactly as it was — the refusal
+    // is raised before the upsert's delete, so there is no partial write.
+    expect(await priceRowsFor(id)).toEqual([{ vehicleType: 'van', ...VALID_PRICES.van }]);
+
+    const refused = (await ownerApi().admin.transferRoutes.list()).find((r) => r.id === id);
+    // The route's own column did not move either, and the gap is REPORTED
+    // rather than papered over with a zero.
+    expect(refused?.estimatedDurationMinutes).toBe(180);
+    expect(refused?.prices.suv).toBeNull();
+    expect(refused?.prices.van).toEqual(VALID_PRICES.van);
+
+    // And the refusal is not a dead end: the way out is the one its message
+    // names — state both prices in the save.
+    await ownerApi().admin.transferRoutes.update({
+      id,
+      patch: {
+        estimatedDurationMinutes: 210,
+        prices: { van: { ...VALID_PRICES.van }, suv: { ...VALID_PRICES.suv } },
+      },
+    });
+    const repaired = (await ownerApi().admin.transferRoutes.list()).find((r) => r.id === id);
+    expect(repaired?.estimatedDurationMinutes).toBe(210);
+    expect(repaired?.prices.suv).toEqual(VALID_PRICES.suv);
+    expect(await priceRowsFor(id)).toHaveLength(2);
   });
 
   it('keeps exactly two price rows per route, however many times it is saved', async () => {

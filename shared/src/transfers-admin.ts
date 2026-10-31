@@ -72,6 +72,62 @@ export type TransferRoutePricesInput = z.infer<typeof transferRoutePricesInputSc
 const transferRouteIdSchema = z.number().int().positive();
 
 /**
+ * Trims surrounding whitespace, then lowercases.
+ *
+ * Exported because the normalisation is a fact about a slug rather than about
+ * one schema: anything that later has to ask "is this the same route" — a
+ * lookup, an import, a seed — must ask it of the same normalised form.
+ */
+export function normalizeTransferRouteSlug(slug: string): string {
+  return slug.trim().toLowerCase();
+}
+
+/**
+ * A route's URL segment: `mactan-airport`.
+ *
+ * **Two separate reasons this is more than `z.string().max(80)`** (fix round,
+ * review finding I2 — fixed while both databases still held zero routes, so
+ * no data migration and no broken shared link was involved):
+ *
+ *  1. **It is destined for a public URL.** A later task publishes
+ *     `/transfers/:slug`, and the SEO resolver puts the same string in a
+ *     canonical and in `/sitemap.xml`. An owner typing `Mactan Airport` or
+ *     `Oslob/Sumilon` into the admin form would produce a canonical containing
+ *     `%20`, or a path the SPA router 404s on, and the sitemap guard test
+ *     clears `content_unverified` first on purpose — so a malformed URL there
+ *     would not be hidden by the site-wide noindex gate. The pattern is
+ *     `tourFields.slug`'s own, character for character, because a transfer
+ *     route's URL and a tour's are the same kind of thing.
+ *  2. **`transfer_routes.slug` is UNIQUE, and that UNIQUE must not depend on
+ *     the MySQL collation.** `.transform()` runs
+ *     {@link normalizeTransferRouteSlug} BEFORE `.pipe()`'s shape check — the
+ *     `bookingRefSchema` ordering (CLAUDE.md, BUG-108) — so `Moalboal`,
+ *     `MOALBOAL` and `  moalboal  ` all reach the column as the one byte
+ *     sequence `moalboal` and collide on an exact match. CLAUDE.md names
+ *     leaning on the `_ci` collation twice as a thing not to repeat (BUG-108
+ *     on `bookings.ref`, BUG-107 on `coupons.code`); this is the third place
+ *     it could have happened and it does not.
+ *
+ * Normalising first is not a loosening: a string that is still the wrong
+ * charset after trimming and lowercasing is refused exactly as it would have
+ * been. The message shows the shape rather than naming the rule, the way every
+ * other refusal in this codebase does.
+ */
+export const transferRouteSlugSchema = z
+  .string()
+  .transform(normalizeTransferRouteSlug)
+  .pipe(
+    z
+      .string()
+      .min(1)
+      .max(80)
+      .regex(
+        /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+        'Use lowercase letters, numbers and hyphens, like mactan-airport.',
+      ),
+  );
+
+/**
  * `admin.transferRoutes.create` — the whole route plus its whole price card.
  *
  * `prices` is REQUIRED, with no default: a route with no prices is one no
@@ -82,7 +138,7 @@ const transferRouteIdSchema = z.number().int().positive();
 export const transferRouteCreateInputSchema = z
   .object({
     destinationId: z.number().int().positive(),
-    slug: z.string().trim().min(1).max(80),
+    slug: transferRouteSlugSchema,
     estimatedDurationMinutes: z.number().int().min(1).max(1440),
     freeCancelHours: z.number().int().min(0).max(168),
     inclusionsText: z.string().trim().max(5000).nullable(),

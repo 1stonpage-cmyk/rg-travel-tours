@@ -240,6 +240,12 @@ export const adminTransferRoutesRouter = router({
              * the patch omits `prices`, every vehicle type has a stored row,
              * so the card really is complete. When the patch SUPPLIES prices,
              * `mergeTransferRoutePatch` never reads this field at all.
+             *
+             * The refusal is pinned by `admin-transfer-routes.test.ts`'s
+             * "refuses an update that would have to invent a missing price"
+             * (review finding I1): replacing it with a `?? 0` default turns
+             * that test red with `promise resolved "{ ok: true }"`, which is
+             * exactly the silent ₱0 repricing it exists to stop.
              */
             prices: card as TransferRoutePricesInput,
           },
