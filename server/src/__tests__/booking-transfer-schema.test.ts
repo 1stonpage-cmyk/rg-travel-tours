@@ -349,8 +349,24 @@ async function tableExists(name: string): Promise<boolean> {
   }
 }
 
-const migrated = (await tableExists('bookings')) && (await tableExists('booking_transfer_details'));
-const dbIt = migrated ? it : it.skip;
+/**
+ * The gate keys on **`bookings`**, a table that predates this migration and is
+ * therefore always present on any database the suite can reach — not on
+ * `booking_transfer_details`, which is the table these migrations CREATE
+ * (review finding I3).
+ *
+ * That distinction is the whole value of the gate. Gating on the new table
+ * fails OPEN: on a database where the migration was never applied, every
+ * test below — including the ones whose entire job is to prove the migration
+ * landed — would report green by silently skipping. Gating on `bookings`
+ * means a missing migration is a screen of loud failures, which is what
+ * `schema-bookings.test.ts` gates this way for.
+ *
+ * So the only thing this still absorbs is MySQL being unreachable, exactly
+ * like `helpers/db.ts`.
+ */
+const dbReachable = await tableExists('bookings');
+const dbIt = dbReachable ? it : it.skip;
 
 describe('bookings + booking_transfer_details, as actually migrated', () => {
   dbIt('declares the product-type CHECK as a real, enforced constraint', async () => {
@@ -375,9 +391,39 @@ describe('bookings + booking_transfer_details, as actually migrated', () => {
     expect(clause.match(/tour_idisnull/gi)?.length).toBe(1);
     expect(clause.match(/vehicle_type_requestedisnotnull/gi)?.length).toBe(1);
     expect(clause.match(/vehicle_type_requestedisnull/gi)?.length).toBe(1);
-    // route_id is deliberately NOT in the CHECK — the XOR with
-    // custom_route_description is cross-table and lives in the writer.
-    expect(clause, 'route_id must not be constrained here').not.toContain('route_id');
+
+    /*
+     * **The branches are asymmetric about `route_id`, and this is where that
+     * is pinned** (review finding I1). The top-level OR splits the clause at
+     * `product_type<>'tour'`, so the two halves can be asserted separately
+     * rather than with a blanket ban on the identifier — which is what this
+     * used to do, and which actively foreclosed the tour-branch fix.
+     */
+    const split = clause.indexOf("product_type<>'tour'");
+    expect(split, 'the transfer branch is missing entirely').toBeGreaterThan(0);
+    const tourBranch = clause.slice(0, split);
+    const transferBranch = clause.slice(split);
+
+    // A tour never carries a route. Single-table, so it is stated.
+    expect(
+      tourBranch,
+      'a tour booking may carry a route_id — the mirror of a transfer carrying a tour_id',
+    ).toContain('route_idisnull');
+    // ...and only there, so the count doubles as a guard on the split above.
+    expect(clause.match(/route_idisnull/gi)?.length).toBe(1);
+
+    /*
+     * The transfer branch must say NOTHING about `route_id`. A staff-quoted
+     * custom trip legitimately has none (it carries
+     * `booking_transfer_details.custom_route_description` instead), and
+     * "route_id XOR custom_route_description" is cross-table — a single-table
+     * CHECK cannot express it, and requiring `route_id IS NOT NULL` here
+     * would make a real booking unbookable.
+     */
+    expect(
+      transferBranch,
+      'the transfer branch constrains route_id — a custom, staff-quoted trip can no longer be booked',
+    ).not.toContain('route_id');
   });
 
   dbIt('made tour_id nullable in the real table, and backfilled product_type to tour', async () => {
@@ -518,10 +564,24 @@ describe('bookings + booking_transfer_details, as actually migrated', () => {
   });
 
   /**
-   * **The three rejections, by the DATABASE, through raw SQL.** One field at a
+   * **The four rejections, by the DATABASE, through raw SQL.** One field at a
    * time off an otherwise valid row, so what fired is unambiguous.
+   *
+   * `tourId`/`routeId` of `REAL` mean "create a real parent row and use its
+   * id" — needed because both are foreign keys, and an invented integer would
+   * be refused by the FK (`ER_NO_REFERENCED_ROW_2`) before the CHECK ever got
+   * a chance to speak. That would still be a rejection, and a test asserting
+   * only "it threw" would pass for entirely the wrong reason.
    */
-  const REJECTED: Array<[string, Parameters<typeof insertBookingShape>[1], string]> = [
+  const REAL = 'REAL' as const;
+  type RawShape = {
+    productType: string;
+    tourId: number | null | typeof REAL;
+    routeId: number | null | typeof REAL;
+    vehicleTypeRequested: string | null;
+  };
+
+  const REJECTED: Array<[string, RawShape, string]> = [
     [
       'a tour with no tour_id',
       { productType: 'tour', tourId: null, routeId: null, vehicleTypeRequested: null },
@@ -539,15 +599,39 @@ describe('bookings + booking_transfer_details, as actually migrated', () => {
     ],
     [
       'a tour carrying a vehicle type requested',
-      { productType: 'tour', tourId: -1, routeId: null, vehicleTypeRequested: 'van' },
+      { productType: 'tour', tourId: REAL, routeId: null, vehicleTypeRequested: 'van' },
       'a tour booking carrying a vehicle-type-requested was accepted — "is this a transfer?" now has two answers',
+    ],
+    /*
+     * Review finding I1. The exact mirror of the case above it, with the
+     * tables swapped: a perfectly valid tour booking that also points at a
+     * transfer route. Before the tour branch gained `route_id IS NULL` this
+     * row was legal, so it would have been counted by a tour report and a
+     * transfer report at once — which is the failure the branch beside it
+     * already argued against.
+     */
+    [
+      'a tour carrying a route_id',
+      { productType: 'tour', tourId: REAL, routeId: REAL, vehicleTypeRequested: null },
+      'a tour booking carrying a route_id was accepted — it is a tour and a transfer at the same time',
     ],
   ];
 
   for (const [label, shape, why] of REJECTED) {
     dbIt(`REFUSES ${label}`, async () => {
       await inRollback(async (tx) => {
-        const resolved = { ...shape, tourId: shape.tourId === -1 ? await makeTour(tx) : null };
+        const resolved = {
+          productType: shape.productType,
+          vehicleTypeRequested: shape.vehicleTypeRequested,
+          tourId: shape.tourId === REAL ? await makeTour(tx) : shape.tourId,
+          routeId: shape.routeId === REAL ? await makeRoute(tx) : shape.routeId,
+        };
+        /*
+         * The CODE, not merely "it threw". `ER_CHECK_CONSTRAINT_VIOLATED` is
+         * what proves the CHECK refused it — an `ER_NO_REFERENCED_ROW_2` here
+         * would mean a foreign key caught a fixture mistake and the CHECK was
+         * never consulted.
+         */
         expect(await rejectionCode(() => insertBookingShape(tx, resolved)), why).toBe(
           'ER_CHECK_CONSTRAINT_VIOLATED',
         );

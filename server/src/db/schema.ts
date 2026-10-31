@@ -1200,36 +1200,49 @@ export const bookings = mysqlTable(
     check('bookings_amount_paid_non_negative', sql`${t.amountPaidCentavos} >= 0`),
     /**
      * **A booking is a tour or a transfer, never both and never neither**
-     * (owner decision 2026-10-28/31; migration 0017).
+     * (owner decision 2026-10-28/31; migration 0017, tour branch tightened by
+     * 0018 after review finding I1).
      *
      * `tour_id` became nullable so a transfer can exist at all, and a
      * nullable column with nothing arbitrating it is how a row arrives that
      * is a tour by `product_type` and a transfer by its data. So one CHECK,
      * both directions:
-     *   - `product_type = 'tour'` ⇒ `tour_id` IS NOT NULL and
-     *     `vehicle_type_requested` IS NULL;
+     *   - `product_type = 'tour'` ⇒ `tour_id` IS NOT NULL, and BOTH transfer
+     *     columns (`vehicle_type_requested`, `route_id`) IS NULL;
      *   - anything else ⇒ `tour_id` IS NULL and `vehicle_type_requested`
      *     IS NOT NULL.
      *
      * The second half of each branch is the part a reader is tempted to drop
      * as redundant. It is not: a tour row carrying a
-     * `vehicle_type_requested` would make "is this a transfer?" a question
-     * with two answers, and a transfer row carrying a `tour_id` would be
-     * counted by every tour report and every tour capacity query at once.
+     * `vehicle_type_requested` or a `route_id` would make "is this a
+     * transfer?" a question with two answers, and a transfer row carrying a
+     * `tour_id` would be counted by every tour report and every tour
+     * capacity query at once.
      *
-     * **`route_id` is deliberately NOT part of this CHECK.** A transfer
-     * normally has one, but a staff-converted custom request may not — it
-     * carries `booking_transfer_details.custom_route_description` instead.
-     * "`route_id` XOR `custom_route_description`, for every non-tour
-     * booking" is a CROSS-TABLE invariant, which a single-table MySQL CHECK
-     * cannot express at all. It is enforced in the one writer,
-     * `createTransferBooking()`, and pinned by a test there. Do not try to
-     * encode it here; there is no gap to fix.
+     * **The branches are deliberately ASYMMETRIC about `route_id`, and that
+     * is the whole subtlety here.** The tour branch requires it NULL; the
+     * transfer branch says nothing about it at all.
+     *
+     * "A tour never carries a route" is a single-table fact about one row, so
+     * it costs nothing to state and is stated. What CANNOT be stated is the
+     * other side: a transfer normally has a `route_id`, but a staff-converted
+     * custom request has none and carries
+     * `booking_transfer_details.custom_route_description` instead. "`route_id`
+     * XOR `custom_route_description`, for every non-tour booking" is a
+     * CROSS-TABLE invariant, which a single-table MySQL CHECK cannot express
+     * at all. It is enforced in the one writer, `createTransferBooking()`, and
+     * pinned by a test there.
+     *
+     * So: do not add a `route_id` requirement to the TRANSFER branch — it
+     * would make a legitimate custom trip unbookable. And do not remove the
+     * `route_id IS NULL` from the TOUR branch as "the same exclusion" — it is
+     * not; it is the mirror of `vehicle_type_requested IS NULL` beside it.
      */
     check(
       'bookings_product_type_shape',
       sql`
-        (${t.productType} = 'tour' AND ${t.tourId} IS NOT NULL AND ${t.vehicleTypeRequested} IS NULL)
+        (${t.productType} = 'tour' AND ${t.tourId} IS NOT NULL
+          AND ${t.vehicleTypeRequested} IS NULL AND ${t.routeId} IS NULL)
         OR
         (${t.productType} <> 'tour' AND ${t.tourId} IS NULL AND ${t.vehicleTypeRequested} IS NOT NULL)
       `,

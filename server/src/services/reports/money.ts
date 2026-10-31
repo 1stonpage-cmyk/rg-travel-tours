@@ -251,8 +251,14 @@ export async function revenueByTour(range: DateRangeInput): Promise<TourRevenueR
    * transfer bookings: a transfer's revenue is currently reported NOWHERE by
    * this function, which is correct for its title and probably wrong for the
    * owner — a transfers breakdown (or a product_type dimension) is the real
-   * answer, not a change here. `revenueTotals` is unaffected; it does not
-   * group by tour.
+   * answer, not a change here.
+   *
+   * `reportSummary` (this file's other export, composing `moneyMoved` and
+   * `bookingTotals`) is unaffected: neither of those groups by tour, so the
+   * top-line figures will include transfer money the moment it exists while
+   * this per-tour table will not. The two will disagree by exactly the
+   * transfer revenue, in one owner-facing report — that discrepancy, not a
+   * null-handling bug, is what T6 has to answer for.
    */
   for (const row of moneyRows) {
     if (row.tourId === null) continue;
