@@ -1,8 +1,8 @@
 # Van & SUV Transfers Launch Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. **This plan requires owner approval before execution begins.**
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. **✅ APPROVED by the owner, 2026-10-31 (commit `a119286`), subject to the driver-capacity addendum below, which must land in T7/T8 before T1 starts.**
 
-**Revision log:** 2026-10-31 — owner answered the four open-design questions (availability model, notice window, coupons, custom-trip-request conversion) and gave defaults for the rest. This revision replaces the whole-day-block availability design with a time-window design, adds a staff-priced booking-conversion feature with a new role boundary, and renumbers tasks T1–T29 accordingly. See "Owner answers, 2026-10-31" below for the decisions and "What changed in this revision" for a diff against the first draft.
+**Revision log:** 2026-10-31 — owner answered the four open-design questions (availability model, notice window, coupons, custom-trip-request conversion) and gave defaults for the rest. This revision replaces the whole-day-block availability design with a time-window design, adds a staff-priced booking-conversion feature with a new role boundary, and renumbers tasks T1–T29 accordingly. See "Owner answers, 2026-10-31" below for the decisions and "What changed in this revision" for a diff against the first draft. **Second addendum, same day, after approval:** the owner added a driver-overwork guardrail (max transfer jobs per driver per day) — see "Owner decision, recorded 2026-10-31 (second round) — driver capacity" and "What changed in the driver-capacity addendum," both below. T7 and T8 are revised again to carry it; no other task changes.
 
 **Goal:** Make private van/SUV **transfers** (airport one-way, day-use, custom trip request) the product R&G launches with, built on top of the existing tours/booking/dispatch/driver/admin machinery, while **tours stay fully built but hidden** behind a settings switch the owner can flip on later with no further build.
 
@@ -28,6 +28,13 @@
    - **one new `ROLE_MATRIX` area, `transferQuoting` (owner + finance only)** — the plan's first draft claimed zero new areas; that claim no longer holds, because "dispatcher can view the request but not set the price" is a real permission split the existing `packagesInquiries` (owner+dispatcher) area cannot express. `BUILD_SPEC.md`'s §9 table and `role-isolation.test.ts`'s pinned counts must be edited together, in the same commit, per that test's own convention (Task T19).
 7. **Owner defaults recorded for the rest** (no automation needed): no night/late-flight surcharge; free-waiting-time stays Terms-page placeholder text, not code; excess luggage is enforced only by vehicle-type capacity (no surcharge logic); transfer cancellation window reuses the same Refund Policy placeholder tours already have. The legal to-do list is shorter as a result (see below).
 8. Tasks renumbered **T1–T29** (was T1–T24) to fit the new scope. The model/schema/review table at the end is rebuilt from scratch — use it, not the first draft's.
+
+## What changed in the driver-capacity addendum (same day, after approval)
+
+9. **Drivers get their own capacity guardrail, separate from vehicles.** The plan's Architecture §2 covered vehicle (van/suv) capacity but never gave drivers their own cap beyond the pre-existing, binary "is a driver free that day" gate §5 already describes for tours. The owner's addendum adds a real per-day job cap per driver (default 2, per-driver override), enforced two ways: a simple job-count pool check at HOLD time (Architecture §2a, new), and a count-**and**-window overlap check at DISPATCH time (Task T8, extended). This surfaced a genuine gap in the first revision — drivers were implicitly assumed to have unlimited transfer jobs per day as long as "a driver is free," which was never actually true once transfers can be windowed.
+10. **`drivers.max_transfer_jobs_per_day`** (nullable int, override) is a new column — **T7 is now a schema task** (it wasn't, in the previous revision). Migration numbering shifts: T17's inquiries migration moves from `0018` to `0019`.
+11. **The feasibility math for drivers is a different, correct-by-exchange-argument formula from the vehicles' peak-overlap one** — drivers are a single, undifferentiated pool (no type), and the HOLD-time check is a job **count**, not a time-window peak (the owner's own wording: "driver capacity left that day," not "driver capacity free at this hour"). See Architecture §2a for the exact rule and why assigning tours to the *smallest*-cap drivers first is the provably optimal (not just "safe") choice.
+12. `transfer_operations` gains a fourth field, `maxTransferJobsPerDriverPerDay` (default 2); `AdminDriversPage.tsx` gains the per-driver override field. Both fold into Task T16 (no new task needed for the UI half).
 
 ---
 
@@ -60,6 +67,17 @@ These decisions **supersede** the pre-launch-fixes batch's "do not build van tra
 7. Excess luggage: **enforced only by vehicle-type luggage capacity at booking time; no surcharge logic.**
 8. Transfer cancellation window: **same Refund Policy placeholder wording tours already use** — no transfer-specific copy needed at launch; `transfer_routes.free_cancel_hours` still exists as a real, enforced number (mirroring `tours.free_cancel_hours`), defaulted the same way tours are.
 9. **Fleet sharing is designed now, not deferred:** a tour booking blocks its vehicle for the whole day; a transfer uses a time window; availability checks — both at hold time (pool math) and at dispatch time (specific-vehicle assignment) — must respect both so a van can never be on a tour and a transfer at once. → Architecture §2, Tasks T7 and T8.
+
+## Owner decision, recorded 2026-10-31 (second round) — driver capacity
+
+Approved alongside the plan itself, to be built into T7/T8 before T1 starts:
+
+**Drivers must not be overworked.** Add an admin setting **"Max transfer jobs per driver per day"** (default **2**), plus an **optional per-driver override** (blank = use the default). Enforce it two ways:
+
+1. **At hold time (T7):** a transfer can only be sold if, besides a free vehicle window, there is driver capacity left that day — sum over active, not-on-leave drivers of their daily max, minus transfer jobs already held/confirmed that day. **A driver assigned to a tour counts as fully used that day.** Concurrency-safe, the same way the vehicle check is.
+2. **At dispatch time (T8):** assigning a driver who already has their max transfer jobs that day, or whose jobs would overlap including the buffer, is refused with a clear message.
+
+**Buffer between a driver's jobs uses the same admin buffer setting** as vehicles (default 60 minutes) — not a second buffer setting. **Dedicated Opus review on T7 and T8**, per the owner's explicit instruction.
 
 ---
 
@@ -100,8 +118,9 @@ Measured at `0035a72`. Build on this; do not rebuild it.
 | Online payment (PayMongo) + manual QR + driver cash | `checkout.ts` `startPayment`, `routers/webhooks`, `driver.recordCash`, `record-payment.ts` | Yes, unchanged — including for a staff-created booking, which is paid exactly like any other |
 | Coupons | `services/coupons.ts` | Yes (owner answer 3) — `quoteTransfer`/`createTransferBooking` call the same `validateCoupon`/`recordRedemption`/`releaseRedemption` |
 | Fleet-wide date lock | `fleet_date_slots(date)` | **Now the single lock for every capacity decision on a date, tour or transfer** (revised — see Architecture §2; no new lock table) |
-| "Which van/driver are free on this date" (dispatch assignment) | `server/src/services/dispatch/availability.ts` (`vansFreeOn`, `driversFreeOn`) | **Extended, not unchanged** — needs a window-aware exclusion rule for transfer-vs-transfer on the same specific vehicle (Task T8) |
-| `assessCapacity` (tours' own group-per-day math) | `server/src/services/capacity.ts` | **Extended, not untouched** (revised from the first draft) — gains one additive subtraction term for each vehicle type's transfer peak-overlap (Task T7). The empty-fleet test's own assertion is unaffected: zero sellable vehicles and zero transfer bookings still yields zero available, same as today |
+| "Which van/driver are free on this date" (dispatch assignment) | `server/src/services/dispatch/availability.ts` (`vansFreeOn`, `driversFreeOn`) | **Extended, not unchanged** — `vansFreeOn` needs a window-aware exclusion for transfer-vs-transfer on the same specific vehicle; `driversFreeOn` needs the same window-aware exclusion **plus** a per-driver max-jobs-per-day refusal (owner addendum, second round) (Task T8) |
+| `assessCapacity` (tours' own group-per-day math) | `server/src/services/capacity.ts` | **Extended, not untouched** (revised from the first draft) — gains one additive subtraction term for each vehicle type's transfer peak-overlap, **and** a driver-side leftover-pool check mirroring it (Task T7). The empty-fleet test's own assertion is unaffected: zero sellable vehicles/drivers and zero transfer bookings still yields zero available, same as today |
+| Driver "free that day" gate for tours (§5 step 4) | Folded into `assessCapacity`/`createHold`'s existing driver check | **Extended** — now a job-count pool shared with transfer driver jobs, not a plain binary (Architecture §2a, Task T7) |
 | Driver login, lockout, sessions, PIN | Driver portal | Yes, unchanged |
 | Check-in / trip_checkpoints, start/finish trip, `on_trip` van status | `server/src/services/trips/checkins.ts` | Reused; T22 confirms (not assumes) zero-stop tolerance |
 | Payment box, cash collection, refusal | `PaymentBox.tsx`, `admin.bookings.rejectCash` | Yes, unchanged |
@@ -110,7 +129,7 @@ Measured at `0035a72`. Build on this; do not rebuild it.
 | Reports money math | `services/reports/money.ts` | Top-level summary confirmed tour-agnostic; `outstandingBookings` is not — Must-fix #1 |
 | `admin.vans.*` CRUD | `routers/admin/vans.ts`, `AdminVansPage.tsx` | Extended with `vehicleType` |
 | `admin.packages.*` / `admin.inquiries.*` | `routers/admin/packages.ts` | Extended for the new inquiry type **and** the new convert-to-booking action (gated separately — see below) |
-| Settings read/write, `content_unverified`-style SEO gating | `content/settings*.ts`, `seo/resolvers.ts`, `sitemap.ts` | `show_tours` reuses the identical mechanism; a new `transfer_operations` settings block (buffer minutes, minimum notice hours, staff-quote hold hours) reuses the identical writer/reader/cache pattern |
+| Settings read/write, `content_unverified`-style SEO gating | `content/settings*.ts`, `seo/resolvers.ts`, `sitemap.ts` | `show_tours` reuses the identical mechanism; a new `transfer_operations` settings block (buffer minutes, minimum notice hours, staff-quote hold hours, **max transfer jobs per driver per day**) reuses the identical writer/reader/cache pattern |
 | Site/brand copy separation | `client/src/lib/site.ts` | Unchanged |
 
 **`ROLE_MATRIX`: one new area, not zero (corrected from the first draft).** `toursPricing`, `vansDrivers`, `usersSettings` and `packagesInquiries` (view only) still cover every screen they covered before. The one genuinely new permission boundary is **setting a price on / converting a custom request into a booking**, which the owner explicitly withheld from dispatcher — that needs its own area, `transferQuoting: ['owner', 'finance']`, because no existing area expresses "dispatcher may read this, but not act on it." See Task T19.
@@ -124,6 +143,10 @@ Measured at `0035a72`. Build on this; do not rebuild it.
 ```
 vans
   + vehicle_type  enum('van','suv')  NOT NULL DEFAULT 'van'   -- backfills every existing row to 'van'
+
+drivers
+  + max_transfer_jobs_per_day  int, NULLABLE   -- override; NULL = use transfer_operations.maxTransferJobsPerDriverPerDay
+                                                 -- (owner addendum, second round — Architecture §2a)
 
 transfer_routes                                    -- anchored on the EXISTING destinations table
   id                    PK
@@ -184,7 +207,7 @@ inquiries
 
 **What is deliberately reused, not duplicated:** `bookings.pickup`/`pickup_map_url` (already exist) serve the transfer's pickup address; `bookings.requests` serves "notes"; `destinations` is not duplicated by `transfer_routes`; `price_snapshot` (JSON, already exists) carries `{ productType, vehicleType, routeId | null, customRouteDescription | null, priceSource: 'catalog' | 'staff_quote', priceCentavos, depositPercent, freeCancelHours }` — no new money column, and `priceSource` lives there rather than as a dedicated `bookings` column.
 
-**Migration numbers.** Next is `0015`. Four tasks change the schema, in this order: T2 (`vans.vehicle_type`) → T3 (`transfer_routes` + `transfer_route_vehicle_prices`) → T5 (`bookings` columns/CHECK + `booking_transfer_details`) → T17 (`inquiries` columns). That is migrations `0015`–`0018`. (The first draft's `transfer_date_slots` migration is removed — see Architecture §2.) Every one of these four must be applied to both `rg_travel` and `rg_travel_test`, and the owner reminded to apply each to the server database at next deploy.
+**Migration numbers.** Next is `0015`. Five tasks change the schema, in this order: T2 (`vans.vehicle_type`) → T3 (`transfer_routes` + `transfer_route_vehicle_prices`) → T5 (`bookings` columns/CHECK + `booking_transfer_details`) → T7 (`drivers.max_transfer_jobs_per_day` — added by the driver-capacity addendum) → T17 (`inquiries` columns). That is migrations `0015`–`0019`. (The first draft's `transfer_date_slots` migration is removed — see Architecture §2.) Every one of these five must be applied to both `rg_travel` and `rg_travel_test`, and the owner reminded to apply each to the server database at next deploy.
 
 ### 2. Availability: time windows, shared fleet, one lock — the actual design
 
@@ -219,12 +242,41 @@ toursToday(D) = COUNT(bookings WHERE product_type = 'tour' AND tour_date = D AND
 
 **Why no new lock table.** The first draft proposed a `transfer_date_slots(date, vehicle_type)` row mirroring `tour_date_slots`. It is unnecessary and would actually under-serialize: conditions (1)–(3) above read across **both** vehicle types and **both** product types for one date, so locking only one type's row would let a concurrent van-transfer hold and a concurrent suv-transfer hold both proceed while each makes a decision that depends on the other's (soon-to-be-stale) count. `fleet_date_slots(date)` already serializes the whole date for every capacity-affecting transaction today (tours take it first); extending that same lock to transfers, with no second lock, is both simpler and the only choice that is actually correct for this cross-type sharing requirement.
 
+### 2a. Driver capacity (owner addendum, second round): a second, undifferentiated pool, with its own daily cap
+
+**The requirement:** drivers must not be overworked. Each active, not-on-leave driver may do at most `maxTransferJobsPerDay` transfer jobs on a given day (an admin setting, default 2, with an optional per-driver override — `drivers.max_transfer_jobs_per_day`, NULL meaning "use the default"). A driver already doing a tour that day has none of that budget left — a tour, like a vehicle, consumes a driver for the whole day. At dispatch time, a driver's jobs must also not overlap in time, buffer included.
+
+**Drivers are a single pool, unlike vehicles — there is no "van driver" vs "SUV driver" type.** That removes one dimension of the vehicle problem but adds another: drivers can have *different* per-day caps (the per-driver override), so "how many drivers does a tour effectively use up" is no longer "exactly one unit from a uniform pool" — it is "exactly one driver, whichever one, and that driver's own cap goes with them." The hold-time question is therefore: *given `N` active, not-on-leave drivers with caps `c_1 <= c_2 <= ... <= c_N` (sorted ascending), and needing to seat `toursToday(D)` whole-day tours and `transfersToday(D)` one-job-unit transfers, does a feasible assignment exist?*
+
+**The optimal (not merely safe) rule, by a standard exchange argument:** to leave the most capacity for transfers, assign tours to the drivers with the **smallest** caps first — swapping a tour from a larger-cap driver to a smaller-cap one never reduces what is left over for transfers, so if any feasible assignment exists, the smallest-first one does too. This gives an exact, not just conservative, feasibility rule:
+
+```
+drivers sorted ascending by effective cap c_1 <= c_2 <= ... <= c_N   (effective cap = override ?? maxTransferJobsPerDay default)
+toursToday(D)     = COUNT(bookings WHERE product_type = 'tour' AND tour_date = D AND status IN CAPACITY_HOLDING_STATUSES)
+transfersToday(D)  = COUNT(bookings WHERE product_type <> 'tour' AND tour_date = D AND status IN CAPACITY_HOLDING_STATUSES)
+
+(4)  toursToday(D) <= N
+     -- enough distinct drivers exist to give every tour its own driver (the existing §5
+     -- "at least one driver free" rule, now expressed as a pool count instead of a binary)
+(5)  transfersToday(D) <= ( sum(c_1 .. c_N) - sum(c_1 .. c_{toursToday(D)}) )
+     -- after handing a whole day to the toursToday(D) SMALLEST-capacity drivers (the
+     -- capacity-maximising choice), the remaining drivers' summed caps must cover every
+     -- transfer job already booked
+```
+
+- **Adding a new TRANSFER** is allowed iff condition (5) holds with `transfersToday(D) + 1` on the left (condition 4 is unaffected by adding a transfer).
+- **Adding a new TOUR** is allowed iff condition (4) holds with `toursToday(D) + 1`, **and** condition (5) still holds after re-sorting with one more driver notionally removed from the bottom of the list (adding a tour can only shrink the leftover pool, since it removes one more driver — the next-smallest-capacity one — from the sum).
+- This runs under the **same** `fleet_date_slots(D) FOR UPDATE` lock as the vehicle conditions (1)–(3) — one lock, one transaction, both the vehicle and the driver question answered together, so a hold is refused the instant either resource is short, never just one.
+- **At HOLD time this is a job-count check only — no time-of-day math** (matching the owner's own wording, "driver capacity left that day," not "driver capacity free at this hour"). Time-of-day only matters once a *specific* driver is being assigned, which is Task T8.
+
+**Dispatch-time (Task T8) refusal, per the owner's second condition:** when an admin assigns a specific driver to a specific booking, refuse with a clear message when either is true — (a) the driver already has `effectiveCap` transfer jobs assigned that day (even if none of them overlap in time — the cap is a *count*, not just a schedule), or (b) the new booking's window overlaps, buffer included, with any job already assigned to that driver that day (using the exact same minutes-since-midnight overlap test as vehicles, and the **same** buffer-minutes setting — there is deliberately no second buffer setting for drivers).
+
 ### 3. Quote & hold: parallel procedures, shared booking-writer, coupons included
 
 `checkout.quote`/`createHold` (tours) are untouched. New, parallel procedures:
 
 - **`checkout.quoteTransfer`** (Task T9) — computes `subtotal = vehiclePriceForRouteAndType(route, vehicleType, productType)`, applies a coupon exactly as tours do (`validateCoupon` against the subtotal), `total = subtotal - discount`, `deposit = depositCentavos(total, depositPercent)`, and the existing ₱100/₱0 refusals via the same shared helpers tours use.
-- **`createTransferBooking()`** (Task T10, `server/src/services/transfers/create-booking.ts`) — the **one** function that takes the `fleet_date_slots` lock, re-checks the three feasibility conditions from Architecture §2 with the new booking's window included, re-checks the minimum-notice rule (owner answer 2: `pickup instant - now >= transfer_operations.minNoticeHours`, computed through the one civil-time-to-instant helper), writes the `bookings` row plus `booking_transfer_details` in the same transaction, generates the ref via the existing `generateBookingRef()`, and applies/records a coupon exactly as a tour hold does. It takes an explicit `priceSource` parameter — `{ kind: 'catalog' }` (looks up `transfer_route_vehicle_prices`) or `{ kind: 'staff', priceCentavos, staffUserId }` (Task T19's conversion path) — so **both** the guest-facing hold and the staff-conversion booking go through identical capacity/notice/transaction logic, and nothing about dispatch, payments, check-ins or reports ever needs to know which path created the booking.
+- **`createTransferBooking()`** (Task T10, `server/src/services/transfers/create-booking.ts`) — the **one** function that takes the `fleet_date_slots` lock, re-checks the vehicle feasibility conditions (1)–(3) **and** the driver feasibility conditions (4)–(5) from Architecture §2/§2a with the new booking's window included, re-checks the minimum-notice rule (owner answer 2: `pickup instant - now >= transfer_operations.minNoticeHours`, computed through the one civil-time-to-instant helper), writes the `bookings` row plus `booking_transfer_details` in the same transaction, generates the ref via the existing `generateBookingRef()`, and applies/records a coupon exactly as a tour hold does. It takes an explicit `priceSource` parameter — `{ kind: 'catalog' }` (looks up `transfer_route_vehicle_prices`) or `{ kind: 'staff', priceCentavos, staffUserId }` (Task T19's conversion path) — so **both** the guest-facing hold and the staff-conversion booking go through identical capacity/notice/transaction logic, and nothing about dispatch, payments, check-ins or reports ever needs to know which path created the booking.
 - **`checkout.createHoldTransfer`** (Task T11) — the thin, public, guest-facing wrapper around `createTransferBooking({ priceSource: { kind: 'catalog' } })`, the counterpart to tours' `createHold`.
 
 ### 4. The `show_tours` switch: a second, independent gate next to `content_unverified`
@@ -255,8 +307,8 @@ Unchanged from the first draft. `show_tours: z.boolean()` (default `false`) adde
 
 | File | Responsibility |
 | --- | --- |
-| `server/src/services/transfers/overlap.ts` | Pure `peakOverlap(windows)` sweep-line function (Architecture §2) — no DB, fully unit-testable |
-| `server/src/services/transfers/capacity.ts` | `assessTransferCapacity()` — conditions (1)/(2)/(3), reading `transfer_operations.bufferMinutes` |
+| `server/src/services/transfers/overlap.ts` | Pure `peakOverlap(windows)` sweep-line function (Architecture §2) and a plain two-window `overlaps(a, b)` test, reused for both vehicle and driver checks — no DB, fully unit-testable |
+| `server/src/services/transfers/capacity.ts` | `assessTransferCapacity()` — vehicle conditions (1)/(2)/(3) and driver conditions (4)/(5), reading `transfer_operations.bufferMinutes`/`maxTransferJobsPerDriverPerDay` |
 | `server/src/services/transfers/pricing.ts` | `quoteTransfer()` |
 | `server/src/services/transfers/create-booking.ts` | `createTransferBooking()` — the one shared, lock-holding, transaction-writing function (guest and staff paths both call this) |
 | `server/src/routers/public/transfers.ts` | `transferRoutes.list` (public) |
@@ -268,13 +320,14 @@ Unchanged from the first draft. `show_tours: z.boolean()` (default `false`) adde
 
 | File | Change |
 | --- | --- |
-| `server/src/db/schema.ts` | Architecture §1's four schema changes (no `transfer_date_slots`) |
-| `server/src/services/capacity.ts` | `assessCapacity` gains the leftover-pool subtraction (Architecture §2) |
-| `server/src/services/dispatch/availability.ts` | `vansFreeOn`/`driversFreeOn` gain the window-aware exclusion for transfer-vs-transfer on one vehicle (Task T8) |
+| `server/src/db/schema.ts` | Architecture §1's five schema changes (no `transfer_date_slots`), including `drivers.max_transfer_jobs_per_day` |
+| `server/src/services/capacity.ts` | `assessCapacity` gains the vehicle leftover-pool subtraction (Architecture §2) and the driver smallest-cap-first subtraction (Architecture §2a) |
+| `server/src/services/dispatch/availability.ts` | `vansFreeOn` gains the window-aware exclusion for transfer-vs-transfer on one vehicle; `driversFreeOn` gains the same window-aware exclusion **plus** a max-jobs-per-day refusal (Task T8) |
 | `server/src/routers/public/checkout.ts` | + `quoteTransfer`, `createHoldTransfer` |
 | `server/src/routers/admin/vans.ts` | `vehicleType` field |
 | `server/src/routers/admin/packages.ts` | Inquiries list/detail handle `type = 'transfer_custom'` fields and link to the convert action |
-| `server/src/content/settings-schema.ts` | `show_tours: z.boolean()`; new `transfer_operations` block (`bufferMinutes`, `minNoticeHours`, `staffQuoteHoldHours`) |
+| `server/src/content/settings-schema.ts` | `show_tours: z.boolean()`; new `transfer_operations` block (`bufferMinutes`, `minNoticeHours`, `staffQuoteHoldHours`, `maxTransferJobsPerDriverPerDay`) |
+| `server/src/routers/admin/drivers.ts` | `maxTransferJobsPerDay` override field on `admin.drivers.update` |
 | `server/src/routers/public/tours.ts` | `showTours` refusal branch |
 | `server/src/seo/resolvers.ts`, `server/src/seo/sitemap.ts` | `showTours` gate |
 | `server/src/middleware/require-role.ts` | + `transferQuoting: ['owner', 'finance']` |
@@ -301,7 +354,8 @@ Unchanged from the first draft. `show_tours: z.boolean()` (default `false`) adde
 | `client/src/pages/admin/AdminBookingsPage.tsx`, `AdminBookingDetailPage.tsx` | Product-type badge, transfer fields |
 | `client/src/pages/admin/AdminCalendarPage.tsx`, `AdminDeparturesPage.tsx` | Transfers alongside tours; vehicle-type badge |
 | `client/src/pages/admin/AdminVansPage.tsx` | Vehicle-type field |
-| `client/src/pages/admin/AdminSettingsPage.tsx` | "Show tours" toggle + `transfer_operations` fields |
+| `client/src/pages/admin/AdminDriversPage.tsx` | "Max transfer jobs/day" override field (blank = use the admin default) |
+| `client/src/pages/admin/AdminSettingsPage.tsx` | "Show tours" toggle + all four `transfer_operations` fields (buffer minutes, minimum notice hours, staff-quote hold hours, default max transfer jobs per driver per day) |
 | `client/src/pages/admin/AdminPackagesPage.tsx` | Custom-request fields; "Quote & convert to booking" action, owner/finance only |
 | `client/src/pages/admin/AdminReportsPage.tsx` | Revenue-by-route |
 | `client/src/pages/driver/*` | Pickup time, luggage, dropoff, flight/airline |
@@ -316,7 +370,7 @@ Unchanged from the first draft. `show_tours: z.boolean()` (default `false`) adde
 
 ## Tasks
 
-Batches of 4, plus a trailing controller-only close-out task. **Schema tasks (T2, T3, T5, T17) are strictly sequential** with each other. Model: **Sonnet** for UI/admin-CRUD-plumbing, **Opus** for anything touching money, availability/locking, schema, or the new role boundary. Review: **dedicated Opus reviewer** for every money/availability/schema/role task; combined review for pure-UI tasks.
+Batches of 4, plus a trailing controller-only close-out task. **Schema tasks (T2, T3, T5, T7, T17) are strictly sequential** with each other. Model: **Sonnet** for UI/admin-CRUD-plumbing, **Opus** for anything touching money, availability/locking, schema, or the new role boundary. Review: **dedicated Opus reviewer** for every money/availability/schema/role task; combined review for pure-UI tasks. **T7 and T8 carry the owner's explicit instruction of dedicated Opus review** (both already were dedicated Opus; the driver-capacity addendum does not change that, it reconfirms it).
 
 ### Batch 1 — Spec correction, vehicle types, routes & pricing schema
 
@@ -327,21 +381,21 @@ Batches of 4, plus a trailing controller-only close-out task. **Schema tasks (T2
 | **T3** | `transfer_routes` + `transfer_route_vehicle_prices` tables + migration; `upsert-route.ts`; `admin.transferRoutes.*` (`toursPricing`) | **Opus** | **Yes** | dedicated Opus |
 | **T4** | `AdminTransferRoutesPage.tsx` | Sonnet | No | combined |
 
-### Batch 2 — `bookings`/`booking_transfer_details` schema, must-fix audit, availability (hold time + dispatch time)
+### Batch 2 — `bookings`/`booking_transfer_details` schema, must-fix audit, availability (hold time + dispatch time, vehicles + drivers)
 
 | Task | Delivers | Model | Schema? | Review |
 | --- | --- | --- | --- | --- |
 | **T5** | `bookings` nullable `tour_id` + `product_type`/`vehicle_type_requested`/`route_id` + CHECK + migration; `booking_transfer_details` table + migration | **Opus** | **Yes** | dedicated Opus |
 | **T6** | Must-fix audit: every `tours`-joined or `bookings.tourId`/`bookings.routeId`-assuming query in `server/src/`, classified and fixed | **Opus** | No | dedicated Opus |
-| **T7** | `overlap.ts` (`peakOverlap`); `transfer_operations` settings block; `assessCapacity` extended (leftover-pool term); `assessTransferCapacity()` — all three feasibility conditions, concurrency-proven the same way `capacity.test.ts` proves tours (two simultaneous holds, one slot, one wins); the cross-midnight-window refusal | **Opus** | No | **dedicated Opus — the owner's named highest-scrutiny task in this plan** |
-| **T8** | `vansFreeOn`/`driversFreeOn` window-aware exclusion for transfer-vs-transfer on one specific vehicle; whole-day tour exclusion unchanged; `dispatch-availability.test.ts` extended, the existing van-status-agreement test re-proven green | **Opus** | No | dedicated Opus |
+| **T7** | `drivers.max_transfer_jobs_per_day` column + migration; `overlap.ts` (`peakOverlap` + `overlaps`); `transfer_operations` settings block (`bufferMinutes`, `minNoticeHours`, `staffQuoteHoldHours`, `maxTransferJobsPerDriverPerDay`); `assessCapacity` extended with the vehicle leftover-pool term (1)–(3) **and** the driver smallest-cap-first term (4)–(5); `assessTransferCapacity()` implementing all five conditions; concurrency-proven the same way `capacity.test.ts` proves tours (two simultaneous holds, one slot, one wins — for both a vehicle-short and a driver-short scenario); the cross-midnight-window refusal | **Opus** | **Yes** | **dedicated Opus — the owner's named highest-scrutiny task in this plan, explicitly reconfirmed for the driver-capacity addendum** |
+| **T8** | `vansFreeOn` window-aware exclusion for transfer-vs-transfer on one specific vehicle; `driversFreeOn` gains the same window-aware exclusion **plus** a max-jobs-per-day refusal with a clear message (owner addendum); whole-day tour exclusion unchanged for both; `dispatch-availability.test.ts` extended (vehicle AND driver cases), the existing van-status-agreement test re-proven green | **Opus** | No | **dedicated Opus — explicitly reconfirmed for the driver-capacity addendum** |
 
 ### Batch 3 — Pricing, the shared booking-writer, the guest hold path
 
 | Task | Delivers | Model | Schema? | Review |
 | --- | --- | --- | --- | --- |
 | **T9** | `services/transfers/pricing.ts` (`quoteTransfer`) — subtotal/coupon/discount/total/deposit, ₱100/₱0 refusals; `checkout.quoteTransfer` | **Opus** | No | dedicated Opus |
-| **T10** | `services/transfers/create-booking.ts` (`createTransferBooking`) — the lock, the three feasibility conditions with the candidate window, the minimum-notice check, the transactional write, coupon redemption, `priceSource` parameter | **Opus** | No | dedicated Opus — the other half of the owner's named highest-scrutiny work |
+| **T10** | `services/transfers/create-booking.ts` (`createTransferBooking`) — the lock, the vehicle conditions (1)–(3) **and** the driver conditions (4)–(5) with the candidate window, the minimum-notice check, the transactional write, coupon redemption, `priceSource` parameter | **Opus** | No | dedicated Opus — the other half of the owner's named highest-scrutiny work |
 | **T11** | `checkout.createHoldTransfer` (public, guest-facing wrapper over T10 with `priceSource: catalog`) | **Opus** | No | dedicated Opus |
 | **T12** | `shared/src/transfers.ts` — Zod inputs for quote/hold (route, product type, vehicle type, date, pax, luggage, pickup/day-use-end time, addresses, flight/airline conditional), friendly messages via `field-errors.ts` | Sonnet | No | combined |
 
@@ -352,7 +406,7 @@ Batches of 4, plus a trailing controller-only close-out task. **Schema tasks (T2
 | **T13** | `TransferTypePicker`, `RoutePicker`, `VehicleOptionCard`, `TransferGuestDetailsForm` | Sonnet | No | combined |
 | **T14** | `TransferBookingPage.tsx`; home page/nav lead with transfers (owner decision 8) | Sonnet | No | combined |
 | **T15** | `show_tours` settings block + `SettingsPayload.showTours`; `tours.list`/`bySlug`, `checkout.quote`/`createHold` (tours) refusals; SEO resolver + sitemap gate | **Opus** | No | dedicated Opus |
-| **T16** | Client: `AdminSettingsPage.tsx` toggle; home/nav/catalog hidden when off; regression proof both ways (`show_tours` true and false) | Sonnet | No | combined |
+| **T16** | Client: `AdminSettingsPage.tsx` `show_tours` toggle **and** all four `transfer_operations` fields (buffer minutes, minimum notice hours, staff-quote hold hours, default max transfer jobs per driver per day); `AdminDriversPage.tsx` per-driver override field; home/nav/catalog hidden when `show_tours` is off; regression proof both ways | Sonnet | No | combined |
 
 ### Batch 5 — Inquiries extension, reports fix, the new role boundary, its admin UI
 
@@ -376,7 +430,7 @@ Batches of 4, plus a trailing controller-only close-out task. **Schema tasks (T2
 
 | Task | Delivers | Model | Schema? | Review |
 | --- | --- | --- | --- | --- |
-| **T25** | End-to-end regression: full suite green, leak detector silent; a transfer booking walked hold → deposit → dispatch assignment (two same-day non-overlapping jobs on one van, proving T7/T8 together) → check-ins → review-eligible; a tour booking walked the same lifecycle with `show_tours = true`; a staff-converted booking walked inquiry → convert → pay → complete | **Opus** | No | dedicated Opus |
+| **T25** | End-to-end regression: full suite green, leak detector silent; a transfer booking walked hold → deposit → dispatch assignment (two same-day non-overlapping jobs on one van **and** one driver, proving T7/T8 together for both vehicles and drivers) → check-ins → review-eligible; a driver at their max transfer jobs refused a third same-day job at dispatch time; a tour booking walked the same lifecycle with `show_tours = true`; a staff-converted booking walked inquiry → convert → pay → complete | **Opus** | No | dedicated Opus |
 | **T26** | Seed data: 2–3 real-named demo routes with both vehicle-type prices, dev-only (`seedDemo`); placeholder vehicle-card imagery | Sonnet | No | combined |
 | **T27** | `frontend-design` + `ui-ux-pro-max` pass on the transfer booking flow, 360px and 1440px | Sonnet | No | combined |
 | **T28** | Legal/content to-do checklist for the owner (shorter now — see below), text not written here | Sonnet | No | combined |
@@ -401,7 +455,8 @@ Batches of 4, plus a trailing controller-only close-out task. **Schema tasks (T2
 - **The one new role area is edited everywhere it must be, in one task (T19):** the matrix, the spec table, the test counts, together — matching the project's own enforced convention rather than letting them drift.
 - **Type/name consistency checked:** `vehicle_type_requested`, `route_id`, `custom_route_description`, `transfer_operations`, `transferQuoting`, `createTransferBooking`, `priceSource` are used identically everywhere they appear.
 - **Placeholder scan:** no task says "handle edge cases" without naming one — the cross-midnight window refusal, the leftover-pool formula, the frozen `buffer_minutes_used`, and the exact CHECK constraint text are all spelled out, not gestured at.
-- **A residual risk, named rather than hidden:** `assessCapacity`'s new leftover-pool term and `assessTransferCapacity`'s three conditions are proven correct by the cited interval-scheduling theorem given the model's own assumptions (vehicles within a type are fungible for this count; windows don't cross midnight). Those assumptions are both stated explicitly above rather than left implicit.
+- **A residual risk, named rather than hidden:** `assessCapacity`'s new leftover-pool term and `assessTransferCapacity`'s vehicle conditions are proven correct by the cited interval-scheduling theorem given the model's own assumptions (vehicles within a type are fungible for this count; windows don't cross midnight). The driver conditions (4)–(5), added in the second-round addendum, are proven correct by a separate but equally standard exchange argument (assign tours to the smallest-cap drivers first) — both proofs are stated explicitly above, not left implicit, and both should be the dedicated reviewer's first thing to re-derive independently on T7, not just read.
+- **Driver-capacity addendum is folded in everywhere it needs to be:** Architecture §2a, the schema block, migration numbering, File Structure, T7, T8, T16, T25, and this self-review. No other task changes — the addendum is additive to T7/T8's scope, not a reshuffle of the rest of the plan.
 
 ---
 
@@ -415,8 +470,8 @@ Batches of 4, plus a trailing controller-only close-out task. **Schema tasks (T2
 | T4 | Admin routes/prices UI | Sonnet | No | combined |
 | T5 | `bookings` + `booking_transfer_details` schema | Opus | Yes | dedicated Opus |
 | T6 | Nullable-join audit | Opus | No | dedicated Opus |
-| T7 | Hold-time window-aware capacity (overlap math, settings, `assessCapacity` extension, `assessTransferCapacity`) | Opus | No | dedicated Opus (highest scrutiny) |
-| T8 | Dispatch-time window-aware vehicle assignment | Opus | No | dedicated Opus |
+| T7 | Hold-time window-aware vehicle AND driver capacity (overlap math, settings, `drivers.max_transfer_jobs_per_day`, `assessCapacity` extension, `assessTransferCapacity`) | Opus | Yes | dedicated Opus (highest scrutiny; owner-mandated) |
+| T8 | Dispatch-time window-aware vehicle AND driver assignment (max-jobs-per-day refusal) | Opus | No | dedicated Opus (owner-mandated) |
 | T9 | Transfer pricing/quote incl. coupons | Opus | No | dedicated Opus |
 | T10 | Shared `createTransferBooking` service | Opus | No | dedicated Opus (highest scrutiny) |
 | T11 | Guest-facing `createHoldTransfer` | Opus | No | dedicated Opus |
@@ -424,7 +479,7 @@ Batches of 4, plus a trailing controller-only close-out task. **Schema tasks (T2
 | T13 | Booking-flow components | Sonnet | No | combined |
 | T14 | Home page + transfer page | Sonnet | No | combined |
 | T15 | `show_tours` gate (server) | Opus | No | dedicated Opus |
-| T16 | `show_tours` gate (client) + regression | Sonnet | No | combined |
+| T16 | `show_tours` gate (client) + `transfer_operations`/driver-override settings UI + regression | Sonnet | No | combined |
 | T17 | Inquiries extension | Sonnet | Yes | combined |
 | T18 | Reports money fix + revenue-by-route | Opus | No | dedicated Opus |
 | T19 | New `transferQuoting` role area + staff-quote conversion | Opus | No | dedicated Opus (money + new role boundary) |
@@ -446,5 +501,7 @@ Batches of 4, plus a trailing controller-only close-out task. **Schema tasks (T2
 - `staffQuoteHoldHours` default of 48 hours is a reasonable guess for "enough time for a guest to see an email and come back," not an owner-given number — admin-editable, easy to change later.
 - A staff-converted booking with no matching catalog route still needs *some* guest-facing display name on receipts/emails/My Booking; this plan uses `custom_route_description` verbatim where a route name would otherwise appear. If the owner wants different wording for a staff-quoted trip specifically, that is a copy change inside T20/T21, not a new architecture decision.
 - "Dispatcher can view requests" (owner answer 4) is read as: dispatcher sees the inquiry's captured fields (route description, date, pax, notes) exactly as today, but never the quoted price, the convert action, or the resulting booking's price details beyond what `bookingsView` already exposes on any booking. If the owner wants dispatcher to see the price once set (just not set it themselves), that's a one-line change to T19/T20, flagged now rather than assumed silently.
+- The driver-capacity hold-time check (Architecture §2a) treats a driver on leave for only part of a day as unavailable for the **whole** day, mirroring how `driver_leaves` already works for tours today — not a new assumption, just carried forward.
+- A driver with an override of `0` is read as "do not give this driver any transfer jobs today" (not an error) — useful for a driver the owner wants reserved for tours only. Worth confirming with the owner during T7 rather than guessing silently if it comes up, but not blocking.
 
-Stopping here for approval, per the prompt. No code, schema, or test changes have been made; only this plan file exists on disk.
+**Approved by the owner, 2026-10-31.** This addendum (driver capacity) is logged and folded into T7/T8 as instructed, as its own commit, before any task execution begins. Execution proceeds via `superpowers:subagent-driven-development`, starting at T1.
