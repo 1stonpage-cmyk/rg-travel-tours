@@ -21,6 +21,7 @@ import { adminReviewsRouter } from './admin/reviews';
 import { adminSettingsRouter } from './admin/settings';
 import { adminStaffUsersRouter } from './admin/staff-users';
 import { adminToursRouter } from './admin/tours';
+import { adminTransferRoutesRouter } from './admin/transfer-routes';
 import { adminVansRouter } from './admin/vans';
 import { staffAuthRouter } from './admin/auth';
 import { portalRouter } from './public/portal';
@@ -148,6 +149,18 @@ export const appRouter = router({
      * do with a tour's children.
      */
     coupons: adminCouponsRouter,
+    /*
+     * Private-transfer routes and their per-vehicle-type prices
+     * (transfers-launch plan, Task T3; owner decision 2026-10-28/31). The
+     * SAME `toursPricing` area as `tours` and `coupons` above — owner only —
+     * because a per-route transfer price is as sensitive as a tour's
+     * per-person price: it is the number a guest is charged for a van. The
+     * plan reuses the area rather than adding a thirteenth row to §9
+     * (Architecture §5, "unchanged area, owner-only"). Its own namespace
+     * because `transfer_routes` and `transfer_route_vehicle_prices` have
+     * nothing to do with a tour's children.
+     */
+    transferRoutes: adminTransferRoutesRouter,
     /*
      * Multi-day packages and the enquiries about them (Week 7, Task 13).
      * Both namespaces are §9's `packagesInquiries` row — owner and

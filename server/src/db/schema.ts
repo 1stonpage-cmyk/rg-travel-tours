@@ -208,6 +208,79 @@ export const tourBlockedDates = mysqlTable(
   (t) => [uniqueIndex('tour_blocked_dates_tour_date_unique').on(t.tourId, t.date)],
 );
 
+/**
+ * A private-transfer route, anchored on an existing destination — the owner's
+ * routes ARE destinations (Moalboal, Oslob, etc.), so this table does not
+ * duplicate place names. One route per destination (UNIQUE on
+ * `destination_id`). Owner decision 2026-10-28/31; transfers-launch plan,
+ * Architecture §1.
+ *
+ * The UNIQUE holds for an INACTIVE route too, deliberately: a retired route
+ * is still the record of that destination's transfer product, and a second
+ * row for the same place would make "which route is Moalboal" a question with
+ * two answers. A route comes back through `setActive(true)`, never through a
+ * second create (CLAUDE.md, "Soft deletes").
+ */
+export const transferRoutes = mysqlTable(
+  'transfer_routes',
+  {
+    id: int('id').autoincrement().primaryKey(),
+    destinationId: int('destination_id')
+      .notNull()
+      .unique()
+      .references(() => destinations.id),
+    slug: varchar('slug', { length: 80 }).notNull().unique(),
+    isActive: boolean('is_active').notNull().default(true),
+    sortOrder: int('sort_order').notNull().default(0),
+    /** One-way duration in minutes — feeds the booking window's end (plan Architecture §2). */
+    estimatedDurationMinutes: int('estimated_duration_minutes').notNull(),
+    /**
+     * Mirrors `tours.free_cancel_hours`; frozen into a booking's price
+     * snapshot at hold time.
+     *
+     * NOT NULL with a default of 24 where `tours.free_cancel_hours` is
+     * nullable with none: the plan's answer 8 calls this "a real, enforced
+     * number ... defaulted the same way tours are", and 24 is what every
+     * seeded tour that has a window actually uses (`db/seed-data.ts`). The
+     * default only applies to a hand-written INSERT — the admin input
+     * requires the value explicitly.
+     */
+    freeCancelHours: int('free_cancel_hours').notNull().default(24),
+    inclusionsText: text('inclusions_text'),
+    exclusionsText: text('exclusions_text'),
+    createdAt: datetime('created_at', { mode: 'date' })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: datetime('updated_at', { mode: 'date' })
+      .notNull()
+      .$defaultFn(() => new Date())
+      .$onUpdateFn(() => new Date()),
+  },
+  (t) => [index('transfer_routes_active_idx').on(t.isActive, t.sortOrder)],
+);
+
+/**
+ * Per-vehicle-type prices for a route — exactly two rows per route (van,
+ * suv), never more, never fewer. Composite PK instead of a surrogate id:
+ * there is no legitimate second row for (route, vehicleType).
+ *
+ * **This table is money.** Both columns are integer centavos, like every
+ * other price in this schema, and `services/transfers/upsert-route.ts` is
+ * their only writer.
+ */
+export const transferRouteVehiclePrices = mysqlTable(
+  'transfer_route_vehicle_prices',
+  {
+    routeId: int('route_id')
+      .notNull()
+      .references(() => transferRoutes.id),
+    vehicleType: mysqlEnum('vehicle_type', VEHICLE_TYPES).notNull(),
+    oneWayPriceCentavos: int('one_way_price_centavos').notNull(),
+    dayUsePriceCentavos: int('day_use_price_centavos').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.routeId, t.vehicleType] })],
+);
+
 export const packages = mysqlTable('packages', {
   id: int('id').autoincrement().primaryKey(),
   slug: varchar('slug', { length: 160 }).notNull().unique(),
