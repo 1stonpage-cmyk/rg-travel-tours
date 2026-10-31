@@ -112,6 +112,14 @@ export async function sendReviewRequests(now: Date): Promise<ReviewRequestsResul
   const from = addCivilDays(today, -REVIEW_LOOKBACK_DAYS);
   const to = addCivilDays(today, -1);
 
+  /*
+   * `tours` is LEFT joined (Task T6). A transfer booking carries
+   * `tour_id IS NULL` since migration 0017, and an INNER JOIN would have
+   * dropped every completed transfer from this sweep — so a transfer guest
+   * would never be asked for a review and the "at most once ever" audit row
+   * would never be written to say so. "How was your trip?" is not
+   * tour-specific. `tourTitle` is nullable; the template omits its "Tour" row.
+   */
   const candidates = await db
     .select({
       id: bookings.id,
@@ -123,7 +131,7 @@ export async function sendReviewRequests(now: Date): Promise<ReviewRequestsResul
       paidCentavos: bookings.amountPaidCentavos,
     })
     .from(bookings)
-    .innerJoin(tours, eq(tours.id, bookings.tourId))
+    .leftJoin(tours, eq(tours.id, bookings.tourId))
     .where(
       and(
         betweenDates(bookings.tourDate, from, to),

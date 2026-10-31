@@ -334,7 +334,15 @@ async function sendReceiptNotices(bookingId: number): Promise<void> {
         paidCentavos: bookings.amountPaidCentavos,
       })
       .from(bookings)
-      .innerJoin(tours, eq(tours.id, bookings.tourId))
+      /*
+       * LEFT on `tours` (Task T6). A transfer booking has no tour since
+       * migration 0017, and an inner join returned no row — so BOTH §11
+       * receipt emails were silently skipped: the guest got no "we have it"
+       * and, worse, the office got no "there is one to verify", leaving a
+       * transfer receipt sitting in the queue with nobody told. `tourTitle` is
+       * nullable and the templates omit their "Tour" row.
+       */
+      .leftJoin(tours, eq(tours.id, bookings.tourId))
       .where(eq(bookings.id, bookingId))
       .limit(1);
     if (!row) return;

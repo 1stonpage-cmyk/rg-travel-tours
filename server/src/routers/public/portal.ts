@@ -156,7 +156,14 @@ export const portalRouter = router({
         holdExpiresAt: bookings.holdExpiresAt,
       })
       .from(bookings)
-      .innerJoin(tours, eq(tours.id, bookings.tourId))
+      /*
+       * LEFT on `tours` (Task T6). A transfer booking has no tour since
+       * migration 0017, and an inner join here returned zero rows for a
+       * signed-in transfer guest — so the refusal below fired and the guest
+       * was told their own booking could not be found, on the screen that
+       * shows them where to send the money. `tourTitle` is nullable.
+       */
+      .leftJoin(tours, eq(tours.id, bookings.tourId))
       .where(eq(bookings.id, ctx.customerSession.subjectId))
       .limit(1);
 
@@ -258,7 +265,10 @@ export const portalRouter = router({
         vanId: bookings.vanId,
       })
       .from(bookings)
-      .innerJoin(tours, eq(tours.id, bookings.tourId))
+      // LEFT on `tours` (Task T6) — same reason as `manualPayment` above: an
+      // inner join made My Booking itself answer `NOT_FOUND` for a transfer
+      // guest who had just signed in with the right ref and email.
+      .leftJoin(tours, eq(tours.id, bookings.tourId))
       .where(eq(bookings.id, ctx.customerSession.subjectId))
       .limit(1);
 

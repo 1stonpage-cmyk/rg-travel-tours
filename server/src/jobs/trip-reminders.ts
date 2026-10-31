@@ -105,7 +105,17 @@ export async function sendTripReminders(now: Date): Promise<TripRemindersResult>
   /*
    * The candidate read runs on the pool, outside any transaction: it is a
    * pre-filter, and the claim below re-asks under its own transaction.
-   * `tours` is inner-joined because a booking always has one.
+   *
+   * ## `tours` is LEFT joined, not inner joined (Task T6)
+   *
+   * A booking no longer always has a tour: since migration 0017 a transfer
+   * booking carries `tour_id IS NULL`. An INNER JOIN here would have dropped
+   * every transfer departing tomorrow from this sweep — silently, with no
+   * error anywhere, so a transfer guest would simply never be reminded and
+   * nothing would say why. `tourTitle` is therefore nullable, and the
+   * `trip_reminder` template omits its "Tour" row rather than printing a null
+   * (see `NotifyPayload.tourTitle`). The reminder itself is not tour-specific:
+   * "your trip is tomorrow, have the balance ready" is true of both products.
    */
   const candidates = await db
     .select({
@@ -119,7 +129,7 @@ export async function sendTripReminders(now: Date): Promise<TripRemindersResult>
     .from(bookings)
     // `eq` is correct here: both sides are `int` columns. Only the civil-date
     // comparison needs the raw-`sql` helper.
-    .innerJoin(tours, eq(tours.id, bookings.tourId))
+    .leftJoin(tours, eq(tours.id, bookings.tourId))
     .where(and(onDate(bookings.tourDate, tomorrow), inArray(bookings.status, REMINDED_STATUSES)))
     .orderBy(asc(bookings.id));
 

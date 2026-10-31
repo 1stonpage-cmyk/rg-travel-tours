@@ -51,6 +51,7 @@
  */
 import {
   BOOKING_STATUS_LABELS,
+  TRANSFER_BOOKING_LABEL,
   TRIP_START_STOP_NAME,
   manilaTimeHHMM,
   type BookingStatus,
@@ -136,7 +137,10 @@ function DepartureRow({ departure }: { departure: TodayDeparture }) {
         </p>
       </div>
 
-      <p className="text-brand-ink mt-1 text-base font-semibold">{departure.tourTitle}</p>
+      {/* `tourTitle` is null on a transfer booking (T6) — never an empty heading. */}
+      <p className="text-brand-ink mt-1 text-base font-semibold">
+        {departure.tourTitle ?? TRANSFER_BOOKING_LABEL}
+      </p>
 
       <p className="text-brand-error mt-0.5 text-sm">
         {departure.driverName ?? 'No driver yet'} · {departure.vanPlate ?? 'No van yet'}

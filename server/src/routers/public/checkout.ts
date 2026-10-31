@@ -217,7 +217,13 @@ function bookingNotFound(): TRPCError {
 type BookingStatusResult = {
   ref: string;
   status: BookingStatus;
-  tourTitle: string;
+  /**
+   * NULL on a transfer booking, which has no tour (Task T6). Nullable rather
+   * than the row being dropped: this is the page a guest lands on coming back
+   * from the gateway, and an inner join made it answer "we could not find
+   * that booking" about a booking they had just paid for.
+   */
+  tourTitle: string | null;
   /** Civil date (Asia/Manila), e.g. `'2026-12-25'` — see `bookings.tourDate`. */
   date: string;
   pax: number;
@@ -259,7 +265,8 @@ type BookingStatusResult = {
 type BookingLookupResult = {
   ref: string;
   status: BookingStatus;
-  tourTitle: string;
+  /** NULL on a transfer booking (Task T6) — see `BookingStatusResult`. */
+  tourTitle: string | null;
   date: string;
   pax: number;
   payMode: PayMode;
@@ -794,7 +801,14 @@ export const checkoutRouter = router({
             tourTitle: tours.title,
           })
           .from(bookings)
-          .innerJoin(tours, eq(tours.id, bookings.tourId))
+          /*
+           * LEFT on `tours` (Task T6). A transfer booking has no tour since
+           * migration 0017, and an inner join made this read return nothing —
+           * so `bookingNotFound()` fired below and a guest trying to pay for a
+           * real transfer booking was told it does not exist. Money path, so
+           * the fix is the point: the refusal must mean what it says.
+           */
+          .leftJoin(tours, eq(tours.id, bookings.tourId))
           .where(eq(bookings.ref, input.ref))
           .limit(1);
 
@@ -914,7 +928,15 @@ export const checkoutRouter = router({
             // The tour and the public ref — never a name, an email or a
             // phone number (RA 10173: the gateway gets what the payment
             // needs and nothing else).
-            description: `${booking.tourTitle} — booking ${booking.ref}`,
+            //
+            // The ref alone when there is no tour to name (Task T6): a
+            // transfer booking's gateway description must not read
+            // `null — booking RG-XXXXXX` in the dashboard someone reconciles
+            // against. T24 may give a transfer a better description; this one
+            // is merely true.
+            description: booking.tourTitle
+              ? `${booking.tourTitle} — booking ${booking.ref}`
+              : `Booking ${booking.ref}`,
             methods: CHECKOUT_PAYMENT_METHODS,
             successUrl,
             cancelUrl: `${successUrl}?cancelled=1`,
@@ -982,7 +1004,10 @@ export const checkoutRouter = router({
             tourTitle: tours.title,
           })
           .from(bookings)
-          .innerJoin(tours, eq(tours.id, bookings.tourId))
+          // LEFT on `tours` (Task T6) — see `startPayment` above. An inner
+          // join made the post-payment landing page say "we could not find
+          // that booking" about a transfer booking that had just been paid.
+          .leftJoin(tours, eq(tours.id, bookings.tourId))
           .where(eq(bookings.ref, input.ref))
           .limit(1);
 
@@ -1075,7 +1100,14 @@ export const checkoutRouter = router({
             tourTitle: tours.title,
           })
           .from(bookings)
-          .innerJoin(tours, eq(tours.id, bookings.tourId))
+          /*
+           * LEFT on `tours` (Task T6). The credential check above already
+           * matched the ref and email, so an inner join here failed AFTER the
+           * guest proved who they were — §7's self-service lookup would refuse
+           * a transfer guest with the same sentence a wrong email gets, and
+           * they would have no way to tell the difference.
+           */
+          .leftJoin(tours, eq(tours.id, bookings.tourId))
           .where(eq(bookings.id, match.id))
           .limit(1);
 

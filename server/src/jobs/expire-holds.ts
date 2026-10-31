@@ -200,12 +200,23 @@ interface Candidate {
   id: number;
   ref: string;
   couponId: number | null;
-  // T6: nullable since migration 0017 — a transfer booking has no tour. This
-  // sweep never reads it for a decision (it only names it in the audit row,
-  // where a null is a truthful "not a tour"), so widening the type is the
-  // whole fix. Audit against transfer bookings: a lapsed transfer hold must
-  // also release whatever capacity a transfer holds, which is not this
-  // column.
+  /**
+   * Nullable since migration 0017 — a transfer booking has no tour.
+   *
+   * **Audited in Task T6: widening the type was the whole fix, and no code
+   * change was needed.** This sweep never joins `tours` and never reads this
+   * column for a decision: `expirable()` selects on status, `hold_expires_at`,
+   * the review flag and `amount_paid_centavos`, none of which is tour-scoped,
+   * so a lapsed TRANSFER hold is swept exactly like a tour's. The only reader
+   * is the `booking.expired` audit payload below, where `tourId: null` is a
+   * truthful "this was not a tour" rather than a missing field — audit rows
+   * are JSON and tolerate it.
+   *
+   * What this does NOT do, and is not supposed to: release whatever capacity a
+   * transfer holds. Nothing here released a tour's capacity either (capacity is
+   * derived from the booking's own status, which the `UPDATE` changes), and the
+   * transfer capacity model is T7/T8's.
+   */
   tourId: number | null;
   tourDate: Date;
   holdExpiresAt: Date | null;

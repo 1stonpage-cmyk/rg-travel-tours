@@ -22,3 +22,19 @@ export type VehicleType = (typeof VEHICLE_TYPES)[number];
  */
 export const PRODUCT_TYPES = ['tour', 'transfer_one_way', 'transfer_day_use'] as const;
 export type ProductType = (typeof PRODUCT_TYPES)[number];
+
+/**
+ * What a surface puts where a tour title would go, on a booking that has no
+ * tour (Task T6's audit).
+ *
+ * A booking with `tour_id IS NULL` is a transfer and cannot be anything else —
+ * the `bookings_product_type_shape` CHECK says so in the database — so this is
+ * a fact about the row rather than a guess, and it is honest wherever a
+ * now-nullable `tourTitle` reaches a heading or a label.
+ *
+ * Deliberately generic. Naming the real route, vehicle type and times is the
+ * display work of T18 (reports), T22 (driver portal), T23 (admin screens) and
+ * T24 (portal + notification copy); this constant is the single string those
+ * tasks replace, and the single grep that finds every place needing it.
+ */
+export const TRANSFER_BOOKING_LABEL = 'Transfer booking';

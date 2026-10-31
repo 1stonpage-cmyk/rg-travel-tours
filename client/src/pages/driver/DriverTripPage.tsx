@@ -38,7 +38,7 @@
  */
 import { ArrowLeft, MessageCircle, Navigation, Phone, StickyNote } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
-import { type TripDetail } from '@rg/shared';
+import { TRANSFER_BOOKING_LABEL, type TripDetail } from '@rg/shared';
 import PaymentBox from '@/components/driver/PaymentBox';
 import StopList from '@/components/driver/StopList';
 import { STATUS_LABEL } from '@/components/driver/trip-copy';
@@ -81,7 +81,11 @@ function TripScreen({
     <div className="space-y-5">
       <header>
         <BackLink />
-        <h1 className="text-brand-blue-900 mt-2 text-2xl font-bold">{trip.tourTitle}</h1>
+        {/* Null on a transfer booking (T6); T22 puts the route and the
+            pickup time here instead. Never an empty <h1>. */}
+        <h1 className="text-brand-blue-900 mt-2 text-2xl font-bold">
+          {trip.tourTitle ?? TRANSFER_BOOKING_LABEL}
+        </h1>
         <p className="text-brand-blue-900 mt-1 text-base font-medium">
           {dateFormatter.format(new Date(`${trip.tourDate}T00:00:00Z`))}
           <span aria-hidden="true"> · </span>

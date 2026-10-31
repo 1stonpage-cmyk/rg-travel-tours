@@ -119,7 +119,14 @@ export const adminCalendarRouter = router({
           driverName: drivers.name,
         })
         .from(bookings)
-        .innerJoin(tours, eq(tours.id, bookings.tourId))
+        /*
+         * LEFT, never inner (Task T6). A transfer booking has no tour since
+         * migration 0017, and an inner join would have left it off the
+         * dispatch calendar entirely — a trip with no van and no driver,
+         * invisible on the screen whose `needsAssignmentCount` exists to
+         * surface exactly that. `CalendarTrip.tourTitle` is nullable for it.
+         */
+        .leftJoin(tours, eq(tours.id, bookings.tourId))
         .leftJoin(vans, eq(vans.id, bookings.vanId))
         .leftJoin(drivers, eq(drivers.id, bookings.driverId))
         .where(

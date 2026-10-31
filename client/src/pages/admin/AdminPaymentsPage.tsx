@@ -35,7 +35,7 @@
  */
 import { Link, useSearchParams } from 'react-router-dom';
 import { ExternalLink, Loader2 } from 'lucide-react';
-import { formatPeso } from '@rg/shared';
+import { TRANSFER_BOOKING_LABEL, formatPeso } from '@rg/shared';
 import PaymentDecisions from '@/components/admin/PaymentDecisions';
 import { findPendingCash, findPendingReceipt } from '@/components/admin/pending-payments';
 import { pesosInWords } from '@/lib/peso-words';
@@ -177,7 +177,9 @@ export default function AdminPaymentsPage() {
                         {item.ref}
                       </span>
                       <span className="text-brand-ink mt-1 block text-sm font-semibold">
-                        {item.leadName} · {item.tourTitle}
+                        {/* `tourTitle` is null on a transfer booking (T6) — the
+                            separator must not be left dangling. */}
+                        {item.leadName} · {item.tourTitle ?? TRANSFER_BOOKING_LABEL}
                       </span>
                       <span className="text-brand-error mt-0.5 block text-sm">
                         {item.tourDate} · {item.pax} {item.pax === 1 ? 'guest' : 'guests'}
@@ -225,8 +227,8 @@ export default function AdminPaymentsPage() {
                         <span className="font-mono">{booking.ref}</span> · {booking.leadName}
                       </h2>
                       <p className="text-brand-error text-sm">
-                        {booking.tourTitle} · {booking.tourDate} · {booking.pax}{' '}
-                        {booking.pax === 1 ? 'guest' : 'guests'}
+                        {booking.tourTitle ?? TRANSFER_BOOKING_LABEL} · {booking.tourDate} ·{' '}
+                        {booking.pax} {booking.pax === 1 ? 'guest' : 'guests'}
                       </p>
                     </div>
                     <p className="text-brand-gold-800 bg-brand-gold-50 rounded-full border border-amber-200 px-3 py-1 text-xs font-semibold">

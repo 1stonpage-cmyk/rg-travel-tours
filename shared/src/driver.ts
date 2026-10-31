@@ -133,7 +133,12 @@ export function driverTripBucket(tourDate: string, todayManila: string): DriverT
 export interface DriverTripRow {
   bookingId: number;
   ref: string;
-  tourTitle: string;
+  /**
+   * NULL on a transfer booking, which has no tour (Task T6). A driver's own
+   * transfer trip must appear in their list, so the title is nullable rather
+   * than the row being dropped by an inner join.
+   */
+  tourTitle: string | null;
   /** Manila civil date, `YYYY-MM-DD`. */
   tourDate: string;
   pax: number;
@@ -302,7 +307,8 @@ export type PaymentBoxState =
 export interface TripDetail {
   bookingId: number;
   ref: string;
-  tourTitle: string;
+  /** NULL on a transfer booking, which has no tour (Task T6) — as `DriverTripRow`. */
+  tourTitle: string | null;
   /** Manila civil date, `YYYY-MM-DD`. */
   tourDate: string;
   pax: number;

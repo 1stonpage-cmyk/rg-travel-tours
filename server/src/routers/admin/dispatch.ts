@@ -89,8 +89,21 @@ async function sendAssignmentNotice(bookingId: number): Promise<void> {
         vanPlate: vans.plate,
       })
       .from(bookings)
-      .innerJoin(tours, eq(tours.id, bookings.tourId))
-      // INNER joins on both: the assignment wrote both ids, so a row with
+      /*
+       * LEFT on `tours` (Task T6): a transfer booking has no tour since
+       * migration 0017, and an inner join would make this read return no row —
+       * so an assigned transfer guest would get no "your driver is set" email
+       * at all, silently (`if (!row) return`). `tourTitle` is nullable and the
+       * template omits its "Tour" row.
+       *
+       * **Latent today.** `assignVanAndDriver()` throws on a null `tour_id`
+       * before any assignment commits (it has no `tour_date_slots` row to
+       * lock), so no transfer can reach this function until T7/T8 build
+       * transfer dispatch locking. Fixed here anyway: when they do, this path
+       * must already be correct rather than quietly mailing nobody.
+       */
+      .leftJoin(tours, eq(tours.id, bookings.tourId))
+      // INNER joins on the driver and the van: the assignment wrote both ids, so a row with
       // either missing is not an assignment this email describes, and saying
       // "your driver is undefined" to a guest is worse than saying nothing.
       .innerJoin(drivers, eq(drivers.id, bookings.driverId))

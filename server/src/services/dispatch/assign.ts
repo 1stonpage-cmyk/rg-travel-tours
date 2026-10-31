@@ -164,12 +164,24 @@ export async function assignVanAndDriver(
     throw new Error(`booking ${bookingId} has a null tour_date`);
   }
 
-  // T6: `tour_id` is nullable since migration 0017, and a transfer booking
-  // has no `tour_date_slots` row to lock. Nothing can create a transfer
-  // booking yet (T9/T10 do), so this cannot fire today — loud rather than
-  // locking the wrong row or silently skipping the lock. Audit against
-  // transfer bookings: assigning a van to a transfer needs its own lock
-  // target, decided with the transfer capacity model.
+  /*
+   * `tour_id` is nullable since migration 0017, and a transfer booking has no
+   * `tour_date_slots` row to lock.
+   *
+   * **Audited in Task T6, and the loud throw is the deliberate stopgap** — not
+   * an omission and not something to "fix" by widening a type. Transfer
+   * dispatch needs its OWN lock target and its own capacity model (the plan's
+   * Architecture §2), which is Tasks T7/T8; until they land, there is no
+   * correct row to take here. Failing loudly is the only safe option: skipping
+   * the lock would let two dispatchers send one van to two trips on one
+   * morning, and locking the tour side anyway would lock nothing while looking
+   * like it had.
+   *
+   * It is unreachable today. Nothing in the codebase writes a booking with a
+   * non-`'tour'` `product_type` — T9/T10 build that — so no transfer booking
+   * exists to be assigned. **When T7/T8 replace this, replace the throw with
+   * real logic, not with a silent skip.**
+   */
   if (booking.tourId === null) {
     throw new Error(`booking ${bookingId} has no tour_id — transfer assignment is not built yet`);
   }

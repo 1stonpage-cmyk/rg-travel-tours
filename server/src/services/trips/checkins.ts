@@ -224,10 +224,20 @@ class CheckInRollback extends Error {
 /** The booking fields every one of the three mutations needs. */
 interface TripRow {
   id: number;
-  // T6: nullable since migration 0017 — a transfer booking has no tour, and
-  // therefore no `tour_itinerary_stops`. The one reader guards on it (see
-  // `checkInStop`). Audit against transfer bookings: a transfer's progress
-  // model is not itinerary stops, so check-in needs its own answer here.
+  /**
+   * Nullable since migration 0017 — a transfer booking has no tour, and
+   * therefore no `tour_itinerary_stops`.
+   *
+   * **Audited in Task T6: no code change was needed.** This module has exactly
+   * ONE reader of this field (`checkInStop`), and it guards on null before the
+   * value reaches a query — verified by grep, not assumed: `startTrip`,
+   * `finishTrip`, `completeTrip` and `undoLastCheckIn` never read it, so a
+   * transfer trip starts, completes and un-completes normally, and its van is
+   * taken to `on_trip` and back exactly as a tour's is.
+   *
+   * What a transfer's PROGRESS should mean (it has no stop list, so
+   * `tripProgress` reports trip-start alone, `0 of 1`) is T22's question.
+   */
   tourId: number | null;
   status: BookingStatus;
   vanId: number | null;
@@ -708,13 +718,22 @@ export async function checkInStop(
   if (!trip) return refuse('not_your_trip');
 
   /*
-   * T6: `tour_id` is nullable since migration 0017. A booking with no tour is
-   * a transfer, and a transfer owns no `tour_itinerary_stops` rows — so no
-   * stop id can belong to it, and `unknown_stop` is the same refusal any
-   * other id that is not this trip's gets. Fail closed, and indistinguishable
-   * from an id that does not exist, exactly like the join below. Audit
-   * against transfer bookings: a transfer's progress is not a stop list, so
-   * its check-in path is a separate question.
+   * `tour_id` is nullable since migration 0017. A booking with no tour is a
+   * transfer, and a transfer owns no `tour_itinerary_stops` rows — so no stop
+   * id can belong to it, and `unknown_stop` is the same refusal any other id
+   * that is not this trip's gets.
+   *
+   * **Audited in Task T6 and kept as it is: this already fails closed**, and
+   * indistinguishable from an id that does not exist, exactly like the join
+   * below. Without it, `eq(tourItineraryStops.tourId, null)` would be passed a
+   * null and match nothing anyway — but as SQL, not as a decision, and the
+   * guard is what makes the refusal deliberate and readable. Ahead of the
+   * `in_progress` gate for the reason stated above: an incoherent stop is
+   * incoherent whatever state the trip is in.
+   *
+   * A transfer trip is NOT otherwise blocked from running: `startTrip` and
+   * `completeTrip` (the Complete tap) both work on it. T22 decides what
+   * check-in should mean for a product with no stop list.
    */
   if (trip.tourId === null) return refuse('unknown_stop');
 

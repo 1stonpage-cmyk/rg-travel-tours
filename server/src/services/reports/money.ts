@@ -244,21 +244,25 @@ export async function revenueByTour(range: DateRangeInput): Promise<TourRevenueR
   });
 
   /*
-   * T6: `bookings.tour_id` is nullable since migration 0017, so both GROUP BYs
-   * can now produce a NULL bucket holding every transfer booking's money. This
+   * `bookings.tour_id` is nullable since migration 0017, so both GROUP BYs can
+   * now produce a NULL bucket holding every transfer booking's money. This
    * report is revenue BY TOUR and there is no tour to name it with, so the
-   * bucket is skipped rather than merged into a bogus tour id. Audit against
-   * transfer bookings: a transfer's revenue is currently reported NOWHERE by
-   * this function, which is correct for its title and probably wrong for the
-   * owner — a transfers breakdown (or a product_type dimension) is the real
-   * answer, not a change here.
+   * bucket is skipped rather than merged into a bogus tour id.
    *
+   * **Audited in Task T6: skipping is correct, and no change belongs here.**
+   * `tour-only`, in the audit's own vocabulary — a per-tour table that invented
+   * a row for revenue belonging to no tour would be lying in a way no later
+   * task could unpick.
+   *
+   * **The real gap, stated so nobody re-litigates it as a null bug.**
    * `reportSummary` (this file's other export, composing `moneyMoved` and
-   * `bookingTotals`) is unaffected: neither of those groups by tour, so the
-   * top-line figures will include transfer money the moment it exists while
-   * this per-tour table will not. The two will disagree by exactly the
-   * transfer revenue, in one owner-facing report — that discrepancy, not a
-   * null-handling bug, is what T6 has to answer for.
+   * `bookingTotals`) is not scoped by tour at all, so its top-line figures
+   * WILL include transfer money the moment transfers exist while this per-tour
+   * table will not. The two owner-facing numbers then disagree by exactly the
+   * transfer revenue. That is a reporting-COMPLETENESS gap — there is no
+   * transfer breakdown yet — and it closes when **T18** adds
+   * `revenueByRoute()`, the transfer-side counterpart, alongside this. Not a
+   * reason to change the skip.
    */
   for (const row of moneyRows) {
     if (row.tourId === null) continue;

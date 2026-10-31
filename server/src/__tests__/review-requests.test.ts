@@ -78,13 +78,31 @@ async function count(statement: Parameters<ReturnType<typeof getDb>['execute']>[
   return Number(rows[0]?.n ?? -1);
 }
 
-async function makeBooking(opts: { status?: BookingStatus; tourDate?: string } = {}) {
+async function makeBooking(
+  opts: {
+    status?: BookingStatus;
+    tourDate?: string;
+    /**
+     * A TRANSFER booking — `tour_id IS NULL` with a `product_type` and a
+     * requested vehicle, the only shape `bookings_product_type_shape` accepts
+     * without a tour (Task T5). Nothing creates one yet (T9/T10), so the
+     * fixture writes it directly.
+     */
+    transfer?: boolean;
+  } = {},
+) {
   const ref = generateBookingRef();
   const [row] = await getDb()
     .insert(bookings)
     .values({
       ref,
-      tourId,
+      ...(opts.transfer
+        ? ({
+            tourId: null,
+            productType: 'transfer_one_way',
+            vehicleTypeRequested: 'van',
+          } as const)
+        : { tourId }),
       tourDate: new Date(`${opts.tourDate ?? YESTERDAY}T00:00:00Z`),
       pax: 2,
       leadName: 'Review Request Fixture Guest',
@@ -189,6 +207,34 @@ describeWithDb('the review-request sweep', () => {
     // The sign-in screen with the ref prefilled: the guest still proves
     // ref + email (Q5), and the review form lives behind it in My Booking.
     expect(mails[0]!.html).toContain(`/portal/login?ref=${booking.ref}`);
+  });
+
+  /**
+   * **Task T6.** `bookings.tour_id` became nullable in migration 0017 and this
+   * sweep used to `INNER JOIN tours` on it, so a completed TRANSFER booking
+   * was never a candidate: no mail, and — worse for an "at most once EVER"
+   * job — no `review.requested` audit row either, so the omission left no
+   * trace at all.
+   *
+   * Proven able to fail: restoring `.innerJoin(tours, …)` in
+   * `jobs/review-requests.ts` reddens this test and nothing else here.
+   */
+  it('asks the guest of a completed TRANSFER booking, which has no tour', async () => {
+    const transfer = await makeBooking({ transfer: true });
+
+    expect(await sendReviewRequests(NOW)).toMatchObject({ sent: 1, alreadySent: 0, failed: 0 });
+
+    const mails = sentFor(transfer.ref);
+    expect(mails, 'a completed transfer was silently dropped from the sweep').toHaveLength(1);
+    // No "Tour" row invented from a null, and nothing reading `null`.
+    expect(mails[0]!.text).not.toContain('Tour:');
+    expect(mails[0]!.text).not.toContain('null');
+    expect(mails[0]!.html).not.toContain('null');
+
+    // And the claim really was recorded, so it cannot be asked twice.
+    const rows = await requestAuditRows(transfer.id);
+    expect(rows.filter((r) => r.action === 'review.requested')).toHaveLength(1);
+    expect(await sendReviewRequests(NOW)).toMatchObject({ sent: 0, alreadySent: 1 });
   });
 
   /**

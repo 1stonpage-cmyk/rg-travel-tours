@@ -1006,11 +1006,18 @@ export const bookings = mysqlTable(
      * to a tour, and now it belongs to a tour or to a transfer.
      *
      * Nullable is the honest shape rather than a sentinel tour row, but it
-     * has a cost worth naming here: an `INNER JOIN tours` on this column now
+     * has a cost worth naming here: an `INNER JOIN tours` on this column
      * silently DROPS every transfer booking from whatever it feeds (a report,
      * a dispatch list, a capacity count). That is a behaviour change no
-     * typechecker catches — see the `bookings_product_type_shape` CHECK below
-     * and the `T6:` markers across `server/src` for the audit of it.
+     * typechecker catches — see the `bookings_product_type_shape` CHECK below.
+     *
+     * **Task T6 audited every such site across `server/src`** and left exactly
+     * two kinds behind: `leftJoin(tours, …)` wherever a transfer belongs in the
+     * result (the jobs, the admin screens, the driver and guest surfaces, the
+     * §9 unassigned alert), and a documented `innerJoin` only where the query
+     * is about tours BY DEFINITION (`revenueByTour`). A NEW query joining this
+     * column must make that same choice deliberately; `tour_id IS NULL` is a
+     * transfer, and the CHECK below is what guarantees it.
      */
     tourId: int('tour_id').references(() => tours.id),
     /**

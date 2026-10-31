@@ -137,7 +137,15 @@ export async function unassignedSoon(tx: Transaction, now: Date): Promise<Dashbo
       tourTitle: tours.title,
     })
     .from(bookings)
-    .innerJoin(tours, eq(tours.id, bookings.tourId))
+    /*
+     * LEFT on `tours` too (Task T6), and for the same reason the drivers join
+     * below is left: a transfer booking has no tour since migration 0017, and
+     * an inner join would have dropped an unassigned TRANSFER from the one
+     * alert whose whole job is "this trip has no van or driver and it leaves
+     * within 48 hours". That is the alert's most important case, arriving
+     * silently as a zero.
+     */
+    .leftJoin(tours, eq(tours.id, bookings.tourId))
     /*
      * LEFT, never inner: a booking with a null `driver_id` has no drivers row
      * to join, and an inner join would drop exactly the alert's original and
@@ -180,7 +188,10 @@ export async function unassignedSoon(tx: Transaction, now: Date): Promise<Dashbo
     count: rows.length,
     examples: rows.slice(0, MAX_EXAMPLES).map((row) => ({
       id: row.id,
-      label: `${row.ref} · ${row.tourTitle}`,
+      // The ref alone when there is no tour to name (Task T6) — never
+      // `RG-XXXXXX · null`, and never the word "transfer" invented from the
+      // absence of a join. T23 decides what a transfer's label should say.
+      label: row.tourTitle === null ? row.ref : `${row.ref} · ${row.tourTitle}`,
       date: civilDateFromDate(row.tourDate),
     })),
   };

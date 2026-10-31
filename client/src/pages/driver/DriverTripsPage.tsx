@@ -37,6 +37,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CalendarDays, ChevronRight, Clock, History, Users } from 'lucide-react';
+import { TRANSFER_BOOKING_LABEL } from '@rg/shared';
 import type { DriverTripBucket, DriverTripRow } from '@rg/shared';
 import { STATUS_LABEL } from '@/components/driver/trip-copy';
 import { trpc } from '@/lib/trpc';
@@ -73,7 +74,10 @@ function TripCard({ trip }: { trip: DriverTripRow }) {
         className="tap-target press border-brand-blue-200 bg-background focus-visible:ring-brand-blue-600 flex items-center gap-3 rounded-xl border p-4 transition-colors focus-visible:outline-none focus-visible:ring-2"
       >
         <span className="min-w-0 flex-1">
-          <span className="text-brand-blue-900 block text-base font-bold">{trip.tourTitle}</span>
+          {/* Null on a transfer booking (T6) — the row must still read as a trip. */}
+          <span className="text-brand-blue-900 block text-base font-bold">
+            {trip.tourTitle ?? TRANSFER_BOOKING_LABEL}
+          </span>
           <span className="text-brand-blue-900 mt-1 block text-base">
             {readableDate(trip.tourDate)}
             <span aria-hidden="true"> · </span>

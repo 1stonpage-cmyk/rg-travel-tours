@@ -189,7 +189,15 @@ function asTrpcError(error: unknown): TRPCError {
     : new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'That did not work.' });
 }
 
-/** What the §11 emails need, read once after the decision has committed. */
+/**
+ * What the §11 emails need, read once after the decision has committed.
+ *
+ * `tours` is LEFT joined (Task T6): a transfer booking has no tour since
+ * migration 0017, and an inner join would have returned no row at all — so a
+ * verified or rejected transfer receipt would have sent the guest NO email,
+ * silently (`mailPayload` returning null is indistinguishable from a deleted
+ * booking). `tourTitle` is nullable and the template omits its "Tour" row.
+ */
 async function mailPayload(bookingId: number) {
   const [row] = await getDb()
     .select({
@@ -201,7 +209,7 @@ async function mailPayload(bookingId: number) {
       paidCentavos: bookings.amountPaidCentavos,
     })
     .from(bookings)
-    .innerJoin(tours, eq(tours.id, bookings.tourId))
+    .leftJoin(tours, eq(tours.id, bookings.tourId))
     .where(eq(bookings.id, bookingId))
     .limit(1);
   if (!row) return null;
@@ -426,7 +434,15 @@ export const adminBookingsRouter = router({
           )`,
         })
         .from(bookings)
-        .innerJoin(tours, eq(tours.id, bookings.tourId))
+        /*
+         * LEFT, never inner (Task T6). A transfer booking has no tour since
+         * migration 0017, and an inner join would have hidden every one of
+         * them from the office's only bookings list — including the
+         * `awaitingVerification` queue, so a transfer guest's receipt would
+         * wait for a decision nobody could see. The count below is joined the
+         * same way, or the pager would count a different set from the page.
+         */
+        .leftJoin(tours, eq(tours.id, bookings.tourId))
         .where(condition)
         // Soonest tour first: an operations list is a diary, not a log.
         .orderBy(asc(bookings.tourDate), asc(bookings.id))
@@ -436,7 +452,8 @@ export const adminBookingsRouter = router({
       const [counted] = await getDb()
         .select({ total: sql<number>`COUNT(*)` })
         .from(bookings)
-        .innerJoin(tours, eq(tours.id, bookings.tourId))
+        // Same join as the page query above — see its note.
+        .leftJoin(tours, eq(tours.id, bookings.tourId))
         .where(condition);
 
       return {
@@ -498,7 +515,14 @@ export const adminBookingsRouter = router({
           createdAt: bookings.createdAt,
         })
         .from(bookings)
-        .innerJoin(tours, eq(tours.id, bookings.tourId))
+        /*
+         * LEFT, never inner (Task T6). An inner join turned a transfer
+         * booking's real reference into `NOT_FOUND` — "no booking with that
+         * reference" about a booking that exists, which is the worst kind of
+         * wrong answer for the one screen an admin reaches for when a guest
+         * rings. `tourTitle` is nullable; `tourId` already was.
+         */
+        .leftJoin(tours, eq(tours.id, bookings.tourId))
         .where(eq(bookings.ref, input.ref))
         .limit(1);
 

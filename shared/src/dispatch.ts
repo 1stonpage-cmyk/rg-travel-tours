@@ -283,7 +283,13 @@ export type CalendarMonthInput = z.infer<typeof calendarMonthSchema>;
 export interface CalendarTrip {
   bookingId: number;
   ref: string;
-  tourTitle: string;
+  /**
+   * NULL on a transfer booking, which has no tour (Task T6). The calendar
+   * must show the trip anyway — a transfer with no van or driver is exactly
+   * what a dispatcher opens this screen to find — so the title is nullable
+   * rather than the row being dropped by an inner join.
+   */
+  tourTitle: string | null;
   pax: number;
   status: BookingStatus;
   vanId: number | null;
@@ -515,7 +521,8 @@ export type SuggestInput = z.infer<typeof suggestInputSchema>;
 export interface TodayDeparture {
   bookingId: number;
   ref: string;
-  tourTitle: string;
+  /** NULL on a transfer booking, which has no tour (Task T6) — as `CalendarTrip`. */
+  tourTitle: string | null;
   driverName: string | null;
   vanPlate: string | null;
   status: BookingStatus;

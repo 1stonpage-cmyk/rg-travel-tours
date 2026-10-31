@@ -46,7 +46,7 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ExternalLink, Loader2 } from 'lucide-react';
-import { BOOKING_NOTE_MAX_LENGTH, formatPeso } from '@rg/shared';
+import { BOOKING_NOTE_MAX_LENGTH, TRANSFER_BOOKING_LABEL, formatPeso } from '@rg/shared';
 import FieldError from '@/components/common/FieldError';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -157,7 +157,10 @@ export default function AdminBookingDetailPage() {
           Booking
         </p>
         <h1 className="text-brand-ink font-mono text-2xl font-bold sm:text-3xl">{booking.ref}</h1>
-        <p className="text-brand-ink font-semibold">{booking.tourTitle}</p>
+        {/* Null on a transfer booking (T6); T23 shows the real route here. */}
+        <p className="text-brand-ink font-semibold">
+          {booking.tourTitle ?? TRANSFER_BOOKING_LABEL}
+        </p>
         <p className="text-brand-error flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
           <span>
             {booking.tourDate} · {booking.pax} pax

@@ -23,7 +23,12 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
-import { BOOKING_STATUS_LABELS, BOOKING_STATUSES, formatPeso } from '@rg/shared';
+import {
+  BOOKING_STATUS_LABELS,
+  BOOKING_STATUSES,
+  TRANSFER_BOOKING_LABEL,
+  formatPeso,
+} from '@rg/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -155,7 +160,10 @@ export default function AdminBookingsPage() {
                 >
                   {booking.ref}
                 </Link>
-                <p className="text-brand-ink font-semibold">{booking.tourTitle}</p>
+                {/* Null on a transfer booking (T6) — never a blank line. */}
+                <p className="text-brand-ink font-semibold">
+                  {booking.tourTitle ?? TRANSFER_BOOKING_LABEL}
+                </p>
                 <p className="text-brand-error">
                   {booking.tourDate} · {booking.pax} pax · {booking.leadName}
                 </p>
@@ -208,7 +216,9 @@ export default function AdminBookingsPage() {
                         {booking.ref}
                       </Link>
                     </td>
-                    <td className="text-brand-ink px-4 py-3 font-medium">{booking.tourTitle}</td>
+                    <td className="text-brand-ink px-4 py-3 font-medium">
+                      {booking.tourTitle ?? TRANSFER_BOOKING_LABEL}
+                    </td>
                     <td className="text-brand-ink px-4 py-3 tabular-nums">{booking.tourDate}</td>
                     <td className="text-brand-ink px-4 py-3">{booking.leadName}</td>
                     <td className="px-4 py-3">

@@ -74,14 +74,33 @@ async function count(statement: Parameters<ReturnType<typeof getDb>['execute']>[
 }
 
 async function makeBooking(
-  opts: { status?: BookingStatus; tourDate?: string; paidCentavos?: number } = {},
+  opts: {
+    status?: BookingStatus;
+    tourDate?: string;
+    paidCentavos?: number;
+    /**
+     * A TRANSFER booking — `tour_id IS NULL`, a `product_type` of
+     * `transfer_one_way` and a requested vehicle, which is the only shape the
+     * `bookings_product_type_shape` CHECK accepts without a tour (Task T5).
+     * Nothing in the codebase creates one yet (T9/T10), so the fixture is
+     * written straight through Drizzle, as `booking-transfer-schema.test.ts`
+     * does.
+     */
+    transfer?: boolean;
+  } = {},
 ) {
   const ref = generateBookingRef();
   const [row] = await getDb()
     .insert(bookings)
     .values({
       ref,
-      tourId,
+      ...(opts.transfer
+        ? ({
+            tourId: null,
+            productType: 'transfer_one_way',
+            vehicleTypeRequested: 'van',
+          } as const)
+        : { tourId }),
       tourDate: new Date(`${opts.tourDate ?? TOMORROW}T00:00:00Z`),
       pax: 2,
       leadName: 'Reminder Fixture Guest',
@@ -307,6 +326,48 @@ describeWithDb('the day-before trip reminder', () => {
 
     const rows = await reminderAuditRows(booking.id);
     expect(rows.filter((r) => r.action === 'trip.reminder_sent')).toHaveLength(1);
+  });
+
+  /**
+   * **Task T6.** `bookings.tour_id` became nullable in migration 0017, and
+   * this sweep used to `INNER JOIN tours` on it — so a transfer booking
+   * departing tomorrow was dropped from the candidate list with no error
+   * anywhere, and its guest was never reminded. Nothing would have reported
+   * that: `sent: 0` on a quiet day and `sent: 0` because the only departure
+   * was invisible look identical.
+   *
+   * Proven able to fail: restoring `.innerJoin(tours, …)` in
+   * `jobs/trip-reminders.ts` reddens this test (`sent: 0`, no mail) and
+   * reddens nothing else in the file.
+   */
+  it('reminds a TRANSFER booking departing tomorrow, which has no tour at all', async () => {
+    const transfer = await makeBooking({ transfer: true });
+
+    expect(await sendTripReminders(NOW)).toMatchObject({ sent: 1, alreadySent: 0, failed: 0 });
+
+    const mails = sentFor(transfer.ref);
+    expect(mails, 'a transfer departing tomorrow was silently dropped').toHaveLength(1);
+    // And the mail does not LIE about a tour it does not have: the "Tour"
+    // row is omitted rather than rendered from a null (`detailsText` /
+    // `detailsHtml` in `services/notify/templates.ts`).
+    expect(mails[0]!.text).not.toContain('Tour:');
+    expect(mails[0]!.text).not.toContain('null');
+    expect(mails[0]!.html).not.toContain('null');
+    // The reference still identifies the trip, in both parts.
+    expect(mails[0]!.text).toContain(transfer.ref);
+  });
+
+  /** A tour and a transfer on the same day are both reminded, once each. */
+  it('reminds a tour and a transfer on the same day, one email each', async () => {
+    const tour = await makeBooking();
+    const transfer = await makeBooking({ transfer: true });
+
+    expect(await sendTripReminders(NOW)).toMatchObject({ sent: 2, alreadySent: 0, failed: 0 });
+    expect(sentFor(tour.ref)).toHaveLength(1);
+    expect(sentFor(transfer.ref)).toHaveLength(1);
+    // The tour's own mail still names its tour — the left join did not cost
+    // the tour side anything.
+    expect(sentFor(tour.ref)[0]!.text).toContain('Tour:');
   });
 
   it('reports zero on a quiet day', async () => {

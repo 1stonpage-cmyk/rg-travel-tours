@@ -66,7 +66,23 @@ export interface NotifyPayload {
   /** The recipient. The guest for three of these; the admin for the fourth. */
   to: string;
   ref: string;
-  tourTitle: string;
+  /**
+   * NULL on a transfer booking, which has no tour (Task T6's audit).
+   *
+   * `detailsHtml` / `detailsText` OMIT the "Tour" row entirely when it is
+   * null rather than interpolate a value — a line reading `Tour: null` is the
+   * failure this nullability exists to make impossible, and an empty label is
+   * worse than no label. The booking reference identifies the trip in either
+   * case, and it is the first row of both tables.
+   *
+   * **Still tour-only, and deliberately left to T24:** the WORDING of several
+   * events ("Your tour is tomorrow", "Balance on tour day"). T24 owns the
+   * tour-only-language sweep across every event's copy; naming a transfer's
+   * real route here would be a partial version of work it will redo with full
+   * context. This task's bar is that no sentence is FALSE because of a null,
+   * which omitting the row satisfies.
+   */
+  tourTitle: string | null;
   /** A civil date, `YYYY-MM-DD`, as every tour date is. */
   tourDate: string;
   totalCentavos: number;
@@ -140,11 +156,19 @@ function document_(heading: string, bodyHtml: string): string {
   ].join('');
 }
 
-/** The booking facts every email repeats, as a small table. */
+/**
+ * The booking facts every email repeats, as a small table.
+ *
+ * The "Tour" row is present only when there IS a tour — see
+ * `NotifyPayload.tourTitle`. A transfer booking's email therefore carries
+ * Reference, Date and Total, and says nothing untrue about a tour.
+ */
 function detailsHtml(payload: NotifyPayload): string {
   const rows: Array<[string, string]> = [
     ['Reference', payload.ref],
-    ['Tour', payload.tourTitle],
+    ...(payload.tourTitle === null
+      ? []
+      : ([['Tour', payload.tourTitle]] as Array<[string, string]>)),
     ['Date', payload.tourDate],
     ['Total', formatPeso(payload.totalCentavos)],
   ];
@@ -162,7 +186,8 @@ function detailsHtml(payload: NotifyPayload): string {
 function detailsText(payload: NotifyPayload): string {
   return [
     `Reference: ${payload.ref}`,
-    `Tour: ${payload.tourTitle}`,
+    // Same omission as `detailsHtml` above, and for the same reason.
+    ...(payload.tourTitle === null ? [] : [`Tour: ${payload.tourTitle}`]),
     `Date: ${payload.tourDate}`,
     `Total: ${formatPeso(payload.totalCentavos)}`,
   ].join('\n');

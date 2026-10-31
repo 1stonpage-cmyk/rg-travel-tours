@@ -103,7 +103,15 @@ export async function listDriverTrips(driverId: number, now: Date): Promise<Driv
       vanPlate: vans.plate,
     })
     .from(bookings)
-    .innerJoin(tours, eq(tours.id, bookings.tourId))
+    /*
+     * LEFT on `tours` (Task T6). A transfer booking has no tour since
+     * migration 0017, and an inner join would have dropped a driver's own
+     * transfer trip out of their trip list — no error, no empty state, just a
+     * trip they were assigned that their phone does not show them.
+     * `DriverTripRow.tourTitle` is nullable for it; what the screen should
+     * show instead (the route, the pickup time, the vehicle) is T22's.
+     */
+    .leftJoin(tours, eq(tours.id, bookings.tourId))
     .leftJoin(vans, eq(vans.id, bookings.vanId))
     .where(eq(bookings.driverId, driverId))
     .orderBy(asc(bookings.tourDate), asc(bookings.id));
@@ -242,7 +250,14 @@ async function loadDriverTrip(driverId: number, bookingId: number) {
       reviewRequired: bookings.paymentReviewRequired,
     })
     .from(bookings)
-    .innerJoin(tours, eq(tours.id, bookings.tourId))
+    /*
+     * LEFT on `tours` (Task T6) — same reason as `listDriverTrips` above, with
+     * a sharper consequence: an inner join made a driver's own transfer trip
+     * answer `NOT_FOUND`, the same refusal another driver's booking gets. The
+     * driver would be told the trip is not theirs, and could neither see the
+     * guest's number nor record the cash they just took.
+     */
+    .leftJoin(tours, eq(tours.id, bookings.tourId))
     .leftJoin(vans, eq(vans.id, bookings.vanId))
     .where(and(eq(bookings.id, bookingId), eq(bookings.driverId, driverId)))
     .limit(1);

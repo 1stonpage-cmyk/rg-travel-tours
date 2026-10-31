@@ -29,7 +29,7 @@
  */
 import { Link } from 'react-router-dom';
 import { Loader2, RefreshCw } from 'lucide-react';
-import { APP_SURFACE_TITLES, formatPeso, portalPollMs } from '@rg/shared';
+import { APP_SURFACE_TITLES, TRANSFER_BOOKING_LABEL, formatPeso, portalPollMs } from '@rg/shared';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import DriverCard from '@/components/portal/DriverCard';
 import ReceiptUpload from '@/components/portal/ReceiptUpload';
@@ -106,7 +106,10 @@ export default function PortalBookingPage() {
         <span className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.18em]">
           Booking {booking.ref}
         </span>
-        <h1 className="text-brand-blue-900 text-2xl font-bold">{booking.tourTitle}</h1>
+        {/* Null on a transfer booking (T6); T24 writes the guest-facing copy. */}
+        <h1 className="text-brand-blue-900 text-2xl font-bold">
+          {booking.tourTitle ?? TRANSFER_BOOKING_LABEL}
+        </h1>
         <p className="text-muted-foreground text-sm">
           {booking.tourDate} · {booking.pax} {booking.pax === 1 ? 'guest' : 'guests'} ·{' '}
           {booking.leadName}

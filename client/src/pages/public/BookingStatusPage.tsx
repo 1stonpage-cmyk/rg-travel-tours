@@ -1,5 +1,5 @@
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { formatPeso, type BookingStatus } from '@rg/shared';
+import { TRANSFER_BOOKING_LABEL, formatPeso, type BookingStatus } from '@rg/shared';
 import PaymentOptions from '@/components/checkout/PaymentOptions';
 import QueryBoundary from '@/components/common/QueryBoundary';
 import { Skeleton } from '@/components/common/Skeleton';
@@ -222,7 +222,8 @@ export default function BookingStatusPage() {
                 <Card className="bg-background">
                   <CardContent className="space-y-3 p-5">
                     <h2 className="text-brand-blue-900 text-base font-semibold">
-                      {data.tourTitle}
+                      {/* Null on a transfer booking (T6); T24 writes the copy. */}
+                      {data.tourTitle ?? TRANSFER_BOOKING_LABEL}
                     </h2>
                     <dl className="space-y-2 text-sm">
                       <div className="flex items-center justify-between gap-3">

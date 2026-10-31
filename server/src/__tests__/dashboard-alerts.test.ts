@@ -143,12 +143,25 @@ async function makeBooking(opts: {
   status?: 'confirmed' | 'assigned' | 'pending_payment' | 'pending_verification' | 'cancelled';
   vanId?: number | null;
   driverId?: number | null;
+  /**
+   * A TRANSFER booking — `tour_id IS NULL`, a `product_type` and a requested
+   * vehicle, the only shape `bookings_product_type_shape` accepts without a
+   * tour (Task T5). Nothing creates one yet (T9/T10), so the fixture writes it
+   * directly, as `booking-transfer-schema.test.ts` does.
+   */
+  transfer?: boolean;
 }) {
   const [booking] = await getDb()
     .insert(bookings)
     .values({
       ref: generateBookingRef(),
-      tourId,
+      ...(opts.transfer
+        ? ({
+            tourId: null,
+            productType: 'transfer_one_way',
+            vehicleTypeRequested: 'van',
+          } as const)
+        : { tourId }),
       tourDate: asDate(opts.tourDate),
       pax: 2,
       leadName: 'Dashboard Fixture',
@@ -293,6 +306,56 @@ describeWithDb('vans', () => {
     await makeBooking({ tourDate: plusDays(TODAY, 1), status: 'pending_payment' });
     await makeBooking({ tourDate: plusDays(TODAY, 1), status: 'pending_verification' });
     expect(alertFor(await callAlerts(), 'unassigned_soon').count).toBe(0);
+  });
+
+  /* ---- T6: a transfer booking has no tour, and must still be counted ---- */
+
+  /**
+   * **Task T6.** `unassignedSoon` used to `INNER JOIN tours` on
+   * `bookings.tour_id`, which migration 0017 made nullable — so an unassigned
+   * TRANSFER leaving tomorrow was dropped from the count. The alert's whole
+   * purpose is "this trip has no van or driver and it departs within 48
+   * hours", and it would have arrived as a reassuring zero.
+   *
+   * Proven able to fail: restoring `.innerJoin(tours, …)` in
+   * `services/dispatch/alerts.ts` makes the count 0 and reddens this test.
+   */
+  it('counts an unassigned TRANSFER inside the window, which has no tour', async () => {
+    const bookingId = await makeBooking({
+      tourDate: plusDays(TODAY, 1),
+      vanId: null,
+      driverId: null,
+      transfer: true,
+    });
+
+    const alert = alertFor(await callAlerts(), 'unassigned_soon');
+    expect(alert.count, 'an unassigned transfer was silently dropped from the alert').toBe(1);
+    // The example's label is the ref ALONE — never `RG-XXXXXX · null`.
+    const example = alert.examples.find((e) => e.id === bookingId);
+    expect(example).toBeDefined();
+    expect(example!.label).not.toContain('null');
+    expect(example!.label).not.toContain('·');
+    expect(example!.date).toBe(plusDays(TODAY, 1));
+  });
+
+  /** A tour and a transfer on the same day both count, and the tour keeps its label. */
+  it('counts a tour and a transfer together, and still names the tour', async () => {
+    const tourBookingId = await makeBooking({
+      tourDate: plusDays(TODAY, 1),
+      vanId: null,
+      driverId: null,
+    });
+    await makeBooking({
+      tourDate: plusDays(TODAY, 1),
+      vanId: null,
+      driverId: null,
+      transfer: true,
+    });
+
+    const alert = alertFor(await callAlerts(), 'unassigned_soon');
+    expect(alert.count).toBe(2);
+    const tourExample = alert.examples.find((e) => e.id === tourBookingId);
+    expect(tourExample!.label).toContain('Dashboard Fixture Tour');
   });
 
   /* ---- D4: a deactivated driver's future trips need assigning (2026-10-16) ---- */

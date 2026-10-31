@@ -31,7 +31,12 @@
  */
 import { useState } from 'react';
 import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
-import { BOOKING_STATUS_LABELS, manilaParts, type CalendarDay } from '@rg/shared';
+import {
+  BOOKING_STATUS_LABELS,
+  TRANSFER_BOOKING_LABEL,
+  manilaParts,
+  type CalendarDay,
+} from '@rg/shared';
 import MonthGrid from '@/components/admin/MonthGrid';
 import AssignPanel from '@/components/admin/AssignPanel';
 import { trpc } from '@/lib/trpc';
@@ -328,7 +333,8 @@ export default function AdminCalendarPage() {
                       >
                         <span className="flex min-w-0 flex-col gap-1">
                           <span className="text-brand-ink text-base font-bold">
-                            {trip.tourTitle}
+                            {/* Null on a transfer booking (T6). */}
+                            {trip.tourTitle ?? TRANSFER_BOOKING_LABEL}
                           </span>
                           <span className="text-brand-error text-sm">
                             <span className="font-mono">{trip.ref}</span> · {trip.pax}{' '}
@@ -368,7 +374,8 @@ export default function AdminCalendarPage() {
           {activeTrip && canAssign ? (
             <div className="flex min-w-0 flex-[1_1_300px] flex-col gap-2">
               <p className="text-brand-error text-sm">
-                For <span className="font-mono">{activeTrip.ref}</span> · {activeTrip.tourTitle}
+                For <span className="font-mono">{activeTrip.ref}</span> ·{' '}
+                {activeTrip.tourTitle ?? TRANSFER_BOOKING_LABEL}
               </p>
               <AssignPanel
                 key={activeTrip.bookingId}

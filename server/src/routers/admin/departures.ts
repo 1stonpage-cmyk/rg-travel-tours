@@ -109,10 +109,18 @@ export async function todayDepartures(now: Date): Promise<TodayDeparture[]> {
   const db = getDb();
 
   /*
-   * One statement for the day. `tours` is inner-joined (a booking always
-   * has one); `vans` and `drivers` are LEFT joined because a trip can sit
-   * on today's date with neither assigned, and that trip is the single most
-   * important row on this board.
+   * One statement for the day. `vans` and `drivers` are LEFT joined because a
+   * trip can sit on today's date with neither assigned, and that trip is the
+   * single most important row on this board.
+   *
+   * **`tours` is LEFT joined too (Task T6).** It used to be inner-joined, on
+   * the reasoning that a booking always has a tour; since migration 0017 a
+   * transfer booking has none, and an inner join would have hidden today's
+   * transfers from the live departures board — the one screen that says what
+   * is on the road right now. `TodayDeparture.tourTitle` is nullable for them.
+   * `tripProgress()` already tolerates a null `tour_id` (it left-joins the
+   * itinerary stops, so a transfer reads trip-start only); what "progress"
+   * should MEAN for a transfer is T22's question.
    */
   const rows = await db
     .select({
@@ -124,7 +132,7 @@ export async function todayDepartures(now: Date): Promise<TodayDeparture[]> {
       status: bookings.status,
     })
     .from(bookings)
-    .innerJoin(tours, eq(tours.id, bookings.tourId))
+    .leftJoin(tours, eq(tours.id, bookings.tourId))
     .leftJoin(vans, eq(vans.id, bookings.vanId))
     .leftJoin(drivers, eq(drivers.id, bookings.driverId))
     .where(and(onDate(bookings.tourDate, today), notInArray(bookings.status, [...NOT_DEPARTING])))
