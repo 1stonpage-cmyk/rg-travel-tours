@@ -235,11 +235,21 @@ db:seed:demo`.
     `context`. `ALLOW_DEMO_SEED` is in `.env.example` (commented "dev only — never set on the
     server") and in `server/src/env.ts`'s schema (optional, no default, mirroring
     `OWNER_EMAIL`/`OWNER_PASSWORD`). The test suite's `seed('test')` callers (17+ files, via
-    `global-setup.ts`) need `ALLOW_DEMO_SEED=1` too — it is injected through
-    `server/vitest.config.ts`'s `test.env`, which Vitest sets before any test-process module
-    (globalSetup included) loads; `env.ts` parses `process.env` once at import time, so setting it
-    any later (inside `global-setup.ts`'s own body, for instance) would be too late. Their
-    `NODE_ENV` is already `'test'`, so the production check needed no loosening for them.
+    `global-setup.ts`) need `ALLOW_DEMO_SEED=1` too — `env.ts` parses `process.env` once at
+    import time, so setting it any later (inside `global-setup.ts`'s own function body, for
+    instance) would be too late. **Vitest's `test.env` option alone does NOT reach
+    `global-setup.ts`**: `test.env` is only applied inside each test file's own worker (Vitest's
+    `setupCommonEnv()`), and `globalSetup` runs earlier, in Vitest's main process, before any
+    worker exists — proven by setting only `test.env` and watching the suite fail with this
+    exact refusal, thrown from inside `global-setup.ts`. What actually protects it is a
+    top-level `process.env.ALLOW_DEMO_SEED ??= '1';` statement in `server/vitest.config.ts`
+    itself, outside `defineConfig`, which runs at config-load time in that same main process —
+    before `global-setup.ts`'s static `import { env } from '../env'` ever executes — and whose
+    value every later-spawned worker also inherits. `test.env` is kept alongside it as the
+    documented, worker-scoped channel: it is what a test file that calls `seed('test')` or
+    `seedDemo('test')` directly, inside its own worker, is actually relying on; it is not what
+    protects `globalSetup`. Their `NODE_ENV` is already `'test'`, so the production check needed
+    no loosening for them.
 
   `seed(context)` itself is `await seedBase(context); await seedDemo(context);` — unchanged
   externally, so every existing caller (test files, `global-setup.ts`, `helpers/test-db.ts`)

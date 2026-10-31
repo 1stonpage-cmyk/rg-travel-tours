@@ -810,9 +810,18 @@ export async function seedBase(context: DatabaseContext = 'app'): Promise<void> 
  * specifically, not `seedBase`/the base seed, and both run for a standalone
  * `seedDemo('test')` call exactly as they do for `seedDemo('app')`. The test
  * suite's own `seed('test')` callers need `ALLOW_DEMO_SEED=1` in the test
- * process's environment (see `server/vitest.config.ts`'s `test.env`) — their
- * `NODE_ENV` is already `'test'`, so the production check never has to be
- * loosened for them.
+ * process's environment, and `server/vitest.config.ts` sets it through TWO
+ * mechanisms protecting two different callers:
+ *  - a top-level `process.env.ALLOW_DEMO_SEED ??= '1';` statement (outside
+ *    `defineConfig`), which is what `global-setup.ts` actually relies on —
+ *    its static `import { env } from '../env'` runs in Vitest's MAIN
+ *    process, before any worker exists, and `test.env` below never reaches
+ *    that process;
+ *  - the `test.env` option, which Vitest applies inside each test FILE's own
+ *    worker — what a test that calls `seed('test')`/`seedDemo('test')`
+ *    directly, inside its own worker, is relying on instead.
+ * Their `NODE_ENV` is already `'test'`, so the production check never has to
+ * be loosened for them.
  */
 export async function seedDemo(context: DatabaseContext = 'app'): Promise<void> {
   if (env.ALLOW_DEMO_SEED !== '1') {
