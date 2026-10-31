@@ -46,6 +46,11 @@ The `db:*` scripts live in the **server** workspace, so they need the `--filter`
 `pnpm db:seed` from the repo root fails with `Command "db:seed" not found`. There is also
 `db:generate` (write a migration from the schema) and `db:push`.
 
+`db:seed:demo` additionally refuses unless `ALLOW_DEMO_SEED=1` is set in `.env` (empty by
+default — see `.env.example`) **and** `NODE_ENV` is not `production`. Both checks run before any
+write; neither is something to "fix" by setting `ALLOW_DEMO_SEED=1` anywhere but your own local
+`.env`.
+
 After changing `server/src/db/schema.ts`, run `db:generate`, read the generated SQL, then
 `db:migrate` — and remember to apply the same migration to the server database.
 
