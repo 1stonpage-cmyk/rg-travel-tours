@@ -72,8 +72,9 @@ prompt's instruction):
   restore) — log a test that cannot be made to fail in `docs/BUGS_LOG.md`
   rather than shipping it silently.
 - No new npm/yarn lockfiles, no new dependencies without asking.
-- Do not widen a role, touch Kong PMS, build van transfers/joiner
-  departures, or deploy to production.
+- Do not widen a role, touch Kong PMS, or deploy to production. (The "no van
+  transfers" line that used to sit here was superseded by the owner's
+  2026-10-28 decision — see `docs/superpowers/plans/2026-10-31-transfers-launch.md`.)
 - A booking ref is validated and normalised by the one shared
   `bookingRefSchema` — do not add a second ref schema.
 - No form may show raw Zod JSON; use `client/src/lib/field-errors.ts`.

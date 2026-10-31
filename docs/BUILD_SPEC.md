@@ -61,12 +61,17 @@ If you find a bug unrelated to the current task, **don't stop or fix it**. Finis
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Brand          | TravelSugbo (public-facing)                                                                                                                                   |
 | Legal operator | R&G Travel & Tours, Cebu, Philippines                                                                                                                         |
-| Business       | Day tours + multi-day packages (not van rentals)                                                                                                              |
+| Business       | Private van/SUV transfers (airport one-way, day-use, custom trip request) at launch; day tours + multi-day packages built but hidden behind a settings switch |
 | Domain         | TravelSugbo.com                                                                                                                                               |
 | Hosting        | IONOS VPS M+ (2 vCPU, 4 GB RAM), Ubuntu, nginx, PM2                                                                                                           |
 | Payments       | Multi-gateway behind one interface — PayMongo first (GCash, Maya, GrabPay, card, PayPal if enabled on account, QR Ph), Xendit addable without a schema change |
 | Timeline       | 8 weeks                                                                                                                                                       |
 | Users          | Guests, customers (booked guests), drivers, admin staff                                                                                                       |
+
+**Owner decision, 2026-10-28 (confirmed 2026-10-31):** R&G launches with private van/SUV
+transfers as the primary product; day tours and packages stay built but hidden behind
+`settings.show_tours` (default off) until the owner re-enables them. See
+`docs/superpowers/plans/2026-10-31-transfers-launch.md` for the full build plan.
 
 ### Five surfaces
 
