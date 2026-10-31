@@ -1,16 +1,33 @@
 # Van & SUV Transfers Launch Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. **This plan requires owner approval before execution begins — see the owner decisions and QUESTIONS sections below.**
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. **This plan requires owner approval before execution begins.**
+
+**Revision log:** 2026-10-31 — owner answered the four open-design questions (availability model, notice window, coupons, custom-trip-request conversion) and gave defaults for the rest. This revision replaces the whole-day-block availability design with a time-window design, adds a staff-priced booking-conversion feature with a new role boundary, and renumbers tasks T1–T29 accordingly. See "Owner answers, 2026-10-31" below for the decisions and "What changed in this revision" for a diff against the first draft.
 
 **Goal:** Make private van/SUV **transfers** (airport one-way, day-use, custom trip request) the product R&G launches with, built on top of the existing tours/booking/dispatch/driver/admin machinery, while **tours stay fully built but hidden** behind a settings switch the owner can flip on later with no further build.
 
-**Architecture:** Transfers are a second **product type** on the existing `bookings` row, not a parallel system. `bookings.tour_id` becomes nullable and a new `product_type` column (`tour` / `transfer_one_way` / `transfer_day_use`) discriminates the two. A transfer booking carries a `route_id` (→ a new `transfer_routes` table, itself anchored on the existing `destinations` table — no duplicate place names) and a `vehicle_type_requested` (`van`/`suv`). Everything downstream — statuses, holds, deposit + driver-cash payment, check-ins, refunds, audit log, reviews, driver portal, admin bookings/dispatch/reports — keeps working on the same `bookings` row with no rewrite, only additive reads that branch on `product_type`. Vehicle availability reuses the exact fleet-lock pattern (`fleet_date_slots` → a new `transfer_date_slots` row, mirroring `tour_date_slots`) rather than inventing new concurrency machinery. Tours hide behind a new `show_tours` settings boolean, read the same way `content_unverified` already gates indexing — no new gating mechanism, just a second, independent gate.
+**Architecture:** Transfers are a second **product type** on the existing `bookings` row, not a parallel system. `bookings.tour_id` becomes nullable and a new `product_type` column (`tour` / `transfer_one_way` / `transfer_day_use`) discriminates the two. A transfer booking carries a `vehicle_type_requested` (`van`/`suv`) and, usually, a `route_id` (→ a new `transfer_routes` table anchored on the existing `destinations` table — a staff-created custom quote may instead carry a free-text route description with no catalog route at all). Everything downstream — statuses, holds, deposit + driver-cash payment, check-ins, refunds, audit log, reviews, driver portal, admin bookings/dispatch/reports — keeps working on the same `bookings` row with no rewrite, only additive reads that branch on `product_type`. **Vehicle availability is now time-window based** (revised in this round): a transfer blocks its vehicle type from pickup time to an estimated end plus an admin-configurable buffer, and a tour still blocks a vehicle for the whole civil day — both checked under the single existing `fleet_date_slots(date)` lock, using a standard interval-scheduling result (see Architecture §2) rather than a new per-vehicle schedule table. Tours hide behind a new `show_tours` settings boolean, read the same way `content_unverified` already gates indexing.
 
 **Tech Stack:** React + TypeScript + Vite + Tailwind v4 + shadcn/ui + React Router · Express + tRPC · Drizzle + MySQL 8 · Zod (shared) · scrypt sessions · PayMongo · node-cron · PM2. **No new libraries.**
 
-**Spec:** `docs/BUILD_SPEC.md` — §5 (pricing/capacity/holds), §6 (checkout/payments), §8 (driver portal), §9 (admin/dispatch/roles), §10 (schema), §11 (notifications). The spec currently says (line 64) "Business: Day tours + multi-day packages (**not van rentals**)" — **this plan supersedes that line by the owner's 2026-10-28 decision below; Task T1 corrects the spec text in the same commit that records the decision**, per CLAUDE.md's "stale prose describing a now-fixed/changed decision gets corrected in the same commit" convention.
+**Spec:** `docs/BUILD_SPEC.md` — §5 (pricing/capacity/holds), §6 (checkout/payments), §8 (driver portal), §9 (admin/dispatch/roles), §10 (schema), §11 (notifications). The spec currently says (line 64) "Business: Day tours + multi-day packages (**not van rentals**)" — **this plan supersedes that line; Task T1 corrects the spec text**.
 
-**Base commit:** `0035a72` on `main`, clean tree.
+**Base commit:** `0035a72` on `main`, clean tree. (Unchanged since the first draft — no code has been written yet.)
+
+---
+
+## What changed in this revision
+
+1. **Availability (owner answer 1): time windows, not whole-day blocking.** Architecture §2 is rewritten. A transfer now blocks its vehicle type for `[pickup time, estimated end + buffer)`, not the whole day, and one vehicle can serve several jobs a day. This needed real design work — a peak-overlap (interval scheduling) feasibility rule — because tours (whole-day) and transfers (windowed) now share one fleet and must never conflict (owner answer 9). The separate `transfer_date_slots` lock table from the first draft is **removed** — the existing `fleet_date_slots(date)` lock is sufficient and is now the single serialization point for every capacity decision, tour or transfer, on a given date.
+2. **`assessCapacity()` (tours) is no longer "untouched."** It gains one additive term: the pool of vehicles "available for a tour today" now subtracts whatever each vehicle type's transfer peak-overlap has already claimed. This is required by owner answer 9 and is new scope — Task T7.
+3. **Dispatch-time assignment (`vansFreeOn`/`driversFreeOn`) also needs a window-aware change**, not just the hold-time pool math — once a specific van is actually assigned, two transfers on the same van the same day must not have overlapping windows, while a tour assigned to a van still excludes it for the whole day. New Task T8.
+4. **Notice window (owner answer 2): a new, transfer-specific, hour-based minimum-notice setting** (default 6h, admin-editable), replacing tours' day-based `minLeadDays`/`cutoffTime` for the transfer path only. Tours are unchanged.
+5. **Coupons (owner answer 3): now in scope**, using the existing `validateCoupon`/`recordRedemption`/`releaseRedemption` machinery and the existing ₱0/₱100 refusals, unchanged. Removed from QUESTIONS.
+6. **Custom Trip Request → real booking (owner answer 4): new feature**, not a deferred limitation. Owner/finance can convert a custom-request inquiry into a real, staff-priced transfer booking; the guest then pays through the normal flow. This needs:
+   - a new, shared `createTransferBooking()` service (Task T10) so the guest path and the staff path write the exact same booking shape through the exact same capacity check — no second code path to drift;
+   - **one new `ROLE_MATRIX` area, `transferQuoting` (owner + finance only)** — the plan's first draft claimed zero new areas; that claim no longer holds, because "dispatcher can view the request but not set the price" is a real permission split the existing `packagesInquiries` (owner+dispatcher) area cannot express. `BUILD_SPEC.md`'s §9 table and `role-isolation.test.ts`'s pinned counts must be edited together, in the same commit, per that test's own convention (Task T19).
+7. **Owner defaults recorded for the rest** (no automation needed): no night/late-flight surcharge; free-waiting-time stays Terms-page placeholder text, not code; excess luggage is enforced only by vehicle-type capacity (no surcharge logic); transfer cancellation window reuses the same Refund Policy placeholder tours already have. The legal to-do list is shorter as a result (see below).
+8. Tasks renumbered **T1–T29** (was T1–T24) to fit the new scope. The model/schema/review table at the end is rebuilt from scratch — use it, not the first draft's.
 
 ---
 
@@ -19,7 +36,7 @@
 1. **Three transfer products**, all private vehicle + driver, no shared/joiner departures:
    a. **Airport transfer** — one-way, either direction (airport→destination or destination→airport).
    b. **Day use** — same-day round trip: vehicle + driver to a destination and back.
-   c. **Custom trip request** — guest sends route/date/group/notes as a lead; staff reply with a quote off-system. Reuses the existing inquiries area.
+   c. **Custom trip request** — guest sends route/date/group/notes as a lead; staff reply with a quote, **and can now convert it into a real booking** (owner answer 4, below).
 2. Price is **per vehicle, per route, per product type**. Admin manages routes/destinations (Moalboal, Oslob, Badian/Kawasan, Alegria, Argao/Dalaguete, Hagnaya Port, Maya Port, Cebu City, …) with a one-way price and a day-use price **for each vehicle type**. Admin can change prices anytime; price is **locked on the booking at hold time**. Server computes all money, centavos only. No competitor text/photos/prices copied.
 3. Vehicle types: **VAN** and **SUV**, each with seat and luggage capacity. Fleet vehicles get a type. Guest picks the type; only types that fit passengers/luggage are offered.
 4. Payment: deposit (online or QR transfer, as today) + balance in cash to the driver — the **existing** deposit/driver-cash flow, unchanged. No new payment path. Existing ₱100 gateway minimum and ₱0-booking refusals apply unchanged.
@@ -28,7 +45,21 @@
 7. Settings switch **"Show tours on the website"**, default **OFF**. OFF: tour catalog, tour detail, tour nav links, tour cards and the tour sitemap entries are hidden, **and the server refuses new tour holds**. Existing tour bookings and admin tour editing keep working regardless of the switch. ON: everything as today.
 8. Home page leads with transfers: choose type → route → date → passengers → see vehicle options with prices. `frontend-design` + `ui-ux-pro-max`, 360px first.
 
-These decisions **supersede** the pre-launch-fixes batch's "do not build van transfers" constraint (`docs/superpowers/plans/2026-10-30-prelaunch-fixes.md`'s Global Constraints line) and the spec's "not van rentals" line (§1, line 64) — both are artifacts of a pre-pivot plan, corrected by Task T1.
+These decisions **supersede** the pre-launch-fixes batch's "do not build van transfers" constraint and the spec's "not van rentals" line (§1, line 64) — both corrected by Task T1.
+
+## Owner answers, recorded 2026-10-31
+
+1. **Availability: time windows, not whole-day.** A transfer blocks its vehicle from pickup time to an estimated end — the route's one-way duration for airport transfers, or a guest/staff-entered end time for day use — plus a buffer. **Buffer is an admin setting, default 60 minutes.** One vehicle can do several jobs a day. Must remain concurrency-safe under simultaneous holds. → Architecture §2, Task T7 (revised, dedicated Opus review as the owner required).
+2. **Notice: same-day transfers are allowed**, subject to a minimum notice before pickup — **admin setting, default 6 hours.** Tours keep their existing day-based booking window unchanged. → Architecture §2/§3, Tasks T7/T11.
+3. **Coupons apply to transfers**, with the existing rules, including the ₱0 and below-₱100 refusals. → Architecture §3, Task T9.
+4. **Custom Trip Request → staff creates a booking.** Owner/finance can turn a custom request into a real transfer booking with a staff-entered, server-validated, per-vehicle, centavos price, audited with the acting staff id and the price. The guest then pays through the normal flow (My Booking → deposit online/QR, balance cash to driver). **Dispatcher can view requests but not set prices.** → Architecture §5/§6, Tasks T10, T19, T20, T21 (new; dedicated Opus review as the owner required, plus a role-boundary review).
+
+**Defaults for the remaining questions** (admin-editable where noted; R&G will confirm later — none of these block building to the default):
+5. Night/late-flight surcharge: **none at launch.**
+6. Free waiting time: **Terms-page placeholder text only, no automated enforcement.**
+7. Excess luggage: **enforced only by vehicle-type luggage capacity at booking time; no surcharge logic.**
+8. Transfer cancellation window: **same Refund Policy placeholder wording tours already use** — no transfer-specific copy needed at launch; `transfer_routes.free_cancel_hours` still exists as a real, enforced number (mirroring `tours.free_cancel_hours`), defaulted the same way tours are.
+9. **Fleet sharing is designed now, not deferred:** a tour booking blocks its vehicle for the whole day; a transfer uses a time window; availability checks — both at hold time (pool math) and at dispatch time (specific-vehicle assignment) — must respect both so a van can never be on a tour and a transfer at once. → Architecture §2, Tasks T7 and T8.
 
 ---
 
@@ -36,25 +67,25 @@ These decisions **supersede** the pre-launch-fixes batch's "do not build van tra
 
 Every task's requirements implicitly include this section, copied from `CLAUDE.md` and sharpened for this plan.
 
-- **Money is integers in centavos everywhere.** The server computes every total, deposit and discount; the browser sends only the guest's choices (route, vehicle type, date, pax). `bookings.amount_paid_centavos` is written **only** by the two allow-listed functions in `server/src/services/payments/record-payment.ts` (`CREDITING_FUNCTIONS` in `schema-conventions.test.ts`) — this plan adds none.
-- **A refund is never a subtraction.** Unchanged for transfers: a separate positive `payments` row, `type = 'refund'`.
-- **Soft deletes only.** `transfer_routes`, `transfer_route_vehicle_prices` rows deactivate (`is_active`), never delete. Vans/drivers already soft-delete.
-- **`audit_log` on every money movement, status change, assignment, and price change** — a route price edit audits exactly like a tour price edit does today.
-- **Price-at-booking.** A transfer's price snapshot freezes the vehicle type, route, product type, the price used, the deposit percent and the route's free-cancellation window, in `bookings.price_snapshot` — identical contract to tours' snapshot, so refund/cancellation logic needs no branch to read it.
-- **NO RED anywhere.** Guard tests (`no-red.test.ts`, `contrast.test.ts`) apply to every new screen.
+- **Money is integers in centavos everywhere.** The server computes every total, deposit and discount; the browser sends only the guest's choices. `bookings.amount_paid_centavos` is written **only** by the two allow-listed functions in `server/src/services/payments/record-payment.ts` — this plan adds none, including the staff-conversion path (which creates a booking at `pending_payment`, same as any other hold; crediting still happens only through the existing verified-webhook/admin-approval paths).
+- **A refund is never a subtraction.** Unchanged for transfers.
+- **Soft deletes only.** `transfer_routes`, `transfer_route_vehicle_prices` rows deactivate (`is_active`), never delete.
+- **`audit_log` on every money movement, status change, assignment, and price change** — including the new staff-quoted-price event (Task T19): actor id, the price, the inquiry id.
+- **Price-at-booking.** A transfer's price snapshot freezes the vehicle type, route (or custom description), product type, the price used, its source (catalog vs. staff quote), the deposit percent, the route's free-cancellation window and the buffer-minutes value in force at hold time.
+- **NO RED anywhere.** Guard tests apply to every new screen, including the new convert-to-booking admin screen.
 - **Mobile-first at 360px**, 44px tap targets, visible focus, AA contrast, alt text.
-- **Store UTC, compute business dates/times in Asia/Manila.** A transfer's `pickup_time` is a civil time-of-day **label** (`"HH:mm"` string) for the driver to read, like a civil date is a string — it is never used in timezone arithmetic and never feeds the capacity lock (see Availability below).
-- **Zod on every input, shared from `/shared`.** No form shows raw Zod JSON — reuse `client/src/lib/field-errors.ts`.
-- **Every admin procedure is an `adminProcedure(area)`.** This plan adds **zero new `ROLE_MATRIX` areas** — see the Admin & roles section for why the existing areas already cover every new screen. That also means **no edit to `docs/BUILD_SPEC.md`'s §9 role table or `role-isolation.test.ts`'s pinned counts is needed** — confirm this remains true before shipping; if a task discovers it needs a new area, stop and ask rather than widening one of the existing seven silently.
+- **Store UTC, compute business dates/times in Asia/Manila.** A transfer's `pickup_time` (and, for day-use, `day_use_end_time`) is stored as a civil `"HH:mm"` label, exactly like a civil date is stored as a string. It is converted to a real UTC instant in exactly **one** place — the minimum-notice check (owner answer 2) — through a new, explicit helper alongside `civilDateFromDate()`/`manilaCivilDate()` in `shared/src/time.ts`, never by ad hoc string math. The window-overlap math (Architecture §2) works entirely in **minutes-since-midnight**, never converted to an instant, because overlap is a same-day, same-timezone comparison that an instant conversion would only complicate.
+- **Zod on every input, shared from `/shared`.** No form shows raw Zod JSON.
+- **Every admin procedure is an `adminProcedure(area)`.** This plan now adds **exactly one new `ROLE_MATRIX` area, `transferQuoting: ['owner', 'finance']`** (owner answer 4) — every other new screen reuses an existing area (`toursPricing`, `vansDrivers`, `usersSettings`, `packagesInquiries`), unchanged from the first draft. The one new area means `BUILD_SPEC.md`'s §9 table and `role-isolation.test.ts`'s pinned counts **must** be edited together, in the same commit (Task T19) — do not add the area without also updating the table, the mapping and the counts, per that test's own enforced convention.
 - **No new npm libraries.** Ports 5180/3100 only. Never touch Kong PMS, production, the VPS, or `C:\dev\travelsugbo-explainer`.
-- **Every task:** `✅ DONE` immediately on finishing · its own commit · all five checks with exit codes (`pnpm lint` · `pnpm typecheck` · `pnpm test` · `pnpm format:check` · `ALLOW_PLACEHOLDER_BUILD=1 pnpm build`) · every new test proven able to fail · leak detector silent · browser check at 1440px and 360px where client-facing.
-- **A schema-changing task reminds the owner to apply the migration to the server database** (per `CLAUDE.md`'s standing instruction) and to run the same migration against `rg_travel_test` locally before any test touches the new columns.
-- **Unrelated bugs found along the way:** finish the task, list the bug, don't fix it unless it blocks the task — except the two correctness bugs this plan's design work already found and is therefore in scope to fix (see "Must-fix while here," below).
+- **Every task:** `✅ DONE` immediately on finishing · its own commit · all five checks with exit codes · every new test proven able to fail · leak detector silent · browser check at 1440px and 360px where client-facing.
+- **A schema-changing task reminds the owner to apply the migration to the server database** and to run it against `rg_travel_test` locally first.
+- **Unrelated bugs found along the way:** finish the task, list it, don't fix it unless it blocks the task — except the money-visibility bug in "Must-fix while here," below, which is in scope.
 
-### Must-fix while here (found during this plan's research, not optional)
+### Must-fix while here (found during research, not optional)
 
-1. **`server/src/services/reports/money.ts:317`** — `outstandingBookings()` does `INNER JOIN tours`. Once `bookings.tour_id` is nullable, this silently **drops every transfer booking from "still to collect"** — real money a finance user would stop seeing. Must become a `LEFT JOIN` with a title fallback (the pattern at `revenueByTour`'s `titles.get(...) ?? 'Tour #' + id` already shows the shape; the transfer equivalent reads the route name). This is a **money-visibility bug**, not a style note — it is Task T16's first acceptance criterion, not an afterthought.
-2. Any other `innerJoin(tours, ...)` or `eq(tours.id, bookings.tourId)` across `server/src/` must be audited the same way once `tour_id` is nullable: grep for both and classify each as "tour-only, correctly excludes transfers" (e.g. `revenueByTour` itself — fine, it's a tour-specific report) or "must handle `tour_id IS NULL`" (fix). This audit is Task T7's acceptance criterion, run immediately after the schema migration lands, before any later task can rely on "transfers are invisible to tour-shaped code paths" being safe.
+1. **`server/src/services/reports/money.ts:317`** — `outstandingBookings()` does `INNER JOIN tours`. Once `bookings.tour_id` is nullable, this silently **drops every transfer booking from "still to collect."** Must become a `LEFT JOIN` with a title fallback (route name, or "Custom transfer" for a staff-quoted booking with no route). Task T18's first acceptance criterion.
+2. Any other `innerJoin(tours, ...)` or `eq(tours.id, bookings.tourId)` across `server/src/` must be audited once `tour_id` (and now, separately, `route_id`) are nullable: grep both, classify each as "tour-only, correctly excludes transfers" or "must handle NULL" (fix). Task T6's acceptance criterion, run immediately after the `bookings` schema migration (T5) lands.
 
 ---
 
@@ -65,77 +96,82 @@ Measured at `0035a72`. Build on this; do not rebuild it.
 | Capability | Where | Reused as-is for transfers? |
 | --- | --- | --- |
 | Booking statuses, hold expiry, capacity-holding set | `shared/src/booking.ts` `CAPACITY_HOLDING_STATUSES`; `bookings.status` | Yes, unchanged |
-| Deposit math, ₱100 gateway floor, ₱0 refusal | `shared/src/money.ts` (`depositCentavos`, `PAYMONGO_MIN_CENTAVOS`), `shared/src/checkout.ts` (`gatewayMinimumMessage`) | Yes, called from the new transfer quote/hold functions |
-| Online payment (PayMongo) + manual QR + driver cash | `checkout.ts` `startPayment`, `routers/webhooks`, `driver.recordCash`, `record-payment.ts` | Yes, unchanged — a transfer booking is a booking |
-| Fleet-wide date lock, per-product date lock, lock ORDER | `fleet_date_slots(date)` → `tour_date_slots(tour_id, date)` → booking row | Pattern reused: add `transfer_date_slots(date, vehicle_type)` as the new per-product lock, taken in the same position as `tour_date_slots` (after fleet, before the booking row) |
-| "Which van/driver are free on this date" | `server/src/services/dispatch/availability.ts` (`vansFreeOn`, `driversFreeOn`) | Yes, unchanged — it already excludes a van "assigned to another booking on this date whose status holds capacity," regardless of what kind of booking. No edit needed once `vans.vehicle_type` exists, because this module doesn't filter by type; the admin calendar's dropdown will show both types and the dispatcher picks one that fits |
-| `assessCapacity` (tours' own group-per-day math) | `server/src/services/capacity.ts` | **Untouched.** It counts the whole sellable fleet regardless of vehicle type, exactly as it does today. A new, separate function handles transfer capacity — see Availability below |
-| Driver login, lockout, sessions, PIN | Everything in "Driver portal (current state)" | Yes, unchanged |
-| Check-in / trip_checkpoints, start/finish trip, `on_trip` van status | `server/src/services/trips/checkins.ts` | Reused, with one thing to verify in T13: a transfer booking has **zero** itinerary stops (no `tour_itinerary_stops` row, because `tour_id` is null), so the trip is "start" then "complete" with nothing in between — confirm `tripProgress`/`checkins.ts` already tolerates a booking whose stop count is 0 (the CLAUDE.md note on `tour_itinerary_stops` says a tour CAN ship zero stops in the test DB, so this path is believed to exist already; T13 proves it rather than assuming it) |
-| Payment box, cash collection, refusal | `client/src/components/driver/PaymentBox.tsx`, `admin.bookings.rejectCash` | Yes, unchanged |
-| Receipts, refunds, cancellation, coupon release | `server/src/services/dispatch/*`, `admin.refunds.cancelBooking` | Yes, unchanged — cancelling a transfer releases its van exactly like cancelling a tour does, because `releaseVanFromTrip` isn't tour-specific |
-| Reviews, driver rating via `booking_id → driver_id` | `server/src/services/reviews/*` | Yes, unchanged — review submission never reads `tour_id` for the driver-rating path. A transfer *can* collect a review the same way; whether it should show a "tour" review form is Task T18 |
-| Reports money math (`moneyMoved`, `bookingTotals`) | `server/src/services/reports/money.ts` | Confirmed tour-agnostic (no `tours` join) for the top-level summary. `outstandingBookings` is **not** — see Must-fix #1 |
-| `admin.vans.*` CRUD | `server/src/routers/admin/vans.ts`, `client/src/pages/admin/AdminVansPage.tsx` | Extended with one new field (`vehicleType`), not replaced |
-| `admin.packages.*` / `admin.inquiries.*` | `server/src/routers/admin/packages.ts` | Extended for the new inquiry type, not replaced |
-| Settings read/write, `content_unverified`-style SEO gating | `server/src/content/settings*.ts`, `server/src/seo/resolvers.ts`, `sitemap.ts` | The `show_tours` gate is built as a **second, independent** gate next to `content_unverified`, reusing the identical mechanism (a boolean settings block, a cache, a resolver check, a sitemap filter) |
-| Site/brand copy separation | `client/src/lib/site.ts` (`SITE.name` = TravelSugbo, `SITE.legalOperator` = R&G Travel & Tours) | Unchanged; transfer copy follows the same brand/legal split |
+| Deposit math, ₱100 gateway floor, ₱0 refusal | `shared/src/money.ts`, `shared/src/checkout.ts` | Yes |
+| Online payment (PayMongo) + manual QR + driver cash | `checkout.ts` `startPayment`, `routers/webhooks`, `driver.recordCash`, `record-payment.ts` | Yes, unchanged — including for a staff-created booking, which is paid exactly like any other |
+| Coupons | `services/coupons.ts` | Yes (owner answer 3) — `quoteTransfer`/`createTransferBooking` call the same `validateCoupon`/`recordRedemption`/`releaseRedemption` |
+| Fleet-wide date lock | `fleet_date_slots(date)` | **Now the single lock for every capacity decision on a date, tour or transfer** (revised — see Architecture §2; no new lock table) |
+| "Which van/driver are free on this date" (dispatch assignment) | `server/src/services/dispatch/availability.ts` (`vansFreeOn`, `driversFreeOn`) | **Extended, not unchanged** — needs a window-aware exclusion rule for transfer-vs-transfer on the same specific vehicle (Task T8) |
+| `assessCapacity` (tours' own group-per-day math) | `server/src/services/capacity.ts` | **Extended, not untouched** (revised from the first draft) — gains one additive subtraction term for each vehicle type's transfer peak-overlap (Task T7). The empty-fleet test's own assertion is unaffected: zero sellable vehicles and zero transfer bookings still yields zero available, same as today |
+| Driver login, lockout, sessions, PIN | Driver portal | Yes, unchanged |
+| Check-in / trip_checkpoints, start/finish trip, `on_trip` van status | `server/src/services/trips/checkins.ts` | Reused; T22 confirms (not assumes) zero-stop tolerance |
+| Payment box, cash collection, refusal | `PaymentBox.tsx`, `admin.bookings.rejectCash` | Yes, unchanged |
+| Receipts, refunds, cancellation, coupon release | `admin.refunds.cancelBooking` | Yes, unchanged |
+| Reviews, driver rating | `services/reviews/*` | Yes, unchanged |
+| Reports money math | `services/reports/money.ts` | Top-level summary confirmed tour-agnostic; `outstandingBookings` is not — Must-fix #1 |
+| `admin.vans.*` CRUD | `routers/admin/vans.ts`, `AdminVansPage.tsx` | Extended with `vehicleType` |
+| `admin.packages.*` / `admin.inquiries.*` | `routers/admin/packages.ts` | Extended for the new inquiry type **and** the new convert-to-booking action (gated separately — see below) |
+| Settings read/write, `content_unverified`-style SEO gating | `content/settings*.ts`, `seo/resolvers.ts`, `sitemap.ts` | `show_tours` reuses the identical mechanism; a new `transfer_operations` settings block (buffer minutes, minimum notice hours, staff-quote hold hours) reuses the identical writer/reader/cache pattern |
+| Site/brand copy separation | `client/src/lib/site.ts` | Unchanged |
 
-**Confirmed empty — zero `ROLE_MATRIX` changes needed.** `toursPricing` (owner-only) already reads "Tours, pricing, coupons" and covers transfer routes/prices by the same logic (money-sensitive, owner-only). `packagesInquiries` (owner + dispatcher) already covers the new inquiry type. `vansDrivers` (owner + dispatcher) already covers the vehicle-type field. `usersSettings` (owner-only) already covers the new settings block. This matters because §9's role table in `BUILD_SPEC.md` is parsed by `role-isolation.test.ts` with pinned counts (12 areas, 23 allowed, 13 denied) — adding a row would require editing the spec table, the mapping, and the counts together. **This plan needs none of that.**
+**`ROLE_MATRIX`: one new area, not zero (corrected from the first draft).** `toursPricing`, `vansDrivers`, `usersSettings` and `packagesInquiries` (view only) still cover every screen they covered before. The one genuinely new permission boundary is **setting a price on / converting a custom request into a booking**, which the owner explicitly withheld from dispatcher — that needs its own area, `transferQuoting: ['owner', 'finance']`, because no existing area expresses "dispatcher may read this, but not act on it." See Task T19.
 
 ---
 
 ## Architecture decisions
 
-### 1. Schema: one `bookings` row, a discriminator, two new small tables, one child table
+### 1. Schema: one `bookings` row, a discriminator, two small admin-owned tables, one child table
 
 ```
 vans
-  + vehicle_type  enum('van','suv')  NOT NULL DEFAULT 'van'   -- migration backfills every existing row to 'van'
+  + vehicle_type  enum('van','suv')  NOT NULL DEFAULT 'van'   -- backfills every existing row to 'van'
 
-transfer_routes                                    -- new table, anchored on the EXISTING destinations table
+transfer_routes                                    -- anchored on the EXISTING destinations table
   id                    PK
   destination_id        FK -> destinations.id, UNIQUE   -- one transfer route per destination; no duplicate place names
   slug                  varchar(80) unique
   is_active             boolean default true
   sort_order            int
-  estimated_duration_minutes  int
-  free_cancel_hours     int               -- mirrors tours.free_cancel_hours; frozen into the booking's price snapshot
+  estimated_duration_minutes  int      -- one-way duration; feeds the window end for transfer_one_way
+  free_cancel_hours     int            -- mirrors tours.free_cancel_hours; frozen into the price snapshot
   inclusions_text       text
   exclusions_text       text
   created_at / updated_at
 
-transfer_route_vehicle_prices                       -- new table, mirrors tour_price_tiers' role
+transfer_route_vehicle_prices                       -- mirrors tour_price_tiers' role
   route_id              FK -> transfer_routes.id
   vehicle_type          enum('van','suv')
   one_way_price_centavos  int NOT NULL
   day_use_price_centavos  int NOT NULL
   PK (route_id, vehicle_type)
 
-transfer_date_slots                                 -- new lock/count row, mirrors tour_date_slots exactly
-  date                  date
-  vehicle_type          enum('van','suv')
-  PK (date, vehicle_type)
-
 bookings
   tour_id               becomes NULLABLE (was NOT NULL)
   + product_type        enum('tour','transfer_one_way','transfer_day_use') NOT NULL DEFAULT 'tour'
-  + route_id             FK -> transfer_routes.id, NULLABLE
-  + vehicle_type_requested  enum('van','suv'), NULLABLE
-  + CHECK (                                          -- mirrors the coupons CHECK-mirrored-by-Zod pattern
-      (product_type = 'tour' AND tour_id IS NOT NULL AND route_id IS NULL AND vehicle_type_requested IS NULL)
+  + route_id             FK -> transfer_routes.id, NULLABLE   -- NULL for a tour, AND for a staff-quoted custom route
+  + vehicle_type_requested  enum('van','suv'), NULLABLE        -- the one real discriminator; see CHECK below
+  + CHECK (
+      (product_type = 'tour' AND tour_id IS NOT NULL AND vehicle_type_requested IS NULL)
       OR
-      (product_type <> 'tour' AND tour_id IS NULL AND route_id IS NOT NULL AND vehicle_type_requested IS NOT NULL)
+      (product_type <> 'tour' AND tour_id IS NULL AND vehicle_type_requested IS NOT NULL)
     )
+  -- NOTE: route_id is deliberately NOT part of this CHECK. A transfer normally has a route_id,
+  -- but a staff-converted custom request may not (see booking_transfer_details.custom_route_description
+  -- below). "route_id XOR custom_route_description for every non-tour booking" is a cross-table
+  -- invariant MySQL's single-table CHECK cannot express — it is enforced in the ONE writer,
+  -- createTransferBooking() (Task T10), and pinned by a dedicated test, the same way
+  -- schema-conventions.test.ts pins the amount_paid_centavos writer allow-list.
 
-booking_transfer_details                            -- new 1:1 child table (pattern: booking_notes, booking_addons)
+booking_transfer_details                            -- 1:1 child table (pattern: booking_notes, booking_addons)
   booking_id            PK, FK -> bookings.id
-  pickup_time           varchar(5)   -- "HH:mm", civil label only, never parsed as a timezone instant
-  dropoff_address        varchar(400) NOT NULL
-  dropoff_map_url         varchar(500)
-  luggage_count          int NOT NULL default 0
-  flight_number          varchar(20)   -- airport transfers only; null for day-use
-  airline                varchar(80)   -- airport transfers only; null for day-use
+  pickup_time           varchar(5)    -- "HH:mm", civil label
+  day_use_end_time       varchar(5)    -- "HH:mm", day-use only; NULL for a one-way transfer
+  dropoff_address         varchar(400) NOT NULL
+  dropoff_map_url          varchar(500)
+  luggage_count           int NOT NULL default 0
+  flight_number           varchar(20)   -- airport transfers only
+  airline                 varchar(80)   -- airport transfers only
+  custom_route_description varchar(300) -- set only when bookings.route_id is NULL (a staff-quoted custom trip)
+  buffer_minutes_used      int NOT NULL  -- the admin setting's value AT HOLD TIME, frozen (see price-snapshot discipline)
   created_at / updated_at
 
 inquiries
@@ -143,66 +179,73 @@ inquiries
   + requested_date       date, nullable
   + pax                  int, nullable
   + route_description    varchar(300), nullable
+  + converted_booking_id  int, nullable, FK -> bookings.id   -- set once owner/finance convert it (Task T19)
 ```
 
-**What is deliberately reused, not duplicated:**
-- `bookings.pickup` / `pickup_map_url` already exist and serve the transfer's pickup address/map link — no new column.
-- `bookings.requests` already exists (free text) and serves "notes" — no new column.
-- `destinations` already exists and is not duplicated by `transfer_routes` — the new table only adds the transfer-specific attributes a destination doesn't have (duration, route-level cancellation window, inclusions/exclusions, pricing).
-- `price_snapshot` (JSON) already exists on `bookings` and takes the same shape discipline tours use — no new money column.
+**What is deliberately reused, not duplicated:** `bookings.pickup`/`pickup_map_url` (already exist) serve the transfer's pickup address; `bookings.requests` serves "notes"; `destinations` is not duplicated by `transfer_routes`; `price_snapshot` (JSON, already exists) carries `{ productType, vehicleType, routeId | null, customRouteDescription | null, priceSource: 'catalog' | 'staff_quote', priceCentavos, depositPercent, freeCancelHours }` — no new money column, and `priceSource` lives there rather than as a dedicated `bookings` column.
 
-**Migration numbers.** Next is `0015` (`0014_hot_the_stranger.sql` is the newest on disk). Each schema-changing task below runs `pnpm --filter @rg/server db:generate` once, in task order, so the exact mapping (0015 → vans.vehicle_type, 0016 → transfer_routes + prices, 0017 → transfer_date_slots, 0018 → bookings columns + CHECK, 0019 → booking_transfer_details, 0020 → inquiries columns) is fixed by execution order, not by this document. **Every one of these six migrations must be applied to both `rg_travel` and `rg_travel_test`, and the owner reminded to apply each to the server database at next deploy** — do not batch them into one migration file; Drizzle generates one per `db:generate` run and this plan does not override that.
+**Migration numbers.** Next is `0015`. Four tasks change the schema, in this order: T2 (`vans.vehicle_type`) → T3 (`transfer_routes` + `transfer_route_vehicle_prices`) → T5 (`bookings` columns/CHECK + `booking_transfer_details`) → T17 (`inquiries` columns). That is migrations `0015`–`0018`. (The first draft's `transfer_date_slots` migration is removed — see Architecture §2.) Every one of these four must be applied to both `rg_travel` and `rg_travel_test`, and the owner reminded to apply each to the server database at next deploy.
 
-### 2. Availability: whole-day vehicle blocking (recommended default), not time-window overlap
+### 2. Availability: time windows, shared fleet, one lock — the actual design
 
-The owner's prompt asks for a real design choice here, so here is the actual tradeoff:
+**The requirement (owner answers 1 and 9):** a transfer blocks its vehicle type for `[pickup_time, estimated_end + buffer)`, not the whole day, so one vehicle can serve several transfers a day. A tour still blocks a vehicle for the whole day. The two must never conflict, and the check must be concurrency-safe under simultaneous holds.
 
-**Option A — whole-day block (recommended for launch).** A transfer, one-way OR day-use, consumes **one vehicle of the requested type for the entire civil day**, exactly like a tour consumes one van for the day today. A one-way transfer that physically only takes two hours still occupies that vehicle's whole day in the booking system. This is conservative (undersells real fleet throughput) but requires **zero new interval/overlap logic** — it reuses the identical per-day counting shape `tour_date_slots` already uses, just keyed by `vehicle_type` instead of `tour_id`:
+**The tool that makes this tractable without per-vehicle scheduling at hold time:** neither a tour nor a transfer pins a specific `van_id` at hold/booking time — both still defer physical assignment to dispatch, exactly as today. So the hold-time check cannot ask "is van #7 free from 2–4pm"; it can only ask a pool question: "is there *some* van of the right type free for this window, given everything else already booked that day?" The classical **interval-scheduling minimum-resources result** answers this cleanly: *the minimum number of same-type resources needed to serve a set of time windows with none overlapping on the same resource equals the maximum number of those windows that are simultaneously active at any single instant* (the "peak"), and that minimum is always achievable — there is no packing case where more resources are needed than the peak. This is exactly the right tool, and it is a standard, provable result, not a heuristic.
+
+**The three feasibility conditions for a date `D`, checked under `fleet_date_slots(D) FOR UPDATE`** (the existing lock, taken first — unchanged from today's tour path):
 
 ```
-transferCapacity(vehicleType, date, now):
-  lock fleet_date_slots(date)                         -- same global lock, same order, first
-  lock transfer_date_slots(date, vehicleType)          -- created on demand, mirrors tour_date_slots
-  sellable = COUNT(vans WHERE is_active AND status = VAN_STATUS_SELLABLE AND vehicle_type = :vehicleType)
-  booked   = COUNT(bookings WHERE tour_date = :date AND vehicle_type_requested = :vehicleType
-                             AND status IN CAPACITY_HOLDING_STATUSES)
-  allowed  = booked < sellable
+vanSellable   = COUNT(vans WHERE is_active AND status = VAN_STATUS_SELLABLE AND vehicle_type = 'van')
+suvSellable   = COUNT(... vehicle_type = 'suv')
+vanPeak(D)    = peakOverlap( windows of every 'van'-type transfer booking on D with a capacity-holding status )
+suvPeak(D)    = peakOverlap( windows of every 'suv'-type transfer booking on D, same statuses )
+toursToday(D) = COUNT(bookings WHERE product_type = 'tour' AND tour_date = D AND status IN CAPACITY_HOLDING_STATUSES)
+
+(1)  vanPeak(D) <= vanSellable          -- van-type transfers must fit within the van fleet alone
+(2)  suvPeak(D) <= suvSellable          -- same, for SUVs
+(3)  toursToday(D) <= (vanSellable - vanPeak(D)) + (suvSellable - suvPeak(D))
+     -- tours (which can use either type) must fit in whatever is left over after
+     -- each type's own transfer peak has reserved its share
 ```
 
-**Known, accepted gap at launch:** this formula does **not** subtract tour bookings from the transfer pool or vice versa, even though both draw from the same physical fleet. Since tours ship **hidden** at launch (`show_tours = false`), this gap is inert on day one — every vehicle effectively serves transfers only. It only becomes a real double-booking risk the day the owner flips `show_tours` back on *and* tours and transfers are both actively taking bookings against the same physical vans. That is flagged in QUESTIONS below rather than solved speculatively now (YAGNI) — solving it precisely would require either (a) letting `assessCapacity` and the new transfer function share one fleet-wide counter keyed by vehicle type (a real redesign of `assessCapacity`, which `CLAUDE.md` explicitly says not to loosen casually — "the test database keeps an EMPTY fleet... do not loosen that assertion to fit a seed"), or (b) the owner manually partitioning the fleet into a "tours reserve" vs "transfers pool" via vehicle tagging, which needs its own decision.
+`peakOverlap()` is a pure, five-line sweep-line function over `{start, end}` pairs in **minutes-since-midnight**: sort the start/end boundaries, walk them incrementing/decrementing a counter, return the maximum. No timezone or DB access inside it — fully unit-testable in isolation with plain arrays.
 
-**Option B — time-window overlap** (duration + a configurable buffer between jobs, true multi-trip-per-vehicle-per-day scheduling) is more accurate and more complex: it needs an interval-overlap query (not a simple COUNT) and a real decision on buffer minutes, which the owner has not given. **Not built in this plan.** If the owner wants it, it is a follow-up plan, not a task added here under time pressure.
+- **Adding a new TRANSFER of type `T`** is allowed iff recomputing condition (1) or (2) for `T` (with the candidate's window included in the peak) still holds, **and** condition (3) still holds with that new peak (toursToday is unchanged by adding a transfer, but the leftover pool it must fit in shrinks if the peak grew).
+- **Adding a new TOUR** is allowed iff condition (3) holds with `toursToday(D) + 1` on the left (conditions 1/2 are unaffected by adding a tour).
+- **A window** is computed as `[pickupTime, pickupTime + route.estimatedDurationMinutes + bufferMinutes)` for `transfer_one_way`, or `[pickupTime, dayUseEndTime + bufferMinutes)` for `transfer_day_use`, all in minutes-since-midnight of the civil tour date. `bufferMinutes` is read from the new `transfer_operations` settings block (default 60) and **frozen** onto the booking as `booking_transfer_details.buffer_minutes_used`, so a later admin change to the default never silently reinterprets an existing booking's window.
+- **Known, accepted limitation:** a window that would cross midnight (a very late pickup plus a long duration/buffer landing after 23:59) is not modeled across two civil dates — the capacity date key is a single `date`. Task T7 adds an explicit guest-safe refusal for this case ("choose an earlier pickup time") rather than silently miscounting it; a cross-midnight itinerary is rare for these three products and not worth a two-date windowing model at launch.
 
-### 3. Quote & hold: parallel procedures, not one unified function
+**Dispatch-time assignment (Task T8) is a separate, more precise question** — once a booking is `confirmed` and an admin is picking an actual `van_id`, the real identity of every other booking on that van that day is known, so this is a straightforward per-vehicle check rather than pool math: `vansFreeOn`/`driversFreeOn` exclude a specific van from being offered for a new assignment when (a) it already has an assigned TOUR that date (whole-day exclusion, unchanged), or (b) it already has an assigned TRANSFER that date whose window overlaps the new booking's window (new — a plain two-interval overlap test, using the same minutes-since-midnight representation). Two non-overlapping transfers on the same van the same day are **not** excluded — that is the "several jobs a day" the owner asked for.
 
-`checkout.quote` / `checkout.createHold` for tours are already intricate (coupons, add-ons, tiers, the booking-window check, the ₱0/₱100 refusals). Rather than bolting a second shape onto that function with a growing set of "if transfer" branches, this plan adds **parallel, structurally similar** procedures — `checkout.quoteTransfer` and `checkout.createHoldTransfer` — that:
-- call the **same** shared helpers (`depositCentavos`, `gatewayMinimumMessage`, `PAYMONGO_MIN_CENTAVOS`, `bookableDateRange()`, `generateBookingRef()`, coupon validation if a coupon is offered on a transfer — see QUESTIONS) rather than re-implementing any of them;
-- write into the **same** `bookings` table, so every downstream admin/driver/reports/reviews/notify consumer needs no new type to understand, only a `product_type` branch where display copy differs;
-- take the fleet lock in the same fixed global order (`fleet_date_slots` → `transfer_date_slots` → booking row) as tours take (`fleet_date_slots` → `tour_date_slots` → booking row) — never both locks in one transaction (a booking is either a tour or a transfer, never both), so there is no new deadlock surface to reason about between the two lock chains.
+**Why no new lock table.** The first draft proposed a `transfer_date_slots(date, vehicle_type)` row mirroring `tour_date_slots`. It is unnecessary and would actually under-serialize: conditions (1)–(3) above read across **both** vehicle types and **both** product types for one date, so locking only one type's row would let a concurrent van-transfer hold and a concurrent suv-transfer hold both proceed while each makes a decision that depends on the other's (soon-to-be-stale) count. `fleet_date_slots(date)` already serializes the whole date for every capacity-affecting transaction today (tours take it first); extending that same lock to transfers, with no second lock, is both simpler and the only choice that is actually correct for this cross-type sharing requirement.
+
+### 3. Quote & hold: parallel procedures, shared booking-writer, coupons included
+
+`checkout.quote`/`createHold` (tours) are untouched. New, parallel procedures:
+
+- **`checkout.quoteTransfer`** (Task T9) — computes `subtotal = vehiclePriceForRouteAndType(route, vehicleType, productType)`, applies a coupon exactly as tours do (`validateCoupon` against the subtotal), `total = subtotal - discount`, `deposit = depositCentavos(total, depositPercent)`, and the existing ₱100/₱0 refusals via the same shared helpers tours use.
+- **`createTransferBooking()`** (Task T10, `server/src/services/transfers/create-booking.ts`) — the **one** function that takes the `fleet_date_slots` lock, re-checks the three feasibility conditions from Architecture §2 with the new booking's window included, re-checks the minimum-notice rule (owner answer 2: `pickup instant - now >= transfer_operations.minNoticeHours`, computed through the one civil-time-to-instant helper), writes the `bookings` row plus `booking_transfer_details` in the same transaction, generates the ref via the existing `generateBookingRef()`, and applies/records a coupon exactly as a tour hold does. It takes an explicit `priceSource` parameter — `{ kind: 'catalog' }` (looks up `transfer_route_vehicle_prices`) or `{ kind: 'staff', priceCentavos, staffUserId }` (Task T19's conversion path) — so **both** the guest-facing hold and the staff-conversion booking go through identical capacity/notice/transaction logic, and nothing about dispatch, payments, check-ins or reports ever needs to know which path created the booking.
+- **`checkout.createHoldTransfer`** (Task T11) — the thin, public, guest-facing wrapper around `createTransferBooking({ priceSource: { kind: 'catalog' } })`, the counterpart to tours' `createHold`.
 
 ### 4. The `show_tours` switch: a second, independent gate next to `content_unverified`
 
-Add `show_tours: z.boolean()` to `SETTING_SCHEMAS` (default `false` in `SEED_SETTINGS`) — same shape as `content_unverified`'s own bare-boolean block, same writer (`writeSettingBlock`), same reader pattern (`readSettingBlock('show_tours')`). Exposed on `SettingsPayload` as `showTours`, computed server-side exactly like `onlinePaymentEnabled` is — the client never re-derives it.
+Unchanged from the first draft. `show_tours: z.boolean()` (default `false`) added to `SETTING_SCHEMAS`, exposed as `SettingsPayload.showTours`, consulted by `tours.list`/`bySlug`, `checkout.quote`/`createHold` (tours), the SEO resolver and the sitemap — each independently of `content_unverified`. Admin tour editing is never gated by it.
 
-Consulted in four places, each additive:
-- `tours.list` / `tours.bySlug` (public router): return `[]` / refuse `NOT_FOUND` when `showTours` is false. The server is the authority — "hidden" means a guest cannot reach tour data through any public procedure, not merely that a nav link is missing.
-- `checkout.quote` / `checkout.createHold` (tours): refuse with a clear, friendly, guest-safe message when `showTours` is false — this is "the server refuses new tour holds" from the owner's decision, word for word.
-- `server/src/seo/resolvers.ts`: `/tours`, `/tours/:slug` resolve `noindex,nofollow` when `showTours` is false, **independently of `content_unverified`** — the same two-gates-both-fail-closed shape the spec already documents for `content_unverified` + `SITE_ENV`.
-- `server/src/seo/sitemap.ts`: tour/package detail URLs are dropped from the sitemap when `showTours` is false (packages are unaffected — packages are not tours and the owner's decision does not mention hiding them).
-- Client: `HomePage`, the header nav, and `TourCard`/catalog links read `settings.showTours` and render nothing when false — cosmetic, and explicitly **not** the access control (the server-side refusals above are).
+### 5. Admin & roles: one new area, three unchanged
 
-**Admin tour editing is NOT gated by `show_tours`.** `admin.tours.*` stays reachable to the owner regardless of the switch, per the owner's explicit "admin tour editing keep[s] working" instruction — this is the one place the plan deliberately does *not* add a check.
+- **Routes & prices:** `admin.transferRoutes.*`, gated `adminProcedure('toursPricing')` — unchanged area, owner-only.
+- **Vehicle type on vans:** existing `admin.vans.update`, unchanged area (`vansDrivers`).
+- **The tours switch, `transfer_operations` settings:** existing `admin.settings.*`, unchanged area (`usersSettings`).
+- **Viewing a custom-trip-request inquiry:** existing `admin.inquiries.*`, unchanged area (`packagesInquiries`, owner+dispatcher) — dispatcher can see the request, the requested route/date/pax/notes.
+- **Setting a price on / converting that request into a booking — the one new boundary:** `admin.transferQuotes.convert`, gated `adminProcedure('transferQuoting')`, **new area, `['owner', 'finance']`**. Dispatcher is denied by the area, not by hiding a button — Task T19 proves this with a role-isolation test the same way every other area is proven.
 
-### 5. Admin & roles: no new `ROLE_MATRIX` area (see reuse map above)
+### 6. Custom Trip Request → staff-priced booking (owner answer 4) — the actual flow
 
-- **Routes & prices:** new `admin.transferRoutes.*` router, gated `adminProcedure('toursPricing')` — owner-only, same area as tour pricing and coupons.
-- **Vehicle type on vans:** one new field on the existing `admin.vans.update` input, gated `adminProcedure('vansDrivers')` — unchanged area.
-- **The tours switch:** one more block in the existing `admin.settings.*` writer, gated `adminProcedure('usersSettings')` — unchanged area.
-- **Custom trip request quoting:** extended `admin.inquiries.*`, gated `adminProcedure('packagesInquiries')` — unchanged area.
-
-### 6. Custom Trip Request: lead capture only, with an honest limit (see QUESTIONS)
-
-There is no "admin creates a booking manually" capability anywhere in the codebase today (`server/src/routers/admin/` has no `bookings.create`). Building one is real new scope (a staff-priced, still-centavos, still-audited booking-creation path) that the owner's prompt did not ask for. So for this plan: a custom trip request becomes an `inquiries` row (`type = 'transfer_custom'`) with `requestedDate`/`pax`/`routeDescription`/`message`; staff reply with a quote **off-system** (phone, email, or the existing WhatsApp/Viber deep links), exactly as the owner's prompt describes ("staff reply with a quote"). If the guest accepts and the trip maps to one of R&G's standard routes, staff point them at that route's normal booking flow. **If it doesn't map to a standard route (a genuinely custom multi-stop itinerary), there is currently no in-system way to turn that into a trackable, paid, audited booking** — this is called out explicitly in QUESTIONS rather than silently worked around.
+1. Guest submits the existing public inquiry form with "Custom trip request" selected; it lands as an `inquiries` row (`type = 'transfer_custom'`, `requestedDate`, `pax`, `routeDescription`, `message`). Owner and dispatcher both see it (`packagesInquiries`).
+2. Owner or finance opens it and chooses **"Quote & convert to booking"** (dispatcher does not have this control — denied server-side by `transferQuoting`). They fill in the full set of transfer-booking fields (vehicle type, product type, tour date, pickup time/addresses, luggage, flight/airline if applicable) **plus a quoted price in pesos**, which the client converts to centavos and the server re-validates (positive, passes the same ₱100-gateway-floor logic that would apply if this were a catalog price, since the guest will pay it through the exact same PayMongo/QR path).
+3. The server calls `createTransferBooking({ priceSource: { kind: 'staff', priceCentavos, staffUserId } })`, through the same feasibility/notice checks as any other transfer hold. `inquiries.convertedBookingId` is set. `audit_log` gets a row naming the actor, the inquiry id, and the price (`transfer.custom_quote_converted`).
+4. The booking is created at `pending_payment`, with a **longer** hold window than the guest self-serve 15 minutes — a new `transfer_operations.staffQuoteHoldHours` setting (default 48h, admin-editable) — because the guest needs time to receive a notification and come back. This reuses the **existing** `hold_expires_at` column and the **existing** `expire-holds` cron sweep; only the expiry duration passed at creation differs. No new status, no new job.
+5. The guest is notified (new copy through the existing `notify()` — cannot-throw, after-commit) with a link into My Booking, where they pay the deposit online/QR or wait for cash collection on the day, exactly like any other transfer booking from this point on.
 
 ---
 
@@ -212,143 +255,157 @@ There is no "admin creates a booking manually" capability anywhere in the codeba
 
 | File | Responsibility |
 | --- | --- |
-| `server/src/services/transfers/pricing.ts` | `quoteTransfer()` — the one place a transfer's subtotal/discount/total/deposit is computed, mirroring `services/checkout`'s tour pricing shape |
-| `server/src/services/transfers/capacity.ts` | `assessTransferCapacity()` — the whole-day vehicle-type counting formula (Architecture §2), taking the fleet lock then `transfer_date_slots` |
-| `server/src/routers/public/transfers.ts` | `transferRoutes.list` (public, for the home-page picker and route pages) |
-| `server/src/routers/admin/transfer-routes.ts` | `admin.transferRoutes.*` — CRUD over routes + their per-vehicle-type prices |
-| `server/src/services/transfers/upsert-route.ts` | The transactional write for a route plus its two price rows |
+| `server/src/services/transfers/overlap.ts` | Pure `peakOverlap(windows)` sweep-line function (Architecture §2) — no DB, fully unit-testable |
+| `server/src/services/transfers/capacity.ts` | `assessTransferCapacity()` — conditions (1)/(2)/(3), reading `transfer_operations.bufferMinutes` |
+| `server/src/services/transfers/pricing.ts` | `quoteTransfer()` |
+| `server/src/services/transfers/create-booking.ts` | `createTransferBooking()` — the one shared, lock-holding, transaction-writing function (guest and staff paths both call this) |
+| `server/src/routers/public/transfers.ts` | `transferRoutes.list` (public) |
+| `server/src/routers/admin/transfer-routes.ts` | `admin.transferRoutes.*` |
+| `server/src/routers/admin/transfer-quotes.ts` | `admin.transferQuotes.convert` (`transferQuoting` area) |
+| `server/src/services/transfers/upsert-route.ts` | Transactional write for a route + its two price rows |
 
-**Modified server files** (additive branches, not rewrites)
+**Modified server files**
 
 | File | Change |
 | --- | --- |
-| `server/src/db/schema.ts` | Six schema changes from Architecture §1 |
-| `server/src/routers/public/checkout.ts` | + `quoteTransfer`, `createHoldTransfer` procedures (new exports, existing tour procedures untouched) |
-| `server/src/routers/admin/vans.ts` | `vehicleType` added to the update/create input |
-| `server/src/routers/admin/packages.ts` | Inquiries list/detail handle `type = 'transfer_custom'` fields |
-| `server/src/content/settings-schema.ts` | `show_tours: z.boolean()` added to `SETTING_SCHEMAS` |
-| `server/src/routers/public/tours.ts` | `showTours` refusal branch on `list`/`bySlug` |
-| `server/src/seo/resolvers.ts`, `server/src/seo/sitemap.ts` | `showTours` gate, independent of `content_unverified` |
-| `server/src/services/reports/money.ts` | Must-fix #1 (`outstandingBookings` → LEFT JOIN); new `revenueByRoute()` parallel to `revenueByTour()` |
-| `server/src/routers/public/driver.ts`, `shared/src/driver.ts` | `TripDetail` carries the transfer fields (pickup time, luggage, flight info, dropoff) when `productType !== 'tour'` |
-| `server/src/services/notify/templates.ts` | Existing `NotifyPayload` fields (`tourTitle`, `tourDate`) populated with the route name/date for a transfer booking — no new template keys unless T19 finds a genuine copy mismatch |
+| `server/src/db/schema.ts` | Architecture §1's four schema changes (no `transfer_date_slots`) |
+| `server/src/services/capacity.ts` | `assessCapacity` gains the leftover-pool subtraction (Architecture §2) |
+| `server/src/services/dispatch/availability.ts` | `vansFreeOn`/`driversFreeOn` gain the window-aware exclusion for transfer-vs-transfer on one vehicle (Task T8) |
+| `server/src/routers/public/checkout.ts` | + `quoteTransfer`, `createHoldTransfer` |
+| `server/src/routers/admin/vans.ts` | `vehicleType` field |
+| `server/src/routers/admin/packages.ts` | Inquiries list/detail handle `type = 'transfer_custom'` fields and link to the convert action |
+| `server/src/content/settings-schema.ts` | `show_tours: z.boolean()`; new `transfer_operations` block (`bufferMinutes`, `minNoticeHours`, `staffQuoteHoldHours`) |
+| `server/src/routers/public/tours.ts` | `showTours` refusal branch |
+| `server/src/seo/resolvers.ts`, `server/src/seo/sitemap.ts` | `showTours` gate |
+| `server/src/middleware/require-role.ts` | + `transferQuoting: ['owner', 'finance']` |
+| `server/src/services/reports/money.ts` | Must-fix #1; new `revenueByRoute()` |
+| `server/src/routers/public/driver.ts`, `shared/src/driver.ts` | `TripDetail` transfer fields |
+| `server/src/services/notify/templates.ts` | Route-name/date copy for a transfer booking; new copy for a ready staff quote |
+| `shared/src/time.ts` | New civil-time-to-instant helper for the minimum-notice check only |
 
 **New client files**
 
 | File | Responsibility |
 | --- | --- |
-| `client/src/pages/public/TransferBookingPage.tsx` | The transfer picker + vehicle-option + quote flow (home page leads here per owner decision 8) |
-| `client/src/components/transfer/TransferTypePicker.tsx` | Airport / day-use / custom-request chooser |
-| `client/src/components/transfer/RoutePicker.tsx` | Destination/route selector, reusing the existing `destinations` data |
-| `client/src/components/transfer/VehicleOptionCard.tsx` | Van vs SUV, price, seat/luggage capacity, selection |
-| `client/src/components/transfer/TransferGuestDetailsForm.tsx` | Pickup time, luggage, addresses, flight/airline (conditional), notes |
-| `client/src/pages/admin/AdminTransferRoutesPage.tsx` | Routes + per-vehicle-type prices + inclusions/exclusions editor |
+| `client/src/pages/public/TransferBookingPage.tsx` | The transfer picker + vehicle-option + quote flow |
+| `client/src/components/transfer/TransferTypePicker.tsx`, `RoutePicker.tsx`, `VehicleOptionCard.tsx`, `TransferGuestDetailsForm.tsx` | Booking-flow components |
+| `client/src/pages/admin/AdminTransferRoutesPage.tsx` | Routes + prices + inclusions/exclusions editor |
+| `client/src/components/admin/ConvertInquiryForm.tsx` | Owner/finance-only quote-and-convert form |
 
 **Modified client files**
 
 | File | Change |
 | --- | --- |
-| `client/src/pages/public/HomePage.tsx`, `client/src/components/layout/*` | Transfer-first hero; tour nav/cards gated on `settings.showTours` |
-| `client/src/pages/portal/*` (My Booking) | Transfer-specific fields rendered when `productType !== 'tour'` |
-| `client/src/pages/admin/AdminBookingsPage.tsx`, `AdminBookingDetailPage.tsx` | Product-type column/badge; transfer fields in the detail view |
-| `client/src/pages/admin/AdminCalendarPage.tsx`, `AdminDeparturesPage.tsx` | Transfers appear alongside tours; vehicle-type badge |
+| `client/src/pages/public/HomePage.tsx`, layout nav | Transfer-first hero; tour surfaces gated on `settings.showTours` |
+| `client/src/pages/portal/*` | Transfer fields when `productType !== 'tour'` |
+| `client/src/pages/admin/AdminBookingsPage.tsx`, `AdminBookingDetailPage.tsx` | Product-type badge, transfer fields |
+| `client/src/pages/admin/AdminCalendarPage.tsx`, `AdminDeparturesPage.tsx` | Transfers alongside tours; vehicle-type badge |
 | `client/src/pages/admin/AdminVansPage.tsx` | Vehicle-type field |
-| `client/src/pages/admin/AdminSettingsPage.tsx` | "Show tours on the website" toggle |
-| `client/src/pages/admin/AdminPackagesPage.tsx` | Custom-trip-request fields in the inquiries list/detail |
-| `client/src/pages/admin/AdminReportsPage.tsx` | Revenue-by-route table + CSV, alongside revenue-by-tour |
-| `client/src/pages/driver/*` | Pickup time, luggage, dropoff address, flight/airline shown on a transfer trip |
+| `client/src/pages/admin/AdminSettingsPage.tsx` | "Show tours" toggle + `transfer_operations` fields |
+| `client/src/pages/admin/AdminPackagesPage.tsx` | Custom-request fields; "Quote & convert to booking" action, owner/finance only |
+| `client/src/pages/admin/AdminReportsPage.tsx` | Revenue-by-route |
+| `client/src/pages/driver/*` | Pickup time, luggage, dropoff, flight/airline |
 
 **Shared**
 
 | File | Responsibility |
 | --- | --- |
-| `shared/src/transfers.ts` | `VEHICLE_TYPES`, Zod inputs for quote/hold/route-admin, the transfer detail/quote result types |
+| `shared/src/transfers.ts` | `VEHICLE_TYPES`, Zod inputs for quote/hold/route-admin/convert, result types |
 
 ---
 
 ## Tasks
 
-Batches of ~4. **Schema tasks (T2–T6) are strictly sequential** (each migration depends on the schema.ts state the last one left); UI tasks within a batch can run in parallel across different files once their schema dependency has landed. Model: **Sonnet** for UI/cleanup/admin-CRUD-plumbing, **Opus** for anything touching money, availability/locking, or schema. Review: **own dedicated Opus reviewer** for every money/availability/schema task, matching this project's standing rule; combined review for pure-UI tasks.
+Batches of 4, plus a trailing controller-only close-out task. **Schema tasks (T2, T3, T5, T17) are strictly sequential** with each other. Model: **Sonnet** for UI/admin-CRUD-plumbing, **Opus** for anything touching money, availability/locking, schema, or the new role boundary. Review: **dedicated Opus reviewer** for every money/availability/schema/role task; combined review for pure-UI tasks.
 
 ### Batch 1 — Spec correction, vehicle types, routes & pricing schema
 
 | Task | Delivers | Model | Schema? | Review |
 | --- | --- | --- | --- | --- |
-| **T1** | Correct `BUILD_SPEC.md` line 64 ("not van rentals") and record the 2026-10-28 owner decision in the spec's decision log; correct `docs/superpowers/plans/2026-10-30-prelaunch-fixes.md`'s now-superseded "do not build van transfers" line with a pointer to this plan | Sonnet | No | combined |
-| **T2** | `vans.vehicle_type` column + migration; `admin.vans.*` accepts/returns it; `AdminVansPage.tsx` gets the field | Sonnet | **Yes** | combined (schema is additive/low-risk: one nullable-free enum with a safe default, no money, no lock) |
-| **T3** | `transfer_routes` + `transfer_route_vehicle_prices` tables + migration; `server/src/services/transfers/upsert-route.ts` (transactional write, mirrors `services/tours/upsert.ts`'s pattern); `admin.transferRoutes.*` router (`toursPricing` area) | **Opus** | **Yes** | dedicated Opus (money: prices) |
-| **T4** | `AdminTransferRoutesPage.tsx` — list + editor for routes, their two per-vehicle-type prices, inclusions/exclusions text, active toggle | Sonnet | No | combined |
+| **T1** | Correct `BUILD_SPEC.md` line 64 and record the 2026-10-28/10-31 owner decisions in the spec's decision log; correct the pre-launch-fixes plan's now-superseded "no van transfers" line | Sonnet | No | combined |
+| **T2** | `vans.vehicle_type` column + migration; `admin.vans.*`; `AdminVansPage.tsx` | Sonnet | **Yes** | combined |
+| **T3** | `transfer_routes` + `transfer_route_vehicle_prices` tables + migration; `upsert-route.ts`; `admin.transferRoutes.*` (`toursPricing`) | **Opus** | **Yes** | dedicated Opus |
+| **T4** | `AdminTransferRoutesPage.tsx` | Sonnet | No | combined |
 
-### Batch 2 — `bookings` schema, availability, pricing/quote core
-
-| Task | Delivers | Model | Schema? | Review |
-| --- | --- | --- | --- | --- |
-| **T5** | `bookings.tour_id` nullable + `product_type`/`route_id`/`vehicle_type_requested` columns + CHECK constraint + migration; `booking_transfer_details` table + migration | **Opus** | **Yes** | dedicated Opus (changes the central money/booking table; the CHECK constraint is the load-bearing invariant) |
-| **T6** | **Must-fix audit** (Global Constraints): grep every `tours` join/reference to `bookings.tourId` in `server/src/`, classify each, fix every one that must handle `tour_id IS NULL` (starting with `outstandingBookings`, `money.ts:317`) | **Opus** | No | dedicated Opus (money correctness) |
-| **T7** | `transfer_date_slots` table + migration; `server/src/services/transfers/capacity.ts` (`assessTransferCapacity`), unit-tested for the exact concurrency race `capacity.test.ts` already proves for tours (two guests, one slot, one wins) | **Opus** | **Yes** | dedicated Opus (locking/concurrency) |
-| **T8** | `server/src/services/transfers/pricing.ts` (`quoteTransfer`) — subtotal/discount/total/deposit, the ₱100/₱0 refusals, the price snapshot shape; `checkout.quoteTransfer` procedure | **Opus** | No | dedicated Opus (money) |
-
-### Batch 3 — Hold creation, public booking UI, home page
+### Batch 2 — `bookings`/`booking_transfer_details` schema, must-fix audit, availability (hold time + dispatch time)
 
 | Task | Delivers | Model | Schema? | Review |
 | --- | --- | --- | --- | --- |
-| **T9** | `checkout.createHoldTransfer` — takes the fleet lock then `transfer_date_slots`, re-checks capacity and the booking window inside the lock, writes the booking + `booking_transfer_details` row in one transaction, generates the ref via the existing `generateBookingRef()` | **Opus** | No | dedicated Opus (money + concurrency) |
-| **T10** | `shared/src/transfers.ts` — Zod inputs for quote/hold (route, product type, vehicle type, date, pax, luggage, pickup time, addresses, flight/airline conditional on airport transfers), friendly messages via the field-errors pattern | Sonnet | No | combined |
-| **T11** | `TransferTypePicker`, `RoutePicker`, `VehicleOptionCard`, `TransferGuestDetailsForm` components; the quote-and-hold flow calling T9/T8 | Sonnet | No | combined |
-| **T12** | `TransferBookingPage.tsx` wired into the home page per owner decision 8 (type → route → date → passengers → vehicle options with prices); nav/home updated to lead with transfers | Sonnet | No | combined |
+| **T5** | `bookings` nullable `tour_id` + `product_type`/`vehicle_type_requested`/`route_id` + CHECK + migration; `booking_transfer_details` table + migration | **Opus** | **Yes** | dedicated Opus |
+| **T6** | Must-fix audit: every `tours`-joined or `bookings.tourId`/`bookings.routeId`-assuming query in `server/src/`, classified and fixed | **Opus** | No | dedicated Opus |
+| **T7** | `overlap.ts` (`peakOverlap`); `transfer_operations` settings block; `assessCapacity` extended (leftover-pool term); `assessTransferCapacity()` — all three feasibility conditions, concurrency-proven the same way `capacity.test.ts` proves tours (two simultaneous holds, one slot, one wins); the cross-midnight-window refusal | **Opus** | No | **dedicated Opus — the owner's named highest-scrutiny task in this plan** |
+| **T8** | `vansFreeOn`/`driversFreeOn` window-aware exclusion for transfer-vs-transfer on one specific vehicle; whole-day tour exclusion unchanged; `dispatch-availability.test.ts` extended, the existing van-status-agreement test re-proven green | **Opus** | No | dedicated Opus |
 
-### Batch 4 — Tours-hidden switch, admin settings, inquiries extension
-
-| Task | Delivers | Model | Schema? | Review |
-| --- | --- | --- | --- | --- |
-| **T13** | `show_tours` settings block + `SettingsPayload.showTours`; `tours.list`/`bySlug` refusal; `checkout.quote`/`createHold` (tours) refusal; SEO resolver + sitemap gate | **Opus** | No | dedicated Opus (a money/booking-refusal gate + an SEO gate, both fail-closed-sensitive) |
-| **T14** | Client: `AdminSettingsPage.tsx` toggle; home/nav/catalog hide tour surfaces when off; **regression proof**: existing tour tests stay green with `show_tours = true` (the seed default once this ships), and a new test proves every hidden surface with `show_tours = false` | Sonnet | No | combined |
-| **T15** | `inquiries` schema extension (`transfer_custom` type + 3 nullable columns) + migration; `admin.inquiries.*`/`AdminPackagesPage.tsx` show the new fields; public inquiry form gains the "Custom trip request" option | Sonnet | **Yes** | combined (no money, no lock; schema is three nullable columns) |
-| **T16** | Must-fix #1 verification + `revenueByRoute()` in `reports/money.ts`; `AdminReportsPage.tsx` revenue-by-route table + CSV, alongside revenue-by-tour | **Opus** | No | dedicated Opus (money) |
-
-### Batch 5 — Driver portal, admin bookings/calendar, My Booking, notifications
+### Batch 3 — Pricing, the shared booking-writer, the guest hold path
 
 | Task | Delivers | Model | Schema? | Review |
 | --- | --- | --- | --- | --- |
-| **T17** | `TripDetail` (shared + `driver.ts`) carries transfer fields; driver portal trip screen renders pickup time, luggage, dropoff, flight/airline for a transfer; T13's zero-stops path confirmed structurally (not assumed) in `checkins.ts`/`tripProgress` | **Opus** | No | dedicated Opus (driver-portal data exposure touches the same role-isolation care as the rest of the driver portal) |
-| **T18** | `AdminBookingsPage.tsx`/`AdminBookingDetailPage.tsx`/`AdminCalendarPage.tsx`/`AdminDeparturesPage.tsx` show product type, vehicle type requested, route, and the transfer-only guest fields | Sonnet | No | combined |
-| **T19** | Portal (My Booking) renders transfer fields; `notify()` templates populate correctly for a transfer booking (route name where `tourTitle` was, no itinerary-stop language); review-request email copy checked for tour-only language | Sonnet | No | combined |
-| **T20** | End-to-end regression proof: full test suite green, leak detector silent, a transfer booking walked through hold → deposit → assignment → check-ins (start + complete, no stops) → review-eligible, **and** a tour booking walked through the same lifecycle with `show_tours = true` to prove nothing broke | **Opus** (verification task) | No | dedicated Opus |
+| **T9** | `services/transfers/pricing.ts` (`quoteTransfer`) — subtotal/coupon/discount/total/deposit, ₱100/₱0 refusals; `checkout.quoteTransfer` | **Opus** | No | dedicated Opus |
+| **T10** | `services/transfers/create-booking.ts` (`createTransferBooking`) — the lock, the three feasibility conditions with the candidate window, the minimum-notice check, the transactional write, coupon redemption, `priceSource` parameter | **Opus** | No | dedicated Opus — the other half of the owner's named highest-scrutiny work |
+| **T11** | `checkout.createHoldTransfer` (public, guest-facing wrapper over T10 with `priceSource: catalog`) | **Opus** | No | dedicated Opus |
+| **T12** | `shared/src/transfers.ts` — Zod inputs for quote/hold (route, product type, vehicle type, date, pax, luggage, pickup/day-use-end time, addresses, flight/airline conditional), friendly messages via `field-errors.ts` | Sonnet | No | combined |
 
-### Batch 6 — Content, legal, final polish
+### Batch 4 — Public booking UI, home page, tours-hidden switch
 
 | Task | Delivers | Model | Schema? | Review |
 | --- | --- | --- | --- | --- |
-| **T21** | Seed data: 2–3 real-named demo routes with both vehicle-type prices in `seedDemo` (dev-only, same upsert discipline as tours); placeholder imagery for transfer vehicle cards, same PLACEHOLDER-labelled gradient pattern as tours | Sonnet | No | combined |
-| **T22** | `frontend-design` + `ui-ux-pro-max` pass on the transfer booking flow at 360px and 1440px — the home-page sequence is the highest-traffic surface in the whole relaunch | Sonnet | No | combined |
-| **T23** | Legal/content to-dos filed as a checklist for the owner (see below) — **text not written by this task**, only the list of what must change | Sonnet | No | combined |
-| **T24** | Full five-check pass across the whole batch, `docs/BUGS_LOG.md` updated for anything found, plan's "Execution status" section closed out | — (controller) | No | — |
+| **T13** | `TransferTypePicker`, `RoutePicker`, `VehicleOptionCard`, `TransferGuestDetailsForm` | Sonnet | No | combined |
+| **T14** | `TransferBookingPage.tsx`; home page/nav lead with transfers (owner decision 8) | Sonnet | No | combined |
+| **T15** | `show_tours` settings block + `SettingsPayload.showTours`; `tours.list`/`bySlug`, `checkout.quote`/`createHold` (tours) refusals; SEO resolver + sitemap gate | **Opus** | No | dedicated Opus |
+| **T16** | Client: `AdminSettingsPage.tsx` toggle; home/nav/catalog hidden when off; regression proof both ways (`show_tours` true and false) | Sonnet | No | combined |
+
+### Batch 5 — Inquiries extension, reports fix, the new role boundary, its admin UI
+
+| Task | Delivers | Model | Schema? | Review |
+| --- | --- | --- | --- | --- |
+| **T17** | `inquiries` schema extension (`transfer_custom` type, `requestedDate`/`pax`/`routeDescription`/`convertedBookingId`) + migration; `admin.inquiries.*`/`AdminPackagesPage.tsx` show the new fields; public inquiry form gains "Custom trip request" | Sonnet | **Yes** | combined |
+| **T18** | Must-fix #1 fix (`outstandingBookings` → LEFT JOIN); `revenueByRoute()`; `AdminReportsPage.tsx` revenue-by-route + CSV | **Opus** | No | dedicated Opus |
+| **T19** | **New `ROLE_MATRIX` area `transferQuoting: ['owner','finance']`** + `BUILD_SPEC.md` §9 table + `role-isolation.test.ts` counts, edited together; `admin.transferQuotes.convert` calling T10's `createTransferBooking({priceSource: staff})`; `staffQuoteHoldHours` setting; `audit_log` row with actor + price | **Opus** | No | **dedicated Opus — money AND a new role boundary, this project's own dual-trigger for maximum scrutiny** |
+| **T20** | `ConvertInquiryForm.tsx` + `AdminPackagesPage.tsx` "Quote & convert to booking" control, visible/actionable only for owner/finance; dispatcher still sees the request read-only | Sonnet | No | combined |
+
+### Batch 6 — Close the loop: notifications, role-isolation proof, driver/admin/portal surfaces
+
+| Task | Delivers | Model | Schema? | Review |
+| --- | --- | --- | --- | --- |
+| **T21** | Guest notification for a ready staff quote; role-isolation test proving dispatcher is refused `transferQuoting`; full lifecycle test: inquiry → convert → booking → guest pays deposit → cash balance on the day | **Opus** | No | dedicated Opus |
+| **T22** | `TripDetail` carries transfer fields; driver trip screen renders them; zero-itinerary-stop check-in path confirmed structurally in `checkins.ts`/`tripProgress`, not assumed | **Opus** | No | dedicated Opus |
+| **T23** | `AdminBookingsPage.tsx`/`AdminBookingDetailPage.tsx`/`AdminCalendarPage.tsx`/`AdminDeparturesPage.tsx` show product type, vehicle type, route (or custom description), and the transfer-only guest fields | Sonnet | No | combined |
+| **T24** | Portal (My Booking) renders transfer fields; `notify()` template copy checked for tour-only language across every event, not just the new one | Sonnet | No | combined |
+
+### Batch 7 — Regression proof, content, design, legal
+
+| Task | Delivers | Model | Schema? | Review |
+| --- | --- | --- | --- | --- |
+| **T25** | End-to-end regression: full suite green, leak detector silent; a transfer booking walked hold → deposit → dispatch assignment (two same-day non-overlapping jobs on one van, proving T7/T8 together) → check-ins → review-eligible; a tour booking walked the same lifecycle with `show_tours = true`; a staff-converted booking walked inquiry → convert → pay → complete | **Opus** | No | dedicated Opus |
+| **T26** | Seed data: 2–3 real-named demo routes with both vehicle-type prices, dev-only (`seedDemo`); placeholder vehicle-card imagery | Sonnet | No | combined |
+| **T27** | `frontend-design` + `ui-ux-pro-max` pass on the transfer booking flow, 360px and 1440px | Sonnet | No | combined |
+| **T28** | Legal/content to-do checklist for the owner (shorter now — see below), text not written here | Sonnet | No | combined |
+| **T29** | Full five-check pass across the whole batch; `docs/BUGS_LOG.md` updated; plan's "Execution status" closed out | — (controller) | No | — |
 
 ---
 
-## Legal & content to-dos for the owner (not written by this plan)
+## Legal & content to-dos for the owner (shortened by the 2026-10-31 defaults; not drafted here)
 
-The Terms of Service / Refund policy / Privacy notice currently describe a tour business. Flag for the owner, as a to-do list, **not drafted here**:
-
-1. **No-show / waiting-time policy** for airport transfers — how long does the driver wait at a canceled or delayed pickup before it counts as a no-show, and what (if anything) is forfeited.
-2. **Flight-delay handling** — does a delayed flight automatically extend the free wait, and is there a cutoff.
-3. **Luggage limits** — what happens if a guest's actual luggage exceeds what they declared and the vehicle genuinely can't fit it.
-4. **Day-use overrun** — what happens if a day-use round trip runs past the agreed return time (driver overtime, additional charge, or absorbed).
-5. **Cancellation window for transfers** specifically — the existing tour cancellation language (`free_cancel_hours`) needs a transfer-appropriate number and wording (see QUESTIONS, below — this is also a build question, not purely legal).
-6. **"Operated by R&G Travel & Tours"** regulatory/accreditation language should be checked against transfer-specific DOT/LTFRB requirements if those differ from the tour operator permit already shown.
+1. **No-show / waiting-time policy** — owner answer 6: ship as **Terms-page placeholder text only** (consistent with the rest of the site's `content_unverified` placeholder discipline); no automated enforcement to build.
+2. **Flight-delay handling** — same treatment as #1, placeholder text.
+3. **Luggage limits** — owner answer 7: no legal text needed beyond noting the vehicle-type capacity is enforced at booking time; nothing is "forfeited," the option is simply not offered.
+4. **Day-use overrun** — still open; not covered by any 2026-10-31 default. Flag for the owner.
+5. **Cancellation window for transfers** — owner answer 8: reuse the same Refund Policy placeholder tours already show; no new copy needed at launch. The enforced number (`transfer_routes.free_cancel_hours`) still needs a sensible default — proposed: same default tours use, admin-editable per route.
+6. **"Operated by R&G Travel & Tours"** regulatory/accreditation language — still open: check against transfer-specific DOT/LTFRB requirements if they differ from the tour permit shown today.
 
 ---
 
-## Self-review
+## Self-review (this revision)
 
-- **Spec coverage:** every owner decision (1–8) maps to at least one task above; §5/§6/§8/§9/§10/§11 of `BUILD_SPEC.md` are each touched by name in Architecture §1–6 and the task table.
-- **Placeholder scan:** no task says "add validation" or "handle edge cases" without naming the edge case (the CHECK constraint, the ₱0/₱100 refusals, the zero-stops check-in path, the nullable-join audit are all named explicitly).
-- **Type/name consistency:** `product_type`, `route_id`, `vehicle_type_requested`, `transfer_routes`, `transfer_route_vehicle_prices`, `transfer_date_slots`, `booking_transfer_details` are used identically everywhere they appear across Architecture and the task table.
-- **Gap found and fixed during self-review:** the first draft of T9 did not say which lock order a transfer hold takes — corrected to match Architecture §3 explicitly (fleet → `transfer_date_slots`, never both chains in one transaction).
+- **Every 2026-10-31 owner answer maps to a named task:** availability → T7/T8; notice → T7/T11; coupons → T9/T10; custom-request conversion → T10/T17/T19/T20/T21; fleet-sharing design → T7/T8 together, explicitly required to agree (T25's regression test exercises both in one scenario).
+- **The one new role area is edited everywhere it must be, in one task (T19):** the matrix, the spec table, the test counts, together — matching the project's own enforced convention rather than letting them drift.
+- **Type/name consistency checked:** `vehicle_type_requested`, `route_id`, `custom_route_description`, `transfer_operations`, `transferQuoting`, `createTransferBooking`, `priceSource` are used identically everywhere they appear.
+- **Placeholder scan:** no task says "handle edge cases" without naming one — the cross-midnight window refusal, the leftover-pool formula, the frozen `buffer_minutes_used`, and the exact CHECK constraint text are all spelled out, not gestured at.
+- **A residual risk, named rather than hidden:** `assessCapacity`'s new leftover-pool term and `assessTransferCapacity`'s three conditions are proven correct by the cited interval-scheduling theorem given the model's own assumptions (vehicles within a type are fungible for this count; windows don't cross midnight). Those assumptions are both stated explicitly above rather than left implicit.
 
 ---
 
-## ✅ TRANSFERS PLAN WRITTEN
+## Task summary table
 
 | Task | Delivers | Model | Schema? | Review |
 | --- | --- | --- | --- | --- |
@@ -357,40 +414,37 @@ The Terms of Service / Refund policy / Privacy notice currently describe a tour 
 | T3 | Routes + prices schema/service/router | Opus | Yes | dedicated Opus |
 | T4 | Admin routes/prices UI | Sonnet | No | combined |
 | T5 | `bookings` + `booking_transfer_details` schema | Opus | Yes | dedicated Opus |
-| T6 | Nullable-`tour_id` join audit | Opus | No | dedicated Opus |
-| T7 | `transfer_date_slots` + capacity service | Opus | Yes | dedicated Opus |
-| T8 | Transfer pricing/quote | Opus | No | dedicated Opus |
-| T9 | Transfer hold creation | Opus | No | dedicated Opus |
-| T10 | Shared transfer Zod inputs | Sonnet | No | combined |
-| T11 | Booking-flow components | Sonnet | No | combined |
-| T12 | Home page + transfer page | Sonnet | No | combined |
-| T13 | `show_tours` gate (server) | Opus | No | dedicated Opus |
-| T14 | `show_tours` gate (client) + regression | Sonnet | No | combined |
-| T15 | Inquiries extension | Sonnet | Yes | combined |
-| T16 | Reports money fix + revenue-by-route | Opus | No | dedicated Opus |
-| T17 | Driver portal transfer fields | Opus | No | dedicated Opus |
-| T18 | Admin bookings/calendar UI | Sonnet | No | combined |
-| T19 | Portal + notifications | Sonnet | No | combined |
-| T20 | End-to-end regression proof | Opus | No | dedicated Opus |
-| T21 | Seed/placeholder content | Sonnet | No | combined |
-| T22 | Design/UX pass | Sonnet | No | combined |
-| T23 | Legal to-do list | Sonnet | No | combined |
-| T24 | Final verification sweep | — | No | — |
+| T6 | Nullable-join audit | Opus | No | dedicated Opus |
+| T7 | Hold-time window-aware capacity (overlap math, settings, `assessCapacity` extension, `assessTransferCapacity`) | Opus | No | dedicated Opus (highest scrutiny) |
+| T8 | Dispatch-time window-aware vehicle assignment | Opus | No | dedicated Opus |
+| T9 | Transfer pricing/quote incl. coupons | Opus | No | dedicated Opus |
+| T10 | Shared `createTransferBooking` service | Opus | No | dedicated Opus (highest scrutiny) |
+| T11 | Guest-facing `createHoldTransfer` | Opus | No | dedicated Opus |
+| T12 | Shared transfer Zod inputs | Sonnet | No | combined |
+| T13 | Booking-flow components | Sonnet | No | combined |
+| T14 | Home page + transfer page | Sonnet | No | combined |
+| T15 | `show_tours` gate (server) | Opus | No | dedicated Opus |
+| T16 | `show_tours` gate (client) + regression | Sonnet | No | combined |
+| T17 | Inquiries extension | Sonnet | Yes | combined |
+| T18 | Reports money fix + revenue-by-route | Opus | No | dedicated Opus |
+| T19 | New `transferQuoting` role area + staff-quote conversion | Opus | No | dedicated Opus (money + new role boundary) |
+| T20 | Convert-to-booking admin UI | Sonnet | No | combined |
+| T21 | Staff-quote notification + role-isolation + lifecycle proof | Opus | No | dedicated Opus |
+| T22 | Driver portal transfer fields | Opus | No | dedicated Opus |
+| T23 | Admin bookings/calendar UI | Sonnet | No | combined |
+| T24 | Portal + notifications copy | Sonnet | No | combined |
+| T25 | End-to-end regression proof | Opus | No | dedicated Opus |
+| T26 | Seed/placeholder content | Sonnet | No | combined |
+| T27 | Design/UX pass | Sonnet | No | combined |
+| T28 | Legal to-do list | Sonnet | No | combined |
+| T29 | Final verification sweep | — | No | — |
 
 ---
 
-## QUESTIONS FOR THE OWNER
+## Assumptions carried into this revision (flag if any are wrong)
 
-1. **Booking lead time for airport transfers.** The existing tour booking window (`settings.booking`: `minLeadDays = 1`, `nextDayCutoffTime = "18:00"`) blocks same-day bookings entirely. Real airport-transfer demand is often same-day or next-flight. Should transfers use a **separate, shorter** lead-time setting (e.g. minimum 2–4 hours' notice), or share the tours window as-is for launch?
-2. **Buffer / back-to-back jobs.** This plan's recommended default (Option A, Architecture §2) blocks a vehicle for the **whole day** per transfer, even a 2-hour airport run — simple, safe against double-booking, but wastes fleet capacity. Is that acceptable at launch volume, or is true time-window scheduling (Option B: duration + a buffer you specify in minutes) worth building as a fast follow-up before or shortly after launch?
-3. **Night / late-flight surcharge.** Is there a surcharge for very early/late pickups, and if so is it per-route (another column on `transfer_route_vehicle_prices`) or a flat percentage?
-4. **Free waiting time at pickup.** How many minutes does the driver wait free before a no-show applies (feeds to-do #1 above, and possibly a `free_wait_minutes` column)?
-5. **Excess luggage.** Is there a hard per-vehicle-type luggage cap the guest selection enforces at booking time (blocking the SUV option if luggage count exceeds it), or is it handled by the driver on the day?
-6. **Child seats.** Offered as a free inclusion, a paid add-on (reusing the existing `tour_addons`-style per-route add-on concept), or not offered at all for transfers?
-7. **Minimum notice to book a day-use trip** — same question as Q1 but for the day-use product specifically, since it ties up a vehicle for a full day.
-8. **Cancellation window for transfers.** What should `transfer_routes.free_cancel_hours` default to — the same value as tours, or a transfer-specific number (and does it differ between one-way and day-use)?
-9. **Coupons on transfers.** Should the existing coupon system apply to transfer bookings at all, or are transfers deliberately coupon-free at launch (simpler quote function, one fewer interaction to test)?
-10. **Custom Trip Request → real booking.** Confirmed in Architecture §6: there is no "staff creates a manual booking" feature today, so an accepted custom quote that doesn't match a standard route has no in-system way to become a trackable, paid, audited booking. Is that acceptable for launch (handled entirely off-system), or should a scoped "admin-priced manual booking" feature be added to this batch?
-11. **Tours/transfers sharing the fleet once `show_tours` is flipped back on.** Architecture §2's accepted gap: once tours are live again, the whole-day-block formula doesn't cross-check against tour bookings on the same vehicle. Acceptable to revisit only when that day actually arrives, or should capacity-sharing be designed now even though it won't be exercised at launch?
+- `staffQuoteHoldHours` default of 48 hours is a reasonable guess for "enough time for a guest to see an email and come back," not an owner-given number — admin-editable, easy to change later.
+- A staff-converted booking with no matching catalog route still needs *some* guest-facing display name on receipts/emails/My Booking; this plan uses `custom_route_description` verbatim where a route name would otherwise appear. If the owner wants different wording for a staff-quoted trip specifically, that is a copy change inside T20/T21, not a new architecture decision.
+- "Dispatcher can view requests" (owner answer 4) is read as: dispatcher sees the inquiry's captured fields (route description, date, pax, notes) exactly as today, but never the quoted price, the convert action, or the resulting booking's price details beyond what `bookingsView` already exposes on any booking. If the owner wants dispatcher to see the price once set (just not set it themselves), that's a one-line change to T19/T20, flagged now rather than assumed silently.
 
 Stopping here for approval, per the prompt. No code, schema, or test changes have been made; only this plan file exists on disk.
