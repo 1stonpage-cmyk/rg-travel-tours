@@ -36,10 +36,24 @@
  */
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import AdminVansPage from '@/pages/admin/AdminVansPage';
 import { TrpcProviders } from '@/lib/trpc';
 import { mockTrpc, mockTrpcError, resetTrpcMock } from './helpers/mock-trpc';
+
+/*
+ * Task T2 adds the first Radix `Select` field to this page's own form
+ * (vehicle type). Radix needs three DOM APIs jsdom does not implement, and
+ * without them the listbox never opens — see `assign-panel.test.tsx` for
+ * the first use of this exact shim in this tree.
+ */
+beforeAll(() => {
+  const proto = window.Element.prototype as unknown as Record<string, unknown>;
+  proto.hasPointerCapture = () => false;
+  proto.setPointerCapture = () => {};
+  proto.releasePointerCapture = () => {};
+  proto.scrollIntoView = () => {};
+});
 
 afterEach(() => {
   resetTrpcMock();
@@ -52,6 +66,7 @@ const VAN = {
   plate: 'ABC123',
   model: 'Toyota Hiace',
   capacity: 10,
+  vehicleType: 'van',
   status: 'available',
   odometer: 50_000,
   lastService: '2026-01-01',
@@ -80,7 +95,7 @@ function renderPage(overrides?: { vans?: Array<typeof VAN> }) {
 describe('AdminVansPage', () => {
   it('labels every input with a real <label>', () => {
     renderPage();
-    for (const name of ['Plate', 'Model', 'Seats for guests']) {
+    for (const name of ['Plate', 'Model', 'Seats for guests', 'Vehicle type']) {
       expect(screen.getByLabelText(new RegExp(name, 'i'))).toBeTruthy();
     }
 
@@ -140,6 +155,60 @@ describe('AdminVansPage', () => {
     const described = field.getAttribute('aria-describedby');
     expect(described).toBeTruthy();
     expect(document.getElementById(described!)?.textContent).toMatch(/required|at least/i);
+  });
+
+  /**
+   * Task T2. `vehicleType` is a required Zod field with no default — the
+   * admin must explicitly choose van or SUV, never have one silently
+   * assumed. Filling every other required field and submitting without
+   * ever touching the vehicle-type control must refuse, with the message
+   * beside that control, same as every other required field above.
+   */
+  it('requires an explicit vehicle type, with no default silently chosen', async () => {
+    renderPage();
+    await user.type(screen.getByLabelText(/^plate/i), 'NEW111');
+    await user.type(screen.getByLabelText(/model/i), 'Nissan Urvan');
+    await user.type(screen.getByLabelText(/seats for guests/i), '12');
+    await user.click(screen.getByRole('button', { name: /add van/i }));
+
+    const field = screen.getByRole('combobox', { name: /vehicle type/i });
+    const described = field.getAttribute('aria-describedby');
+    expect(described).toBeTruthy();
+    expect(document.getElementById(described!)?.textContent).toMatch(/required/i);
+  });
+
+  /**
+   * Task T2. Proves the SUV choice actually reaches the mutation, not just
+   * that the control renders — selecting "SUV" and submitting must send
+   * `vehicleType: 'suv'` to `admin.vans.create`.
+   */
+  it('sends the chosen vehicle type to admin.vans.create', async () => {
+    const createCalls: unknown[] = [];
+    mockTrpc({
+      'admin.vans.list': [VAN],
+      'admin.vans.create': (input: unknown) => {
+        createCalls.push(input);
+        return { id: 99 };
+      },
+      'admin.vans.update': () => ({ ok: true }),
+      'admin.vans.setStatus': () => ({ ok: true }),
+    });
+    render(
+      <TrpcProviders>
+        <AdminVansPage />
+      </TrpcProviders>,
+    );
+
+    await user.type(screen.getByLabelText(/^plate/i), 'SUV111');
+    await user.type(screen.getByLabelText(/model/i), 'Toyota Fortuner');
+    await user.type(screen.getByLabelText(/seats for guests/i), '6');
+    await user.click(screen.getByRole('combobox', { name: /vehicle type/i }));
+    await user.click(await screen.findByRole('option', { name: /^suv$/i }));
+    await user.click(screen.getByRole('button', { name: /add van/i }));
+
+    expect(await screen.findByText(/van added/i)).toBeTruthy();
+    expect(createCalls).toHaveLength(1);
+    expect(createCalls[0]).toMatchObject({ vehicleType: 'suv' });
   });
 
   /**
@@ -215,9 +284,20 @@ describe('AdminVansPage', () => {
     // controls, all exempt from a test named "every control". The source
     // happens to apply `tap-target` to them anyway, so nothing was masked —
     // but the test was not checking.
+    //
+    // Task T2 adds `aria-hidden="true"` to the exclusion: the vehicle-type
+    // field is the first `Select` on this page mounted INSIDE a real
+    // `<form>`, and Radix's `Select` renders a visually-hidden, `tabIndex
+    // -1`, `aria-hidden="true"` native `<select>` (`SelectBubbleInput`)
+    // alongside any `Select` that is a form control, purely so a form
+    // without JS still submits a value — a mirror, never something a guest
+    // can see or tap. Excluding `aria-hidden` elements keeps the sweep
+    // honest about what "every control" means (every control a human can
+    // reach) without weakening it for anything real: no visible, operable
+    // control on this page carries `aria-hidden="true"`.
     const controls = Array.from(
       document.querySelectorAll<HTMLElement>('button, input, select, textarea'),
-    );
+    ).filter((control) => control.getAttribute('aria-hidden') !== 'true');
     expect(controls.length).toBeGreaterThan(8);
     for (const control of controls) {
       expect(
@@ -261,6 +341,10 @@ describe('AdminVansPage', () => {
     await user.type(screen.getByLabelText(/model/i), 'Another Hiace');
     await user.clear(screen.getByLabelText(/seats for guests/i));
     await user.type(screen.getByLabelText(/seats for guests/i), '10');
+    // `vehicleType` is a required field with no default — the form cannot
+    // submit without an explicit choice, same as every other required field.
+    await user.click(screen.getByRole('combobox', { name: /vehicle type/i }));
+    await user.click(await screen.findByRole('option', { name: /^van$/i }));
     await user.click(screen.getByRole('button', { name: /add van/i }));
 
     const field = await screen.findByLabelText(/^plate/i);

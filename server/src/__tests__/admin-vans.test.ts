@@ -23,6 +23,7 @@ const VALID_VAN = {
   plate: 'ABC123',
   model: 'Toyota Hiace',
   capacity: 10,
+  vehicleType: 'van',
   odometer: 50_000,
   lastService: '2026-01-01',
   nextService: '2026-07-01',
@@ -259,6 +260,59 @@ describeWithDb('vans', () => {
     const row = rows.find((r) => r.id === id);
     expect(row).toBeDefined();
     expect(row).toMatchObject(dates);
+  });
+
+  /**
+   * Task T2 — `vehicleType` is a required Zod field with no default, so a
+   * `create` call missing it must be rejected as a validation failure
+   * (BAD_REQUEST-shaped), never a 500.
+   */
+  it('rejects create with no vehicleType', async () => {
+    const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
+    const withoutVehicleType = {
+      plate: 'NOVT111',
+      model: VALID_VAN.model,
+      capacity: VALID_VAN.capacity,
+      odometer: VALID_VAN.odometer,
+      lastService: VALID_VAN.lastService,
+      nextService: VALID_VAN.nextService,
+      orcrExpiry: VALID_VAN.orcrExpiry,
+      franchiseNo: VALID_VAN.franchiseNo,
+      franchiseExpiry: VALID_VAN.franchiseExpiry,
+      repairNotes: VALID_VAN.repairNotes,
+    };
+    await expect(api.admin.vans.create(withoutVehicleType as never)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+  });
+
+  it('round-trips vehicleType: suv through create and list', async () => {
+    const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
+    const { id } = await api.admin.vans.create({
+      ...VALID_VAN,
+      plate: 'SUV111',
+      vehicleType: 'suv',
+    });
+    created.vanIds.push(id);
+
+    const rows = await api.admin.vans.list();
+    const row = rows.find((r) => r.id === id);
+    expect(row).toBeDefined();
+    expect(row?.vehicleType).toBe('suv');
+  });
+
+  it("update's patch can change a van's vehicleType from van to suv and back", async () => {
+    const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
+    const { id } = await api.admin.vans.create({ ...VALID_VAN, plate: 'SWAP111' });
+    created.vanIds.push(id);
+
+    await api.admin.vans.update({ id, patch: { vehicleType: 'suv' } });
+    let rows = await api.admin.vans.list();
+    expect(rows.find((r) => r.id === id)?.vehicleType).toBe('suv');
+
+    await api.admin.vans.update({ id, patch: { vehicleType: 'van' } });
+    rows = await api.admin.vans.list();
+    expect(rows.find((r) => r.id === id)?.vehicleType).toBe('van');
   });
 
   it('has no delete mutation — vans are soft-deleted through is_active', () => {

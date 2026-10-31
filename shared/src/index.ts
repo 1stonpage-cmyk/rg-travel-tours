@@ -17,4 +17,5 @@ export * from './settings';
 export * from './staff-users';
 export * from './time';
 export * from './tours-admin';
+export * from './transfers';
 export * from './schemas/public';

@@ -34,6 +34,7 @@ import {
   BOOKING_STATUSES,
   DISCOUNT_TYPES,
   PAY_MODES,
+  VEHICLE_TYPES,
   type PriceSnapshot,
 } from '@rg/shared';
 
@@ -461,6 +462,15 @@ export const vans = mysqlTable(
     model: varchar('model', { length: 120 }).notNull(),
     /** Seats available to GUESTS, not including the driver. Feeds the §5 capacity check. */
     capacity: int('capacity').notNull(),
+    /**
+     * Van or SUV (owner decision 2026-10-28) — every vehicle in the fleet
+     * needs a type now that transfers are typed by vehicle. Defaults to
+     * `'van'` so every existing `.insert(vans).values(...)` call site keeps
+     * compiling without being touched; the admin CRUD form still requires an
+     * explicit choice (`vanInputSchema`'s `vehicleType` carries no Zod
+     * default — see `shared/src/dispatch.ts`).
+     */
+    vehicleType: mysqlEnum('vehicle_type', VEHICLE_TYPES).notNull().default('van'),
     status: mysqlEnum('status', VAN_STATUSES).notNull().default('available'),
     odometer: int('odometer'),
     /** Civil dates in Asia/Manila — a van's papers expire on a day, not at an instant. */

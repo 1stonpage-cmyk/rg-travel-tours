@@ -50,6 +50,7 @@ function toVanRow(row: VanSelect): VanRow {
     plate: row.plate,
     model: row.model,
     capacity: row.capacity,
+    vehicleType: row.vehicleType,
     status: row.status,
     odometer: row.odometer,
     lastService: civilDateFromDate(row.lastService),
@@ -68,6 +69,7 @@ function toInsertValues(input: VanInput): VanInsert {
     plate: input.plate,
     model: input.model,
     capacity: input.capacity,
+    vehicleType: input.vehicleType,
     odometer: input.odometer,
     lastService: toDbDate(input.lastService),
     nextService: toDbDate(input.nextService),
@@ -89,6 +91,7 @@ function toUpdateValues(patch: Partial<VanInput>): Partial<VanInsert> {
   if (patch.plate !== undefined) out.plate = patch.plate;
   if (patch.model !== undefined) out.model = patch.model;
   if (patch.capacity !== undefined) out.capacity = patch.capacity;
+  if (patch.vehicleType !== undefined) out.vehicleType = patch.vehicleType;
   if (patch.odometer !== undefined) out.odometer = patch.odometer;
   if (patch.lastService !== undefined) out.lastService = toDbDate(patch.lastService);
   if (patch.nextService !== undefined) out.nextService = toDbDate(patch.nextService);

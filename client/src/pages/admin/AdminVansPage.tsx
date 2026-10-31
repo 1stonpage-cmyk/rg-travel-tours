@@ -74,6 +74,12 @@ import { trpc } from '@/lib/trpc';
 const SETTABLE_STATUSES = ['available', 'parked', 'for_repair'] as const;
 type SettableStatus = (typeof SETTABLE_STATUSES)[number];
 
+/** Labels for the vehicle-type column/badge — matches the form's own options. */
+const VEHICLE_TYPE_LABELS: Record<string, string> = {
+  van: 'Van',
+  suv: 'SUV',
+};
+
 const STATUS_LABELS: Record<string, string> = {
   available: 'Available',
   on_trip: 'On trip',
@@ -101,6 +107,16 @@ const VAN_FIELDS: readonly EntityFormField[] = [
   { name: 'plate', label: 'Plate', type: 'text', required: true },
   { name: 'model', label: 'Model', type: 'text', required: true },
   { name: 'capacity', label: 'Seats for guests', type: 'number', required: true },
+  {
+    name: 'vehicleType',
+    label: 'Vehicle type',
+    type: 'select',
+    required: true,
+    options: [
+      { value: 'van', label: 'Van' },
+      { value: 'suv', label: 'SUV' },
+    ],
+  },
   {
     name: 'odometer',
     label: 'Odometer (km)',
@@ -133,6 +149,7 @@ function rawFromValues(values: Record<string, string>) {
     model: values.model ?? '',
     capacity:
       values.capacity === '' || values.capacity === undefined ? NaN : Number(values.capacity),
+    vehicleType: values.vehicleType ?? '',
     odometer: !values.odometer ? null : Number(values.odometer),
     lastService: values.lastService || null,
     nextService: values.nextService || null,
@@ -149,6 +166,7 @@ function valuesFromRow(row: VanRow): Record<string, string> {
     plate: row.plate,
     model: row.model,
     capacity: String(row.capacity),
+    vehicleType: row.vehicleType,
     odometer: row.odometer === null ? '' : String(row.odometer),
     lastService: row.lastService ?? '',
     nextService: row.nextService ?? '',
@@ -190,6 +208,7 @@ function buildPatch(next: VanInput, original: VanRow): Partial<VanInput> {
   if (next.plate !== original.plate) patch.plate = next.plate;
   if (next.model !== original.model) patch.model = next.model;
   if (next.capacity !== original.capacity) patch.capacity = next.capacity;
+  if (next.vehicleType !== original.vehicleType) patch.vehicleType = next.vehicleType;
   if (next.odometer !== original.odometer) patch.odometer = next.odometer;
   if (next.lastService !== original.lastService) patch.lastService = next.lastService;
   if (next.nextService !== original.nextService) patch.nextService = next.nextService;
@@ -481,7 +500,8 @@ export default function AdminVansPage() {
               <li key={van.id} className={`${CARD} p-4 text-sm`}>
                 <p className="text-brand-ink font-mono font-semibold">{van.plate}</p>
                 <p className="text-brand-error">
-                  {van.model} · {van.capacity} seats
+                  {van.model} · {van.capacity} seats ·{' '}
+                  {VEHICLE_TYPE_LABELS[van.vehicleType] ?? van.vehicleType}
                 </p>
                 <div className="mt-2">
                   <StatusCell
@@ -520,6 +540,9 @@ export default function AdminVansPage() {
                     Seats
                   </th>
                   <th scope="col" className="px-4 py-3 font-semibold">
+                    Type
+                  </th>
+                  <th scope="col" className="px-4 py-3 font-semibold">
                     Status
                   </th>
                   <th scope="col" className="px-4 py-3 text-right font-semibold">
@@ -538,6 +561,11 @@ export default function AdminVansPage() {
                     </td>
                     <td className="text-brand-ink px-4 py-3">{van.model}</td>
                     <td className="text-brand-ink px-4 py-3 tabular-nums">{van.capacity}</td>
+                    <td className="px-4 py-3">
+                      <Badge className="bg-brand-blue-50 text-brand-blue-800 border-0">
+                        {VEHICLE_TYPE_LABELS[van.vehicleType] ?? van.vehicleType}
+                      </Badge>
+                    </td>
                     <td className="px-4 py-3">
                       <StatusCell
                         van={van}

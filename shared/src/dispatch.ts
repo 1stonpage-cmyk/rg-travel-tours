@@ -17,12 +17,24 @@ import { z } from 'zod';
 import type { BookingStatus } from './booking';
 import type { TripProgress } from './driver';
 import { civilDateSchema, phPhoneSchema } from './checkout';
+import { VEHICLE_TYPES, type VehicleType } from './transfers';
 
 export const vanInputSchema = z
   .object({
     plate: z.string().trim().min(3).max(20).toUpperCase(),
     model: z.string().trim().min(2).max(120),
     capacity: z.number().int().min(1).max(30),
+    /**
+     * Required, with no Zod default, even though the database column has
+     * one (owner decision 2026-10-28): the admin must explicitly pick van
+     * or SUV for every new vehicle rather than silently defaulting.
+     */
+    /**
+     * Required, with no Zod default, even though the database column has
+     * one (owner decision 2026-10-28): the admin must explicitly pick van
+     * or SUV for every new vehicle rather than silently defaulting.
+     */
+    vehicleType: z.enum(VEHICLE_TYPES),
     odometer: z.number().int().min(0).max(5_000_000).nullable(),
     lastService: civilDateSchema.nullable(),
     nextService: civilDateSchema.nullable(),
@@ -48,6 +60,7 @@ export interface VanRow {
   plate: string;
   model: string;
   capacity: number;
+  vehicleType: VehicleType;
   status: string;
   odometer: number | null;
   lastService: string | null;

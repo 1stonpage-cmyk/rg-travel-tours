@@ -1,0 +1,1 @@
+ALTER TABLE `vans` ADD `vehicle_type` enum('van','suv') DEFAULT 'van' NOT NULL;
