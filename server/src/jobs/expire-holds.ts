@@ -200,7 +200,13 @@ interface Candidate {
   id: number;
   ref: string;
   couponId: number | null;
-  tourId: number;
+  // T6: nullable since migration 0017 — a transfer booking has no tour. This
+  // sweep never reads it for a decision (it only names it in the audit row,
+  // where a null is a truthful "not a tour"), so widening the type is the
+  // whole fix. Audit against transfer bookings: a lapsed transfer hold must
+  // also release whatever capacity a transfer holds, which is not this
+  // column.
+  tourId: number | null;
   tourDate: Date;
   holdExpiresAt: Date | null;
 }

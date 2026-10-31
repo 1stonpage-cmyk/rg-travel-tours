@@ -224,7 +224,11 @@ class CheckInRollback extends Error {
 /** The booking fields every one of the three mutations needs. */
 interface TripRow {
   id: number;
-  tourId: number;
+  // T6: nullable since migration 0017 — a transfer booking has no tour, and
+  // therefore no `tour_itinerary_stops`. The one reader guards on it (see
+  // `checkInStop`). Audit against transfer bookings: a transfer's progress
+  // model is not itinerary stops, so check-in needs its own answer here.
+  tourId: number | null;
   status: BookingStatus;
   vanId: number | null;
 }
@@ -702,6 +706,17 @@ export async function checkInStop(
 
   const trip = await readTrip(tx, bookingId, driverId);
   if (!trip) return refuse('not_your_trip');
+
+  /*
+   * T6: `tour_id` is nullable since migration 0017. A booking with no tour is
+   * a transfer, and a transfer owns no `tour_itinerary_stops` rows — so no
+   * stop id can belong to it, and `unknown_stop` is the same refusal any
+   * other id that is not this trip's gets. Fail closed, and indistinguishable
+   * from an id that does not exist, exactly like the join below. Audit
+   * against transfer bookings: a transfer's progress is not a stop list, so
+   * its check-in path is a separate question.
+   */
+  if (trip.tourId === null) return refuse('unknown_stop');
 
   /*
    * The stop must belong to THIS trip's tour. `tour_id` is half of the

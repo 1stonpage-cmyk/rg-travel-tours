@@ -382,10 +382,13 @@ describe('bookings table', () => {
    * is precisely the mechanism that would quietly delete one — along with
    * the money trail attached to it.
    */
-  it('references tours, coupons, vans and drivers, and cascades nothing', () => {
+  it('references tours, coupons, vans, drivers and transfer routes, and cascades nothing', () => {
     expect(foreignKeys.map((fk) => `${fk.columns.join(',')}->${fk.table}`).sort()).toEqual([
       'coupon_id->coupons',
       'driver_id->drivers',
+      // Added by migration 0017 (transfers-launch T5): a transfer booking's
+      // catalog route. Nullable, and nullable for tours too.
+      'route_id->transfer_routes',
       'tour_id->tours',
       'van_id->vans',
     ]);
@@ -401,11 +404,19 @@ describe('bookings table', () => {
   /**
    * §5: "Bookings confirm automatically; van + driver are assigned later by
    * dispatch." So a confirmed booking with no van and no driver is a normal
-   * state, and both columns are nullable — while the tour it is for never
-   * is.
+   * state, and both columns are nullable.
+   *
+   * **`tour_id` used to be asserted NOT NULL here, and is not any more.**
+   * Migration 0017 (transfers-launch T5) made it nullable so a booking can be
+   * a transfer instead of a tour, and what replaced the mandatory tour as the
+   * invariant is `bookings_product_type_shape`: a `'tour'` booking still
+   * cannot exist without a `tour_id`, the database still refuses one, and the
+   * proof moved to `booking-transfer-schema.test.ts` where the CHECK's other
+   * branch is tested alongside it. This test keeps the dispatch half, which
+   * 0017 did not touch.
    */
-  it('keeps the dispatch assignment nullable and the tour mandatory', () => {
-    expect(column('tour_id')?.notNull).toBe(true);
+  it('keeps the dispatch assignment nullable, and the tour nullable only for transfers', () => {
+    expect(column('tour_id')?.notNull).toBe(false);
     expect(column('van_id')?.notNull).toBe(false);
     expect(column('driver_id')?.notNull).toBe(false);
     expect(column('coupon_id')?.notNull).toBe(false);

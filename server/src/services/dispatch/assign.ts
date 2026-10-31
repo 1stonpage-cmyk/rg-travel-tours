@@ -164,6 +164,16 @@ export async function assignVanAndDriver(
     throw new Error(`booking ${bookingId} has a null tour_date`);
   }
 
+  // T6: `tour_id` is nullable since migration 0017, and a transfer booking
+  // has no `tour_date_slots` row to lock. Nothing can create a transfer
+  // booking yet (T9/T10 do), so this cannot fire today — loud rather than
+  // locking the wrong row or silently skipping the lock. Audit against
+  // transfer bookings: assigning a van to a transfer needs its own lock
+  // target, decided with the transfer capacity model.
+  if (booking.tourId === null) {
+    throw new Error(`booking ${bookingId} has no tour_id — transfer assignment is not built yet`);
+  }
+
   // 4. Lock before you look. Fleet row then tour row — the established
   //    global order (services/capacity.ts). Nothing above this line issued
   //    a plain, non-locking read, so the snapshot is still unpinned.

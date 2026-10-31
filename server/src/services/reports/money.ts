@@ -243,7 +243,19 @@ export async function revenueByTour(range: DateRangeInput): Promise<TourRevenueR
     bookingCount: 0,
   });
 
+  /*
+   * T6: `bookings.tour_id` is nullable since migration 0017, so both GROUP BYs
+   * can now produce a NULL bucket holding every transfer booking's money. This
+   * report is revenue BY TOUR and there is no tour to name it with, so the
+   * bucket is skipped rather than merged into a bogus tour id. Audit against
+   * transfer bookings: a transfer's revenue is currently reported NOWHERE by
+   * this function, which is correct for its title and probably wrong for the
+   * owner — a transfers breakdown (or a product_type dimension) is the real
+   * answer, not a change here. `revenueTotals` is unaffected; it does not
+   * group by tour.
+   */
   for (const row of moneyRows) {
+    if (row.tourId === null) continue;
     const entry = merged.get(row.tourId) ?? blank(row.tourId);
     entry.receivedCentavos = Number(row.received);
     entry.refundedCentavos = Number(row.refunded);
@@ -251,6 +263,7 @@ export async function revenueByTour(range: DateRangeInput): Promise<TourRevenueR
     merged.set(row.tourId, entry);
   }
   for (const row of bookingRows) {
+    if (row.tourId === null) continue;
     const entry = merged.get(row.tourId) ?? blank(row.tourId);
     entry.stillToCollectCentavos = Number(row.still);
     entry.bookingCount = Number(row.count);

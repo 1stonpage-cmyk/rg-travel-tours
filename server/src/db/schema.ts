@@ -34,6 +34,7 @@ import {
   BOOKING_STATUSES,
   DISCOUNT_TYPES,
   PAY_MODES,
+  PRODUCT_TYPES,
   VEHICLE_TYPES,
   type PriceSnapshot,
 } from '@rg/shared';
@@ -998,9 +999,38 @@ export const bookings = mysqlTable(
      * `id` is internal and is never shown to a guest.
      */
     ref: varchar('ref', { length: 12 }).notNull().unique(),
-    tourId: int('tour_id')
-      .notNull()
-      .references(() => tours.id),
+    /**
+     * The tour booked — **NULL for a transfer booking** (owner decision
+     * 2026-10-28/31, transfers-launch plan Architecture §1). It was NOT NULL
+     * from the core-schema plan until migration 0017: a booking belonged only
+     * to a tour, and now it belongs to a tour or to a transfer.
+     *
+     * Nullable is the honest shape rather than a sentinel tour row, but it
+     * has a cost worth naming here: an `INNER JOIN tours` on this column now
+     * silently DROPS every transfer booking from whatever it feeds (a report,
+     * a dispatch list, a capacity count). That is a behaviour change no
+     * typechecker catches — see the `bookings_product_type_shape` CHECK below
+     * and the `T6:` markers across `server/src` for the audit of it.
+     */
+    tourId: int('tour_id').references(() => tours.id),
+    /**
+     * Discriminates a tour booking from a transfer booking (owner decision
+     * 2026-10-28/31). Every booking before this column existed was a tour, so
+     * the default backfills every existing row to 'tour' — this migration
+     * changes no booking's meaning.
+     */
+    productType: mysqlEnum('product_type', PRODUCT_TYPES).notNull().default('tour'),
+    /**
+     * NULL for a tour. Set for a transfer with a catalog route — NULL also
+     * for a staff-quoted custom route with no catalog match (see
+     * `booking_transfer_details.custom_route_description`).
+     */
+    routeId: int('route_id').references(() => transferRoutes.id),
+    /**
+     * NULL for a tour. The one real discriminator a transfer booking carries
+     * on the bookings row itself — see the CHECK below.
+     */
+    vehicleTypeRequested: mysqlEnum('vehicle_type_requested', VEHICLE_TYPES),
     /**
      * The tour DAY as a civil date in Asia/Manila — `date`, not `datetime`.
      * A trip on the 25th is on the 25th in Cebu regardless of the server's
@@ -1168,6 +1198,50 @@ export const bookings = mysqlTable(
     check('bookings_discount_non_negative', sql`${t.discountCentavos} >= 0`),
     check('bookings_total_non_negative', sql`${t.totalCentavos} >= 0`),
     check('bookings_amount_paid_non_negative', sql`${t.amountPaidCentavos} >= 0`),
+    /**
+     * **A booking is a tour or a transfer, never both and never neither**
+     * (owner decision 2026-10-28/31; migration 0017).
+     *
+     * `tour_id` became nullable so a transfer can exist at all, and a
+     * nullable column with nothing arbitrating it is how a row arrives that
+     * is a tour by `product_type` and a transfer by its data. So one CHECK,
+     * both directions:
+     *   - `product_type = 'tour'` ⇒ `tour_id` IS NOT NULL and
+     *     `vehicle_type_requested` IS NULL;
+     *   - anything else ⇒ `tour_id` IS NULL and `vehicle_type_requested`
+     *     IS NOT NULL.
+     *
+     * The second half of each branch is the part a reader is tempted to drop
+     * as redundant. It is not: a tour row carrying a
+     * `vehicle_type_requested` would make "is this a transfer?" a question
+     * with two answers, and a transfer row carrying a `tour_id` would be
+     * counted by every tour report and every tour capacity query at once.
+     *
+     * **`route_id` is deliberately NOT part of this CHECK.** A transfer
+     * normally has one, but a staff-converted custom request may not — it
+     * carries `booking_transfer_details.custom_route_description` instead.
+     * "`route_id` XOR `custom_route_description`, for every non-tour
+     * booking" is a CROSS-TABLE invariant, which a single-table MySQL CHECK
+     * cannot express at all. It is enforced in the one writer,
+     * `createTransferBooking()`, and pinned by a test there. Do not try to
+     * encode it here; there is no gap to fix.
+     */
+    check(
+      'bookings_product_type_shape',
+      sql`
+        (${t.productType} = 'tour' AND ${t.tourId} IS NOT NULL AND ${t.vehicleTypeRequested} IS NULL)
+        OR
+        (${t.productType} <> 'tour' AND ${t.tourId} IS NULL AND ${t.vehicleTypeRequested} IS NOT NULL)
+      `,
+    ),
+    /**
+     * The transfer-side twin of `bookings_tour_date_status_idx`, which leads
+     * on `tour_id` and is therefore useless for a transfer query — every
+     * transfer row has `tour_id` NULL, so a date+status sweep over transfers
+     * would read the whole index for one key. Same three-column shape,
+     * `product_type` in the lead.
+     */
+    index('bookings_product_type_date_idx').on(t.productType, t.tourDate, t.status),
   ],
 );
 
@@ -1266,6 +1340,60 @@ export const bookingNotes = mysqlTable(
     index('booking_notes_booking_idx').on(t.bookingId, t.createdAt),
   ],
 );
+
+/**
+ * 1:1 transfer-specific detail row — exists only for a booking whose
+ * `product_type` is not 'tour'. Owner decision 2026-10-28/31 (transfers-launch
+ * plan, Architecture §1).
+ *
+ * **The primary key IS the foreign key**, which is this table's whole point
+ * and the one structural difference from its two neighbours: `booking_addons`
+ * and `booking_notes` are 1:N (a surrogate `id` plus a `booking_id` index), and
+ * a transfer has exactly one set of these details for its whole life. A
+ * surrogate id here would permit a second row per booking, and "which pickup
+ * time is this trip's" would become a question with two answers — the same
+ * failure mode `transfer_route_vehicle_prices`'s composite PK refuses.
+ *
+ * No index beyond the primary key: every read is by `booking_id`, which the PK
+ * already serves.
+ *
+ * These fields are transfer-only on purpose. A transfer's pickup ADDRESS is
+ * `bookings.pickup`, shared with tours; what a tour has no concept of is a
+ * dropoff, a pickup CLOCK TIME and a flight.
+ */
+export const bookingTransferDetails = mysqlTable('booking_transfer_details', {
+  bookingId: int('booking_id')
+    .primaryKey()
+    .references(() => bookings.id),
+  /** "HH:mm" civil label, Asia/Manila — same convention as a civil date string. */
+  pickupTime: varchar('pickup_time', { length: 5 }).notNull(),
+  /** Day-use only. NULL for a one-way transfer. */
+  dayUseEndTime: varchar('day_use_end_time', { length: 5 }),
+  dropoffAddress: varchar('dropoff_address', { length: 400 }).notNull(),
+  dropoffMapUrl: varchar('dropoff_map_url', { length: 500 }),
+  luggageCount: int('luggage_count').notNull().default(0),
+  /** Airport transfers only. */
+  flightNumber: varchar('flight_number', { length: 20 }),
+  /** Airport transfers only. */
+  airline: varchar('airline', { length: 80 }),
+  /** Set only when `bookings.route_id` is NULL (a staff-quoted custom trip). */
+  customRouteDescription: varchar('custom_route_description', { length: 300 }),
+  /**
+   * The `transfer_operations.bufferMinutes` setting's value AT HOLD TIME,
+   * frozen — a later admin change to the default must never reinterpret an
+   * existing booking's already-computed window (plan Architecture §2). The
+   * same reasoning as `bookings.price_snapshot`: what the booking was taken
+   * under is a fact about the booking, not a live lookup.
+   */
+  bufferMinutesUsed: int('buffer_minutes_used').notNull(),
+  createdAt: datetime('created_at', { mode: 'date' })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: datetime('updated_at', { mode: 'date' })
+    .notNull()
+    .$defaultFn(() => new Date())
+    .$onUpdateFn(() => new Date()),
+});
 
 /**
  * One row per coupon use (BUILD_SPEC §10). This is what enforces a coupon's
