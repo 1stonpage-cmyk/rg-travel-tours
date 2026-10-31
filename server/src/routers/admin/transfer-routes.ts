@@ -193,6 +193,7 @@ export const adminTransferRoutesRouter = router({
           .select({
             destinationId: transferRoutes.destinationId,
             slug: transferRoutes.slug,
+            sortOrder: transferRoutes.sortOrder,
             estimatedDurationMinutes: transferRoutes.estimatedDurationMinutes,
             freeCancelHours: transferRoutes.freeCancelHours,
             inclusionsText: transferRoutes.inclusionsText,

@@ -139,6 +139,16 @@ export const transferRouteCreateInputSchema = z
   .object({
     destinationId: z.number().int().positive(),
     slug: transferRouteSlugSchema,
+    /**
+     * Where this route sorts among its siblings, lowest first — mirrors
+     * `tours-admin.ts`'s `sortOrder` field on `tourFields` exactly. Optional
+     * with no default STATED here (the column's own `DEFAULT 0` is what
+     * fills it in on create, via `upsertTransferRoute`'s `params.sortOrder ??
+     * 0`), so an owner who never touches this field gets the same "sorts
+     * with everything else at 0" behaviour every route had before this field
+     * existed (T4, carried forward from T3's review finding M3).
+     */
+    sortOrder: z.number().int().min(0).max(9999).optional(),
     estimatedDurationMinutes: z.number().int().min(1).max(1440),
     freeCancelHours: z.number().int().min(0).max(168),
     inclusionsText: z.string().trim().max(5000).nullable(),

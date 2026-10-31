@@ -133,6 +133,7 @@ export function mergeTransferRoutePatch(
   return {
     destinationId: patch.destinationId !== undefined ? patch.destinationId : stored.destinationId,
     slug: patch.slug !== undefined ? patch.slug : stored.slug,
+    sortOrder: patch.sortOrder !== undefined ? patch.sortOrder : stored.sortOrder,
     estimatedDurationMinutes:
       patch.estimatedDurationMinutes !== undefined
         ? patch.estimatedDurationMinutes
@@ -158,14 +159,19 @@ function routeValues(params: TransferRouteUpsertParams) {
   return {
     destinationId: params.destinationId,
     slug: params.slug,
+    // Defaults to the column's own `DEFAULT 0` when the caller (a bare
+    // `create` whose input never named it) omits it — T4's M3 addition.
+    // `update` never hits this default in practice: `mergeTransferRoutePatch`
+    // always hands this function a complete, already-resolved number.
+    sortOrder: params.sortOrder ?? 0,
     estimatedDurationMinutes: params.estimatedDurationMinutes,
     freeCancelHours: params.freeCancelHours,
     inclusionsText: params.inclusionsText,
     exclusionsText: params.exclusionsText,
     /*
-     * `isActive` and `sortOrder` are absent on purpose, not forgotten: neither
-     * is on the input (see `shared/src/transfers-admin.ts`), so `setActive`
-     * stays the only writer of the soft-delete flag.
+     * `isActive` is absent on purpose, not forgotten: it is not on the input
+     * (see `shared/src/transfers-admin.ts`), so `setActive` stays the only
+     * writer of the soft-delete flag.
      */
   };
 }

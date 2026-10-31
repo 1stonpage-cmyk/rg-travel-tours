@@ -274,6 +274,30 @@ describeWithDb('admin.transferRoutes', () => {
     expect(row?.destinationName).toMatch(/^__adtrdest__/);
   });
 
+  /**
+   * T4's M3 addition: `sortOrder` was a column `list` already ordered by,
+   * but nothing on `create`/`update` could set it, so every route sorted at
+   * the same value. This proves the field actually reaches the column and
+   * that `list`'s own `ORDER BY sort_order` honours it against ANOTHER
+   * route, not just that the number round-trips in isolation.
+   */
+  it("round-trips sortOrder through list, honouring it against another route's", async () => {
+    const earlierDestination = await makeDestination();
+    const laterDestination = await makeDestination();
+    const { id: laterId } = await createRoute({ destinationId: laterDestination, sortOrder: 50 });
+    const { id: earlierId } = await createRoute({
+      destinationId: earlierDestination,
+      sortOrder: 5,
+    });
+
+    const rows = await ownerApi().admin.transferRoutes.list();
+    const earlierRow = rows.find((r) => r.id === earlierId);
+    const laterRow = rows.find((r) => r.id === laterId);
+    expect(earlierRow?.sortOrder).toBe(5);
+    expect(laterRow?.sortOrder).toBe(50);
+    expect(rows.indexOf(earlierRow!)).toBeLessThan(rows.indexOf(laterRow!));
+  });
+
   it('refuses a create that prices only one vehicle type', async () => {
     const destinationId = await makeDestination();
     const input = routeInput(destinationId);

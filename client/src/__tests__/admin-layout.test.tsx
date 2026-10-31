@@ -148,6 +148,9 @@ describe('AdminLayout', () => {
         'Vans',
         'Drivers',
         'Tours',
+        // Owner-only too (transfers-launch plan, Task T4): `admin.transferRoutes.*`
+        // is the same `toursPricing` area as tours and pricing.
+        'Transfer routes',
         // Coupons is owner-only too (Week 7 Task 8): `admin.coupons.*` is the
         // same `toursPricing` area as tours and pricing.
         'Coupons',
