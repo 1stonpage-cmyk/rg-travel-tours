@@ -65,6 +65,8 @@ const REFUSAL_COPY: Record<AssignRefusal, string> = {
   booking_not_assignable: "This trip's status cannot take a van and driver yet.",
   van_unavailable: 'Someone just took that van. The list below has been refreshed.',
   driver_unavailable: 'That driver is not available on this date — newly assigned, or on leave.',
+  driver_at_daily_cap:
+    'That driver already has their maximum transfer jobs for the day. Choose another driver.',
   van_too_small: 'That van is too small for this group.',
   reason_required: 'A trip already under way needs a reason before it can be re-assigned.',
 };

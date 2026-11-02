@@ -10,12 +10,16 @@
  * implementation)
  *
  *   1. Read the booking `FOR UPDATE` — tourId, tourDate, pax, status,
- *      current van/driver.
+ *      current van/driver, and (left-joined, same row, same lock) the
+ *      product type and the transfer's own frozen window inputs.
  *   2. Refuse unless the status is in the assignable set (the Q2/Q3 table).
  *   3. Refuse `reason_required` if the status is `in_progress` and no
  *      trimmed reason came in.
- *   4. `takeSlotLocks(tx, booking.tourId, tourDate)` — fleet row then tour
- *      row, the established global order.
+ *   4. **TOUR:** `takeSlotLocks(tx, booking.tourId, tourDate)` — fleet row
+ *      then tour row, the established global order.
+ *      **TRANSFER:** `takeFleetDateLock(tx, tourDate)` alone — a transfer has
+ *      no `tour_date_slots` row to take, and the fleet row is the single
+ *      serialization point for a date (plan Architecture §2).
  *   5. `vansFreeOn` / `driversFreeOn`, re-run inside the lock, excluding
  *      this booking's own current assignment.
  *   6. Refuse unless the chosen van/driver is in those lists.
@@ -23,6 +27,10 @@
  *      moves `confirmed -> assigned`; `pending_verification` and
  *      `in_progress` keep their status.
  *   8. `writeAudit`, action named for what happened.
+ *
+ * Steps 7 and 8 never branch on `product_type`: a transfer's assignment is
+ * the same two ids written to the same two columns, and `booking_assigned` is
+ * the action an operations review looks for either way.
  *
  * ## Why steps 2-3 (plain reads) come BEFORE step 4 (the locks)
  *
@@ -44,12 +52,53 @@
  * tour/date `takeSlotLocks` needs. `takeSlotLocks` itself must still be the
  * first NON-LOCKING-adjacent statement before the plain reads in step 5 —
  * see the mutation proof in the test file that pins this ordering.
+ *
+ * ## Assigning a TRANSFER (transfers-launch plan, Architecture §2/§2a; T8)
+ *
+ * `tour_id` is nullable since migration 0017, and a transfer booking has no
+ * `tour_date_slots` row — so the transfer branch takes `takeFleetDateLock`
+ * alone. That is not a weaker lock: conditions (1)–(5) read across both
+ * vehicle types and both product types for one date, so `fleet_date_slots`
+ * IS the serialization point and the tour row only ever added a second,
+ * narrower one. The ordering discipline above is unchanged — the fleet lock
+ * is still taken before step 5's plain reads, and nothing between step 1 and
+ * it issues a plain `SELECT` (the transfer's own window inputs ride along on
+ * step 1's `FOR UPDATE` read of the same booking row).
+ *
+ * Three things differ once the lock is held, and nothing else does:
+ *
+ *  - The booking's window is recomputed from its OWN FROZEN values
+ *    (`buffer_minutes_used`, `route_duration_minutes_used`), never from the
+ *    catalog route, and handed to `vansFreeOn`/`driversFreeOn` as
+ *    `transferWindow` — so another transfer on the same van that day only
+ *    excludes it when the two windows actually overlap.
+ *  - The van pool is filtered by `vehicle_type_requested` rather than by
+ *    seats (`minCapacity: 0`): the guest chose a TYPE, and the type is what
+ *    the window claims. A refused van is always `van_unavailable` here —
+ *    the `van_too_small` diagnostic is TOUR-only (dedicated review finding):
+ *    since seats never gate a transfer's pool, running it anyway could
+ *    misreport a van excluded for being the wrong TYPE, or already busy, as
+ *    merely "too small".
+ *  - A refused driver gets one extra diagnostic, `driver_at_daily_cap`, so
+ *    "that driver is done for the day" is not reported as "unavailable" —
+ *    which would send a dispatcher hunting for a colleague who did nothing.
+ *    (It defers to the generic reason for a driver who is inactive or on
+ *    leave — that is the TRUE reason then, not the cap.)
  */
-import { eq } from 'drizzle-orm';
-import { civilDateFromDate, type AssignRefusal, type BookingStatus } from '@rg/shared';
+import { and, eq, ne, sql } from 'drizzle-orm';
+import {
+  civilDateFromDate,
+  type AssignRefusal,
+  type BookingStatus,
+  type ProductType,
+  type VehicleType,
+} from '@rg/shared';
 import type { Transaction } from '../../db/client';
-import { bookings, vans } from '../../db/schema';
-import { takeSlotLocks } from '../capacity';
+import { bookingTransferDetails, bookings, driverLeaves, drivers, vans } from '../../db/schema';
+import { takeFleetDateLock, takeSlotLocks } from '../capacity';
+import { holdsCapacity, on } from '../capacity-sql';
+import { readDefaultDriverTransferCap } from '../transfers/capacity';
+import { clockTimeToMinutes, computeTransferWindow, type TimeWindow } from '../transfers/overlap';
 import { writeAudit } from '../audit';
 import { driversFreeOn, vansFreeOn } from './availability';
 
@@ -104,6 +153,142 @@ function refuse(reason: AssignRefusal): AssignVerdict {
   return { ok: false, reason };
 }
 
+/** The transfer-shaped columns step 1's locking read carries along. */
+interface TransferBookingRow {
+  productType: ProductType;
+  vehicleTypeRequested: VehicleType | null;
+  pickupTime: string | null;
+  dayUseEndTime: string | null;
+  bufferMinutesUsed: number | null;
+  routeDurationMinutesUsed: number | null;
+}
+
+/**
+ * A transfer booking's window, recomputed from the values FROZEN onto it at
+ * hold time — never from the catalog route, which an admin may have edited
+ * since (see `booking_transfer_details.route_duration_minutes_used`).
+ *
+ * **Every failure here THROWS rather than refusing, deliberately.** This
+ * booking was already accepted at hold time under these exact frozen values,
+ * so an unreadable clock label, a missing details row or a window that now
+ * crosses midnight is genuine data corruption on a row that passed the
+ * hold-time check — not a state a dispatcher can do anything about and not a
+ * state any code path can produce. Inventing a refusal reason for it would
+ * put an unreachable branch in front of the dispatcher and hide the
+ * corruption; a loud `Error` surfaces it. This is the opposite choice from
+ * `windowForBookedTransfer`, which fails CLOSED to the whole day — correctly,
+ * because there one bad row would otherwise 500 every quote for the date,
+ * while here the bad row IS the booking being assigned.
+ */
+function frozenTransferWindow(
+  bookingId: number,
+  booking: TransferBookingRow,
+): { window: TimeWindow; vehicleType: VehicleType } {
+  const corrupt = (why: string) => new Error(`booking ${bookingId} is a transfer but ${why}`);
+
+  // `product_type <> 'tour'` whenever `tour_id IS NULL`, by the
+  // `bookings_product_type_shape` CHECK. Narrowing the type, not guarding.
+  if (booking.productType === 'tour') throw corrupt('its product_type is tour');
+  const { vehicleTypeRequested, pickupTime, bufferMinutesUsed } = booking;
+  if (vehicleTypeRequested === null) throw corrupt('has no vehicle_type_requested');
+  if (pickupTime === null || bufferMinutesUsed === null) {
+    throw corrupt('has no booking_transfer_details row');
+  }
+
+  const pickupTimeMinutes = clockTimeToMinutes(pickupTime);
+  if (pickupTimeMinutes === null) {
+    throw corrupt(`has an unreadable pickup_time (${pickupTime})`);
+  }
+
+  let dayUseEndTimeMinutes: number | null = null;
+  if (booking.productType === 'transfer_day_use') {
+    if (booking.dayUseEndTime === null) throw corrupt('is day-use with no day_use_end_time');
+    dayUseEndTimeMinutes = clockTimeToMinutes(booking.dayUseEndTime);
+    if (dayUseEndTimeMinutes === null) throw corrupt('has an unreadable day_use_end_time');
+  }
+
+  /*
+   * Throws on a malformed frozen value (a missing one-way duration, a day-use
+   * ending before it starts) — which is the same corruption case and wants the
+   * same loud failure, so it is deliberately NOT caught here.
+   */
+  const result = computeTransferWindow({
+    productType: booking.productType,
+    pickupTimeMinutes,
+    dayUseEndTimeMinutes,
+    routeDurationMinutes: booking.routeDurationMinutesUsed,
+    bufferMinutes: bufferMinutesUsed,
+  });
+  if (!result.ok) throw corrupt(`has a window that crosses midnight (${result.reason})`);
+
+  return { window: result.window, vehicleType: vehicleTypeRequested };
+}
+
+/**
+ * Does this driver already hold their day's worth of transfer jobs?
+ *
+ * The count is of OTHER capacity-holding transfer bookings assigned to them on
+ * `date` — this booking excluded, so re-assigning a transfer to the driver who
+ * already has it never reports them as full. Compared against their effective
+ * cap: the per-driver override if set, otherwise the
+ * `transfer_operations.maxTransferJobsPerDriverPerDay` default, read through
+ * the same one function the hold-time check uses so the two can never disagree.
+ *
+ * `?? defaultCap`, never `||` — an override of 0 means "no transfer jobs".
+ *
+ * **Returns `false` for an inactive or on-leave driver** (dedicated review
+ * finding, T8), rather than letting the cap arithmetic answer for them: the
+ * caller only reaches this function after `driversFreeOn` has ALREADY
+ * excluded such a driver, so the question here is never "are they
+ * assignable" (settled) but "which SENTENCE explains it". A driver on leave
+ * who also happens to be at their cap is `driver_unavailable`, not
+ * `driver_at_daily_cap` — the leave is the true reason, and "done for the
+ * day" would send a dispatcher re-checking a cap that was never the issue.
+ */
+async function driverAtDailyCap(
+  tx: Transaction,
+  driverId: number,
+  date: string,
+  bookingId: number,
+): Promise<boolean> {
+  const [driver] = await tx
+    .select({ cap: drivers.maxTransferJobsPerDay, isActive: drivers.isActive })
+    .from(drivers)
+    .where(eq(drivers.id, driverId))
+    .limit(1);
+  if (driver === undefined || !driver.isActive) return false;
+
+  const [leave] = await tx
+    .select({ one: sql`1` })
+    .from(driverLeaves)
+    .where(
+      and(
+        eq(driverLeaves.driverId, driverId),
+        sql`${driverLeaves.startDate} <= ${date}`,
+        sql`${driverLeaves.endDate} >= ${date}`,
+      ),
+    )
+    .limit(1);
+  if (leave !== undefined) return false;
+
+  const [row] = await tx
+    .select({ n: sql<number>`COUNT(*)` })
+    .from(bookings)
+    .where(
+      and(
+        eq(bookings.driverId, driverId),
+        on(bookings.tourDate, date),
+        ne(bookings.productType, 'tour'),
+        holdsCapacity,
+        ne(bookings.id, bookingId),
+      ),
+    );
+  const held = Number(row?.n ?? 0);
+  const effectiveCap = driver.cap ?? (await readDefaultDriverTransferCap(tx));
+
+  return held >= effectiveCap;
+}
+
 /**
  * Assigns a van and driver to a booking, or refuses — never throws a
  * REFUSAL (same contract as `assessCapacity`); it DOES throw on a
@@ -121,8 +306,16 @@ export async function assignVanAndDriver(
 ): Promise<AssignVerdict> {
   const { bookingId, vanId, driverId, actorUserId, reason } = input;
 
-  // 1. Read the booking FOR UPDATE — a locking read, so it does not pin the
-  //    REPEATABLE READ snapshot the way a plain SELECT would.
+  /*
+   * 1. Read the booking FOR UPDATE — a locking read, so it does not pin the
+   *    REPEATABLE READ snapshot the way a plain SELECT would.
+   *
+   *    The `booking_transfer_details` LEFT join rides along on the same
+   *    locking read, so the transfer branch needs no second, plain `SELECT`
+   *    before the locks — which is the hazard the module note is about. LEFT,
+   *    not inner: a TOUR has no details row, and an inner join would make
+   *    this read find nothing and refuse every tour as `booking_not_found`.
+   */
   const [booking] = await tx
     .select({
       tourId: bookings.tourId,
@@ -131,8 +324,15 @@ export async function assignVanAndDriver(
       status: bookings.status,
       vanId: bookings.vanId,
       driverId: bookings.driverId,
+      productType: bookings.productType,
+      vehicleTypeRequested: bookings.vehicleTypeRequested,
+      pickupTime: bookingTransferDetails.pickupTime,
+      dayUseEndTime: bookingTransferDetails.dayUseEndTime,
+      bufferMinutesUsed: bookingTransferDetails.bufferMinutesUsed,
+      routeDurationMinutesUsed: bookingTransferDetails.routeDurationMinutesUsed,
     })
     .from(bookings)
+    .leftJoin(bookingTransferDetails, eq(bookingTransferDetails.bookingId, bookings.id))
     .where(eq(bookings.id, bookingId))
     .for('update')
     .limit(1);
@@ -165,43 +365,64 @@ export async function assignVanAndDriver(
   }
 
   /*
-   * `tour_id` is nullable since migration 0017, and a transfer booking has no
-   * `tour_date_slots` row to lock.
+   * A transfer booking is the `tour_id IS NULL` case, and it is now real
+   * rather than a stopgap throw. See "Assigning a TRANSFER" in the module
+   * note for the three differences; everything else below is shared.
+   */
+  const transferWindow =
+    booking.tourId === null ? frozenTransferWindow(bookingId, booking) : undefined;
+
+  /*
+   * 4. Lock before you look. Nothing above this line issued a plain,
+   *    non-locking read, so the snapshot is still unpinned.
    *
-   * **Audited in Task T6, and the loud throw is the deliberate stopgap** — not
-   * an omission and not something to "fix" by widening a type. Transfer
-   * dispatch needs its OWN lock target and its own capacity model (the plan's
-   * Architecture §2), which is Tasks T7/T8; until they land, there is no
-   * correct row to take here. Failing loudly is the only safe option: skipping
-   * the lock would let two dispatchers send one van to two trips on one
-   * morning, and locking the tour side anyway would lock nothing while looking
-   * like it had.
-   *
-   * It is unreachable today. Nothing in the codebase writes a booking with a
-   * non-`'tour'` `product_type` — T9/T10 build that — so no transfer booking
-   * exists to be assigned. **When T7/T8 replace this, replace the throw with
-   * real logic, not with a silent skip.**
+   *    TOUR: fleet row then tour row — the established global order
+   *    (services/capacity.ts). TRANSFER: the fleet row alone, because there
+   *    is no `tour_date_slots` row for a booking with no tour, and the fleet
+   *    row is the single serialization point for a date.
    */
   if (booking.tourId === null) {
-    throw new Error(`booking ${bookingId} has no tour_id — transfer assignment is not built yet`);
+    await takeFleetDateLock(tx, tourDate);
+  } else {
+    await takeSlotLocks(tx, booking.tourId, tourDate);
   }
-
-  // 4. Lock before you look. Fleet row then tour row — the established
-  //    global order (services/capacity.ts). Nothing above this line issued
-  //    a plain, non-locking read, so the snapshot is still unpinned.
-  await takeSlotLocks(tx, booking.tourId, tourDate);
 
   // 5. Re-check inside the lock. The dropdown the dispatcher clicked was
   //    rendered seconds ago; this is the enforcement, not the dropdown.
   //    `excludeBookingId` so re-assigning a booking does not exclude the
   //    van/driver it already holds.
   const [freeVans, freeDrivers] = await Promise.all([
-    vansFreeOn(tx, tourDate, booking.pax, { excludeBookingId: bookingId }),
-    driversFreeOn(tx, tourDate, { excludeBookingId: bookingId }),
+    transferWindow === undefined
+      ? vansFreeOn(tx, tourDate, booking.pax, { excludeBookingId: bookingId })
+      : // `minCapacity: 0` with a `vehicleType`: the TYPE is the fit for a
+        // transfer, never the seat count — the same precedent
+        // `sellableVehiclesByType` set at hold time.
+        vansFreeOn(tx, tourDate, 0, {
+          excludeBookingId: bookingId,
+          vehicleType: transferWindow.vehicleType,
+          transferWindow: transferWindow.window,
+        }),
+    driversFreeOn(tx, tourDate, {
+      excludeBookingId: bookingId,
+      ...(transferWindow === undefined ? {} : { transferWindow: transferWindow.window }),
+    }),
   ]);
 
   // 6. Refuse unless the chosen ids are actually free.
   if (!freeVans.some((van) => van.id === vanId)) {
+    /*
+     * The `van_too_small` diagnostic below is a TOUR-only sentence (dedicated
+     * review finding, T8): a transfer's `vansFreeOn` call passes
+     * `minCapacity: 0`, so seats never gate it there — the type does. Running
+     * this diagnostic on the transfer branch anyway could misreport a van
+     * excluded for being the WRONG TYPE (or already busy) as merely "too
+     * small", which is a different, actionable-sounding, and wrong sentence.
+     * `van_unavailable` is always the transfer branch's answer; the plain
+     * capacity read only happens where it is the true gate.
+     */
+    if (transferWindow !== undefined) {
+      return refuse('van_unavailable');
+    }
     // A plain read of the chosen van's OWN capacity, so a too-small van
     // gets a more useful refusal than "unavailable" — this is a diagnostic
     // read, not a re-implementation of `vansFreeOn`'s filtering, which
@@ -215,6 +436,23 @@ export async function assignVanAndDriver(
     return refuse(tooSmall ? 'van_too_small' : 'van_unavailable');
   }
   if (!freeDrivers.some((driver) => driver.id === driverId)) {
+    /*
+     * One diagnostic read, mirroring `van_too_small` immediately above and on
+     * the TRANSFER branch only: "this driver already has their day's transfer
+     * jobs" is a different sentence to "someone just took them / they are on
+     * leave", and §2a's cap is the one reason a driver can be refused while
+     * being provably idle at this hour. Not a re-implementation of
+     * `driversFreeOn`'s filtering — that stays the only place the rules live.
+     *
+     * The TOUR branch is untouched and can still only ever say
+     * `driver_unavailable`.
+     */
+    if (
+      transferWindow !== undefined &&
+      (await driverAtDailyCap(tx, driverId, tourDate, bookingId))
+    ) {
+      return refuse('driver_at_daily_cap');
+    }
     return refuse('driver_unavailable');
   }
 

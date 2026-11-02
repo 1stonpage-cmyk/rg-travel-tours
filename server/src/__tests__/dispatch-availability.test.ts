@@ -22,29 +22,50 @@
  */
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
-import type { BookingStatus, PriceSnapshot } from '@rg/shared';
+import type { BookingStatus, PriceSnapshot, VehicleType } from '@rg/shared';
+import { readTransferOperationsSettings } from '../content/settings';
 import { getDb, getPool } from '../db/client';
 import {
   VAN_STATUSES,
+  bookingTransferDetails,
   bookings,
   destinations,
   driverLeaves,
   drivers,
   tours,
+  transferRoutes,
   vans,
 } from '../db/schema';
 import { generateBookingRef } from '../services/booking-ref';
 import { assessCapacity } from '../services/capacity';
 import { driversFreeOn, vansFreeOn } from '../services/dispatch/availability';
+import type { TransferProductType } from '../services/transfers/capacity';
 import { describeWithDb } from './helpers/db';
 
 /** The tour day every test uses, far enough out that no seed or fixture owns it. */
 const DATE = '2099-10-20';
 
+/* ----- Task T8 (transfers-launch plan, Architecture §2/§2a) ----- */
+
+/** The seeded `transfer_operations` values, asserted in `beforeEach`. */
+const BUFFER = 60;
+const DEFAULT_DRIVER_CAP = 2;
+/** The one-way route duration every transfer fixture here shares. */
+const DURATION = 120;
+
+/** Minutes since midnight, so the cases read as times. */
+const at = (hours: number, minutes = 0) => hours * 60 + minutes;
+/** Minutes back to the `"HH:mm"` civil label the column stores. */
+const hhmm = (minutes: number) =>
+  `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+/** A candidate window, the shape `vansFreeOn`/`driversFreeOn` take. */
+const window = (startMinutes: number, endMinutes: number) => ({ startMinutes, endMinutes });
+
 /** Every id this file committed, so teardown removes exactly those rows. */
 const created = {
   bookingIds: [] as number[],
   tourIds: [] as number[],
+  routeIds: [] as number[],
   destinationIds: [] as number[],
   vanIds: [] as number[],
   driverIds: [] as number[],
@@ -77,7 +98,12 @@ async function makeTour(opts: { groupsPerDay?: number } = {}) {
 }
 
 async function makeVan(
-  opts: { capacity?: number; status?: (typeof VAN_STATUSES)[number]; isActive?: boolean } = {},
+  opts: {
+    capacity?: number;
+    status?: (typeof VAN_STATUSES)[number];
+    isActive?: boolean;
+    vehicleType?: VehicleType;
+  } = {},
 ) {
   const suffix = unique();
   const [van] = await getDb()
@@ -88,12 +114,16 @@ async function makeVan(
       capacity: opts.capacity ?? 12,
       status: opts.status ?? 'available',
       isActive: opts.isActive ?? true,
+      vehicleType: opts.vehicleType ?? 'van',
     });
   created.vanIds.push(van.insertId);
   return van.insertId;
 }
 
-async function makeDriver(opts: { isActive?: boolean; name?: string } = {}) {
+/** `maxTransferJobsPerDay: undefined` leaves the column NULL — "use the default". */
+async function makeDriver(
+  opts: { isActive?: boolean; name?: string; maxTransferJobsPerDay?: number } = {},
+) {
   const suffix = unique();
   const [driver] = await getDb()
     .insert(drivers)
@@ -104,9 +134,23 @@ async function makeDriver(opts: { isActive?: boolean; name?: string } = {}) {
       // Not a real hash and not a real PIN: nothing here logs in.
       pinHash: '__availability_not_a_pin_hash__',
       isActive: opts.isActive ?? true,
+      maxTransferJobsPerDay: opts.maxTransferJobsPerDay ?? null,
     });
   created.driverIds.push(driver.insertId);
   return driver.insertId;
+}
+
+/** A transfer route, plus the destination its UNIQUE foreign key needs. */
+async function makeRoute() {
+  const db = getDb();
+  const slug = `__avail__${unique()}`;
+  const [destination] = await db.insert(destinations).values({ name: slug, slug });
+  created.destinationIds.push(destination.insertId);
+  const [route] = await db
+    .insert(transferRoutes)
+    .values({ destinationId: destination.insertId, slug, estimatedDurationMinutes: DURATION });
+  created.routeIds.push(route.insertId);
+  return route.insertId;
 }
 
 /** The minimum snapshot `bookings.price_snapshot` will accept. No test reads it. */
@@ -156,6 +200,66 @@ async function makeBooking(opts: {
   return booking.insertId;
 }
 
+/**
+ * A committed TRANSFER booking and its `booking_transfer_details` row, already
+ * ASSIGNED to a van and/or a driver — which is what makes it this file's
+ * business rather than `transfer-capacity.test.ts`'s. That file asks the pool
+ * question at hold time, where nothing is assigned yet; these ask the
+ * dispatch-time one about a specific vehicle and a specific human.
+ *
+ * Written by hand, in one transaction, exactly as `transfer-capacity.test.ts`
+ * does and for the same reason: `createTransferBooking()` is Task T10 and does
+ * not exist yet. Both frozen values (`buffer_minutes_used`,
+ * `route_duration_minutes_used`) are stored, because the module under test
+ * recomputes the window from those and never from the catalog route.
+ */
+async function makeTransferBooking(opts: {
+  routeId: number;
+  pickupMinutes: number;
+  dayUseEndMinutes?: number;
+  productType?: TransferProductType;
+  vehicleType?: VehicleType;
+  date?: string;
+  status?: BookingStatus;
+  vanId?: number;
+  driverId?: number;
+  bufferMinutes?: number;
+}) {
+  const productType = opts.productType ?? 'transfer_one_way';
+  const id = await getDb().transaction(async (tx) => {
+    const [booking] = await tx.insert(bookings).values({
+      ref: generateBookingRef(),
+      tourId: null,
+      productType,
+      routeId: opts.routeId,
+      vehicleTypeRequested: opts.vehicleType ?? 'van',
+      tourDate: new Date(`${opts.date ?? DATE}T00:00:00Z`),
+      pax: 2,
+      leadName: 'Availability Transfer Fixture',
+      leadEmail: 'fixture@example.test',
+      leadPhone: '09170000000',
+      status: opts.status ?? 'assigned',
+      payMode: 'full',
+      priceSnapshot: SNAPSHOT,
+      subtotalCentavos: 100000,
+      totalCentavos: 100000,
+      vanId: opts.vanId ?? null,
+      driverId: opts.driverId ?? null,
+    });
+    await tx.insert(bookingTransferDetails).values({
+      bookingId: booking.insertId,
+      pickupTime: hhmm(opts.pickupMinutes),
+      dayUseEndTime: opts.dayUseEndMinutes === undefined ? null : hhmm(opts.dayUseEndMinutes),
+      dropoffAddress: 'Fixture drop-off',
+      bufferMinutesUsed: opts.bufferMinutes ?? BUFFER,
+      routeDurationMinutesUsed: productType === 'transfer_day_use' ? null : DURATION,
+    });
+    return booking.insertId;
+  });
+  created.bookingIds.push(id);
+  return id;
+}
+
 describeWithDb('vans', () => {
   beforeEach(async () => {
     // Every test here counts the WHOLE fleet, so a van or driver left
@@ -167,17 +271,35 @@ describeWithDb('vans', () => {
       await count(sql`SELECT COUNT(*) n FROM drivers`),
       'leftover drivers in rg_travel_test',
     ).toBe(0);
+
+    /*
+     * Task T8's driver-cap and window expectations are arithmetic over these
+     * two seeded values, so a change to the owner's defaults must fail HERE,
+     * by name, rather than as a handful of unexplained exclusions below.
+     */
+    const operations = await readTransferOperationsSettings();
+    expect(operations.bufferMinutes, 'the seeded buffer changed').toBe(BUFFER);
+    expect(operations.maxTransferJobsPerDriverPerDay, 'the seeded driver cap changed').toBe(
+      DEFAULT_DRIVER_CAP,
+    );
   });
 
   afterEach(async () => {
     const pool = getPool();
     for (const id of created.bookingIds) {
+      // The details row FIRST: it references the booking, so the delete below
+      // would otherwise die on the foreign key.
+      await pool.query('DELETE FROM booking_transfer_details WHERE booking_id = ?', [id]);
       await pool.query('DELETE FROM bookings WHERE id = ?', [id]);
     }
     for (const id of created.leaveIds) {
       await pool.query('DELETE FROM driver_leaves WHERE id = ?', [id]);
     }
     for (const id of created.tourIds) await pool.query('DELETE FROM tours WHERE id = ?', [id]);
+    // Before the destinations they reference.
+    for (const id of created.routeIds) {
+      await pool.query('DELETE FROM transfer_routes WHERE id = ?', [id]);
+    }
     for (const id of created.destinationIds) {
       await pool.query('DELETE FROM destinations WHERE id = ?', [id]);
     }
@@ -186,6 +308,7 @@ describeWithDb('vans', () => {
     created.bookingIds = [];
     created.leaveIds = [];
     created.tourIds = [];
+    created.routeIds = [];
     created.destinationIds = [];
     created.driverIds = [];
     created.vanIds = [];
@@ -349,5 +472,275 @@ describeWithDb('vans', () => {
     ]);
     expect(freeVans.length).toBeGreaterThan(0);
     expect(freeDrivers.length).toBeGreaterThan(0);
+  });
+
+  /* ======================================================================= *
+   * Task T8 — TRANSFER dispatch: windows for vehicles, windows AND a daily
+   * job count for drivers (transfers-launch plan, Architecture §2 and §2a).
+   *
+   * Every test below passes `transferWindow`, which is what selects the
+   * window-aware branch; the two that deliberately do NOT pass it are
+   * asserting that the whole-day branch is unchanged. `minCapacity: 0` goes
+   * with `vehicleType` on every transfer call, because the TYPE is the fit
+   * for a transfer and the seat count is not consulted.
+   * ======================================================================= */
+
+  /** Pickup 08:00 + 120 duration + 60 buffer = `[08:00, 11:00)`. */
+  const MORNING_PICKUP = at(8);
+
+  it('excludes a van holding a TOUR for the whole day, however narrow the transfer window', async () => {
+    // A tour takes the van all day. A 20-minute airport run at 05:00 cannot
+    // be squeezed around it, because nothing says when the tour is.
+    const tourId = await makeTour();
+    const vanId = await makeVan({ vehicleType: 'van' });
+    const tourBooking = await makeBooking({ tourId, date: DATE });
+    await getDb()
+      .update(bookings)
+      .set({ vanId, status: 'assigned' })
+      .where(eq(bookings.id, tourBooking));
+
+    const free = await getDb().transaction((tx) =>
+      vansFreeOn(tx, DATE, 0, {
+        vehicleType: 'van',
+        transferWindow: window(at(5), at(5, 20)),
+      }),
+    );
+    expect(free.map((v) => v.id)).not.toContain(vanId);
+  });
+
+  it('excludes a van holding even a NON-overlapping transfer from a TOUR assignment', async () => {
+    /*
+     * Re-derived rather than assumed: the no-`transferWindow` branch is one
+     * `NOT EXISTS` with NO product-type filter, so ANY assigned
+     * capacity-holding booking excludes the van — and that is right, not an
+     * oversight. A tour needs the whole day; a van with a 2pm transfer on it
+     * cannot also run a day tour, even though the two windows do not touch.
+     */
+    const routeId = await makeRoute();
+    const vanId = await makeVan({ vehicleType: 'van' });
+    await makeTransferBooking({ routeId, pickupMinutes: at(14), vanId });
+
+    const free = await getDb().transaction((tx) => vansFreeOn(tx, DATE, 2));
+    expect(free.map((v) => v.id)).not.toContain(vanId);
+  });
+
+  it('keeps a van free for a transfer whose window does NOT overlap the one it holds', async () => {
+    // This is the owner's "several jobs a day". [08:00, 11:00) then
+    // [11:00, 14:00): half-open, so the touching pair is one van's work.
+    const routeId = await makeRoute();
+    const vanId = await makeVan({ vehicleType: 'van' });
+    await makeTransferBooking({ routeId, pickupMinutes: MORNING_PICKUP, vanId });
+
+    const free = await getDb().transaction((tx) =>
+      vansFreeOn(tx, DATE, 0, { vehicleType: 'van', transferWindow: window(at(11), at(14)) }),
+    );
+    expect(free.map((v) => v.id)).toContain(vanId);
+  });
+
+  it('excludes a van whose held transfer window overlaps — and the BUFFER is what overlaps', async () => {
+    /*
+     * The held job's vehicle is physically back at 10:00 (08:00 + 120); the
+     * 60-minute buffer is what carries its window to 11:00. A candidate at
+     * 10:30 therefore clashes ONLY because the buffer is counted — so this
+     * test reddens if the stored `buffer_minutes_used` is ever dropped from
+     * the window, which a same-hour overlap test would not notice.
+     */
+    const routeId = await makeRoute();
+    const vanId = await makeVan({ vehicleType: 'van' });
+    await makeTransferBooking({ routeId, pickupMinutes: MORNING_PICKUP, vanId });
+
+    const free = await getDb().transaction((tx) =>
+      vansFreeOn(tx, DATE, 0, { vehicleType: 'van', transferWindow: window(at(10, 30), at(12)) }),
+    );
+    expect(free.map((v) => v.id)).not.toContain(vanId);
+  });
+
+  it('offers only vans of the requested vehicle type', async () => {
+    const vanId = await makeVan({ vehicleType: 'van' });
+    const suvId = await makeVan({ vehicleType: 'suv' });
+
+    const free = await getDb().transaction((tx) =>
+      vansFreeOn(tx, DATE, 0, {
+        vehicleType: 'suv',
+        transferWindow: window(MORNING_PICKUP, at(11)),
+      }),
+    );
+    const ids = free.map((v) => v.id);
+    expect(ids).toContain(suvId);
+    // Otherwise free — nothing is assigned to it at all — and still refused.
+    expect(ids).not.toContain(vanId);
+  });
+
+  /**
+   * **`vehicleType` is TRANSFER-only (dedicated review finding, T8).** Passing
+   * it WITHOUT `transferWindow` must have no effect at all — a TOUR can use
+   * either vehicle type, and nothing in this codebase has a reason to call
+   * `vansFreeOn` that way today, but the TYPE makes it legal, so it is pinned
+   * here rather than left to never be exercised.
+   */
+  it('ignores vehicleType entirely when transferWindow is absent — the TOUR shape', async () => {
+    const vanId = await makeVan({ vehicleType: 'van' });
+    const suvId = await makeVan({ vehicleType: 'suv' });
+
+    const free = await getDb().transaction((tx) => vansFreeOn(tx, DATE, 0, { vehicleType: 'suv' }));
+    const ids = free.map((v) => v.id);
+    // Both vans free — `vehicleType: 'suv'` did NOT narrow the pool to SUVs.
+    expect(ids).toContain(vanId);
+    expect(ids).toContain(suvId);
+  });
+
+  it('does not exclude the transfer being re-assigned from seeing its own van', async () => {
+    // The fully-overlapping case on purpose: the same window, so only
+    // `excludeBookingId` can keep this van in the answer.
+    const routeId = await makeRoute();
+    const vanId = await makeVan({ vehicleType: 'van' });
+    const mineId = await makeTransferBooking({ routeId, pickupMinutes: MORNING_PICKUP, vanId });
+
+    const free = await getDb().transaction((tx) =>
+      vansFreeOn(tx, DATE, 0, {
+        vehicleType: 'van',
+        transferWindow: window(MORNING_PICKUP, at(11)),
+        excludeBookingId: mineId,
+      }),
+    );
+    expect(free.map((v) => v.id)).toContain(vanId);
+  });
+
+  /* ---- drivers: the COUNT rule, which vehicles do not have ---- */
+
+  it('excludes a driver already at their daily transfer-job cap, overlap or not', async () => {
+    // Two jobs at the seeded default cap of 2, both nowhere near the
+    // candidate: [06:00, 09:00) and [12:00, 15:00) against [18:00, 21:00).
+    const routeId = await makeRoute();
+    const driverId = await makeDriver();
+    await makeTransferBooking({ routeId, pickupMinutes: at(6), driverId });
+    await makeTransferBooking({ routeId, pickupMinutes: at(12), driverId });
+
+    const free = await getDb().transaction((tx) =>
+      driversFreeOn(tx, DATE, { transferWindow: window(at(18), at(21)) }),
+    );
+    expect(free.map((d) => d.id)).not.toContain(driverId);
+  });
+
+  it('keeps a driver with capacity left and no overlap', async () => {
+    const routeId = await makeRoute();
+    const driverId = await makeDriver();
+    await makeTransferBooking({ routeId, pickupMinutes: at(6), driverId });
+
+    const free = await getDb().transaction((tx) =>
+      driversFreeOn(tx, DATE, { transferWindow: window(at(18), at(21)) }),
+    );
+    expect(free.map((d) => d.id)).toContain(driverId);
+  });
+
+  it('respects a per-driver override against the settings default', async () => {
+    /*
+     * One job each, and the ONLY difference is the override: the capped driver
+     * is out at one job, the default driver still has a second in them. Both
+     * in one test, because the point is the comparison — a test of the
+     * override alone would also pass if the default were being read for both.
+     */
+    const routeId = await makeRoute();
+    const cappedId = await makeDriver({ name: 'Capped Carlos', maxTransferJobsPerDay: 1 });
+    const defaultId = await makeDriver({ name: 'Default Dolores' });
+    await makeTransferBooking({ routeId, pickupMinutes: at(6), driverId: cappedId });
+    await makeTransferBooking({ routeId, pickupMinutes: at(6), driverId: defaultId });
+
+    const free = await getDb().transaction((tx) =>
+      driversFreeOn(tx, DATE, { transferWindow: window(at(18), at(21)) }),
+    );
+    const ids = free.map((d) => d.id);
+    expect(ids).not.toContain(cappedId);
+    expect(ids).toContain(defaultId);
+  });
+
+  it('excludes a driver whose override is 0 even with no jobs at all', async () => {
+    // A driver kept for tours. `0 >= 0` excludes them, which is the same
+    // meaning a 0 override has at hold time — and `||` instead of `??` in the
+    // cap lookup would silently hand them the default 2 instead.
+    const driverId = await makeDriver({ maxTransferJobsPerDay: 0 });
+
+    const free = await getDb().transaction((tx) =>
+      driversFreeOn(tx, DATE, { transferWindow: window(at(18), at(21)) }),
+    );
+    expect(free.map((d) => d.id)).not.toContain(driverId);
+  });
+
+  it('excludes a driver whose held transfer window overlaps, under their cap', async () => {
+    // One job of two allowed, so the count rule says yes and only the overlap
+    // can refuse: [08:00, 11:00) against a candidate at 10:00.
+    const routeId = await makeRoute();
+    const driverId = await makeDriver();
+    await makeTransferBooking({ routeId, pickupMinutes: MORNING_PICKUP, driverId });
+
+    const free = await getDb().transaction((tx) =>
+      driversFreeOn(tx, DATE, { transferWindow: window(at(10), at(13)) }),
+    );
+    expect(free.map((d) => d.id)).not.toContain(driverId);
+  });
+
+  it('excludes a driver holding a TOUR for the whole day', async () => {
+    const tourId = await makeTour();
+    const driverId = await makeDriver();
+    const tourBooking = await makeBooking({ tourId, date: DATE });
+    await getDb()
+      .update(bookings)
+      .set({ driverId, status: 'assigned' })
+      .where(eq(bookings.id, tourBooking));
+
+    const free = await getDb().transaction((tx) =>
+      driversFreeOn(tx, DATE, { transferWindow: window(at(5), at(5, 20)) }),
+    );
+    expect(free.map((d) => d.id)).not.toContain(driverId);
+  });
+
+  it('does not exclude the transfer being re-assigned from seeing its own driver', async () => {
+    /*
+     * Both rules at once: the driver's only job IS this booking, so without
+     * `excludeBookingId` they would be refused twice over — the window
+     * overlaps itself exactly, and one job against a cap of… well, the point
+     * is the booking must not compete with itself.
+     */
+    const routeId = await makeRoute();
+    const driverId = await makeDriver({ maxTransferJobsPerDay: 1 });
+    const mineId = await makeTransferBooking({
+      routeId,
+      pickupMinutes: MORNING_PICKUP,
+      driverId,
+    });
+
+    const free = await getDb().transaction((tx) =>
+      driversFreeOn(tx, DATE, {
+        transferWindow: window(MORNING_PICKUP, at(11)),
+        excludeBookingId: mineId,
+      }),
+    );
+    expect(free.map((d) => d.id)).toContain(driverId);
+  });
+
+  it('gives a cancelled transfer its van and driver back', async () => {
+    // The same release `CAPACITY_HOLDING_STATUSES` already gives a tour,
+    // reached through the new branch: a cancelled transfer's window is not a
+    // claim on anything.
+    const routeId = await makeRoute();
+    const vanId = await makeVan({ vehicleType: 'van' });
+    const driverId = await makeDriver();
+    await makeTransferBooking({
+      routeId,
+      pickupMinutes: MORNING_PICKUP,
+      vanId,
+      driverId,
+      status: 'cancelled',
+    });
+
+    const [freeVans, freeDrivers] = await getDb().transaction(async (tx) => [
+      await vansFreeOn(tx, DATE, 0, {
+        vehicleType: 'van',
+        transferWindow: window(MORNING_PICKUP, at(11)),
+      }),
+      await driversFreeOn(tx, DATE, { transferWindow: window(MORNING_PICKUP, at(11)) }),
+    ]);
+    expect(freeVans.map((v) => v.id)).toContain(vanId);
+    expect(freeDrivers.map((d) => d.id)).toContain(driverId);
   });
 });

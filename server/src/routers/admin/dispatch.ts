@@ -38,8 +38,15 @@ function asTrpcError(reason: AssignRefusal): TRPCError {
   switch (reason) {
     case 'booking_not_found':
       return new TRPCError({ code: 'NOT_FOUND', message: reason });
+    /*
+     * `driver_at_daily_cap` is CONFLICT alongside the other two for the same
+     * reason: a driver's job count for the day is state that can change,
+     * including by someone else's concurrent assignment pushing it over while
+     * this dispatcher's dropdown was open.
+     */
     case 'van_unavailable':
     case 'driver_unavailable':
+    case 'driver_at_daily_cap':
       return new TRPCError({ code: 'CONFLICT', message: reason });
     case 'booking_not_assignable':
     case 'van_too_small':

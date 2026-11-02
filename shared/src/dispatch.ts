@@ -461,6 +461,16 @@ export type AssignRefusal =
   | 'van_unavailable'
   | 'driver_unavailable'
   | 'van_too_small'
+  /**
+   * TRANSFER assignment only (transfers-launch plan, Architecture §2a; T8):
+   * this driver already holds their day's `maxTransferJobsPerDay` transfer
+   * jobs. Separate from `driver_unavailable` by that type's own logic — the
+   * driver may be provably idle at this hour and still refused, so "someone
+   * just took them, re-check the day" is the one sentence that is certainly
+   * wrong here. It tells the dispatcher to pick a different driver, not to
+   * look again.
+   */
+  | 'driver_at_daily_cap'
   /** An `in_progress` re-assignment arrived without a reason (owner Q3). */
   | 'reason_required';
 

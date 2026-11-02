@@ -20,17 +20,19 @@
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
-import type { BookingStatus, PriceSnapshot } from '@rg/shared';
+import type { BookingStatus, PriceSnapshot, VehicleType } from '@rg/shared';
 import { appRouter } from '../routers/_app';
 import { getDb, getPool } from '../db/client';
 import {
   auditLog,
+  bookingTransferDetails,
   bookings,
   destinations,
   driverLeaves,
   drivers,
   payments,
   tours,
+  transferRoutes,
   users,
   vans,
 } from '../db/schema';
@@ -49,11 +51,26 @@ const unique = () => `${Math.floor(Math.random() * 1e9)}_${Date.now()}`;
 const created = {
   bookingIds: [] as number[],
   tourIds: [] as number[],
+  routeIds: [] as number[],
   destIds: [] as number[],
   vanIds: [] as number[],
   driverIds: [] as number[],
   leaveIds: [] as number[],
 };
+
+/* ----- Task T8: the transfer branch's window arithmetic ----- */
+
+/** The seeded `transfer_operations` values the transfer cases below assume. */
+const BUFFER = 60;
+const DEFAULT_DRIVER_CAP = 2;
+/** The one-way duration every transfer fixture here shares. */
+const DURATION = 120;
+
+/** Minutes since midnight, so the cases read as times. */
+const at = (hours: number, minutes = 0) => hours * 60 + minutes;
+/** Minutes back to the `"HH:mm"` civil label the column stores. */
+const hhmm = (minutes: number) =>
+  `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 
 async function count(statement: Parameters<ReturnType<typeof getDb>['execute']>[0]) {
   const [rows] = (await getDb().execute(statement)) as unknown as [Array<{ n: number }>, unknown];
@@ -72,7 +89,7 @@ async function makeTour() {
   return tour.insertId;
 }
 
-async function makeVan(opts: { capacity?: number } = {}) {
+async function makeVan(opts: { capacity?: number; vehicleType?: VehicleType } = {}) {
   const suffix = unique();
   const [van] = await getDb()
     .insert(vans)
@@ -82,12 +99,14 @@ async function makeVan(opts: { capacity?: number } = {}) {
       capacity: opts.capacity ?? 12,
       status: 'available',
       isActive: true,
+      vehicleType: opts.vehicleType ?? 'van',
     });
   created.vanIds.push(van.insertId);
   return van.insertId;
 }
 
-async function makeDriver() {
+/** `maxTransferJobsPerDay: undefined` leaves the column NULL — "use the default". */
+async function makeDriver(opts: { maxTransferJobsPerDay?: number } = {}) {
   const suffix = unique();
   const [driver] = await getDb()
     .insert(drivers)
@@ -98,9 +117,23 @@ async function makeDriver() {
       // Not a real hash: nothing here logs in.
       pinHash: '__dispassign_not_a_pin_hash__',
       isActive: true,
+      maxTransferJobsPerDay: opts.maxTransferJobsPerDay ?? null,
     });
   created.driverIds.push(driver.insertId);
   return driver.insertId;
+}
+
+/** A transfer route, plus the destination its UNIQUE foreign key needs. */
+async function makeRoute() {
+  const db = getDb();
+  const slug = `__dispassign__${unique()}`;
+  const [destination] = await db.insert(destinations).values({ name: slug, slug });
+  created.destIds.push(destination.insertId);
+  const [route] = await db
+    .insert(transferRoutes)
+    .values({ destinationId: destination.insertId, slug, estimatedDurationMinutes: DURATION });
+  created.routeIds.push(route.insertId);
+  return route.insertId;
 }
 
 async function makeStaff(role: 'owner' | 'dispatcher' | 'finance') {
@@ -156,6 +189,59 @@ async function makeBooking(opts: {
     });
   created.bookingIds.push(booking.insertId);
   return booking.insertId;
+}
+
+/**
+ * A committed TRANSFER booking and its `booking_transfer_details` row — what
+ * `createTransferBooking()` (Task T10) will write, built by hand here because
+ * it does not exist yet, exactly as `transfer-capacity.test.ts` does.
+ *
+ * Both frozen values are stored (`buffer_minutes_used`,
+ * `route_duration_minutes_used`), because `assignVanAndDriver` recomputes this
+ * booking's window from THOSE and never from the catalog route.
+ *
+ * Window, with the seeded defaults: `[pickup, pickup + 120 + 60)`.
+ */
+async function makeTransferBooking(opts: {
+  routeId: number;
+  pickupMinutes: number;
+  vehicleType?: VehicleType;
+  status?: BookingStatus;
+  pax?: number;
+  vanId?: number | null;
+  driverId?: number | null;
+}) {
+  const id = await getDb().transaction(async (tx) => {
+    const [booking] = await tx.insert(bookings).values({
+      ref: generateBookingRef(),
+      tourId: null,
+      productType: 'transfer_one_way',
+      routeId: opts.routeId,
+      vehicleTypeRequested: opts.vehicleType ?? 'van',
+      tourDate: new Date(`${TOUR_DATE}T00:00:00Z`),
+      pax: opts.pax ?? 2,
+      leadName: 'Dispatch Assign Transfer Fixture',
+      leadEmail: 'dispassign@example.test',
+      leadPhone: '09170000000',
+      status: opts.status ?? 'confirmed',
+      payMode: 'full',
+      priceSnapshot: SNAPSHOT,
+      subtotalCentavos: 100000,
+      totalCentavos: 100000,
+      vanId: opts.vanId ?? null,
+      driverId: opts.driverId ?? null,
+    });
+    await tx.insert(bookingTransferDetails).values({
+      bookingId: booking.insertId,
+      pickupTime: hhmm(opts.pickupMinutes),
+      dropoffAddress: 'Fixture drop-off',
+      bufferMinutesUsed: BUFFER,
+      routeDurationMinutesUsed: DURATION,
+    });
+    return booking.insertId;
+  });
+  created.bookingIds.push(id);
+  return id;
 }
 
 async function auditRowsFor(entity: string, entityId: number) {
@@ -252,6 +338,9 @@ describeWithDb('admin.dispatch.assign', () => {
     resetTransportForTests();
     const pool = getPool();
     for (const id of created.bookingIds) {
+      // The details row FIRST: it references the booking, so the delete below
+      // would otherwise die on the foreign key.
+      await pool.query('DELETE FROM booking_transfer_details WHERE booking_id = ?', [id]);
       await pool.query('DELETE FROM bookings WHERE id = ?', [id]);
     }
     for (const id of created.leaveIds) {
@@ -273,6 +362,10 @@ describeWithDb('admin.dispatch.assign', () => {
     }
     await pool.query('DELETE FROM fleet_date_slots WHERE date = ?', [TOUR_DATE]);
     for (const id of created.tourIds) await pool.query('DELETE FROM tours WHERE id = ?', [id]);
+    // Before the destinations they reference.
+    for (const id of created.routeIds) {
+      await pool.query('DELETE FROM transfer_routes WHERE id = ?', [id]);
+    }
     for (const id of created.destIds) {
       await pool.query('DELETE FROM destinations WHERE id = ?', [id]);
     }
@@ -281,6 +374,7 @@ describeWithDb('admin.dispatch.assign', () => {
     created.bookingIds = [];
     created.leaveIds = [];
     created.tourIds = [];
+    created.routeIds = [];
     created.destIds = [];
     created.driverIds = [];
     created.vanIds = [];
@@ -1014,5 +1108,275 @@ describeWithDb('admin.dispatch.assign', () => {
     ).resolves.toEqual({
       ok: true,
     });
+  });
+
+  /* ======================================================================= *
+   * Task T8 — assigning a TRANSFER. The branch that used to be a loud throw
+   * ("transfer assignment is not built yet"): the fleet lock alone, the
+   * booking's own FROZEN window, and the one new driver diagnostic.
+   * ======================================================================= */
+
+  it('assigns a van of the requested type and a non-overlapping driver to a transfer', async () => {
+    const routeId = await makeRoute();
+    // An SUV exists too, and must NOT be the one that satisfies this: the
+    // booking asks for a van.
+    await makeVan({ capacity: 12, vehicleType: 'suv' });
+    const vanId = await makeVan({ capacity: 12, vehicleType: 'van' });
+    const driverId = await makeDriver();
+    const bookingId = await makeTransferBooking({ routeId, pickupMinutes: at(8) });
+
+    const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+    await expect(api.admin.dispatch.assign({ bookingId, vanId, driverId })).resolves.toEqual({
+      ok: true,
+    });
+
+    const [row] = await getDb().select().from(bookings).where(eq(bookings.id, bookingId));
+    expect({ vanId: row!.vanId, driverId: row!.driverId, status: row!.status }).toEqual({
+      vanId,
+      driverId,
+      status: 'assigned',
+    });
+
+    /*
+     * The SAME audit action a tour gets. A transfer's assignment is the same
+     * two ids written to the same two columns, and `admin.bookings.detail`'s
+     * trail reads `entity = 'bookings'` — a second action name would split one
+     * event in two for no reader's benefit.
+     */
+    const audit = (await auditRowsFor('bookings', bookingId)).at(-1)!;
+    expect(audit.action).toBe('booking_assigned');
+    expect(audit.actorId).toBe(dispatcherId);
+    expect(audit.data).toMatchObject({
+      vanId,
+      driverId,
+      previousVanId: null,
+      previousDriverId: null,
+    });
+  });
+
+  it('refuses a van of the WRONG vehicle type for a transfer', async () => {
+    const routeId = await makeRoute();
+    const suvId = await makeVan({ capacity: 12, vehicleType: 'suv' });
+    const driverId = await makeDriver();
+    // `vehicle_type_requested = 'van'`, and the SUV is big enough for the
+    // group — so `van_too_small` would be the wrong sentence and is not it.
+    const bookingId = await makeTransferBooking({ routeId, pickupMinutes: at(8), pax: 2 });
+
+    const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+    await expect(
+      api.admin.dispatch.assign({ bookingId, vanId: suvId, driverId }),
+    ).rejects.toMatchObject({ code: 'CONFLICT', message: 'van_unavailable' });
+
+    const [row] = await getDb()
+      .select({ vanId: bookings.vanId, driverId: bookings.driverId, status: bookings.status })
+      .from(bookings)
+      .where(eq(bookings.id, bookingId));
+    expect(row).toEqual({ vanId: null, driverId: null, status: 'confirmed' });
+  });
+
+  /**
+   * **Dedicated review finding, T8: `van_too_small` is a TOUR-only sentence.**
+   * The candidate is SMALL (capacity 1) AND the wrong type — exactly the
+   * combination that used to say "too small" when the true, and only, gate
+   * is the type. `pax: 1` so the group genuinely would have fit if the type
+   * had matched, isolating the one thing actually wrong with this van.
+   */
+  it('says van_unavailable, never van_too_small, for a small van of the WRONG type', async () => {
+    // `capacity: 1 < pax: 2` on purpose — genuinely "too small" as well as the
+    // wrong type, so the pre-fix diagnostic (`capacity < pax`) would have said
+    // `van_too_small` here. The type mismatch is the true, and only, gate.
+    const routeId = await makeRoute();
+    const suvId = await makeVan({ capacity: 1, vehicleType: 'suv' });
+    const driverId = await makeDriver();
+    const bookingId = await makeTransferBooking({ routeId, pickupMinutes: at(8), pax: 2 });
+
+    const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+    await expect(
+      api.admin.dispatch.assign({ bookingId, vanId: suvId, driverId }),
+    ).rejects.toMatchObject({ code: 'CONFLICT', message: 'van_unavailable' });
+  });
+
+  it('refuses a van whose transfer window overlaps one it already holds', async () => {
+    const routeId = await makeRoute();
+    const vanId = await makeVan({ capacity: 12, vehicleType: 'van' });
+    const driverId = await makeDriver();
+    // Held: [08:00, 11:00). Candidate: [10:00, 13:00).
+    await makeTransferBooking({ routeId, pickupMinutes: at(8), vanId, status: 'assigned' });
+    const bookingId = await makeTransferBooking({ routeId, pickupMinutes: at(10) });
+
+    const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+    await expect(api.admin.dispatch.assign({ bookingId, vanId, driverId })).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'van_unavailable',
+    });
+  });
+
+  it('ACCEPTS a van for a second transfer whose window does not overlap the first', async () => {
+    // The owner's "several jobs a day", through the real mutation. Without it
+    // the test above would also pass against a whole-day exclusion.
+    const routeId = await makeRoute();
+    const vanId = await makeVan({ capacity: 12, vehicleType: 'van' });
+    const driverId = await makeDriver();
+    await makeTransferBooking({ routeId, pickupMinutes: at(8), vanId, status: 'assigned' });
+    const bookingId = await makeTransferBooking({ routeId, pickupMinutes: at(11) });
+
+    const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+    await expect(api.admin.dispatch.assign({ bookingId, vanId, driverId })).resolves.toEqual({
+      ok: true,
+    });
+  });
+
+  it('refuses a driver whose transfer window overlaps, UNDER their daily cap', async () => {
+    /*
+     * One held job against a cap of 2, so the count rule says yes and only the
+     * overlap can refuse — which is what makes this the control for the
+     * `driver_at_daily_cap` test below. The two reasons are not
+     * interchangeable and this pair is the proof.
+     */
+    const routeId = await makeRoute();
+    const vanId = await makeVan({ capacity: 12, vehicleType: 'van' });
+    const otherVanId = await makeVan({ capacity: 12, vehicleType: 'van' });
+    const driverId = await makeDriver();
+    await makeTransferBooking({
+      routeId,
+      pickupMinutes: at(8),
+      vanId: otherVanId,
+      driverId,
+      status: 'assigned',
+    });
+    const bookingId = await makeTransferBooking({ routeId, pickupMinutes: at(10) });
+
+    const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+    await expect(api.admin.dispatch.assign({ bookingId, vanId, driverId })).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'driver_unavailable',
+    });
+  });
+
+  it('refuses a driver at their daily transfer cap with driver_at_daily_cap, not driver_unavailable', async () => {
+    /*
+     * THE TEST THE NEW DIAGNOSTIC EXISTS FOR. Two held jobs at the seeded
+     * default cap of 2, both far from the candidate — [06:00, 09:00) and
+     * [12:00, 15:00) against [18:00, 21:00) — so NO window overlaps and the
+     * count is the only thing refusing. Neither held job holds a van, so the
+     * van this assigns is genuinely free and the refusal can only be about
+     * the driver.
+     */
+    const routeId = await makeRoute();
+    const vanId = await makeVan({ capacity: 12, vehicleType: 'van' });
+    const driverId = await makeDriver();
+    expect(DEFAULT_DRIVER_CAP).toBe(2);
+    await makeTransferBooking({ routeId, pickupMinutes: at(6), driverId, status: 'assigned' });
+    await makeTransferBooking({ routeId, pickupMinutes: at(12), driverId, status: 'assigned' });
+    const bookingId = await makeTransferBooking({ routeId, pickupMinutes: at(18) });
+
+    const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+    await expect(api.admin.dispatch.assign({ bookingId, vanId, driverId })).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'driver_at_daily_cap',
+    });
+
+    // And nothing was written.
+    const [row] = await getDb()
+      .select({ vanId: bookings.vanId, driverId: bookings.driverId, status: bookings.status })
+      .from(bookings)
+      .where(eq(bookings.id, bookingId));
+    expect(row).toEqual({ vanId: null, driverId: null, status: 'confirmed' });
+  });
+
+  /**
+   * **Dedicated review finding, T8: the cap diagnostic defers to the TRUE
+   * reason.** This driver is at their cap (same two jobs as the test above)
+   * AND on leave that day. Leave is the real reason they cannot be assigned
+   * — `driver_at_daily_cap` would send a dispatcher re-checking a cap that
+   * was never the issue.
+   */
+  it('says driver_unavailable, never driver_at_daily_cap, for a driver on leave who is also at cap', async () => {
+    const routeId = await makeRoute();
+    const vanId = await makeVan({ capacity: 12, vehicleType: 'van' });
+    const driverId = await makeDriver();
+    expect(DEFAULT_DRIVER_CAP).toBe(2);
+    await makeTransferBooking({ routeId, pickupMinutes: at(6), driverId, status: 'assigned' });
+    await makeTransferBooking({ routeId, pickupMinutes: at(12), driverId, status: 'assigned' });
+    const bookingId = await makeTransferBooking({ routeId, pickupMinutes: at(18) });
+
+    const [leave] = await getDb()
+      .insert(driverLeaves)
+      .values({
+        driverId,
+        startDate: new Date(`${TOUR_DATE}T00:00:00Z`),
+        endDate: new Date(`${TOUR_DATE}T00:00:00Z`),
+      });
+    created.leaveIds.push(leave.insertId);
+
+    const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+    await expect(api.admin.dispatch.assign({ bookingId, vanId, driverId })).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'driver_unavailable',
+    });
+  });
+
+  it('never says driver_at_daily_cap on the TOUR branch', async () => {
+    // A tour assignment refused for a driver on leave keeps the one reason it
+    // always had: the new diagnostic is transfer-only by construction.
+    const tourId = await makeTour();
+    const vanId = await makeVan({ capacity: 4 });
+    const driverId = await makeDriver({ maxTransferJobsPerDay: 0 });
+    const bookingId = await makeBooking({ tourId, pax: 2, status: 'confirmed' });
+
+    const [leave] = await getDb()
+      .insert(driverLeaves)
+      .values({
+        driverId,
+        startDate: new Date(`${TOUR_DATE}T00:00:00Z`),
+        endDate: new Date(`${TOUR_DATE}T00:00:00Z`),
+      });
+    created.leaveIds.push(leave.insertId);
+
+    const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+    await expect(api.admin.dispatch.assign({ bookingId, vanId, driverId })).rejects.toMatchObject({
+      message: 'driver_unavailable',
+    });
+  });
+
+  it('re-assigns a transfer to the SAME van and driver it already holds', async () => {
+    // `excludeBookingId` through the real mutation: the booking's own window
+    // overlaps itself exactly, and its own job counts against its own driver,
+    // so without the exclusion this is refused twice over.
+    const routeId = await makeRoute();
+    const vanId = await makeVan({ capacity: 12, vehicleType: 'van' });
+    const driverId = await makeDriver({ maxTransferJobsPerDay: 1 });
+    const bookingId = await makeTransferBooking({ routeId, pickupMinutes: at(8) });
+
+    const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+    await expect(api.admin.dispatch.assign({ bookingId, vanId, driverId })).resolves.toEqual({
+      ok: true,
+    });
+    await expect(api.admin.dispatch.assign({ bookingId, vanId, driverId })).resolves.toEqual({
+      ok: true,
+    });
+
+    const [row] = await getDb()
+      .select({ vanId: bookings.vanId, driverId: bookings.driverId })
+      .from(bookings)
+      .where(eq(bookings.id, bookingId));
+    expect(row).toEqual({ vanId, driverId });
+  });
+
+  it('changes no money when it assigns a transfer', async () => {
+    const routeId = await makeRoute();
+    const vanId = await makeVan({ capacity: 12, vehicleType: 'van' });
+    const driverId = await makeDriver();
+    const bookingId = await makeTransferBooking({ routeId, pickupMinutes: at(8) });
+
+    const before = await moneySnapshot(bookingId);
+    expect(before).toMatchObject({
+      totalCentavos: expect.any(Number),
+      amountPaidCentavos: expect.any(Number),
+    });
+
+    const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+    await api.admin.dispatch.assign({ bookingId, vanId, driverId });
+    expect(await moneySnapshot(bookingId)).toEqual(before);
   });
 });

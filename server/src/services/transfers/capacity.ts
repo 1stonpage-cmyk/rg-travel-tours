@@ -148,8 +148,15 @@ export async function sellableVehiclesByType(tx: Transaction): Promise<SellableV
   return counts;
 }
 
-/** What one booked transfer row needs for its window to be recomputed. */
-interface BookedTransferRow {
+/**
+ * What one booked transfer row needs for its window to be recomputed.
+ *
+ * Exported for Task T8's DISPATCH-time counterpart
+ * (`services/dispatch/availability.ts`), which asks the same question of the
+ * same columns for a SPECIFIC van/driver rather than for the type pool. The
+ * shape is the contract between the two; widening visibility, not behaviour.
+ */
+export interface BookedTransferRow {
   bookingId: number;
   productType: ProductType;
   vehicleType: VehicleType | null;
@@ -190,7 +197,7 @@ interface BookedTransferRow {
  * fail-closed clamp for a row this invariant did not hold for — not a path
  * any admin action can trigger once T10 ships.
  */
-function windowForBookedTransfer(row: BookedTransferRow): TimeWindow {
+export function windowForBookedTransfer(row: BookedTransferRow): TimeWindow {
   const unreadable = (why: string): TimeWindow => {
     console.warn(
       `[transfer-capacity] booking ${row.bookingId}: ${why}; ` +
