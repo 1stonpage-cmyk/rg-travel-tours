@@ -99,6 +99,14 @@ function validValueFor(key: string): unknown {
         instructions: null,
         isConfigured: false,
       };
+    case 'transfer_operations':
+      // The owner's four defaults, 2026-10-31 (transfers-launch plan, T7).
+      return {
+        bufferMinutes: 60,
+        minNoticeHours: 6,
+        staffQuoteHoldHours: 48,
+        maxTransferJobsPerDriverPerDay: 2,
+      };
     case 'legal_privacy':
       return { markdown: '# Privacy', updatedAt: '2026-01-01T00:00:00.000Z' };
     case 'legal_terms':
@@ -110,7 +118,7 @@ function validValueFor(key: string): unknown {
 
 describeWithDb('readSettings()', () => {
   // rg_travel_test is a disposable database (task 1.4b): each test clears
-  // the whole `settings` table and writes its own fixture rows for all 15
+  // the whole `settings` table and writes its own fixture rows for all 18
   // keys, rather than colliding with (or snapshotting around) the seeded
   // rows. Once the suite is done, resetTestDb() restores the canonical
   // seeded baseline for whatever runs next.

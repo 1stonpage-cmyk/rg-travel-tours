@@ -11,9 +11,25 @@
  * and never overbook automatically. §5's checklist spells the fleet half out
  * in two parts, and both are enforced here: at least one VAN free that day
  * (active, `status = VAN_STATUS_SELLABLE`, `capacity >= pax`) and at least
- * one DRIVER free that day (active, not on leave) — with every booking already holding
- * capacity that day counting as one van and one driver taken, "so we never
- * sell more trips than the fleet can run".
+ * one DRIVER free that day (active, not on leave) — with every TOUR booking
+ * already holding capacity that day counting as one van and one driver taken,
+ * "so we never sell more trips than the fleet can run".
+ *
+ * ## The fleet is shared with TRANSFERS now (transfers-launch plan, Task T7)
+ *
+ * A tour blocks a vehicle and a driver for the whole civil day. A transfer
+ * blocks its vehicle TYPE only for `[pickup, estimated end + buffer)`, and
+ * consumes one job-unit of one driver's daily cap. So "a booking" is no longer
+ * one unit of anything: this file counts TOURS (`countToursOn`) and asks
+ * `services/transfers/capacity.ts` what the day's transfers have claimed —
+ * each type's PEAK (Architecture §2, conditions 1–3) and the driver pool's
+ * leftover job capacity (§2a, conditions 4–5). Both questions are answered
+ * under the SAME `fleet_date_slots(date)` lock, in the same transaction, so a
+ * hold is refused the instant either resource is short rather than one of them.
+ *
+ * There is deliberately NO second lock table: conditions (1)–(5) read across
+ * both vehicle types and both product types for one date, so a per-type lock
+ * would under-serialize exactly where the sharing happens.
  *
  * ## The lock order is the whole point
  *
@@ -98,10 +114,19 @@
  * `groups_per_day` is either unknowable or not for sale. The caller still
  * owes the past-date and `tour_blocked_dates` checks.
  */
-import { and, eq, gte, inArray, notExists, sql } from 'drizzle-orm';
-import { CAPACITY_HOLDING_STATUSES } from '@rg/shared';
+import { and, eq, gte, sql } from 'drizzle-orm';
 import type { Transaction } from '../db/client';
-import { bookings, driverLeaves, drivers, tours, vans, VAN_STATUS_SELLABLE } from '../db/schema';
+import { bookings, tours, vans, VAN_STATUS_SELLABLE } from '../db/schema';
+import { assertCivilDate, holdsCapacity, on, onlyCount, TOTAL } from './capacity-sql';
+import {
+  countToursOn,
+  countTransfersOn,
+  driverTransferCapsOn,
+  leftoverTransferCapacity,
+  readDefaultDriverTransferCap,
+  sellableVehiclesByType,
+  transferPeaksByType,
+} from './transfers/capacity';
 
 /**
  * Why a booking was refused. Each one is a different sentence to a guest —
@@ -124,28 +149,15 @@ export type CapacityRefusalReason = (typeof CAPACITY_REFUSAL_REASONS)[number];
 /** The verdict. Never a thrown REFUSAL — see the module note. */
 export type CapacityVerdict = { ok: true } | { ok: false; reason: CapacityRefusalReason };
 
-const CIVIL_DATE = /^\d{4}-\d{2}-\d{2}$/;
-
 /**
- * A tour date is a CIVIL date in Asia/Manila (`YYYY-MM-DD`), never an
- * instant: it is passed and compared as a string from end to end, so no
- * timezone conversion can shift the day near midnight.
- *
- * This THROWS on a malformed date rather than returning a verdict, and the
- * distinction matters: MySQL treats an invalid date literal in a `WHERE` as
- * a warning and compares it as NULL, so a typo'd date would quietly count
- * zero bookings and read as "room available". A programmer error has to be
- * loud. The guest-facing boundary (`quoteInput`/`createHoldInput` in
- * @rg/shared) has already rejected anything but this shape, so a throw here
- * is unreachable from the public flow.
+ * `assertCivilDate`, `onlyCount`, `TOTAL`, `on` and `holdsCapacity` were
+ * private to this module until the transfers-launch plan's Task T7 gave the
+ * same questions a second asker (`services/transfers/capacity.ts`). They now
+ * live in `./capacity-sql` — unchanged, comments included — for the reasons
+ * that module's own header gives.
  */
-function assertCivilDate(date: string): void {
-  if (!CIVIL_DATE.test(date)) {
-    throw new TypeError(`Expected a YYYY-MM-DD civil date, got "${date}"`);
-  }
-}
 
-/** Same reasoning: `pax` of 0 would make `capacity >= pax` match every van. */
+/** Same reasoning as `assertCivilDate`: `pax` of 0 would make `capacity >= pax` match every van. */
 function assertPax(pax: number): void {
   if (!Number.isInteger(pax) || pax < 1) {
     throw new RangeError(`Expected a positive whole head count, got ${pax}`);
@@ -153,9 +165,11 @@ function assertPax(pax: number): void {
 }
 
 /**
- * Creates both lock rows if they are absent and locks them, **fleet first,
- * tour second**. Every capacity read must happen after this, through the
- * same `tx`.
+ * The FLEET half of the lock protocol, on its own: creates
+ * `fleet_date_slots(date)` if it is absent and locks it. **Always the first
+ * lock taken, by every path** — a tour hold (through `takeSlotLocks` below) and
+ * a transfer hold (which has no `tour_id` and therefore no second lock to take)
+ * alike.
  *
  * **These must be the FIRST statements of the booking transaction.** A plain
  * `SELECT` before them pins the REPEATABLE READ snapshot before the lock is
@@ -169,7 +183,7 @@ function assertPax(pax: number): void {
  * is exactly the midnight-shift hazard this module avoids), and the four
  * statements then read as the lock protocol §5 writes out.
  */
-export async function takeSlotLocks(tx: Transaction, tourId: number, date: string): Promise<void> {
+export async function takeFleetDateLock(tx: Transaction, date: string): Promise<void> {
   assertCivilDate(date);
 
   /*
@@ -198,6 +212,22 @@ export async function takeSlotLocks(tx: Transaction, tourId: number, date: strin
    * not a guarantee.
    */
   await tx.execute(sql`SELECT date FROM fleet_date_slots WHERE date = ${date} FOR UPDATE`);
+}
+
+/**
+ * Creates both lock rows if they are absent and locks them, **fleet first,
+ * tour second**. Every capacity read must happen after this, through the same
+ * `tx`, and the same FIRST-statements precondition `takeFleetDateLock` states
+ * applies to this whole call.
+ *
+ * Signature and behaviour are unchanged by Task T7: the fleet half simply moved
+ * into `takeFleetDateLock` above, because a TRANSFER hold needs that half alone
+ * (no `tour_id`, so no `tour_date_slots` row to take). It is the same protocol,
+ * in the same order, with the first half now callable on its own — proven by
+ * `capacity.test.ts`'s existing lock-order and race tests passing unchanged.
+ */
+export async function takeSlotLocks(tx: Transaction, tourId: number, date: string): Promise<void> {
+  await takeFleetDateLock(tx, date);
 
   // 2. Then this tour's own groups_per_day row. ALWAYS second.
   await tx.execute(
@@ -208,27 +238,6 @@ export async function takeSlotLocks(tx: Transaction, tourId: number, date: strin
     sql`SELECT tour_id FROM tour_date_slots WHERE tour_id = ${tourId} AND date = ${date} FOR UPDATE`,
   );
 }
-
-/** `COUNT(*)` from a single-row result. No row at all is a failure, not a zero. */
-function onlyCount(rows: Array<{ n: number }>): number {
-  const [row] = rows;
-  if (!row) throw new Error('COUNT(*) returned no row');
-  return Number(row.n);
-}
-
-const TOTAL = { n: sql<number>`COUNT(*)` };
-
-/** `column = :date`, comparing a civil date to a civil-date string. */
-function on(column: typeof bookings.tourDate, date: string) {
-  return sql`${column} = ${date}`;
-}
-
-/**
- * Bookings in one of the five statuses that hold capacity — read from the
- * shared `CAPACITY_HOLDING_STATUSES` constant (§5's table), never restated
- * here: removing a status from that set oversells the fleet.
- */
-const holdsCapacity = inArray(bookings.status, [...CAPACITY_HOLDING_STATUSES]);
 
 /**
  * The verdict for one more group of `pax` on `tourId` / `date`.
@@ -251,7 +260,10 @@ const holdsCapacity = inArray(bookings.status, [...CAPACITY_HOLDING_STATUSES]);
  *
  * The three gates are §5's checklist in order, and the first one that fails
  * is the reason returned: the tour's own `groups_per_day`, then a van, then
- * a driver.
+ * a driver. Task T7 added a second check inside each of the fleet gates — the
+ * shared-pool conditions (3) and (5) — without adding a refusal reason: a tour
+ * refused for want of a vehicle gets `no_van_available` whichever of the two
+ * vehicle checks refused it, because the sentence a guest reads is the same.
  */
 export async function assessCapacity(
   tx: Transaction,
@@ -280,18 +292,22 @@ export async function assessCapacity(
   if (heldOnThisTour >= tour.groupsPerDay) return { ok: false, reason: 'tour_sold_out' };
 
   /*
-   * Every booking that holds capacity on that date, ACROSS ALL TOURS — each
-   * one takes a van and a driver whether or not dispatch has assigned them
-   * yet (§5: "count already-confirmed-but-unassigned bookings as consuming
-   * one van and one driver each"). This is the number the per-tour lock
-   * cannot protect, and the reason `fleet_date_slots` exists.
+   * Every TOUR booking that holds capacity on that date, across all tours —
+   * each one takes a van and a driver for the whole day whether or not dispatch
+   * has assigned them yet (§5: "count already-confirmed-but-unassigned bookings
+   * as consuming one van and one driver each"). This is the number the per-tour
+   * lock cannot protect, and the reason `fleet_date_slots` exists.
+   *
+   * **It is tour-only, and that is a FIX, not a narrowing** (transfers-launch
+   * plan, Task T7). Until transfers existed this count had no `product_type`
+   * filter, which was correct while every booking was a tour; the moment a
+   * transfer booking can exist, the unfiltered count blends the two, and both
+   * gates below subtract it as though one held booking were one van plus one
+   * driver taken for a day — which a windowed transfer is not. A transfer's
+   * claim on the fleet is its type's PEAK (Gate 2) and its job COUNT against
+   * the driver pool (Gate 3), both read below.
    */
-  const heldAcrossTheFleet = onlyCount(
-    await tx
-      .select(TOTAL)
-      .from(bookings)
-      .where(and(on(bookings.tourDate, date), holdsCapacity)),
-  );
+  const toursToday = await countToursOn(tx, date);
 
   /*
    * Gate 2 — a van. `status = VAN_STATUS_SELLABLE` (an ALLOW-list), rather
@@ -308,6 +324,34 @@ export async function assessCapacity(
    * van size it will need. In a mixed fleet that under-counts what is free,
    * which refuses a booking that might have fitted — the safe direction.
    * Never the other way: §5's rule is "never overbook automatically".
+   *
+   * ## TWO gates, not one (transfers-launch plan, Task T7)
+   *
+   * The check immediately below and the one after it answer DIFFERENT
+   * questions, and a tour has to pass both:
+   *
+   *  - **Is a vehicle big enough for THIS party free, net of other tours?**
+   *    That is the pax-filtered count below, and it is the check this file has
+   *    always made. Seat size is a question transfers do not share — a
+   *    transfer's vehicle is the guest's own choice of TYPE, not something
+   *    sized against a `pax`.
+   *  - **Net of what each vehicle TYPE's transfer peak has already claimed, is
+   *    there enough raw vehicle count, fleet-wide, for every tour that day?**
+   *    That is Architecture §2's condition (3), and it is deliberately NOT
+   *    pax-filtered — the plan's own formula is in raw type counts.
+   *
+   * Running both is more conservative than either alone, which is the right
+   * default where the plan's model has an unaddressed edge: "vehicles within a
+   * type are fungible for this count" is its own stated simplification, and
+   * erring towards a refusal rather than an oversell is the direction §5 picks
+   * everywhere else. **It does not close the edge**, and the residual case is
+   * worth knowing: with one 12-seat VAN and one 5-seat SUV, a van-type transfer
+   * holding the van, and a tour for 8, both checks pass (the pax filter sees
+   * the van and does not know the transfer took it; condition (3) sees one
+   * vehicle left over and does not know it is too small) and the tour is sold
+   * against the SUV. Closing it needs a per-type, pax-filtered leftover term,
+   * which would in exchange refuse tours that a mixed-size fleet could really
+   * serve — a trade the owner has to choose, not a silent change here.
    */
   const vansThatFit = onlyCount(
     await tx
@@ -317,38 +361,47 @@ export async function assessCapacity(
         and(eq(vans.isActive, true), eq(vans.status, VAN_STATUS_SELLABLE), gte(vans.capacity, pax)),
       ),
   );
-  if (vansThatFit - heldAcrossTheFleet < 1) return { ok: false, reason: 'no_van_available' };
+  if (vansThatFit - toursToday < 1) return { ok: false, reason: 'no_van_available' };
 
   /*
-   * Gate 3 — a driver. `driver_leaves` is INCLUSIVE at both ends, so a
-   * one-day leave is `start_date = end_date` and `<=` / `>=` are both
-   * correct. `NOT EXISTS` rather than counting the leaves and subtracting:
-   * two overlapping leaves for one driver would otherwise remove that driver
-   * twice and hide a free van behind a phantom shortage.
+   * Gate 2b — Architecture §2's condition (3), with this candidate's `+ 1`:
+   *
+   *   toursToday + 1 <= (vanSellable - vanPeak) + (suvSellable - suvPeak)
+   *
+   * A candidate TOUR changes neither type's transfer peak (conditions (1) and
+   * (2) are untouched by adding a tour), so the peaks read here are the current
+   * ones. A tour may be driven in either type, which is why the two leftovers
+   * are summed rather than asked separately.
    */
-  const driversOnDuty = onlyCount(
-    await tx
-      .select(TOTAL)
-      .from(drivers)
-      .where(
-        and(
-          eq(drivers.isActive, true),
-          notExists(
-            tx
-              .select({ one: sql`1` })
-              .from(driverLeaves)
-              .where(
-                and(
-                  eq(driverLeaves.driverId, drivers.id),
-                  sql`${driverLeaves.startDate} <= ${date}`,
-                  sql`${driverLeaves.endDate} >= ${date}`,
-                ),
-              ),
-          ),
-        ),
-      ),
-  );
-  if (driversOnDuty - heldAcrossTheFleet < 1) return { ok: false, reason: 'no_driver_available' };
+  const sellable = await sellableVehiclesByType(tx);
+  const peaks = await transferPeaksByType(tx, date);
+  const leftoverVehicles = sellable.van - peaks.van + (sellable.suv - peaks.suv);
+  if (toursToday + 1 > leftoverVehicles) return { ok: false, reason: 'no_van_available' };
+
+  /*
+   * Gate 3 — a driver, now as Architecture §2a's pool rather than a binary.
+   *
+   * Condition (4), `toursToday + 1 <= N`, is the SAME statement the old check
+   * made (`driversOnDuty - heldAcrossTheFleet < 1`), re-scoped to count only
+   * tours and expressed as a count of the sorted pool: `N` is the length of the
+   * on-duty driver list, and "on duty" is the identical `is_active` +
+   * `NOT EXISTS (driver_leaves …)` gate this file used before — moved into
+   * `driverTransferCapsOn` so the transfer gate asks it the same way rather
+   * than asking it a second way.
+   *
+   * Condition (5) is the new half, and the candidate tour pays for it twice: it
+   * takes a driver (so one MORE of the smallest-cap drivers leaves the leftover
+   * pool) and the transfer jobs already booked that day must still fit in what
+   * remains. Tours take the smallest caps first because that is provably
+   * optimal, not merely safe — see `leftoverTransferCapacity`.
+   */
+  const driverCaps = await driverTransferCapsOn(tx, date, await readDefaultDriverTransferCap(tx));
+  if (toursToday + 1 > driverCaps.length) return { ok: false, reason: 'no_driver_available' };
+
+  const transfersToday = await countTransfersOn(tx, date);
+  if (transfersToday > leftoverTransferCapacity(driverCaps, toursToday + 1)) {
+    return { ok: false, reason: 'no_driver_available' };
+  }
 
   return { ok: true };
 }

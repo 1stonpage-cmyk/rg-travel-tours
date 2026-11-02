@@ -240,14 +240,71 @@ describe('settings schemas', () => {
   });
 
   /**
-   * Fifteen from the dynamic-site plan, plus `booking` (the bookable date
-   * window, owner decision 2026-10-13) and `payment_qr` (the R&G payment QR
-   * and account, owner decision 2026-10-14 Q3). Listed out rather than
-   * derived, so ADDING a key is a deliberate edit here: every key is a row
-   * `readSettings()` requires, and a key added without a seed row takes the
-   * whole public site down until the seed runs.
+   * `transfer_operations` (transfers-launch plan, Task T7). Four whole,
+   * non-negative numbers — and the two zeros that are MEANINGFUL are the
+   * reason this block has its own cases: zero buffer and zero transfer jobs per
+   * driver are both legitimate owner choices, while a zero-hour staff-quote
+   * hold would expire before the guest could be told about it.
    */
-  it('covers all 17 settings keys — the 15 from the plan, plus booking and payment_qr', () => {
+  describe('transfer_operations', () => {
+    const schema = SETTING_SCHEMAS.transfer_operations;
+    /** The owner's defaults, 2026-10-31, as the seed ships them. */
+    const SEEDED = {
+      bufferMinutes: 60,
+      minNoticeHours: 6,
+      staffQuoteHoldHours: 48,
+      maxTransferJobsPerDriverPerDay: 2,
+    };
+
+    it('accepts the block the seed ships', () => {
+      expect(schema.safeParse(SEEDED).success).toBe(true);
+    });
+
+    it('accepts a zero buffer, zero notice and a zero per-driver cap', () => {
+      expect(
+        schema.safeParse({
+          ...SEEDED,
+          bufferMinutes: 0,
+          minNoticeHours: 0,
+          maxTransferJobsPerDriverPerDay: 0,
+        }).success,
+      ).toBe(true);
+    });
+
+    it('REFUSES a staff-quote hold of zero hours', () => {
+      expect(schema.safeParse({ ...SEEDED, staffQuoteHoldHours: 0 }).success).toBe(false);
+    });
+
+    it('REFUSES a negative or fractional value in any field', () => {
+      for (const field of Object.keys(SEEDED)) {
+        expect(schema.safeParse({ ...SEEDED, [field]: -1 }).success, `${field} = -1`).toBe(false);
+        expect(schema.safeParse({ ...SEEDED, [field]: 1.5 }).success, `${field} = 1.5`).toBe(false);
+        expect(schema.safeParse({ ...SEEDED, [field]: '60' }).success, `${field} = "60"`).toBe(
+          false,
+        );
+      }
+    });
+
+    it('REFUSES a block with a field missing', () => {
+      for (const field of Object.keys(SEEDED)) {
+        const partial: Record<string, unknown> = { ...SEEDED };
+        delete partial[field];
+        expect(schema.safeParse(partial).success, `without ${field}`).toBe(false);
+      }
+    });
+  });
+
+  /**
+   * Fifteen from the dynamic-site plan, plus `booking` (the bookable date
+   * window, owner decision 2026-10-13), `payment_qr` (the R&G payment QR and
+   * account, owner decision 2026-10-14 Q3) and `transfer_operations` (the
+   * transfer buffer, notice, staff-quote hold and per-driver job cap, owner
+   * decisions 2026-10-31). Listed out rather than derived, so ADDING a key is a
+   * deliberate edit here: every key is a row `readSettings()` requires, and a
+   * key added without a seed row takes the whole public site down until the
+   * seed runs.
+   */
+  it('covers all 18 settings keys — the 15 from the plan, plus booking, payment_qr and transfer_operations', () => {
     const expectedKeys = [
       'content_unverified',
       'site_seo',
@@ -266,6 +323,7 @@ describe('settings schemas', () => {
       'legal_terms',
       'booking',
       'payment_qr',
+      'transfer_operations',
     ];
     expect(Object.keys(SETTING_SCHEMAS).sort()).toEqual(expectedKeys.sort());
   });

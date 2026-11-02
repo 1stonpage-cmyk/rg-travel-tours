@@ -1,0 +1,1 @@
+ALTER TABLE `drivers` ADD `max_transfer_jobs_per_day` int;

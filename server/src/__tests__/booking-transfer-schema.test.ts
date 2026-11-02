@@ -311,6 +311,7 @@ describe('booking_transfer_details table (declaration)', () => {
       'flight_number',
       'airline',
       'custom_route_description',
+      'route_duration_minutes_used',
     ]) {
       expect(detailsColumn(optional)?.notNull, `${optional} must be nullable`).toBe(false);
     }
@@ -326,6 +327,21 @@ describe('booking_transfer_details table (declaration)', () => {
   it('freezes the buffer with no default to fall back on', () => {
     expect(detailsColumn('buffer_minutes_used')?.notNull).toBe(true);
     expect(detailsColumn('buffer_minutes_used')?.default).toBeUndefined();
+  });
+
+  /**
+   * `route_duration_minutes_used` freezes the catalog route's duration at
+   * hold time, the same reasoning as `buffer_minutes_used` — added after a
+   * dedicated review (T7) found a live join to `transfer_routes` let an
+   * admin shorten a route and silently shrink an already-taken booking's
+   * window. **Nullable, unlike the buffer**: NULL for a day-use transfer
+   * (which has no duration at all — its window ends at `day_use_end_time`)
+   * and for a custom, staff-quoted one-way transfer (no catalog row to
+   * freeze from). No default, for the same reason the buffer has none.
+   */
+  it('freezes the route duration, nullable for day-use and custom routes', () => {
+    expect(detailsColumn('route_duration_minutes_used')?.notNull).toBe(false);
+    expect(detailsColumn('route_duration_minutes_used')?.default).toBeUndefined();
   });
 
   it('uses no decimal, float or double anywhere', () => {

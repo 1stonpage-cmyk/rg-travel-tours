@@ -9,7 +9,7 @@
  */
 import { eq } from 'drizzle-orm';
 import { bookableDateRange, type BookableDateRange } from '@rg/shared';
-import { getDb } from '../db/client';
+import { getDb, type Transaction } from '../db/client';
 import { settings } from '../db/schema';
 import { resolveOpenState, type OpenState } from '../services/hours';
 import { isPaymongoConfigured } from '../services/payments/paymongo';
@@ -130,6 +130,48 @@ export async function readContentUnverified(now: number = Date.now()): Promise<b
 }
 
 /**
+ * ONE settings block, read through the CALLER'S TRANSACTION.
+ *
+ * Not `readSettingBlock()` above: that one reads through `getDb()`, i.e. a
+ * second pooled connection, which inside an open transaction is both a read
+ * outside that transaction's locks and — as `df8b38d` had to fix — a second
+ * connection taken while the first is held, which starves the pool under load.
+ * Anything running inside a booking or capacity transaction reads through `tx`.
+ *
+ * It lives here rather than in `create-hold.ts`, where it was first written,
+ * because `services/transfers/capacity.ts` needs the same read and a transfer
+ * capacity check has no business importing from the tour hold-creation service.
+ * Behaviour is unchanged from that original: same two failure conditions, same
+ * messages, and it names only the KEY, never the stored value, which can
+ * contain anything an admin typed.
+ *
+ * **Call it AFTER the locks.** A settings read is a plain `SELECT`, so taken
+ * before `takeSlotLocks()`/`takeFleetDateLock()` it pins the REPEATABLE READ
+ * snapshot and silently defeats every capacity count that follows — see THE
+ * PRECONDITION in `services/capacity.ts`.
+ */
+export async function readSettingBlockTx<K extends SettingKey>(
+  tx: Transaction,
+  key: K,
+): Promise<SettingsBlocks[K]> {
+  const [row] = await tx
+    .select({ value: settings.value })
+    .from(settings)
+    .where(eq(settings.key, key))
+    .limit(1);
+  if (!row) {
+    throw new Error(`Missing setting: "${key}"`);
+  }
+
+  const result = SETTING_SCHEMAS[key].safeParse(row.value);
+  if (!result.success) {
+    throw new Error(`Invalid setting: "${key}"`);
+  }
+
+  return result.data as SettingsBlocks[K];
+}
+
+/**
  * Just the `trust` block — for callers like `tours.list`/`tours.bySlug`
  * (Task 1.9, R1) that need only `minReviewsForRating`. Kept as a named
  * function because three call sites read better for it; the single-key read
@@ -137,6 +179,21 @@ export async function readContentUnverified(now: number = Date.now()): Promise<b
  */
 export async function readTrustSettings(): Promise<SettingsBlocks['trust']> {
   return readSettingBlock('trust');
+}
+
+/**
+ * Just the `transfer_operations` block — the buffer, the minimum notice, the
+ * staff-quote hold and the default per-driver transfer-job cap (transfers-launch
+ * plan, Task T7). A named wrapper for the same reason `readTrustSettings` is
+ * one: the call sites read better, and the single-key read itself is above.
+ *
+ * Anything inside an open transaction wants `readSettingBlockTx(tx,
+ * 'transfer_operations')` instead — see that function's note.
+ */
+export async function readTransferOperationsSettings(): Promise<
+  SettingsBlocks['transfer_operations']
+> {
+  return readSettingBlock('transfer_operations');
 }
 
 // ---------------------------------------------------------------------------

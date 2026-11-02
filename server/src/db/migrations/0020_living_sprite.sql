@@ -1,0 +1,1 @@
+ALTER TABLE `booking_transfer_details` ADD `route_duration_minutes_used` int;

@@ -211,6 +211,39 @@ const paymentQrSchema = z
     },
   );
 
+/**
+ * How transfers are OPERATED (owner answers 2026-10-31, answers 1 and 2, plus
+ * the same day's driver-capacity addendum). Settings rather than schema for the
+ * same reason the `booking` block above is: these are business policy the owner
+ * tunes, not facts about a row.
+ *
+ * - `bufferMinutes` — the gap added after a transfer's estimated end before its
+ *   vehicle (and its driver) is considered free again. **One buffer for both
+ *   resources, deliberately** — the addendum says so in as many words, so there
+ *   is no second driver buffer here and must not be one. Frozen onto each
+ *   booking as `booking_transfer_details.buffer_minutes_used` at hold time, so
+ *   changing it never reinterprets a booking already taken.
+ * - `minNoticeHours` — minimum notice before pickup for a transfer, replacing
+ *   tours' day-based window on the transfer path only. Enforced by T11, not
+ *   here; the capacity math has no clock.
+ * - `staffQuoteHoldHours` — how long a staff-quoted booking's hold lasts (T19),
+ *   against the existing `hold_expires_at` column and `expire-holds` sweep.
+ *   `min(1)`: a zero-hour hold would expire before the guest could be told.
+ * - `maxTransferJobsPerDriverPerDay` — the DEFAULT daily transfer-job cap per
+ *   driver, overridable per driver by `drivers.max_transfer_jobs_per_day`.
+ *   `min(0)` and not `min(1)`: zero is a legitimate "no transfer jobs are sold
+ *   at all" switch, and the pool math handles it (every driver contributes 0,
+ *   so every transfer is refused `no_driver_available`).
+ *
+ * All four are whole non-negative numbers. Nothing here is money.
+ */
+const transferOperationsSchema = z.object({
+  bufferMinutes: z.number().int().min(0),
+  minNoticeHours: z.number().int().min(0),
+  staffQuoteHoldHours: z.number().int().min(1),
+  maxTransferJobsPerDriverPerDay: z.number().int().min(0),
+});
+
 const legalDocSchema = z.object({
   markdown: z.string(),
   updatedAt: z.string(),
@@ -232,6 +265,7 @@ export const SETTING_SCHEMAS = {
   contact: contactSchema,
   booking: bookingSchema,
   payment_qr: paymentQrSchema,
+  transfer_operations: transferOperationsSchema,
   legal_privacy: legalDocSchema,
   legal_terms: legalDocSchema,
 } satisfies Record<string, z.ZodType>;

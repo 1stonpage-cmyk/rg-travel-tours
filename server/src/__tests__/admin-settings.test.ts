@@ -23,7 +23,7 @@
  *     refuses outright.
  *
  * **Teardown restores, it does not delete.** The test database is seeded with
- * all seventeen settings rows and `settings.test.ts`, `seo-*.test.ts`,
+ * all eighteen settings rows and `settings.test.ts`, `seo-*.test.ts`,
  * `sitemap-robots.test.ts` and `public-queries.test.ts` all read them;
  * `readSettings()` throws naming the first MISSING key, so deleting a row this
  * file touched would take those suites down with it. Every key is therefore
@@ -95,7 +95,7 @@ async function storedUpdatedAt(key: string): Promise<Date | undefined> {
 /**
  * Remembers a key's stored value the first time it is about to change.
  *
- * Called by every test that writes, rather than snapshotting all seventeen in
+ * Called by every test that writes, rather than snapshotting all eighteen in
  * `beforeAll`: the restore then covers exactly what was touched, and a key a
  * BROKEN build wrote through a refusal is still covered, because the refusal
  * tests snapshot before they attempt the write.
@@ -141,7 +141,7 @@ afterAll(async () => {
   for (const [key, value] of originals) {
     if (value === undefined) {
       // Nothing was there to begin with, which the seed makes impossible for
-      // the seventeen real keys. Only an unknown key a broken build wrote can
+      // the eighteen real keys. Only an unknown key a broken build wrote can
       // reach here, and that row must go.
       await db.delete(settings).where(eq(settings.key, key));
       continue;
@@ -177,14 +177,14 @@ afterAll(async () => {
  * are built from; `SETTING_SCHEMAS` in the server is what validates a block.
  * The shared list cannot be derived from the schemas (the client must not
  * import the server), so this is the seam that keeps them one list: a
- * seventeenth-and-a-half key added to one side and not the other fails here,
+ * eighteenth-and-a-half key added to one side and not the other fails here,
  * rather than becoming an editing screen for a key nothing validates.
  *
  * No database — a pure test, outside `describeWithDb`.
  */
-it('offers the shared key list and the server schemas the SAME seventeen keys', () => {
+it('offers the shared key list and the server schemas the SAME eighteen keys', () => {
   expect([...SHARED_SETTING_KEYS].sort()).toEqual([...SETTING_KEYS].sort());
-  expect(SHARED_SETTING_KEYS).toHaveLength(17);
+  expect(SHARED_SETTING_KEYS).toHaveLength(18);
 });
 
 describeWithDb('admin.settings', () => {

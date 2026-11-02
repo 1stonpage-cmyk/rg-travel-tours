@@ -1,5 +1,5 @@
 /**
- * What each of the seventeen `settings` blocks looks like on the admin screen,
+ * What each of the eighteen `settings` blocks looks like on the admin screen,
  * and how its fields convert to and from the stored JSON (Week 7 plan, Task 9).
  *
  * Separate from `AdminSettingsPage.tsx` for two reasons: the page then holds
@@ -303,6 +303,56 @@ export const BLOCKS: readonly BlockSpec[] = [
       },
     ],
   },
+  /*
+   * Added by the transfers-launch plan's Task T7, which registered the
+   * `transfer_operations` block on the server. A block spec is not optional
+   * once a key exists: `admin-settings-page.test.tsx` requires every key in
+   * `SETTING_KEYS` to have exactly one group and one block, because a key with
+   * no screen is a setting the owner cannot see rather than one that is merely
+   * missing. The four fields are plain numbers and the generic grid draws them,
+   * so `AdminSettingsPage.tsx` itself needed no change.
+   */
+  {
+    key: 'transfer_operations',
+    title: 'Transfer operations',
+    blurb:
+      'How transfers are run: the gap kept after each trip, how much notice a guest must give, how long a staff quote is held, and how many transfer jobs one driver may take in a day.',
+    shape: 'object',
+    fields: [
+      {
+        name: 'bufferMinutes',
+        label: 'Buffer after each transfer, in minutes',
+        kind: 'number',
+        hint: 'Kept free on both the vehicle and the driver. A booking already taken keeps the buffer in force on the day it was booked.',
+      },
+      {
+        name: 'minNoticeHours',
+        label: 'Minimum notice before pickup, in hours',
+        kind: 'number',
+        hint: 'Same-day transfers are allowed, as long as pickup is at least this many hours away.',
+      },
+      {
+        name: 'staffQuoteHoldHours',
+        label: 'Staff quote held for, in hours',
+        kind: 'number',
+        hint: 'How long a guest has to pay a quote the office created for them, before the hold lapses.',
+      },
+      {
+        name: 'maxTransferJobsPerDriverPerDay',
+        label: 'Transfer jobs per driver per day',
+        kind: 'number',
+        /*
+         * Deliberately does NOT promise a per-driver override control yet —
+         * that is the Drivers screen's job (Task T16, not yet built). Review
+         * finding I4: the hint used to claim the screen already had it, which
+         * would have told an owner to go looking for a control that is not
+         * there. This default is real and enforced the moment T7 shipped;
+         * only the per-driver exception is still to come.
+         */
+        hint: 'Applies to every driver unless a per-driver limit is set.',
+      },
+    ],
+  },
   {
     key: 'permits',
     title: 'Accreditation numbers',
@@ -427,8 +477,9 @@ export const GROUPS: readonly GroupSpec[] = [
   {
     id: 'business',
     title: 'Business',
-    blurb: 'Opening hours, contact details, the bookable date window and the permits.',
-    keys: ['business_hours', 'contact', 'booking', 'permits'],
+    blurb:
+      'Opening hours, contact details, the bookable date window, how transfers are run, and the permits.',
+    keys: ['business_hours', 'contact', 'booking', 'transfer_operations', 'permits'],
   },
   {
     id: 'payments',

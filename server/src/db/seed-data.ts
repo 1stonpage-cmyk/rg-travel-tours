@@ -754,6 +754,20 @@ export const SEED_SETTINGS: SettingsBlocks = {
     maxAdvanceDays: 180,
   },
 
+  /*
+   * The owner's four transfer-operations defaults, 2026-10-31 (answers 1 and 2,
+   * plus the same day's driver-capacity addendum): a 60-minute buffer after
+   * every transfer, 6 hours' minimum notice, a 48-hour hold on a staff quote,
+   * and 2 transfer jobs per driver per day. These are real owner decisions, not
+   * placeholder content — nothing here is gated behind `content_unverified`.
+   */
+  transfer_operations: {
+    bufferMinutes: 60,
+    minNoticeHours: 6,
+    staffQuoteHoldHours: 48,
+    maxTransferJobsPerDriverPerDay: 2,
+  },
+
   // Placeholder legal copy — not legal advice, flagged for client review.
   legal_privacy: {
     markdown: `${LEGAL_TODO_LINE}

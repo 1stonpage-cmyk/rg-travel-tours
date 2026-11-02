@@ -629,6 +629,23 @@ export const drivers = mysqlTable(
     emergencyContact: varchar('emergency_contact', { length: 200 }),
     status: mysqlEnum('status', DRIVER_STATUSES).notNull().default('available'),
     isActive: boolean('is_active').notNull().default(true),
+    /**
+     * Per-driver override of `transfer_operations.maxTransferJobsPerDriverPerDay`
+     * (owner addendum 2026-10-31, second round; transfers-launch plan
+     * Architecture §2a).
+     *
+     * **NULL means "use the admin default", and 0 means "no transfer jobs at
+     * all"** — two different, both legitimate states, which is why this column
+     * is nullable rather than `NOT NULL DEFAULT 2`. A driver reserved for tours
+     * is a 0, not an error; a driver nobody has decided about is a NULL and
+     * follows whatever the admin setting says today.
+     *
+     * Read that way in exactly one place — `driverTransferCapsOn()` in
+     * `services/transfers/capacity.ts` — with `?? defaultCap`, never `||`,
+     * because `0 || 2` is 2 and would silently hand a tours-only driver two
+     * transfer jobs.
+     */
+    maxTransferJobsPerDay: int('max_transfer_jobs_per_day'),
     createdAt: datetime('created_at', { mode: 'date' })
       .notNull()
       .$defaultFn(() => new Date()),
@@ -1406,6 +1423,32 @@ export const bookingTransferDetails = mysqlTable('booking_transfer_details', {
    * under is a fact about the booking, not a live lookup.
    */
   bufferMinutesUsed: int('buffer_minutes_used').notNull(),
+  /**
+   * `transfer_routes.estimated_duration_minutes` AT HOLD TIME, frozen — the
+   * same reasoning as `bufferMinutesUsed` immediately above, extended to the
+   * other half of a one-way window (transfers-launch plan Task T7, fix found
+   * in dedicated review).
+   *
+   * **NULL for a day-use transfer** (which has no duration — its window ends
+   * at `dayUseEndTime`, not `pickup + duration`) **and for a custom,
+   * staff-quoted one-way transfer** (no catalog route, so no duration exists
+   * to freeze — Task T19 must supply one some other way; see
+   * `computeTransferWindow`'s throw).
+   *
+   * **Why this exists at all, not just the buffer.** `transfer_routes` is an
+   * admin-editable catalog row — `admin.transferRoutes.update` lets the
+   * owner shorten a route's `estimated_duration_minutes` at any time. Before
+   * this column, `services/transfers/capacity.ts`'s `windowForBookedTransfer`
+   * read that live value for an EXISTING booking's window, which is correct
+   * only in the lengthening direction (a longer window still correctly
+   * reserves the vehicle for longer). Shortening it silently SHRINKS an
+   * already-taken booking's window — the vehicle reads as free sooner than
+   * it actually will be, which is the one direction the plan's own §5
+   * discipline forbids ("never overbook automatically"). Freezing this value
+   * at hold time, exactly as the buffer already is, closes that gap: a later
+   * admin edit to the catalog can never reinterpret a booking already taken.
+   */
+  routeDurationMinutesUsed: int('route_duration_minutes_used'),
   createdAt: datetime('created_at', { mode: 'date' })
     .notNull()
     .$defaultFn(() => new Date()),

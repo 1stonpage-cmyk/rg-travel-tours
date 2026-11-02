@@ -96,14 +96,13 @@ import {
   type PayMode,
   type PriceSnapshot,
 } from '@rg/shared';
-import { SETTING_SCHEMAS } from '../content/settings-schema';
+import { readSettingBlockTx } from '../content/settings';
 import { getDb, type Transaction } from '../db/client';
 import { withDeadlockRetry } from '../db/deadlock';
 import {
   bookingAddons,
   bookings,
   coupons,
-  settings,
   tourAddons,
   tourBlockedDates,
   tourPriceTiers,
@@ -370,33 +369,6 @@ function assertDateNotPast(date: string, now: Date): void {
 }
 
 /**
- * ONE settings block, read through the caller's transaction.
- *
- * Not `readSettingBlock()` from content/settings.ts: that one reads through
- * `getDb()`, i.e. a second pooled connection, which inside this transaction
- * is both a read outside the locks and — as `df8b38d` had to fix — a second
- * connection taken while the first is held. Every read in this module goes
- * through `tx`.
- *
- * Names the key and never the stored value, exactly as `readSettingBlock`
- * does: a settings value can contain anything an admin typed.
- */
-async function readSettingBlockTx<K extends keyof typeof SETTING_SCHEMAS>(
-  tx: Transaction,
-  key: K,
-): Promise<ReturnType<(typeof SETTING_SCHEMAS)[K]['parse']>> {
-  const [row] = await tx
-    .select({ value: settings.value })
-    .from(settings)
-    .where(eq(settings.key, key))
-    .limit(1);
-  if (!row) throw new Error(`Missing setting: "${key}"`);
-  const parsed = SETTING_SCHEMAS[key].safeParse(row.value);
-  if (!parsed.success) throw new Error(`Invalid setting: "${key}"`);
-  return parsed.data as ReturnType<(typeof SETTING_SCHEMAS)[K]['parse']>;
-}
-
-/**
  * The bookable window (owner decision 2026-10-13, pending R&G). Read from
  * settings INSIDE the transaction and AFTER the locks — a settings read
  * before them would pin the REPEATABLE READ snapshot and silently defeat
@@ -464,9 +436,9 @@ interface RecomputeInputs {
  * fail-soft `loadQuoteInputs` documents, and necessarily identical, because
  * any divergence shows up as a digest mismatch rather than as a wrong price.
  *
- * The deposit percent comes from the `trust` settings block, parsed through
- * the one shared schema (`SETTING_SCHEMAS`) so the validation is not
- * restated here.
+ * The deposit percent comes from the `trust` settings block, read through the
+ * shared `readSettingBlockTx` (content/settings.ts) and parsed by the one
+ * shared schema (`SETTING_SCHEMAS`), so the validation is not restated here.
  */
 async function loadRecomputeInputs(
   tx: Transaction,

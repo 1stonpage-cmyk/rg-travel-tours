@@ -134,6 +134,20 @@
       "when": 1793450282018,
       "tag": "0018_tricky_lady_ursula",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "5",
+      "when": 1793455550786,
+      "tag": "0019_cool_swordsman",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "5",
+      "when": 1793649112320,
+      "tag": "0020_living_sprite",
+      "breakpoints": true
     }
   ]
 }
