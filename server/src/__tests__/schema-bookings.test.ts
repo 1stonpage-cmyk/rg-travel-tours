@@ -33,9 +33,13 @@ import {
   BOOKING_STATUSES,
   CAPACITY_HOLDING_STATUSES,
   PAY_MODES,
+  bookingPriceSnapshotSchema,
   bookingRefSchema,
+  isTransferPriceSnapshot,
   priceSnapshotSchema,
+  transferPriceSnapshotSchema,
   type PriceSnapshot,
+  type TransferPriceSnapshot,
 } from '@rg/shared';
 import { getDb, getPool, type Transaction } from '../db/client';
 import { bookings, coupons, destinations, drivers, tours, vans } from '../db/schema';
@@ -70,6 +74,32 @@ const foreignKeys = config.foreignKeys.map((fk) => {
     onUpdate: fk.onUpdate,
   };
 });
+
+/**
+ * A complete, valid TRANSFER snapshot (transfers-launch plan, Task T10) — the
+ * other member of `bookingPriceSnapshotSchema`'s union, and the fixture the
+ * disjointness guard below cross-parses against the tour schema.
+ */
+function validTransferSnapshot(): TransferPriceSnapshot {
+  return {
+    productType: 'transfer_one_way',
+    vehicleType: 'van',
+    routeId: 1,
+    customRouteDescription: null,
+    priceSource: 'catalog',
+    priceCentavos: 350000,
+    coupon: {
+      id: 1,
+      code: 'SUGBO10',
+      discount: { discountType: 'percent', percentBp: 1000, amountCentavos: null },
+    },
+    depositPercent: 30,
+    freeCancelHours: 24,
+    subtotalCentavos: 350000,
+    discountCentavos: 35000,
+    totalCentavos: 315000,
+  };
+}
 
 /** A complete, valid snapshot — the baseline the rejection tests mutate. */
 function validSnapshot(): PriceSnapshot {
@@ -227,6 +257,83 @@ describe('price snapshot shape (@rg/shared)', () => {
     const fractional = validSnapshot();
     fractional.tier.pricePerPersonCentavos = 1890.5;
     expect(priceSnapshotSchema.safeParse(fractional).success).toBe(false);
+  });
+});
+
+/**
+ * **The two members of `bookingPriceSnapshotSchema` must stay MUTUALLY
+ * EXCLUSIVE, and this is the only thing that says so in code.**
+ *
+ * `bookings.price_snapshot` holds a tour snapshot or a transfer one
+ * (transfers-launch plan, Task T10). It is a plain `z.union` rather than a
+ * `z.discriminatedUnion` for a reason recorded on the schema itself: the tour
+ * member has no discriminant literal and must not gain one, because every tour
+ * snapshot already stored in the database was written without it. The union is
+ * therefore told apart STRUCTURALLY — the tour member requires `tier`/`addons`,
+ * the transfer member requires `productType`/`vehicleType` — and that whole
+ * design is only safe while neither member can parse the other's data.
+ *
+ * It is true today. What it is NOT is self-enforcing: relax one required field
+ * on either schema (a future tour variant with an optional `tier`, say) and the
+ * tour member starts silently swallowing transfer snapshots, because Zod strips
+ * unknown keys rather than refusing them. The union's MEMBER ORDER would then
+ * quietly decide the outcome, `.parse()` would return a tour-shaped object with
+ * every transfer field dropped, and nothing anywhere would go red.
+ *
+ * So this block asserts the property rather than the doc comment: each fixture
+ * is refused by the OTHER schema, and each round-trips through the union to its
+ * own member with every field intact. The `toEqual` is the second line of
+ * defence and is deliberate — a member that became loose enough to swallow the
+ * other's data would still parse, but would hand back an object missing most of
+ * it.
+ */
+describe('price snapshot union — the two members are disjoint (@rg/shared)', () => {
+  it('refuses a TOUR snapshot against the transfer schema', () => {
+    expect(transferPriceSnapshotSchema.safeParse(validSnapshot()).success).toBe(false);
+  });
+
+  it('refuses a TRANSFER snapshot against the tour schema', () => {
+    expect(priceSnapshotSchema.safeParse(validTransferSnapshot()).success).toBe(false);
+  });
+
+  it('resolves each snapshot to its OWN union member, with nothing dropped', () => {
+    const tour = bookingPriceSnapshotSchema.parse(validSnapshot());
+    expect(isTransferPriceSnapshot(tour), 'a tour snapshot narrowed as a transfer').toBe(false);
+    expect(tour, 'the tour snapshot lost fields on its way through the union').toEqual(
+      validSnapshot(),
+    );
+
+    const transfer = bookingPriceSnapshotSchema.parse(validTransferSnapshot());
+    expect(isTransferPriceSnapshot(transfer), 'a transfer snapshot narrowed as a tour').toBe(true);
+    expect(transfer, 'the transfer snapshot lost fields on its way through the union').toEqual(
+      validTransferSnapshot(),
+    );
+    // And the narrowing is load-bearing, not cosmetic: the transfer-only field
+    // is only reachable through it.
+    if (isTransferPriceSnapshot(transfer)) {
+      expect(transfer.priceSource).toBe('catalog');
+    }
+  });
+
+  /**
+   * Both members carry these on purpose: five production readers take
+   * `.depositPercent` off a booking's snapshot without caring which product it
+   * is (`record-payment.ts`, `manual-receipt.ts`, `checkout.bookingStatus` and
+   * the two portal views), and TypeScript only allows that for a field present
+   * on EVERY member. Dropping it from either one is a compile error at five
+   * call sites; dropping it from the schemas is this test.
+   */
+  it('keeps depositPercent and freeCancelHours on BOTH members', () => {
+    for (const keys of [
+      Object.keys(priceSnapshotSchema.shape),
+      Object.keys(transferPriceSnapshotSchema.shape),
+    ]) {
+      expect(keys).toContain('depositPercent');
+      expect(keys).toContain('freeCancelHours');
+      expect(keys).toEqual(
+        expect.arrayContaining(['subtotalCentavos', 'discountCentavos', 'totalCentavos']),
+      );
+    }
   });
 });
 
