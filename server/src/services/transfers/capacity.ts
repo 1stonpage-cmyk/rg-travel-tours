@@ -64,7 +64,7 @@
  */
 import { and, eq, ne, notExists, sql } from 'drizzle-orm';
 import type { ProductType, VehicleType } from '@rg/shared';
-import { readSettingBlockTx } from '../../content/settings';
+import { readTransferOperationsSettingsTx } from '../../content/settings';
 import type { Transaction } from '../../db/client';
 import {
   bookingTransferDetails,
@@ -453,7 +453,7 @@ export async function transferPeaksByType(
  * the transfer gate can never read different defaults for one date.
  */
 export async function readDefaultDriverTransferCap(tx: Transaction): Promise<number> {
-  const operations = await readSettingBlockTx(tx, 'transfer_operations');
+  const operations = await readTransferOperationsSettingsTx(tx);
   return operations.maxTransferJobsPerDriverPerDay;
 }
 

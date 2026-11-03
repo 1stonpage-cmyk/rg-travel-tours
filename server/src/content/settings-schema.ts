@@ -237,12 +237,26 @@ const paymentQrSchema = z
  *
  * All four are whole non-negative numbers. Nothing here is money.
  */
-const transferOperationsSchema = z.object({
+export const transferOperationsSchema = z.object({
   bufferMinutes: z.number().int().min(0),
   minNoticeHours: z.number().int().min(0),
   staffQuoteHoldHours: z.number().int().min(1),
   maxTransferJobsPerDriverPerDay: z.number().int().min(0),
 });
+
+/**
+ * Fallback values for `transfer_operations` when the row is missing, or
+ * malformed, in the database — the owner's 2026-10-31 decision log values
+ * (same ones `db/seed-data.ts` seeds), not invented numbers. Used ONLY by
+ * the resilient readers in `content/settings.ts`; every other settings key
+ * keeps the project's standing fail-loud contract unchanged.
+ */
+export const TRANSFER_OPERATIONS_DEFAULTS: z.infer<typeof transferOperationsSchema> = {
+  bufferMinutes: 60,
+  minNoticeHours: 6,
+  staffQuoteHoldHours: 48,
+  maxTransferJobsPerDriverPerDay: 2,
+};
 
 const legalDocSchema = z.object({
   markdown: z.string(),

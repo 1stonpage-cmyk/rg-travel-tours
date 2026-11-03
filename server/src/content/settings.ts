@@ -6,6 +6,15 @@
  * means the seed (Task 1.4) didn't run or ran wrong; substituting a default
  * would put invented content on a live marketing page, which this project
  * forbids. Errors name the key, never the value.
+ *
+ * ONE narrow, explicitly-requested exception: `transfer_operations` (pre-task
+ * 0A, 2026-11-03). It is operational configuration — buffer minutes, notice
+ * hours, a per-driver job cap — not guest-facing content, and it is read on
+ * EVERY tour quote and hold via `assessCapacity()`, not only transfer ones. A
+ * missing or malformed row there must not 500 every booking on the site, so
+ * `readTransferOperationsSettings()` / `readTransferOperationsSettingsTx()`
+ * fall back to `TRANSFER_OPERATIONS_DEFAULTS` instead of throwing. Do not
+ * extend this pattern to any other settings key without a new owner decision.
  */
 import { eq } from 'drizzle-orm';
 import { bookableDateRange, type BookableDateRange } from '@rg/shared';
@@ -17,6 +26,8 @@ import { isWithinWindow } from '../services/schedule';
 import {
   SETTING_KEYS,
   SETTING_SCHEMAS,
+  TRANSFER_OPERATIONS_DEFAULTS,
+  transferOperationsSchema,
   type SettingKey,
   type SettingsBlocks,
 } from './settings-schema';
@@ -182,18 +193,79 @@ export async function readTrustSettings(): Promise<SettingsBlocks['trust']> {
 }
 
 /**
+ * `transfer_operations`, never throwing. Missing row -> full defaults.
+ * Row present but some fields missing/invalid as a whole -> full defaults.
+ * Row present with SOME valid fields and SOME missing fields -> the valid
+ * fields are kept, the missing ones default (owner-requested fallback,
+ * 2026-11-03 — see pre-task 0A). Every fallback path logs exactly one
+ * console.warn naming which fields defaulted (or "row missing" / "row
+ * invalid"), and never logs the raw stored value.
+ *
+ * This is a narrow, explicitly-requested carve-out for this ONE operational
+ * block — `transfer_operations` is buffer minutes, notice hours, etc., not
+ * guest-facing marketing content — and must not be generalised to any other
+ * settings key. Every other key keeps the fail-loud contract this file's own
+ * doc comment describes.
+ */
+function resolveTransferOperations(raw: unknown): SettingsBlocks['transfer_operations'] {
+  if (raw === undefined) {
+    console.warn('[settings] transfer_operations row is missing; using defaults.');
+    return TRANSFER_OPERATIONS_DEFAULTS;
+  }
+
+  const full = transferOperationsSchema.safeParse(raw);
+  if (full.success) return full.data;
+
+  const partial = transferOperationsSchema.partial().safeParse(raw);
+  if (partial.success) {
+    const missing = (
+      Object.keys(TRANSFER_OPERATIONS_DEFAULTS) as Array<keyof typeof TRANSFER_OPERATIONS_DEFAULTS>
+    ).filter((key) => !(key in partial.data));
+    if (missing.length > 0) {
+      console.warn(
+        `[settings] transfer_operations missing field(s) ${missing.join(', ')}; using defaults for those.`,
+      );
+    }
+    return { ...TRANSFER_OPERATIONS_DEFAULTS, ...partial.data };
+  }
+
+  console.warn('[settings] transfer_operations value is invalid; using full defaults.');
+  return TRANSFER_OPERATIONS_DEFAULTS;
+}
+
+/**
  * Just the `transfer_operations` block — the buffer, the minimum notice, the
  * staff-quote hold and the default per-driver transfer-job cap (transfers-launch
  * plan, Task T7). A named wrapper for the same reason `readTrustSettings` is
  * one: the call sites read better, and the single-key read itself is above.
  *
- * Anything inside an open transaction wants `readSettingBlockTx(tx,
- * 'transfer_operations')` instead — see that function's note.
+ * Unlike every other settings reader in this file, this one NEVER throws —
+ * see `resolveTransferOperations`'s own note on why this key alone gets a
+ * fallback. Plain pooled-connection read; anything inside an open transaction
+ * wants `readTransferOperationsSettingsTx(tx)` instead.
  */
 export async function readTransferOperationsSettings(): Promise<
   SettingsBlocks['transfer_operations']
 > {
-  return readSettingBlock('transfer_operations');
+  const db = getDb();
+  const [row] = await db.select().from(settings).where(eq(settings.key, 'transfer_operations'));
+  return resolveTransferOperations(row?.value);
+}
+
+/**
+ * `transfer_operations`, with the same fallback as `readTransferOperationsSettings`
+ * above, read through the CALLER'S TRANSACTION — see `readSettingBlockTx`'s own
+ * note on why a transaction-bound read matters for anything inside a capacity
+ * or booking transaction.
+ */
+export async function readTransferOperationsSettingsTx(
+  tx: Transaction,
+): Promise<SettingsBlocks['transfer_operations']> {
+  const [row] = await tx
+    .select({ value: settings.value })
+    .from(settings)
+    .where(eq(settings.key, 'transfer_operations'));
+  return resolveTransferOperations(row?.value);
 }
 
 // ---------------------------------------------------------------------------

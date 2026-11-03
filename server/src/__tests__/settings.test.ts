@@ -1,10 +1,23 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { getDb } from '../db/client';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { eq } from 'drizzle-orm';
+import { getDb, getPool } from '../db/client';
 import { settings } from '../db/schema';
-import { readSettings, readRawSettings, toSettingsPayload } from '../content/settings';
-import { SETTING_KEYS, type SettingsBlocks } from '../content/settings-schema';
+import {
+  readSettings,
+  readRawSettings,
+  toSettingsPayload,
+  readTransferOperationsSettings,
+  readTransferOperationsSettingsTx,
+} from '../content/settings';
+import {
+  SETTING_KEYS,
+  TRANSFER_OPERATIONS_DEFAULTS,
+  type SettingsBlocks,
+} from '../content/settings-schema';
 import { env } from '../env';
 import { isPaymongoConfigured } from '../services/payments/paymongo';
+import { takeFleetDateLock } from '../services/capacity';
+import { readDefaultDriverTransferCap } from '../services/transfers/capacity';
 import { describeWithDb } from './helpers/db';
 import { resetTestDb } from './helpers/test-db';
 
@@ -293,5 +306,131 @@ describe('isPaymongoConfigured()', () => {
   it('is true once a key is set', () => {
     env.PAYMONGO_SECRET_KEY = 'sk_test_notarealkey';
     expect(isPaymongoConfigured()).toBe(true);
+  });
+});
+
+/* =======================================================================
+ * `transfer_operations` fallback (pre-task 0A). This block is the lone,
+ * explicitly-requested exception to the fail-loud contract tested above: a
+ * missing or malformed `transfer_operations` row must default rather than
+ * 500 every tour quote/hold (`assessCapacity()` reads it on every one, not
+ * only transfer ones, via `readDefaultDriverTransferCap`). See
+ * `content/settings.ts`'s own doc comment for why this key alone gets a
+ * fallback.
+ * ======================================================================= */
+describeWithDb('transfer_operations fallback (pre-task 0A)', () => {
+  // Far enough out that no seed or other suite's fixture owns it; harmless
+  // to reuse even if another file also locks it, since fileParallelism is
+  // off (vitest.config.ts) and the lock row is upserted, not owned.
+  const FLEET_DATE = '2098-01-15';
+
+  async function setTransferOperationsRow(value: unknown | undefined) {
+    await getDb().delete(settings).where(eq(settings.key, 'transfer_operations'));
+    if (value !== undefined) {
+      await getDb().insert(settings).values({
+        key: 'transfer_operations',
+        value,
+        updatedAt: new Date(),
+      });
+    }
+  }
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    // Restore the canonical seeded row so any suite that runs later in this
+    // file list (e.g. transfer-capacity.test.ts, which asserts the seeded
+    // buffer/cap are still the owner's real defaults) sees them, not a
+    // fixture this block left behind.
+    await setTransferOperationsRow(TRANSFER_OPERATIONS_DEFAULTS);
+  });
+
+  afterAll(async () => {
+    // `takeFleetDateLock(FLEET_DATE)` creates a lock-anchor row in
+    // `fleet_date_slots` nothing else owns — one of the LEAK_TABLES
+    // global-setup.ts checks at the end of the run, so this suite must
+    // remove exactly what it created (owner decision 2026-10-16, C5).
+    await getPool().query('DELETE FROM fleet_date_slots WHERE date = ?', [FLEET_DATE]);
+    await resetTestDb();
+  });
+
+  it('missing row -> readDefaultDriverTransferCap (every tour quote/hold) returns the default instead of throwing', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await setTransferOperationsRow(undefined);
+
+    const cap = await getDb().transaction(async (tx) => {
+      await takeFleetDateLock(tx, FLEET_DATE);
+      return readDefaultDriverTransferCap(tx);
+    });
+
+    expect(cap).toBe(TRANSFER_OPERATIONS_DEFAULTS.maxTransferJobsPerDriverPerDay);
+    expect(warn).toHaveBeenCalledTimes(1);
+    const message = String(warn.mock.calls[0]![0]);
+    expect(message).toMatch(/transfer_operations/);
+    expect(message).toMatch(/missing/i);
+  });
+
+  it('missing row -> the plain and transaction readers agree, both logging exactly once', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await setTransferOperationsRow(undefined);
+
+    const plain = await readTransferOperationsSettings();
+    expect(plain).toEqual(TRANSFER_OPERATIONS_DEFAULTS);
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    warn.mockClear();
+    const viaTx = await getDb().transaction((tx) => readTransferOperationsSettingsTx(tx));
+    expect(viaTx).toEqual(TRANSFER_OPERATIONS_DEFAULTS);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('partial row -> missing fields default, present fields kept, and the warning names the missing fields', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await setTransferOperationsRow({ bufferMinutes: 90 });
+
+    const result = await readTransferOperationsSettings();
+
+    expect(result).toEqual({
+      ...TRANSFER_OPERATIONS_DEFAULTS,
+      bufferMinutes: 90,
+    });
+    expect(warn).toHaveBeenCalledTimes(1);
+    const message = String(warn.mock.calls[0]![0]);
+    expect(message).toContain('minNoticeHours');
+    expect(message).toContain('staffQuoteHoldHours');
+    expect(message).toContain('maxTransferJobsPerDriverPerDay');
+    expect(message).not.toContain('bufferMinutes');
+  });
+
+  it('row present but entirely invalid -> full defaults, one warning, no raw value logged', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await setTransferOperationsRow({
+      bufferMinutes: 'a lot',
+      secretGuestName: 'should never be logged',
+    });
+
+    const result = await readTransferOperationsSettings();
+
+    expect(result).toEqual(TRANSFER_OPERATIONS_DEFAULTS);
+    expect(warn).toHaveBeenCalledTimes(1);
+    const message = String(warn.mock.calls[0]![0]);
+    expect(message).toMatch(/invalid/i);
+    expect(message).not.toContain('secretGuestName');
+    expect(message).not.toContain('a lot');
+  });
+
+  it('full, valid row -> returns exactly its own values and never warns', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const value = {
+      bufferMinutes: 45,
+      minNoticeHours: 4,
+      staffQuoteHoldHours: 24,
+      maxTransferJobsPerDriverPerDay: 3,
+    };
+    await setTransferOperationsRow(value);
+
+    const result = await readTransferOperationsSettings();
+
+    expect(result).toEqual(value);
+    expect(warn).not.toHaveBeenCalled();
   });
 });
