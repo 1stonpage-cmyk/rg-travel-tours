@@ -80,6 +80,11 @@ Approved alongside the plan itself, to be built into T7/T8 before T1 starts:
 
 **Buffer between a driver's jobs uses the same admin buffer setting** as vehicles (default 60 minutes) — not a second buffer setting. **Dedicated Opus review on T7 and T8**, per the owner's explicit instruction.
 
+## Owner decisions, given directly by the owner on 2026-11-03
+
+1. **Frozen route duration on the booking (migration 0020) is CONFIRMED.** T7's dedicated review found that `transferWindowsByType` was reading `transfer_routes.estimated_duration_minutes` LIVE for an already-booked transfer — an admin shortening a route's duration after a booking was taken would silently shrink that booking's reserved window, an oversell. The fix (freezing the duration onto `booking_transfer_details.route_duration_minutes_used` at hold time) is approved and stays, on the same principle as the price lock: a booking's capacity-affecting inputs are frozen at hold time, never re-read live from a catalog an admin can edit later. This closes handover QUESTIONS #2 (2026-11-03 handover doc).
+2. **Vehicle seat/luggage check at transfer dispatch: SOFT CHECK WITH OVERRIDE.** Closing handover QUESTIONS #1 — a transfer's vehicle selection is by TYPE only (van vs SUV) at both hold time and dispatch time, and a van of the matching type can be smaller than the party or short on luggage room with no warning today. The owner's answer: when staff assign a vehicle to a transfer booking and the chosen van's seats or luggage capacity fall short of the booking's passengers/bags, show an amber warning naming the actual numbers; the assignment is blocked unless staff tick "Assign anyway" and give a reason (5+ characters); the server enforces this independently of the client (hiding a button is not access control); every override writes to `audit_log` with the booking, the vehicle, the passengers/bags-vs-capacity numbers, the reason, and the staff user; only roles that can already dispatch (`assignVanDriver`) may override — no new `ROLE_MATRIX` area. Built in pre-task 0C (2026-11-03 batch), ahead of T9.
+
 ---
 
 ## Global Constraints
