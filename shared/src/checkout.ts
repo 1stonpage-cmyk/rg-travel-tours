@@ -89,6 +89,66 @@ export const quoteInput = z
   .strict();
 export type QuoteInput = z.infer<typeof quoteInput>;
 
+/**
+ * Who the booking is for — name, email, phone.
+ *
+ * **Every message under `lead` names its own field** (task A4 fix round
+ * 1, I2).
+ *
+ * `z.flattenError` keys by `issue.path[0]`, so this nested object reports
+ * name, email and phone together under one `fieldErrors.lead` entry —
+ * deliberate (Part 2), because the client cannot tell which of the three
+ * boxes a grouped message belongs to and so renders it against the
+ * name/email/phone group as a whole (`GuestDetails.tsx`). That grouping
+ * is only honest while every message it can carry says which field it is
+ * about: Part 1 gave `phone` its own sentence, but `name`'s BOUNDS were
+ * left as Zod's own defaults ("Too big: expected string to have <=160
+ * characters"), which rendered underneath the email and phone rows
+ * naming no field at all — the "misleading message under the wrong
+ * field" that task exists to close. The bounds themselves are unchanged;
+ * only what a failure says. (BUG-120 later added a dot-path
+ * `nestedFieldErrors` map alongside the grouped one, so a client CAN now
+ * place the leaf message — see `server/src/trpc.ts`.)
+ *
+ * **Extracted on its second consumer** (transfers-launch plan, Task T11):
+ * `createHoldInput` below and `createHoldTransferInput`
+ * (`./transfers.ts`) are the two guest-details forms this system has, and
+ * they must never drift on what a valid name, email or PH mobile number
+ * is. One declaration is how that is guaranteed rather than remembered.
+ */
+export const leadSchema = z
+  .object({
+    name: z
+      .string()
+      .min(1, 'Enter your name (up to 160 characters).')
+      .max(160, 'Enter your name (up to 160 characters).'),
+    /*
+     * TWO sentences, because the FORMAT and the BOUND are two different
+     * facts about this one field.
+     *
+     * The format message is spelled rather than left to zod's own
+     * ("Invalid email address"), so every surface that shows this
+     * field's refusal says the same guest-facing sentence (task A4).
+     * Same rule as `bookingLookupInput` below and
+     * `shared/src/schemas/public.ts`.
+     *
+     * The bound needs its own, and it is NOT the defect the fix-round
+     * review expected to find here (measured): in Zod 4 the string a
+     * format constructor is given is a SCHEMA-level error inherited by
+     * every check added after it, so `z.email('Enter a valid email
+     * address.').max(200)` answered a perfectly well-formed 202-character
+     * address with "Enter a valid email address." — field-naming, but
+     * untrue, and a guest who retypes a valid address is refused again.
+     * Zod's `Too big: expected string to have <=200 characters` never
+     * reached a guest from this line.
+     */
+    email: z
+      .email('Enter a valid email address.')
+      .max(200, 'Enter a shorter email address (up to 200 characters).'),
+    phone: phPhoneSchema,
+  })
+  .strict();
+
 export const createHoldInput = quoteInput
   .extend({
     payMode: z.enum(PAY_MODES),
@@ -98,55 +158,7 @@ export const createHoldInput = quoteInput
      * so a price cannot be replayed after an admin edits a price tier.
      */
     quoteId: z.string().regex(/^[0-9a-f]{32}$/, 'Expected a 32-character lowercase hex quote id'),
-    /**
-     * **Every message under `lead` names its own field** (task A4 fix round
-     * 1, I2).
-     *
-     * `z.flattenError` keys by `issue.path[0]`, so this nested object reports
-     * name, email and phone together under one `fieldErrors.lead` entry —
-     * deliberate (Part 2), because the client cannot tell which of the three
-     * boxes a grouped message belongs to and so renders it against the
-     * name/email/phone group as a whole (`GuestDetails.tsx`). That grouping
-     * is only honest while every message it can carry says which field it is
-     * about: Part 1 gave `phone` its own sentence, but `name`'s BOUNDS were
-     * left as Zod's own defaults ("Too big: expected string to have <=160
-     * characters"), which rendered underneath the email and phone rows
-     * naming no field at all — the "misleading message under the wrong
-     * field" this task exists to close. The bounds themselves are unchanged;
-     * only what a failure says.
-     */
-    lead: z
-      .object({
-        name: z
-          .string()
-          .min(1, 'Enter your name (up to 160 characters).')
-          .max(160, 'Enter your name (up to 160 characters).'),
-        /*
-         * TWO sentences, because the FORMAT and the BOUND are two different
-         * facts about this one field.
-         *
-         * The format message is spelled rather than left to zod's own
-         * ("Invalid email address"), so every surface that shows this
-         * field's refusal says the same guest-facing sentence (task A4).
-         * Same rule as `bookingLookupInput` below and
-         * `shared/src/schemas/public.ts`.
-         *
-         * The bound needs its own, and it is NOT the defect the fix-round
-         * review expected to find here (measured): in Zod 4 the string a
-         * format constructor is given is a SCHEMA-level error inherited by
-         * every check added after it, so `z.email('Enter a valid email
-         * address.').max(200)` answered a perfectly well-formed 202-character
-         * address with "Enter a valid email address." — field-naming, but
-         * untrue, and a guest who retypes a valid address is refused again.
-         * Zod's `Too big: expected string to have <=200 characters` never
-         * reached a guest from this line.
-         */
-        email: z
-          .email('Enter a valid email address.')
-          .max(200, 'Enter a shorter email address (up to 200 characters).'),
-        phone: phPhoneSchema,
-      })
-      .strict(),
+    lead: leadSchema,
     pickup: z.string().max(400).optional(),
     pickupMapUrl: z.url().max(500).optional(),
     requests: z.string().max(2000).optional(),

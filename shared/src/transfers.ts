@@ -4,10 +4,20 @@
  *
  * The constants are plain data with no database anywhere near them, so every
  * surface — schema, server, client — reads the same vocabulary. Task T9 added
- * the quote input/result and the public route-list row, as this file's own
- * header always said a later task would; **the HOLD input is still T12's**, so
- * keep adding guest-form fields there rather than widening `quoteTransferInput`
- * below. Anything admin-shaped belongs in `transfers-admin.ts`.
+ * the quote input/result and the public route-list row.
+ *
+ * **The guest-facing HOLD input lives in `./transfers-checkout.ts`, not here,
+ * and that is forced rather than chosen** (Task T11). It has to reuse
+ * `PAY_MODES`, `civilDateSchema` and `leadSchema`, which live in `./booking`
+ * and `./checkout` — and `./booking` imports THIS file (for
+ * `TRANSFER_PRODUCT_TYPES` / `VEHICLE_TYPES`), so importing either of them
+ * from here is a module cycle. Measured, not theorised: the whole suite failed
+ * at import time with `z.enum(undefined)` inside `checkout.ts`, because
+ * `transfers.ts` loaded first and got a half-initialised `./booking` back. So
+ * the hold input sits DOWNSTREAM of all three, in a module nothing else
+ * imports. Keep adding guest-form fields there rather than widening
+ * `quoteTransferInput` below: a quote names a product, a hold describes a
+ * journey. Anything admin-shaped belongs in `transfers-admin.ts`.
  */
 import { z } from 'zod';
 

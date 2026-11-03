@@ -4,8 +4,12 @@
  * `checkout.quoteTransfer` (transfers-launch plan, Task T9): the same thin
  * resolver over the private-transfer product, whose centavos come from
  * `quoteTransfer()` / `vehiclePriceForRouteAndType()`
- * (services/transfers/pricing.ts). It is a QUERY, so it adds no mutation to the
- * two this router is allowed (see the enumeration test below).
+ * (services/transfers/pricing.ts). It is a QUERY, so it added no mutation to
+ * this router (see the enumeration test below). `checkout.createHoldTransfer`
+ * (Task T11) is a mutation and is the THIRD and last one here — the transfer
+ * twin of `createHold`, over `createTransferBooking()`
+ * (services/transfers/create-booking.ts), and like the other two it cannot mark
+ * anything paid.
  *
  * **This router computes nothing.** Every centavo here comes from
  * `priceQuote()` / `loadQuoteInputs()` (pricing.ts) or `createHold()`
@@ -19,10 +23,12 @@
  * booking row, with the deposit arithmetic left to `depositCentavos()` in
  * `@rg/shared`.
  *
- * **`createHold` and `startPayment` are the only two mutations here, and
- * that is a tested property** (plan Task 9). Neither marks anything paid: a
- * third mutation on this router is how a redirect page quietly becomes a way
- * to confirm a booking.
+ * **`createHold`, `createHoldTransfer` and `startPayment` are the only three
+ * mutations here, and that is a tested property** (plan Task 9, extended by
+ * transfers-launch Task T11). None of them marks anything paid: a fourth
+ * mutation on this router is how a redirect page quietly becomes a way to
+ * confirm a booking. The two holds are the same verb over two products — a
+ * mutation that is NOT a hold or a payment start does not belong here.
  *
  * **`bookingStatus` (Task 9) is this rule's other half: the redirect page's
  * own query.** §6: "The success redirect page only reads status (polls until
@@ -78,6 +84,7 @@ import {
   bookingPagePath,
   bookingRefSchema,
   createHoldInput,
+  createHoldTransferInput,
   DATE_BLOCKED,
   DATE_NOT_BOOKABLE,
   depositCentavos,
@@ -132,6 +139,15 @@ import {
   quoteTransfer as quoteTransferPrice,
   vehiclePriceForRouteAndType,
 } from '../../services/transfers/pricing';
+import type { TransferCapacityRefusalReason } from '../../services/transfers/capacity';
+import {
+  createTransferBooking,
+  TransferBookingShapeError,
+  TransferCapacityRefusedError,
+  TransferNoticeTooShortError,
+  TransferRouteNotQuotableError,
+  type TransferBookingShapeProblem,
+} from '../../services/transfers/create-booking';
 import { publicProcedure, router } from '../../trpc';
 
 /**
@@ -485,6 +501,158 @@ function translateHoldError(error: unknown): TRPCError {
       message: gatewayMinimumMessage(error.totalCentavos),
     });
   }
+  if (error instanceof HoldLimitReachedError) {
+    return new TRPCError({
+      code: 'CONFLICT',
+      message:
+        'You already have the maximum number of pending bookings for this contact. ' +
+        'Please complete or cancel one before starting another.',
+    });
+  }
+  if (error instanceof HoldContentionError) {
+    return new TRPCError({
+      code: 'CONFLICT',
+      message: 'This date is very busy right now. Please try again in a moment.',
+    });
+  }
+  return internalError(error);
+}
+
+/**
+ * `assertBookableShape()`'s twelve reasons, one guest-facing sentence each
+ * (transfers-launch plan, Task T11).
+ *
+ * **Every one of these should be unreachable through `createHoldTransferInput`**
+ * — that Zod input refuses each of them first, at the wire boundary, with a
+ * message placed against the field it is about. They are written anyway, for
+ * two reasons: the `Record` type has no optional members, so the typechecker
+ * refuses a map that forgets a reason added later (the same guardrail
+ * `CAPACITY_MESSAGES` above relies on), and a refusal that somehow reaches this
+ * translator must still be a sentence rather than
+ * `TransferBookingShapeError`'s own developer-facing text, which names the
+ * reason code and echoes the offending value.
+ *
+ * The three route-shape reasons collapse to one sentence deliberately: a guest
+ * picks a published route from a list, so "you sent both a route and a
+ * description" and "you sent neither" are the same mistake from where they are
+ * standing. `staff_price_not_whole_centavos` cannot arise on this path at all —
+ * the guest path is `priceSource: { kind: 'catalog' }` — so it gets the generic
+ * "contact us", naming no figure.
+ */
+const TRANSFER_SHAPE_MESSAGES: Record<TransferBookingShapeProblem, string> = {
+  route_and_custom_route_description: 'Please choose one transfer route.',
+  neither_route_nor_custom_route_description: 'Please choose a transfer route.',
+  catalog_price_source_without_route: 'Please choose a transfer route.',
+  pickup_time_unreadable: 'Enter a pickup time as HH:mm, like 08:30.',
+  day_use_end_time_missing: 'Tell us what time you need the vehicle until.',
+  day_use_end_time_unreadable: 'Enter an end time as HH:mm, like 17:00.',
+  day_use_end_time_not_after_pickup: 'The end time must be later than the pickup time.',
+  day_use_end_time_on_one_way: 'A one-way transfer has no end time — please leave it blank.',
+  flight_details_on_day_use:
+    'A day-use hire carries no flight — please leave the flight details blank.',
+  pax_not_positive: 'Enter how many passengers are travelling.',
+  luggage_count_negative: 'Enter how many bags you are bringing (0 if none).',
+  staff_price_not_whole_centavos: 'We could not price that transfer. Please contact us.',
+};
+
+/**
+ * `assessTransferCapacity`'s three refusals, each its own sentence — never one
+ * "sold out", for the reason `CAPACITY_MESSAGES` above is split: "no vehicle
+ * free around then" and "that pickup is too late in the day" are different
+ * facts with different fixes, and one of them the guest can act on by moving
+ * the clock.
+ *
+ * **None of them names a number.** How many vans this business owns, how many
+ * are already out and how much of a driver's day is left are internal facts;
+ * a guest needs only what to change.
+ */
+const TRANSFER_CAPACITY_MESSAGES: Record<TransferCapacityRefusalReason, string> = {
+  no_vehicle_available: 'No vehicle is available for that pickup time. Please try another time.',
+  no_driver_available: 'No driver is available for that date. Please try another date.',
+  pickup_crosses_midnight:
+    'That trip would run past midnight. Please choose an earlier pickup time.',
+};
+
+/**
+ * Every typed refusal `createTransferBooking()`
+ * (services/transfers/create-booking.ts) can throw, translated — the transfer
+ * twin of `translateHoldError` above, with the same structure and the same
+ * shared helpers, so a transfer guest and a tour guest are told the same thing
+ * about the coupon they both typed, the gateway floor they both tripped and the
+ * hold cap they both share.
+ *
+ * The three refusals with no tour counterpart are the shape error, the capacity
+ * vocabulary and the minimum notice; everything below them is the EXISTING
+ * tour vocabulary, reached because `createTransferBooking()` deliberately
+ * reuses those services rather than growing copies.
+ */
+function translateHoldTransferError(error: unknown): TRPCError {
+  const coupon = translateCouponError(error);
+  if (coupon) return coupon;
+  if (error instanceof TransferBookingShapeError) {
+    return new TRPCError({ code: 'BAD_REQUEST', message: TRANSFER_SHAPE_MESSAGES[error.reason] });
+  }
+  if (error instanceof TransferCapacityRefusedError) {
+    return new TRPCError({
+      code: 'BAD_REQUEST',
+      message: TRANSFER_CAPACITY_MESSAGES[error.reason],
+    });
+  }
+  /*
+   * **Branched on the SIGN of the gap, not only on the class** (T10's own
+   * review, Minor M-2). `TransferNoticeTooShortError` carries one arithmetic
+   * comparison that covers two different facts, because a pickup that has
+   * already been and gone has a NEGATIVE `hoursUntilPickup` and fails the same
+   * `>=` test — see that class's own note. Telling such a guest "this transfer
+   * needs at least 6 hours' notice" invites them to try 6 hours after a moment
+   * that is already past. So the two get the two sentences the tour path gets
+   * from two separate classes (`TourDatePastError` vs the booking window).
+   *
+   * `minNoticeHours` is quoted because it is the one number here a guest can
+   * act on, and it is the OWNER's own setting rather than anything about the
+   * fleet.
+   */
+  if (error instanceof TransferNoticeTooShortError) {
+    if (error.hoursUntilPickup < 0) {
+      return new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'That pickup time has already passed. Please choose a later date or time.',
+      });
+    }
+    return new TRPCError({
+      code: 'BAD_REQUEST',
+      message:
+        `This transfer needs at least ${error.minNoticeHours} hours' notice before pickup. ` +
+        'Please choose a later time.',
+    });
+  }
+  /*
+   * An unknown route id, a route the owner retired, a route whose destination
+   * was retired, or a vehicle type with no price row — ONE sentence for all
+   * four, exactly as `quoteTransfer` gives for the same four (see its own
+   * note): distinguishing them over a numeric id would make this mutation an
+   * enumeration oracle for the catalog.
+   */
+  if (error instanceof TransferRouteNotQuotableError) {
+    return new TRPCError({
+      code: 'NOT_FOUND',
+      message: 'That route is no longer available for that vehicle.',
+    });
+  }
+  // BUG-110, the same constant and the same shared chooser the tour hold and
+  // both quote previews use — see `translateHoldError`'s own note.
+  if (error instanceof GatewayMinimumNotMetError) {
+    return new TRPCError({
+      code: 'BAD_REQUEST',
+      message: gatewayMinimumMessage(error.totalCentavos),
+    });
+  }
+  /*
+   * The SAME sentence `translateHoldError` gives, deliberately word for word:
+   * `assertUnderHoldCaps` counts a guest's tour holds and transfer holds
+   * against ONE pool of two, so two different sentences would describe one
+   * cap and send the guest looking for a second one.
+   */
   if (error instanceof HoldLimitReachedError) {
     return new TRPCError({
       code: 'CONFLICT',
@@ -874,6 +1042,79 @@ export const checkoutRouter = router({
       return await createHoldService(input);
     } catch (error) {
       throw translateHoldError(error);
+    }
+  }),
+
+  /**
+   * The PRIVATE-TRANSFER hold (transfers-launch plan, Task T11; Architecture
+   * §3) — the counterpart to `createHold` above, over the other product, and
+   * **the third and last mutation this router is allowed** (the enumeration
+   * test below pins the list by name). It holds a booking at
+   * `pending_payment`; like the other two it cannot mark anything paid, and
+   * there is no path from here to one.
+   *
+   * **Catalog-only, and that is the whole difference between the two callers
+   * of `createTransferBooking()`.** `priceSource: { kind: 'catalog' }` is
+   * hard-coded here, so the price is read from
+   * `transfer_route_vehicle_prices` inside that function's own transaction and
+   * nothing on the wire can influence it. `customRouteDescription: null` for
+   * the same reason: a guest books a published route, and the custom,
+   * staff-quoted branch belongs to `admin.transferQuotes.convert` (Task T19),
+   * which does not come through this input at all.
+   *
+   * **This resolver decides nothing.** Every refusal reason, every lock, the
+   * minimum-notice rule, all five capacity conditions, the gateway floor, the
+   * hold caps and the coupon reservation are `createTransferBooking()`'s, in
+   * one transaction, in the order its own module note sets out. What is left
+   * here is exactly what a router is for: parse the wire input (the Zod schema
+   * in `@rg/shared`), call one service, translate a typed refusal into a
+   * guest-safe `TRPCError`.
+   *
+   * **It takes no `now`.** `createTransferBooking()` accepts one for its tests;
+   * the clock a guest's hold is measured against is the server's, because
+   * nothing on the wire may decide what "now" is (the discipline
+   * `createHold`/`availability` already follow).
+   *
+   * Rate-limited with `createHold` and against the same budget — Ruling 5's "5
+   * hold creations per IP per 15 minutes" is about holds, not about tours (see
+   * `CHECKOUT_HOLD_PROCEDURES` in `middleware/rate-limit.ts`).
+   *
+   * **Known, inherited gap:** `quoteTransfer` checks neither minimum notice nor
+   * capacity, so a guest can hold a perfectly good-looking quote this mutation
+   * then refuses. Not new and not this task's to close — tours' `quote` has the
+   * identical property against `availability`/`createHold` — and the refusal
+   * when it happens is one of the guest-actionable sentences above, never a
+   * crash.
+   */
+  createHoldTransfer: publicProcedure.input(createHoldTransferInput).mutation(async ({ input }) => {
+    try {
+      return await createTransferBooking({
+        date: input.date,
+        routeId: input.routeId,
+        customRouteDescription: null,
+        vehicleType: input.vehicleType,
+        productType: input.productType,
+        pickupTime: input.pickupTime,
+        // The service's shape is `null`-for-absent throughout; the wire's is
+        // optional-for-absent, which is what a form that omits a field
+        // actually sends. This is the one place the two meet.
+        dayUseEndTime: input.dayUseEndTime ?? null,
+        pax: input.pax,
+        luggageCount: input.luggageCount,
+        pickup: input.pickup ?? null,
+        pickupMapUrl: input.pickupMapUrl ?? null,
+        dropoffAddress: input.dropoffAddress,
+        dropoffMapUrl: input.dropoffMapUrl ?? null,
+        flightNumber: input.flightNumber ?? null,
+        airline: input.airline ?? null,
+        requests: input.requests ?? null,
+        payMode: input.payMode,
+        couponCode: input.couponCode,
+        lead: input.lead,
+        priceSource: { kind: 'catalog' },
+      });
+    } catch (error) {
+      throw translateHoldTransferError(error);
     }
   }),
 

@@ -243,10 +243,21 @@ export function createDriverLoginLimiter(): RequestHandler {
  * **Mounted immediately**, unlike `createDriverLoginLimiter()` above: this
  * task ships the route it guards in the same commit, so there is no
  * "guessed procedure name" problem — see `app.ts`.
+ *
+ * **`checkout.createHoldTransfer` shares this ONE budget** (transfers-launch
+ * plan, Task T11). Ruling 5 caps hold CREATIONS per IP, and a transfer hold is
+ * a hold: it takes fleet capacity for a date, reserves a coupon use and spends
+ * the same per-guest pool (`assertUnderHoldCaps` counts both products), so a
+ * second budget of its own would simply double what one script may take.
+ * Nothing legitimate batches the two together, so counting per matched call
+ * (see `createProcedureRateLimit`) costs a real guest nothing.
  */
 export const CHECKOUT_HOLD_WINDOW_MS = 15 * 60_000;
 export const CHECKOUT_HOLD_MAX = 5;
-export const CHECKOUT_HOLD_PROCEDURES = ['checkout.createHold'] as const;
+export const CHECKOUT_HOLD_PROCEDURES = [
+  'checkout.createHold',
+  'checkout.createHoldTransfer',
+] as const;
 
 export function createCheckoutHoldLimiter(): RequestHandler {
   return createProcedureRateLimit([...CHECKOUT_HOLD_PROCEDURES], {

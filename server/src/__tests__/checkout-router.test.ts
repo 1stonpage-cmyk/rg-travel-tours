@@ -961,10 +961,19 @@ describeWithDb('checkout router', () => {
 
   /**
    * The brief's own test, verbatim: this is the single most load-bearing
-   * assertion in the whole task. `createHold` and `startPayment` are the
-   * only two checkout mutations — a third here is exactly how a page that
-   * is supposed to only READ status would quietly become a way to CONFIRM
-   * one.
+   * assertion in the whole task. `createHold`, `createHoldTransfer` and
+   * `startPayment` are the only three checkout mutations — a fourth here is
+   * exactly how a page that is supposed to only READ status would quietly
+   * become a way to CONFIRM one.
+   *
+   * `checkout.createHoldTransfer` joined the list in transfers-launch Task
+   * T11, and the list is still MEANINGFUL rather than merely longer: it is
+   * the same verb (hold a booking at `pending_payment`) over the other
+   * product, through `createTransferBooking()`, which can no more mark a
+   * booking paid than `createHold()` can. The second half of this test is
+   * what keeps the first half honest — every name here is asserted to be a
+   * hold or a payment start, so a future mutation cannot be waved through by
+   * appending it to the array.
    */
   it('exposes no mutation that could confirm a booking', () => {
     const procs = Object.entries(appRouter._def.procedures);
@@ -972,9 +981,18 @@ describeWithDb('checkout router', () => {
       .filter(([name]) => name.startsWith('checkout.'))
       .filter(([, p]) => (p as { _def: { type: string } })._def.type === 'mutation')
       .map(([name]) => name);
-    // createHold and startPayment are the only two. A third mutation here is
-    // how a redirect page quietly becomes a way to confirm a booking.
-    expect(checkoutMutations.sort()).toEqual(['checkout.createHold', 'checkout.startPayment']);
+    // The two holds and the payment start. A fourth mutation here is how a
+    // redirect page quietly becomes a way to confirm a booking.
+    expect(checkoutMutations.sort()).toEqual([
+      'checkout.createHold',
+      'checkout.createHoldTransfer',
+      'checkout.startPayment',
+    ]);
+    for (const name of checkoutMutations) {
+      expect(name, `${name} is neither a hold nor a payment start`).toMatch(
+        /^checkout\.(createHold|createHoldTransfer|startPayment)$/,
+      );
+    }
   });
 
   // -------------------------------------------------------------------------

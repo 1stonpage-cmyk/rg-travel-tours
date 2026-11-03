@@ -19,4 +19,5 @@ export * from './time';
 export * from './tours-admin';
 export * from './transfers';
 export * from './transfers-admin';
+export * from './transfers-checkout';
 export * from './schemas/public';
