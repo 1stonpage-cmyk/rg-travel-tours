@@ -40,16 +40,32 @@ beforeAll(() => {
   proto.scrollIntoView = () => {};
 });
 
-const VAN_10 = { id: 10, plate: 'ABC 123', model: 'HiAce', capacity: 10 };
-const VAN_15 = { id: 15, plate: 'DEF 456', model: 'Urvan', capacity: 15 };
+/*
+ * `luggageCapacity` arrives on every van from pre-task 0C's `dayOptions`.
+ * NULL on these two = "not recorded", which is the state that makes the
+ * panel's luggage warning skip — so every test written before 0C keeps
+ * seeing exactly what it saw.
+ */
+const VAN_10 = { id: 10, plate: 'ABC 123', model: 'HiAce', capacity: 10, luggageCapacity: null };
+const VAN_15 = { id: 15, plate: 'DEF 456', model: 'Urvan', capacity: 15, luggageCapacity: null };
+/** Four seats against the panel's `pax={6}` — undersized on purpose. */
+const VAN_4 = { id: 4, plate: 'GHI 789', model: 'Innova', capacity: 4, luggageCapacity: null };
 const DRIVER_A = { id: 7, name: 'Maria Santos', code: 'D07' };
 const DRIVER_B = { id: 8, name: 'Arturo Abella', code: 'D08' };
 
 interface Overrides {
   role?: 'owner' | 'dispatcher' | 'finance';
   status?: 'confirmed' | 'assigned' | 'pending_verification' | 'in_progress';
-  vans?: Array<typeof VAN_10>;
+  vans?: Array<{
+    id: number;
+    plate: string;
+    model: string;
+    capacity: number;
+    luggageCapacity: number | null;
+  }>;
   drivers?: Array<typeof DRIVER_A>;
+  /** The booking's bag count: a number on a transfer, NULL on a tour. */
+  luggageCount?: number | null;
   /** Records every `assign` call, so "called nothing" is assertable. */
   onAssign?: (input: unknown) => void;
   /** Records every `dayOptions` call — the finance gate must issue none. */
@@ -68,6 +84,7 @@ function renderPanel(overrides: Overrides = {}) {
       return {
         vans: overrides.vans ?? [VAN_10, VAN_15],
         drivers: overrides.drivers ?? [DRIVER_A, DRIVER_B],
+        luggageCount: overrides.luggageCount ?? null,
       };
     },
     'admin.dispatch.suggest': () =>
@@ -265,5 +282,119 @@ describe('AssignPanel', () => {
     await screen.findByRole('combobox', { name: /van/i });
     // Nothing selectable means nothing selected means nothing to submit.
     expect(screen.getByRole('button', { name: /^assign$/i })).toBeDisabled();
+  });
+
+  /* ---- pre-task 0C: the undersized-vehicle warning and its override ---- */
+
+  /** Picks the named van and `DRIVER_A`, so only the van choice varies. */
+  async function pickVan(plate: RegExp) {
+    await user.click(await screen.findByRole('combobox', { name: /van/i }));
+    await user.click(await screen.findByRole('option', { name: plate }));
+    await user.click(await screen.findByRole('combobox', { name: /driver/i }));
+    await user.click(await screen.findByRole('option', { name: /Maria Santos/ }));
+  }
+
+  it('shows no fit warning for a van that fits', async () => {
+    renderPanel({ vans: [VAN_10] });
+    await pickVan(/ABC 123/);
+    expect(screen.queryByTestId('vehicle-fit-warning')).toBeNull();
+  });
+
+  it('warns with the ACTUAL numbers when the chosen van is short on seats', async () => {
+    renderPanel({ vans: [VAN_4] });
+    await pickVan(/GHI 789/);
+
+    const warning = await screen.findByTestId('vehicle-fit-warning');
+    // The numbers, not a verdict: "4 seats, 6 passengers" is a judgement a
+    // dispatcher can make and "too small" is not.
+    expect(warning.textContent).toMatch(/seats 4/i);
+    expect(warning.textContent).toMatch(/6 passengers/i);
+    // Amber, asserted POSITIVELY — the same reasoning as the unpaid label
+    // above. The project-wide "no red" rule has its own guard test.
+    expect(warning.className).toMatch(/bg-amber-100/);
+    expect(warning.className).toMatch(/text-amber-900/);
+  });
+
+  it('warns on LUGGAGE when the seats fit but the recorded bags do not', async () => {
+    renderPanel({
+      vans: [{ ...VAN_10, luggageCapacity: 2 }],
+      luggageCount: 6,
+    });
+    await pickVan(/ABC 123/);
+
+    const warning = await screen.findByTestId('vehicle-fit-warning');
+    expect(warning.textContent).toMatch(/2 bags/i);
+    expect(warning.textContent).toMatch(/this booking has 6/i);
+    // The seats fit (10 >= 6), so the seat sentence must be absent — one
+    // warning box, only the sentences that are true.
+    expect(warning.textContent).not.toMatch(/passengers/i);
+  });
+
+  it('shows no luggage warning when the van has no recorded luggage capacity', async () => {
+    // NULL = not measured yet. Guessing a zero here would warn on the whole
+    // fleet on day one; the server skips the same comparison.
+    renderPanel({ vans: [VAN_10], luggageCount: 99 });
+    await pickVan(/ABC 123/);
+    expect(screen.queryByTestId('vehicle-fit-warning')).toBeNull();
+  });
+
+  it('blocks Assign until the override box is ticked AND a reason is typed', async () => {
+    renderPanel({ vans: [VAN_4] });
+    await pickVan(/GHI 789/);
+
+    const button = () => screen.getByRole('button', { name: /^assign$/i });
+    // Both ids are chosen, so without the override gate this would be ready.
+    expect(button()).toBeDisabled();
+
+    await user.click(screen.getByLabelText(/assign anyway/i));
+    expect(button()).toBeDisabled();
+
+    const box = screen.getByLabelText(/why this vehicle is still the right one/i);
+    await user.type(box, 'four');
+    expect(button()).toBeDisabled();
+    await user.type(box, ' toddlers');
+    expect(button()).toBeEnabled();
+  });
+
+  it('sends override and overrideReason only when the box is ticked', async () => {
+    const assigns: unknown[] = [];
+    renderPanel({ vans: [VAN_4], onAssign: (input) => assigns.push(input) });
+    await pickVan(/GHI 789/);
+
+    await user.click(screen.getByLabelText(/assign anyway/i));
+    await user.type(
+      screen.getByLabelText(/why this vehicle is still the right one/i),
+      '  Four of the six are toddlers.  ',
+    );
+    await user.click(screen.getByRole('button', { name: /^assign$/i }));
+
+    await waitFor(() => expect(assigns).toHaveLength(1));
+    expect(assigns[0]).toMatchObject({
+      vanId: 4,
+      override: true,
+      // Trimmed on the way out, so the server's `.min(5)` sees what a human
+      // actually wrote.
+      overrideReason: 'Four of the six are toddlers.',
+    });
+  });
+
+  it('sends no override field at all for a van that fits', async () => {
+    const assigns: Array<Record<string, unknown>> = [];
+    renderPanel({ vans: [VAN_10], onAssign: (input) => assigns.push(input as never) });
+    await pickVan(/ABC 123/);
+    await user.click(screen.getByRole('button', { name: /^assign$/i }));
+
+    await waitFor(() => expect(assigns).toHaveLength(1));
+    expect(assigns[0]).not.toHaveProperty('override');
+    expect(assigns[0]).not.toHaveProperty('overrideReason');
+  });
+
+  it('turns the vehicle_too_small refusal into something a dispatcher can act on', async () => {
+    // The stale-dropdown fallback: the panel's own warning did not fire
+    // (VAN_10 fits what the panel was told), but the server refused anyway.
+    renderPanel({ vans: [VAN_10], assignError: { message: 'vehicle_too_small' } });
+    await pickVan(/ABC 123/);
+    await user.click(screen.getByRole('button', { name: /^assign$/i }));
+    expect((await screen.findByRole('alert')).textContent).toMatch(/may not fit the group/i);
   });
 });

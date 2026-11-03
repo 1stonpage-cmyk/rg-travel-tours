@@ -107,11 +107,12 @@ describe('civilDateFromDate', () => {
  * `AssignRefusal` is a shared type so the admin UI can map every reason to
  * copy exhaustively. There is nothing to execute, so the guard is a
  * compile-time exhaustiveness check that a reviewer can see and a future
- * reason will break: add an eighth member to the union and this object
+ * reason will break: add a ninth member to the union and this object
  * stops compiling until it gets words.
  *
- * It worked as designed when `driver_at_daily_cap` was added (transfers-launch
- * Task T8): the shared typecheck went red before any UI did.
+ * It worked as designed twice: when `driver_at_daily_cap` was added
+ * (transfers-launch Task T8) and again for `vehicle_too_small` (pre-task 0C)
+ * — the shared typecheck went red before any UI did, both times.
  */
 describe('AssignRefusal', () => {
   it('has copy for every reason, enforced by the compiler', () => {
@@ -122,11 +123,12 @@ describe('AssignRefusal', () => {
       driver_unavailable: 'That driver is not available on this date.',
       driver_at_daily_cap: 'That driver already has their transfer jobs for the day.',
       van_too_small: 'That van is too small for this group.',
+      vehicle_too_small: 'This vehicle may not fit the group or their luggage.',
       reason_required: 'Changing a trip already under way needs a reason.',
     };
-    // Seven, exactly — a reason added without copy fails the line above, and a
+    // Eight, exactly — a reason added without copy fails the line above, and a
     // reason REMOVED without tidying this leaves an excess key, which
     // `Record` also rejects.
-    expect(Object.keys(copy)).toHaveLength(7);
+    expect(Object.keys(copy)).toHaveLength(8);
   });
 });

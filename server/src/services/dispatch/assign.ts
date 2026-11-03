@@ -79,6 +79,11 @@
  *    since seats never gate a transfer's pool, running it anyway could
  *    misreport a van excluded for being the wrong TYPE, or already busy, as
  *    merely "too small".
+ *    Because seats never gate the pool, a van of the right type can still be
+ *    too small for the party or short on luggage room — which is what step
+ *    **6b** (pre-task 0C, owner decision 2026-11-03) checks, SOFTLY: it
+ *    refuses `vehicle_too_small` unless the request carried `override` plus
+ *    a reason, and records the override on the one audit row.
  *  - A refused driver gets one extra diagnostic, `driver_at_daily_cap`, so
  *    "that driver is done for the day" is not reported as "unavailable" —
  *    which would send a dispatcher hunting for a colleague who did nothing.
@@ -121,6 +126,18 @@ export interface AssignVanAndDriverInput {
   /** REQUIRED when the booking is `in_progress` (owner-decided 2026-10-14,
    *  Q3); ignored — and must not be demanded — otherwise. */
   reason?: string;
+  /**
+   * TRANSFER assignment only (pre-task 0C, owner decision 2026-11-03): the
+   * dispatcher has seen that the chosen van may not fit this booking's party
+   * or its luggage and is assigning it anyway. Inert on a TOUR, where an
+   * undersized van was never in `vansFreeOn`'s answer to begin with.
+   *
+   * Separate from `reason` on purpose: the two are independent concepts and
+   * both can apply to one submission (a mid-trip swap onto a smaller van).
+   */
+  override?: boolean;
+  /** REQUIRED whenever `override` is true — `assignInputSchema` enforces it. */
+  overrideReason?: string;
 }
 
 /**
@@ -304,7 +321,7 @@ export async function assignVanAndDriver(
   tx: Transaction,
   input: AssignVanAndDriverInput,
 ): Promise<AssignVerdict> {
-  const { bookingId, vanId, driverId, actorUserId, reason } = input;
+  const { bookingId, vanId, driverId, actorUserId, reason, override, overrideReason } = input;
 
   /*
    * 1. Read the booking FOR UPDATE — a locking read, so it does not pin the
@@ -330,6 +347,9 @@ export async function assignVanAndDriver(
       dayUseEndTime: bookingTransferDetails.dayUseEndTime,
       bufferMinutesUsed: bookingTransferDetails.bufferMinutesUsed,
       routeDurationMinutesUsed: bookingTransferDetails.routeDurationMinutesUsed,
+      // Pre-task 0C: the luggage half of step 6b's soft check. One more
+      // column on the join that is already here, so no second read.
+      luggageCount: bookingTransferDetails.luggageCount,
     })
     .from(bookings)
     .leftJoin(bookingTransferDetails, eq(bookingTransferDetails.bookingId, bookings.id))
@@ -456,6 +476,73 @@ export async function assignVanAndDriver(
     return refuse('driver_unavailable');
   }
 
+  /*
+   * 6b. TRANSFER-ONLY soft check (pre-task 0C, owner decision 2026-11-03).
+   * `vansFreeOn`'s transfer branch filters by TYPE only (`minCapacity: 0` —
+   * "the type is the fit" for a transfer), so a van of the right type can
+   * still be too small for this booking's own party, or short on stated
+   * luggage room. TOURS can never reach this branch: a tour's own
+   * `vansFreeOn` call already requires `capacity >= pax`, so `freeVans`
+   * would never have offered an undersized van in the first place.
+   *
+   * SOFT, not a rule: the dispatcher knows things the seat count does not
+   * (two of the six are toddlers; the bags are going in the back row), so a
+   * refusal is overridable with a reason — and the reason goes in the audit
+   * row, which is the whole point of letting it through at all.
+   *
+   * Placed AFTER step 6's two availability checks and BEFORE step 7's write,
+   * so a van that is unavailable or the wrong type still gets its own, truer
+   * sentence, and so nothing is written on a refusal here either.
+   */
+  let vehicleOverride:
+    | {
+        pax: number;
+        vanCapacity: number;
+        luggageCount: number | null;
+        vanLuggageCapacity: number | null;
+        reason: string;
+      }
+    | undefined;
+  if (transferWindow !== undefined) {
+    const [vanRow] = await tx
+      .select({ capacity: vans.capacity, luggageCapacity: vans.luggageCapacity })
+      .from(vans)
+      .where(eq(vans.id, vanId))
+      .limit(1);
+    const seatsShort = vanRow !== undefined && vanRow.capacity < booking.pax;
+    /*
+     * A NULL `luggage_capacity` means "not yet recorded for this vehicle" —
+     * so the luggage half SKIPS rather than guesses. Guessing either way is
+     * worse: a zero would refuse every van nobody has measured, and treating
+     * NULL as unlimited would make the check silently vacuous on a fleet
+     * that is mostly unmeasured, which is the fleet this ships to.
+     */
+    const luggageShort =
+      vanRow?.luggageCapacity != null &&
+      booking.luggageCount != null &&
+      vanRow.luggageCapacity < booking.luggageCount;
+    if (seatsShort || luggageShort) {
+      const trimmedOverrideReason = override ? overrideReason?.trim() : undefined;
+      /*
+       * `assignInputSchema`'s `.refine()` already guarantees `overrideReason`
+       * is >= 5 trimmed characters whenever `override` is true, so a present
+       * value here is valid. This is defence in depth for a non-tRPC caller
+       * of the service, not duplicate validation — and it fails CLOSED: no
+       * reason means no override, however `override` was set.
+       */
+      if (!override || !trimmedOverrideReason) {
+        return refuse('vehicle_too_small');
+      }
+      vehicleOverride = {
+        pax: booking.pax,
+        vanCapacity: vanRow!.capacity,
+        luggageCount: booking.luggageCount,
+        vanLuggageCapacity: vanRow!.luggageCapacity ?? null,
+        reason: trimmedOverrideReason,
+      };
+    }
+  }
+
   const previousVanId = booking.vanId;
   const previousDriverId = booking.driverId;
 
@@ -510,6 +597,15 @@ export async function assignVanAndDriver(
        * the note and the record threw it away.
        */
       ...(trimmedReason ? { reason: trimmedReason } : {}),
+      /*
+       * Pre-task 0C. ONE audit row, not a second one: the override is a
+       * property of this assignment, so it rides on the same
+       * `action`/`entity`/`entityId` an operations review already reads. The
+       * numbers are recorded as well as the reason, because "they overruled
+       * the fit" is only answerable later if the fit at the time is in the
+       * row — the van's seats can be edited afterwards.
+       */
+      ...(vehicleOverride ? { vehicleOverride } : {}),
     },
   });
 

@@ -25,6 +25,14 @@ export const vanInputSchema = z
     model: z.string().trim().min(2).max(120),
     capacity: z.number().int().min(1).max(30),
     /**
+     * Bags the luggage hold can take. `.nullable()` with no `.optional()`
+     * and no default — the same shape as `odometer` below, so the admin form
+     * must state it (blank means "not recorded yet") rather than have it
+     * quietly omitted. NULL is what makes the dispatch soft-check skip its
+     * luggage half (pre-task 0C, owner decision 2026-11-03).
+     */
+    luggageCapacity: z.number().int().min(0).max(200).nullable(),
+    /**
      * Required, with no Zod default, even though the database column has
      * one (owner decision 2026-10-28): the admin must explicitly pick van
      * or SUV for every new vehicle rather than silently defaulting.
@@ -60,6 +68,8 @@ export interface VanRow {
   plate: string;
   model: string;
   capacity: number;
+  /** Bags the luggage hold can take; NULL = not recorded for this vehicle. */
+  luggageCapacity: number | null;
   vehicleType: VehicleType;
   status: string;
   odometer: number | null;
@@ -471,6 +481,21 @@ export type AssignRefusal =
    * look again.
    */
   | 'driver_at_daily_cap'
+  /**
+   * TRANSFER assignment only (pre-task 0C, owner decision 2026-11-03): the
+   * chosen van is the right TYPE and otherwise free, but its own seats or its
+   * stated luggage capacity do not cover this booking's own party or bags,
+   * and no valid override came with the request.
+   *
+   * **A different reason from `van_too_small`, deliberately.** That one is
+   * TOUR-only and is a plain fact about the chosen van, because a tour's
+   * `vansFreeOn` call has ALREADY filtered the pool by `capacity >= pax` —
+   * an undersized van was never offered. A transfer's pool is filtered by
+   * vehicle TYPE alone (`minCapacity: 0`), so an undersized van IS offered
+   * and the fit is a judgement the dispatcher may overrule. Same words would
+   * have meant two different things and only one of them is overridable.
+   */
+  | 'vehicle_too_small'
   /** An `in_progress` re-assignment arrived without a reason (owner Q3). */
   | 'reason_required';
 
@@ -480,8 +505,28 @@ export const assignInputSchema = z
     vanId: z.number().int().positive(),
     driverId: z.number().int().positive(),
     reason: z.string().trim().min(3).max(500).optional(),
+    /**
+     * TRANSFER assignment only (pre-task 0C, owner decision 2026-11-03):
+     * acknowledges the chosen van may not fit this booking's seats/luggage.
+     * Meaningless, and ignored server-side, on a TOUR assignment — a tour's
+     * own `vansFreeOn` call already guarantees `capacity >= pax`, so the
+     * condition this exists to override can never occur there.
+     */
+    override: z.boolean().optional(),
+    overrideReason: z.string().trim().min(5).max(500).optional(),
   })
-  .strict();
+  .strict()
+  /*
+   * An override with no reason is not an override. The refusal is pinned to
+   * `overrideReason`'s own path so the dispatcher's message lands beside the
+   * box they left empty rather than on the panel as a whole (CLAUDE.md: no
+   * form may show raw Zod JSON).
+   */
+  .refine((data) => !data.override || (data.overrideReason?.length ?? 0) >= 5, {
+    message:
+      'A reason of at least 5 characters is required to assign an undersized vehicle anyway.',
+    path: ['overrideReason'],
+  });
 export type AssignInput = z.infer<typeof assignInputSchema>;
 
 /**

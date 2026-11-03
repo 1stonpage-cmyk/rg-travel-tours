@@ -66,6 +66,7 @@ const VAN = {
   plate: 'ABC123',
   model: 'Toyota Hiace',
   capacity: 10,
+  luggageCapacity: null,
   vehicleType: 'van',
   status: 'available',
   odometer: 50_000,

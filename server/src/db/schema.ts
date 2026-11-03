@@ -537,6 +537,14 @@ export const vans = mysqlTable(
     /** Seats available to GUESTS, not including the driver. Feeds the §5 capacity check. */
     capacity: int('capacity').notNull(),
     /**
+     * Seats a van's luggage hold can take, in pieces/bags. NULLABLE — NULL
+     * means "not yet recorded for this vehicle," and the dispatch soft-check
+     * (pre-task 0C, owner decision 2026-11-03) SKIPS the luggage half of its
+     * comparison when NULL rather than guessing a number. Not part of the
+     * vans_active_status_idx — nothing filters or sorts by it.
+     */
+    luggageCapacity: int('luggage_capacity'),
+    /**
      * Van or SUV (owner decision 2026-10-28) — every vehicle in the fleet
      * needs a type now that transfers are typed by vehicle. Defaults to
      * `'van'` so every existing `.insert(vans).values(...)` call site keeps

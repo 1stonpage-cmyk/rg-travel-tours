@@ -48,8 +48,16 @@ function asTrpcError(reason: AssignRefusal): TRPCError {
     case 'driver_unavailable':
     case 'driver_at_daily_cap':
       return new TRPCError({ code: 'CONFLICT', message: reason });
+    /*
+     * `vehicle_too_small` sits with `van_too_small`, not with the CONFLICTs:
+     * it is a property of the specific van chosen against this specific
+     * booking's own party and bags, not a race with another dispatcher.
+     * Re-sending the same request unchanged will be refused again; what
+     * changes it is a different van, or an override with a reason.
+     */
     case 'booking_not_assignable':
     case 'van_too_small':
+    case 'vehicle_too_small':
     case 'reason_required':
       return new TRPCError({ code: 'BAD_REQUEST', message: reason });
     default: {
@@ -176,6 +184,11 @@ export const adminDispatchRouter = router({
               vanId: input.vanId,
               driverId: input.driverId,
               reason: input.reason,
+              // Pre-task 0C. Passed through unchanged; the service decides
+              // whether they mean anything (transfer only) and refuses
+              // `vehicle_too_small` when they do not cover the gap.
+              override: input.override,
+              overrideReason: input.overrideReason,
               // The LIVE session identity, never a value the request body
               // could claim — same discipline `approveReceipt` uses for
               // `verifier`.

@@ -23,6 +23,8 @@ const VALID_VAN = {
   plate: 'ABC123',
   model: 'Toyota Hiace',
   capacity: 10,
+  /** Pre-task 0C's nullable column. `null` = "not recorded for this vehicle". */
+  luggageCapacity: null,
   vehicleType: 'van',
   odometer: 50_000,
   lastService: '2026-01-01',
@@ -273,6 +275,9 @@ describeWithDb('vans', () => {
       plate: 'NOVT111',
       model: VALID_VAN.model,
       capacity: VALID_VAN.capacity,
+      // Present on purpose: `vehicleType` must stay the ONLY field missing,
+      // or this test stops proving which omission the refusal is about.
+      luggageCapacity: VALID_VAN.luggageCapacity,
       odometer: VALID_VAN.odometer,
       lastService: VALID_VAN.lastService,
       nextService: VALID_VAN.nextService,

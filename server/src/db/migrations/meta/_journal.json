@@ -148,6 +148,13 @@
       "when": 1793649112320,
       "tag": "0020_living_sprite",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "5",
+      "when": 1793682957048,
+      "tag": "0021_clammy_thunderball",
+      "breakpoints": true
     }
   ]
 }

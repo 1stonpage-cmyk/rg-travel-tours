@@ -14,7 +14,7 @@
  * are a convenience rendered from an answer that was true when the day was
  * selected. A dispatcher who sits on this screen for ten minutes can still
  * be refused, and that refusal is the system working — which is why every
- * one of the six refusal reasons has copy below rather than a generic
+ * one of the refusal reasons has copy below rather than a generic
  * "something went wrong".
  *
  * ## The role gate
@@ -51,7 +51,7 @@ import { trpc } from '@/lib/trpc';
  * Copy for every refusal, typed `Record<AssignRefusal, string>` so the
  * COMPILER refuses a build where a reason has no words (controller ruling,
  * 2026-10-15). `AssignRefusal` lives in `@rg/shared` for exactly this; add a
- * seventh reason server-side and this object stops compiling until someone
+ * reason server-side and this object stops compiling until someone
  * decides what a dispatcher should read.
  *
  * `van_unavailable` and `driver_unavailable` both arrive as `CONFLICT` and
@@ -68,6 +68,15 @@ const REFUSAL_COPY: Record<AssignRefusal, string> = {
   driver_at_daily_cap:
     'That driver already has their maximum transfer jobs for the day. Choose another driver.',
   van_too_small: 'That van is too small for this group.',
+  /*
+   * A FALLBACK, not the primary path: the warning below is rendered from the
+   * same numbers the server checks, so a dispatcher normally sees the
+   * "Assign anyway" box before submitting. This is what they read when the
+   * dropdown data was stale — a van's seats or luggage figure edited on the
+   * fleet screen while this panel sat open.
+   */
+  vehicle_too_small:
+    'This vehicle may not fit the group or their luggage. Tick "Assign anyway" below and give a reason.',
   reason_required: 'A trip already under way needs a reason before it can be re-assigned.',
 };
 
@@ -88,7 +97,7 @@ function isRefusal(value: string): value is AssignRefusal {
  *
  * The server sets `message` to the refusal reason, so a known reason maps to
  * its copy. Two cases deliberately fall through to their own words rather
- * than being forced into the six: a `CONFLICT` with no recognised reason is
+ * than being forced into a refusal reason: a `CONFLICT` with no recognised reason is
  * Task 10's deadlock give-up ("this date is busy"), and anything else is
  * genuinely unexpected.
  */
@@ -97,7 +106,7 @@ function refusalMessage(error: unknown): string {
    * Task A4. `error.message` for an INPUT-VALIDATION failure is tRPC's own
    * `JSON.stringify(issues, null, 2)`, and the `reason.length < 200`
    * pass-through below would have shown a short one of those verbatim. A
-   * validation failure is never one of the six §9 refusal reasons, so it is
+   * validation failure is never one of the §9 refusal reasons, so it is
    * answered first, with the schema's own sentence.
    *
    * There is no per-field display here on purpose: this panel's input is a
@@ -150,6 +159,15 @@ export default function AssignPanel({
     currentDriverId === null ? '' : String(currentDriverId),
   );
   const [reason, setReason] = useState('');
+  /*
+   * Pre-task 0C. Deliberately SEPARATE state from `reason`, not a reuse of
+   * it: the Q3 mid-trip reason and the undersized-vehicle override are two
+   * independent concepts and both can apply to one submission (swapping a
+   * running trip onto a smaller van). Sharing one box would send the same
+   * sentence as the answer to two different questions.
+   */
+  const [overrideChecked, setOverrideChecked] = useState(false);
+  const [overrideReason, setOverrideReason] = useState('');
   const [banner, setBanner] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<string | null>(null);
   const [suggestNote, setSuggestNote] = useState<string | null>(null);
@@ -184,6 +202,8 @@ export default function AssignPanel({
     setVanId(currentVanId === null ? '' : String(currentVanId));
     setDriverId(currentDriverId === null ? '' : String(currentDriverId));
     setReason('');
+    setOverrideChecked(false);
+    setOverrideReason('');
     setBanner(null);
     setConfirmation(null);
     setSuggestNote(null);
@@ -193,7 +213,36 @@ export default function AssignPanel({
 
   const vans = options.data?.vans ?? [];
   const drivers = options.data?.drivers ?? [];
-  const ready = vanId !== '' && driverId !== '' && (!reasonRequired || reason.trim().length >= 3);
+
+  /*
+   * Pre-task 0C: the same two comparisons the server's step 6b makes, so the
+   * dispatcher sees the real numbers BEFORE submitting rather than only
+   * after a refusal. This is not the enforcement — see "What this panel is
+   * NOT" above — and the numbers are stated rather than summarised, because
+   * "6 guests, 4 seats" is a judgement a dispatcher can make and "too small"
+   * is not.
+   *
+   * The luggage half is skipped whenever either side is unknown, exactly as
+   * the server skips it: a van nobody has measured must not warn, and a tour
+   * booking has no bag count at all (`luggageCount` is NULL there).
+   */
+  const chosenVanRow = vans.find((candidate) => String(candidate.id) === vanId);
+  const luggageCount = options.data?.luggageCount ?? null;
+  const seatsShort = chosenVanRow !== undefined && chosenVanRow.capacity < pax;
+  const luggageShort =
+    chosenVanRow?.luggageCapacity != null &&
+    luggageCount != null &&
+    chosenVanRow.luggageCapacity < luggageCount;
+  const undersized = seatsShort || luggageShort;
+
+  const ready =
+    vanId !== '' &&
+    driverId !== '' &&
+    (!reasonRequired || reason.trim().length >= 3) &&
+    // An undersized vehicle is assignable only with the box ticked AND a
+    // reason — the same pair the server demands, so the button never offers
+    // a submission that is already refused.
+    (!undersized || (overrideChecked && overrideReason.trim().length >= 5));
 
   async function runSuggest() {
     setBanner(null);
@@ -223,6 +272,10 @@ export default function AssignPanel({
         vanId: Number(vanId),
         driverId: Number(driverId),
         ...(reason.trim().length > 0 ? { reason: reason.trim() } : {}),
+        // Sent only when the dispatcher actually ticked the box. An
+        // `override: true` with no reason is refused by Zod, so the pair
+        // travels together or not at all.
+        ...(overrideChecked ? { override: true, overrideReason: overrideReason.trim() } : {}),
       },
       {
         onSuccess: () => {
@@ -230,6 +283,8 @@ export default function AssignPanel({
             `Assigned ${chosenVan?.plate ?? 'the van'} and ${chosenDriver?.name ?? 'the driver'}.`,
           );
           setReason('');
+          setOverrideChecked(false);
+          setOverrideReason('');
           onAssigned();
         },
         onError: (error) => setBanner(refusalMessage(error)),
@@ -307,6 +362,62 @@ export default function AssignPanel({
         Only vans and drivers free on this date are listed, for {pax} guests. In-repair, parked,
         too-small and already-assigned vans are hidden, as are drivers on leave or already out.
       </p>
+
+      {/* Pre-task 0C. AMBER, never red (CLAUDE.md), and the same amber this
+          file already uses for the unpaid badge rather than a new colour.
+          `role="status"`, not `alert`: nothing has failed yet — this is a
+          thing to look at before deciding, and it is reached by changing the
+          van dropdown, which a dispatcher does repeatedly. */}
+      {undersized ? (
+        <div
+          data-testid="vehicle-fit-warning"
+          role="status"
+          className="mt-3 space-y-2 rounded-[10px] border border-amber-300 bg-amber-100 p-3 text-sm text-amber-900"
+        >
+          {seatsShort ? (
+            <p>
+              This van seats {chosenVanRow!.capacity}; this booking has {pax}{' '}
+              {pax === 1 ? 'passenger' : 'passengers'}.
+            </p>
+          ) : null}
+          {luggageShort ? (
+            <p>
+              This van carries {chosenVanRow!.luggageCapacity} bags of luggage; this booking has{' '}
+              {luggageCount}.
+            </p>
+          ) : null}
+          <label
+            htmlFor={`assign-override-${bookingId}`}
+            className="tap-target flex cursor-pointer items-center gap-2 font-semibold"
+          >
+            <input
+              id={`assign-override-${bookingId}`}
+              type="checkbox"
+              checked={overrideChecked}
+              onChange={(event) => setOverrideChecked(event.target.checked)}
+              className="accent-brand-blue-600 size-5 shrink-0"
+            />
+            Assign anyway
+          </label>
+          {overrideChecked ? (
+            <div className="space-y-1.5">
+              <Label htmlFor={`assign-override-reason-${bookingId}`}>
+                Why this vehicle is still the right one <span aria-hidden="true">·</span>{' '}
+                <span className="font-semibold">Required</span>
+              </Label>
+              <textarea
+                id={`assign-override-reason-${bookingId}`}
+                value={overrideReason}
+                onChange={(event) => setOverrideReason(event.target.value)}
+                rows={2}
+                className="border-input bg-background focus-visible:ring-ring tap-target w-full rounded-md border px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2"
+                placeholder="e.g. two of the six are toddlers; bags go in the front row"
+              />
+              <p className="text-xs">This is recorded with your name on the booking.</p>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {reasonRequired ? (
         <div className="mt-3 space-y-1.5">

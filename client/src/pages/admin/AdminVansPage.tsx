@@ -108,6 +108,12 @@ const VAN_FIELDS: readonly EntityFormField[] = [
   { name: 'model', label: 'Model', type: 'text', required: true },
   { name: 'capacity', label: 'Seats for guests', type: 'number', required: true },
   {
+    name: 'luggageCapacity',
+    label: 'Luggage capacity (bags)',
+    type: 'number',
+    hint: "Leave blank if it hasn't been measured yet.",
+  },
+  {
     name: 'vehicleType',
     label: 'Vehicle type',
     type: 'select',
@@ -149,6 +155,16 @@ function rawFromValues(values: Record<string, string>) {
     model: values.model ?? '',
     capacity:
       values.capacity === '' || values.capacity === undefined ? NaN : Number(values.capacity),
+    /*
+     * Blank ↔ `null`, a typed number ↔ that number — `odometer`'s own
+     * nullable-number shape, copied rather than re-invented. Note the test
+     * reads the form's STRING, so a typed `0` survives (`!'0'` is false) and
+     * lands as `0`: `vanInputSchema` allows `.min(0)` on purpose, because a
+     * vehicle that carries no luggage at all is a fact worth recording and
+     * is the opposite of NULL's "not measured yet" — the one value that
+     * makes the dispatch soft-check skip its luggage half.
+     */
+    luggageCapacity: !values.luggageCapacity ? null : Number(values.luggageCapacity),
     vehicleType: values.vehicleType ?? '',
     odometer: !values.odometer ? null : Number(values.odometer),
     lastService: values.lastService || null,
@@ -166,6 +182,7 @@ function valuesFromRow(row: VanRow): Record<string, string> {
     plate: row.plate,
     model: row.model,
     capacity: String(row.capacity),
+    luggageCapacity: row.luggageCapacity === null ? '' : String(row.luggageCapacity),
     vehicleType: row.vehicleType,
     odometer: row.odometer === null ? '' : String(row.odometer),
     lastService: row.lastService ?? '',
@@ -208,6 +225,8 @@ function buildPatch(next: VanInput, original: VanRow): Partial<VanInput> {
   if (next.plate !== original.plate) patch.plate = next.plate;
   if (next.model !== original.model) patch.model = next.model;
   if (next.capacity !== original.capacity) patch.capacity = next.capacity;
+  if (next.luggageCapacity !== original.luggageCapacity)
+    patch.luggageCapacity = next.luggageCapacity;
   if (next.vehicleType !== original.vehicleType) patch.vehicleType = next.vehicleType;
   if (next.odometer !== original.odometer) patch.odometer = next.odometer;
   if (next.lastService !== original.lastService) patch.lastService = next.lastService;

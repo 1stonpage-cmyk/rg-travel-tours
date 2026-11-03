@@ -112,6 +112,13 @@ export interface FreeVan {
   plate: string;
   model: string;
   capacity: number;
+  /**
+   * Bags the luggage hold can take; NULL = not recorded for this vehicle
+   * (pre-task 0C). Carried so the assign panel can WARN a dispatcher before
+   * they submit — it is not a filter here, and no branch of `vansFreeOn`
+   * reads it: the transfer soft-check lives in `assignVanAndDriver` alone.
+   */
+  luggageCapacity: number | null;
 }
 
 export interface FreeDriver {
@@ -271,6 +278,7 @@ const VAN_COLUMNS = {
   plate: vans.plate,
   model: vans.model,
   capacity: vans.capacity,
+  luggageCapacity: vans.luggageCapacity,
 };
 
 /** `capacity` then `id` — the SQL `ORDER BY` the windowed branch has to do itself. */

@@ -50,7 +50,7 @@ import { and, asc, eq, notInArray, sql } from 'drizzle-orm';
 import { calendarMonthSchema, manilaCivilDate } from '@rg/shared';
 import type { CalendarDay, CalendarTrip } from '@rg/shared';
 import { getDb } from '../../db/client';
-import { bookings, drivers, tours, vans } from '../../db/schema';
+import { bookingTransferDetails, bookings, drivers, tours, vans } from '../../db/schema';
 import { driversFreeOn, vansFreeOn } from '../../services/dispatch/availability';
 import { adminProcedure, router } from '../../trpc';
 
@@ -186,13 +186,27 @@ export const adminCalendarRouter = router({
    * re-assigning a booking still offers the van/driver it already holds).
    *
    * No SQL filtering of vans or drivers lives here — see the module doc.
+   *
+   * `luggageCount` rides along (pre-task 0C): NULL on a tour, which has no
+   * `booking_transfer_details` row, and the bag count on a transfer. It is
+   * there so the assign panel can WARN before a dispatcher submits, next to
+   * `FreeVan.luggageCapacity` — it decides nothing here, and the enforcement
+   * stays `assignVanAndDriver`'s own step 6b.
    */
   dayOptions: adminProcedure('assignVanDriver')
     .input(dayOptionsInput)
     .query(async ({ input }) => {
       const [booking] = await getDb()
-        .select({ tourDate: bookings.tourDate, pax: bookings.pax })
+        .select({
+          tourDate: bookings.tourDate,
+          pax: bookings.pax,
+          luggageCount: bookingTransferDetails.luggageCount,
+        })
         .from(bookings)
+        // LEFT, never inner: a TOUR has no details row and an inner join
+        // would make this read find nothing and 404 every tour — the same
+        // trap `assignVanAndDriver`'s own step 1 documents.
+        .leftJoin(bookingTransferDetails, eq(bookingTransferDetails.bookingId, bookings.id))
         .where(eq(bookings.id, input.bookingId))
         .limit(1);
       if (!booking) {
@@ -203,6 +217,7 @@ export const adminCalendarRouter = router({
       return await getDb().transaction(async (tx) => ({
         vans: await vansFreeOn(tx, date, booking.pax, { excludeBookingId: input.bookingId }),
         drivers: await driversFreeOn(tx, date, { excludeBookingId: input.bookingId }),
+        luggageCount: booking.luggageCount,
       }));
     }),
 });

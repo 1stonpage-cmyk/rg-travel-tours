@@ -20,6 +20,7 @@
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { ZodError } from 'zod';
 import type { BookingStatus, PriceSnapshot, VehicleType } from '@rg/shared';
 import { appRouter } from '../routers/_app';
 import { getDb, getPool } from '../db/client';
@@ -89,7 +90,15 @@ async function makeTour() {
   return tour.insertId;
 }
 
-async function makeVan(opts: { capacity?: number; vehicleType?: VehicleType } = {}) {
+/**
+ * `luggageCapacity: undefined` leaves the column NULL — "not recorded for
+ * this vehicle", which is what makes pre-task 0C's soft check skip its
+ * luggage half. Every van this file made before 0C stays in that state, so
+ * the existing cases are untouched by the new check's luggage arm.
+ */
+async function makeVan(
+  opts: { capacity?: number; vehicleType?: VehicleType; luggageCapacity?: number } = {},
+) {
   const suffix = unique();
   const [van] = await getDb()
     .insert(vans)
@@ -97,6 +106,7 @@ async function makeVan(opts: { capacity?: number; vehicleType?: VehicleType } = 
       plate: `DSP${suffix}`.slice(0, 20),
       model: 'Assignment Fixture Van',
       capacity: opts.capacity ?? 12,
+      luggageCapacity: opts.luggageCapacity ?? null,
       status: 'available',
       isActive: true,
       vehicleType: opts.vehicleType ?? 'van',
@@ -210,6 +220,8 @@ async function makeTransferBooking(opts: {
   pax?: number;
   vanId?: number | null;
   driverId?: number | null;
+  /** Bags. The column is NOT NULL DEFAULT 0, so omitting it means zero bags. */
+  luggageCount?: number;
 }) {
   const id = await getDb().transaction(async (tx) => {
     const [booking] = await tx.insert(bookings).values({
@@ -235,6 +247,7 @@ async function makeTransferBooking(opts: {
       bookingId: booking.insertId,
       pickupTime: hhmm(opts.pickupMinutes),
       dropoffAddress: 'Fixture drop-off',
+      ...(opts.luggageCount === undefined ? {} : { luggageCount: opts.luggageCount }),
       bufferMinutesUsed: BUFFER,
       routeDurationMinutesUsed: DURATION,
     });
@@ -1378,5 +1391,303 @@ describeWithDb('admin.dispatch.assign', () => {
     const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
     await api.admin.dispatch.assign({ bookingId, vanId, driverId });
     expect(await moneySnapshot(bookingId)).toEqual(before);
+  });
+
+  /* ======================================================================= *
+   * Pre-task 0C — the TRANSFER seat + luggage soft check (owner decision
+   * 2026-11-03). A transfer's van pool is filtered by vehicle TYPE alone
+   * (`minCapacity: 0`), so an undersized van really is offered: step 6b
+   * refuses it with `vehicle_too_small` unless the request carries
+   * `override` AND a reason, which it then records on the one audit row.
+   * ======================================================================= */
+
+  const OVERRIDE_REASON = 'Four of the six are toddlers on laps.';
+
+  it('assigns a transfer whose van fits both the seats and the stated luggage', async () => {
+    const routeId = await makeRoute();
+    // Measured van: 12 seats, 10 bags. Booking: 6 guests, 3 bags. Both fit,
+    // so neither half of the check fires.
+    const vanId = await makeVan({ capacity: 12, vehicleType: 'van', luggageCapacity: 10 });
+    const driverId = await makeDriver();
+    const bookingId = await makeTransferBooking({
+      routeId,
+      pickupMinutes: at(8),
+      pax: 6,
+      luggageCount: 3,
+    });
+
+    const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+    await expect(api.admin.dispatch.assign({ bookingId, vanId, driverId })).resolves.toEqual({
+      ok: true,
+    });
+
+    // And NO override on the audit row. An unconditional `vehicleOverride`
+    // key would make every later assertion about it meaningless.
+    const audit = (await auditRowsFor('bookings', bookingId)).at(-1)!;
+    expect(audit.action).toBe('booking_assigned');
+    expect(audit.data).not.toHaveProperty('vehicleOverride');
+  });
+
+  /**
+   * The NULL half, which is the state almost the whole real fleet is in on
+   * the day this ships: `vans.luggage_capacity` is NULL = "not measured
+   * yet", so the luggage comparison is SKIPPED rather than guessed. Fifty
+   * bags against an unmeasured van assigns, and that is deliberate — a zero
+   * would refuse every van nobody has got round to measuring.
+   */
+  it('skips the luggage check entirely when the van has no recorded luggage capacity', async () => {
+    const routeId = await makeRoute();
+    const vanId = await makeVan({ capacity: 12, vehicleType: 'van' });
+    const driverId = await makeDriver();
+    const bookingId = await makeTransferBooking({
+      routeId,
+      pickupMinutes: at(8),
+      pax: 2,
+      luggageCount: 50,
+    });
+
+    const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+    await expect(api.admin.dispatch.assign({ bookingId, vanId, driverId })).resolves.toEqual({
+      ok: true,
+    });
+    const audit = (await auditRowsFor('bookings', bookingId)).at(-1)!;
+    expect(audit.data).not.toHaveProperty('vehicleOverride');
+  });
+
+  it('refuses a transfer van with too few SEATS, with vehicle_too_small and no override', async () => {
+    const routeId = await makeRoute();
+    // Right TYPE, genuinely free, and two seats short of the party — the
+    // exact case `vansFreeOn`'s `minCapacity: 0` lets through.
+    const vanId = await makeVan({ capacity: 4, vehicleType: 'van' });
+    const driverId = await makeDriver();
+    const bookingId = await makeTransferBooking({ routeId, pickupMinutes: at(8), pax: 6 });
+
+    const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+    await expect(api.admin.dispatch.assign({ bookingId, vanId, driverId })).rejects.toMatchObject({
+      // BAD_REQUEST, not CONFLICT: re-sending this unchanged is refused
+      // again, so "re-check the day" would be the wrong sentence.
+      code: 'BAD_REQUEST',
+      message: 'vehicle_too_small',
+    });
+
+    // Nothing written, and no audit row at all — a refusal that still
+    // audited would claim an assignment that never happened.
+    const [row] = await getDb()
+      .select({ vanId: bookings.vanId, driverId: bookings.driverId, status: bookings.status })
+      .from(bookings)
+      .where(eq(bookings.id, bookingId));
+    expect(row).toEqual({ vanId: null, driverId: null, status: 'confirmed' });
+    expect(await auditRowsFor('bookings', bookingId)).toEqual([]);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('refuses a transfer van short on stated LUGGAGE, even though the seats fit', async () => {
+    const routeId = await makeRoute();
+    // 12 seats for 2 guests — the seat half cannot be what refuses this.
+    const vanId = await makeVan({ capacity: 12, vehicleType: 'van', luggageCapacity: 2 });
+    const driverId = await makeDriver();
+    const bookingId = await makeTransferBooking({
+      routeId,
+      pickupMinutes: at(8),
+      pax: 2,
+      luggageCount: 6,
+    });
+
+    const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+    await expect(api.admin.dispatch.assign({ bookingId, vanId, driverId })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'vehicle_too_small',
+    });
+
+    const [row] = await getDb()
+      .select({ vanId: bookings.vanId, status: bookings.status })
+      .from(bookings)
+      .where(eq(bookings.id, bookingId));
+    expect(row).toEqual({ vanId: null, status: 'confirmed' });
+  });
+
+  it('ASSIGNS an undersized transfer van when override and a reason came with it', async () => {
+    const routeId = await makeRoute();
+    const vanId = await makeVan({ capacity: 4, vehicleType: 'van', luggageCapacity: 2 });
+    const driverId = await makeDriver();
+    const bookingId = await makeTransferBooking({
+      routeId,
+      pickupMinutes: at(8),
+      pax: 6,
+      luggageCount: 6,
+    });
+
+    const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+    await expect(
+      api.admin.dispatch.assign({
+        bookingId,
+        vanId,
+        driverId,
+        override: true,
+        overrideReason: OVERRIDE_REASON,
+      }),
+    ).resolves.toEqual({ ok: true });
+
+    const [row] = await getDb()
+      .select({ vanId: bookings.vanId, driverId: bookings.driverId, status: bookings.status })
+      .from(bookings)
+      .where(eq(bookings.id, bookingId));
+    expect(row).toEqual({ vanId, driverId, status: 'assigned' });
+
+    /*
+     * ONE audit row, with the fit AS IT WAS recorded on it — not just the
+     * reason. The van's seats and luggage figure are admin-editable, so a
+     * row carrying only "they overrode it" could not be read back later
+     * against numbers that have since changed.
+     */
+    const rows = await auditRowsFor('bookings', bookingId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.action).toBe('booking_assigned');
+    expect(rows[0]!.data).toMatchObject({
+      vanId,
+      driverId,
+      vehicleOverride: {
+        pax: 6,
+        vanCapacity: 4,
+        luggageCount: 6,
+        vanLuggageCapacity: 2,
+        reason: OVERRIDE_REASON,
+      },
+    });
+  });
+
+  /**
+   * TWO Zod rules, not one, and each needs its own payload — a point the
+   * first draft of this test missed, and measuring it is what found that:
+   *
+   *  - `overrideReason: z.string().trim().min(5)` refuses a reason that is
+   *    PRESENT and too short (or only whitespace);
+   *  - the schema-level `.refine()` refuses `override: true` with the field
+   *    OMITTED ENTIRELY, which no per-field rule can see.
+   *
+   * Neutering the refine leaves the first three cases green — so a test that
+   * only sent short strings would have proved the field rule twice and the
+   * refine not at all.
+   */
+  it('REJECTS override: true without a usable reason, at Zod', async () => {
+    const routeId = await makeRoute();
+    const vanId = await makeVan({ capacity: 4, vehicleType: 'van' });
+    const driverId = await makeDriver();
+    const bookingId = await makeTransferBooking({ routeId, pickupMinutes: at(8), pax: 6 });
+
+    const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+    const payloads = [
+      { label: 'empty', extra: { overrideReason: '' } },
+      { label: 'whitespace', extra: { overrideReason: '   ' } },
+      { label: 'under five characters', extra: { overrideReason: 'tiny' } },
+      // The `.refine()`'s own case: the key is not there at all.
+      { label: 'omitted', extra: {} },
+    ];
+    for (const { label, extra } of payloads) {
+      const error = await api.admin.dispatch
+        .assign({ bookingId, vanId, driverId, override: true, ...extra })
+        .then(
+          () => null,
+          (thrown: unknown) => thrown,
+        );
+      expect(error, `an override reason that was ${label} was accepted`).not.toBe(null);
+      expect(error).toMatchObject({ code: 'BAD_REQUEST' });
+
+      /*
+       * The issue is pinned to `overrideReason`'s OWN path, which is what
+       * lets the panel place the message beside that box rather than render
+       * raw Zod JSON in a banner (CLAUDE.md). A refusal that arrived with no
+       * path would pass a bare `BAD_REQUEST` assertion and still leave the
+       * dispatcher reading a blob.
+       */
+      const cause = (error as { cause?: unknown }).cause;
+      expect(cause).toBeInstanceOf(ZodError);
+      const paths = (cause as ZodError).issues.map((issue) => issue.path.join('.'));
+      expect(paths).toContain('overrideReason');
+    }
+
+    // Zod refused before the service ran, so nothing was written at all.
+    const [row] = await getDb()
+      .select({ vanId: bookings.vanId, status: bookings.status })
+      .from(bookings)
+      .where(eq(bookings.id, bookingId));
+    expect(row).toEqual({ vanId: null, status: 'confirmed' });
+    expect(await auditRowsFor('bookings', bookingId)).toEqual([]);
+  });
+
+  /**
+   * The override is INERT on a tour, and this documents that rather than
+   * relying on it. A tour's own `vansFreeOn` call passes `minCapacity: pax`,
+   * so an undersized van is never offered and step 6b's condition cannot
+   * occur — which is why `vehicle_too_small` is transfer-only and why a tour
+   * assignment carrying `override: true` is simply an ordinary assignment.
+   */
+  it('ignores override on a TOUR assignment — it assigns normally and audits no override', async () => {
+    const tourId = await makeTour();
+    const vanId = await makeVan({ capacity: 12, luggageCapacity: 1 });
+    const driverId = await makeDriver();
+    // 6 guests and 9 bags against a van recorded as holding 1 — numbers that
+    // WOULD refuse on the transfer branch. A tour has no bag count at all.
+    const bookingId = await makeBooking({ tourId, pax: 6, status: 'confirmed' });
+
+    const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+    await expect(
+      api.admin.dispatch.assign({
+        bookingId,
+        vanId,
+        driverId,
+        override: true,
+        overrideReason: OVERRIDE_REASON,
+      }),
+    ).resolves.toEqual({ ok: true });
+
+    const audit = (await auditRowsFor('bookings', bookingId)).at(-1)!;
+    expect(audit.action).toBe('booking_assigned');
+    expect(audit.data).not.toHaveProperty('vehicleOverride');
+  });
+
+  /**
+   * The override is not a side door around §9's role gate. Finance is
+   * refused `FORBIDDEN` by `adminProcedure('assignVanDriver')` BEFORE any of
+   * step 6b runs — and the payload here is the one that would otherwise
+   * SUCCEED for a dispatcher, so the refusal can only be the role.
+   */
+  it('REFUSES finance an undersized-vehicle override — the gate comes first', async () => {
+    const routeId = await makeRoute();
+    const vanId = await makeVan({ capacity: 4, vehicleType: 'van' });
+    const driverId = await makeDriver();
+    const bookingId = await makeTransferBooking({ routeId, pickupMinutes: at(8), pax: 6 });
+
+    const finance = appRouter.createCaller(staffContext(financeId, 'finance') as never);
+    await expect(
+      finance.admin.dispatch.assign({
+        bookingId,
+        vanId,
+        driverId,
+        override: true,
+        overrideReason: OVERRIDE_REASON,
+      }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    const [row] = await getDb()
+      .select({ vanId: bookings.vanId, status: bookings.status })
+      .from(bookings)
+      .where(eq(bookings.id, bookingId));
+    expect(row).toEqual({ vanId: null, status: 'confirmed' });
+    expect(await auditRowsFor('bookings', bookingId)).toEqual([]);
+
+    // VACUITY GUARD: the exact same payload must be ACCEPTED for a
+    // dispatcher, or this test would pass against a request that was simply
+    // malformed and prove nothing about the role gate.
+    const dispatcher = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
+    await expect(
+      dispatcher.admin.dispatch.assign({
+        bookingId,
+        vanId,
+        driverId,
+        override: true,
+        overrideReason: OVERRIDE_REASON,
+      }),
+    ).resolves.toEqual({ ok: true });
   });
 });
