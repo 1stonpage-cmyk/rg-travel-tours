@@ -21,8 +21,14 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { ZodError } from 'zod';
-import type { BookingStatus, PriceSnapshot, VehicleType } from '@rg/shared';
+import {
+  OVERRIDE_REASON_MIN_LENGTH,
+  type BookingStatus,
+  type PriceSnapshot,
+  type VehicleType,
+} from '@rg/shared';
 import { appRouter } from '../routers/_app';
+import { assignVanAndDriver } from '../services/dispatch/assign';
 import { getDb, getPool } from '../db/client';
 import {
   auditLog,
@@ -1626,8 +1632,16 @@ describeWithDb('admin.dispatch.assign', () => {
     const tourId = await makeTour();
     const vanId = await makeVan({ capacity: 12, luggageCapacity: 1 });
     const driverId = await makeDriver();
-    // 6 guests and 9 bags against a van recorded as holding 1 — numbers that
-    // WOULD refuse on the transfer branch. A tour has no bag count at all.
+    /*
+     * The van is recorded as holding ONE bag, which on the transfer branch is
+     * the kind of figure that refuses. It cannot refuse here, and for two
+     * independent reasons worth stating because neither is obvious: a tour
+     * booking has no `booking_transfer_details` row, so its `luggageCount`
+     * is NULL and the luggage half has nothing to compare against; and the
+     * seats cannot refuse either, because a tour's own `vansFreeOn` call
+     * passes `minCapacity: pax`, so the 12-seat van would not have been
+     * offered for these 6 guests if it did not fit.
+     */
     const bookingId = await makeBooking({ tourId, pax: 6, status: 'confirmed' });
 
     const api = appRouter.createCaller(staffContext(dispatcherId, 'dispatcher') as never);
@@ -1644,6 +1658,117 @@ describeWithDb('admin.dispatch.assign', () => {
     const audit = (await auditRowsFor('bookings', bookingId)).at(-1)!;
     expect(audit.action).toBe('booking_assigned');
     expect(audit.data).not.toHaveProperty('vehicleOverride');
+  });
+
+  /* ----------------------------------------------------------------------- *
+   * Step 6b's own fail-closed re-check, with NO Zod in the path.
+   *
+   * **Why these three tests have to bypass the router** (dedicated review
+   * finding, 2026-11-03, and the reason it was found at all): every other
+   * test in this file reaches step 6b through tRPC, where
+   * `assignInputSchema` refuses a reasonless override FIRST. So the
+   * service's own re-check was never executed by the suite — the reviewer
+   * weakened it to `if (!override)` and all 48 tests stayed green. These
+   * call `assignVanAndDriver(tx, …)` directly, which is also the shape a
+   * future in-process caller takes (a job, a backfill, a later task's
+   * internal convert path), and that caller has no Zod layer to save it.
+   * ----------------------------------------------------------------------- */
+
+  /** Builds the undersized-transfer fixture these three share. */
+  async function undersizedTransferFixture() {
+    const routeId = await makeRoute();
+    // Right TYPE and genuinely free, two seats short of the party.
+    const vanId = await makeVan({ capacity: 4, vehicleType: 'van' });
+    const driverId = await makeDriver();
+    const bookingId = await makeTransferBooking({ routeId, pickupMinutes: at(8), pax: 6 });
+    return { vanId, driverId, bookingId };
+  }
+
+  /** `assignVanAndDriver` with no router, no Zod, no input parsing. */
+  async function assignDirect(input: {
+    bookingId: number;
+    vanId: number;
+    driverId: number;
+    override?: boolean;
+    overrideReason?: string;
+  }) {
+    return await getDb().transaction((tx) =>
+      assignVanAndDriver(tx, { ...input, actorUserId: dispatcherId }),
+    );
+  }
+
+  it('refuses at the SERVICE when override arrives with NO reason, Zod bypassed', async () => {
+    const { vanId, driverId, bookingId } = await undersizedTransferFixture();
+
+    // `override: true` and no `overrideReason` key at all — a payload tRPC
+    // would never deliver, because the schema's `.refine()` stops it.
+    await expect(assignDirect({ bookingId, vanId, driverId, override: true })).resolves.toEqual({
+      ok: false,
+      reason: 'vehicle_too_small',
+    });
+
+    // An empty string is the same refusal by the same branch.
+    await expect(
+      assignDirect({ bookingId, vanId, driverId, override: true, overrideReason: '   ' }),
+    ).resolves.toEqual({ ok: false, reason: 'vehicle_too_small' });
+
+    // Nothing written and NO audit row — an override that was refused must
+    // not leave a row claiming a reasoned one.
+    const [row] = await getDb()
+      .select({ vanId: bookings.vanId, driverId: bookings.driverId, status: bookings.status })
+      .from(bookings)
+      .where(eq(bookings.id, bookingId));
+    expect(row).toEqual({ vanId: null, driverId: null, status: 'confirmed' });
+    expect(await auditRowsFor('bookings', bookingId)).toEqual([]);
+  });
+
+  it('refuses at the SERVICE when the override reason is shorter than Zod would accept', async () => {
+    /*
+     * The THRESHOLD half of the same finding: the service used to test
+     * presence only, so a direct caller could bank a one-character reason
+     * while `assignInputSchema` demanded five. Both now read
+     * `OVERRIDE_REASON_MIN_LENGTH`, so this asserts the boundary rather than
+     * the literal — change the constant and this test follows it.
+     */
+    const { vanId, driverId, bookingId } = await undersizedTransferFixture();
+    expect(OVERRIDE_REASON_MIN_LENGTH).toBeGreaterThan(1);
+
+    const tooShort = 'x'.repeat(OVERRIDE_REASON_MIN_LENGTH - 1);
+    await expect(
+      assignDirect({ bookingId, vanId, driverId, override: true, overrideReason: tooShort }),
+    ).resolves.toEqual({ ok: false, reason: 'vehicle_too_small' });
+    // And one that is only long enough once you forget to trim it.
+    await expect(
+      assignDirect({
+        bookingId,
+        vanId,
+        driverId,
+        override: true,
+        overrideReason: `  ${tooShort}  `,
+      }),
+    ).resolves.toEqual({ ok: false, reason: 'vehicle_too_small' });
+
+    expect(await auditRowsFor('bookings', bookingId)).toEqual([]);
+  });
+
+  /**
+   * The positive control for the two above. Without it they would also pass
+   * against a service that refuses EVERY direct override — which is the
+   * other way to get this wrong, and would break the router path too.
+   */
+  it('ACCEPTS a direct override whose reason meets the threshold exactly', async () => {
+    const { vanId, driverId, bookingId } = await undersizedTransferFixture();
+
+    const justLongEnough = 'x'.repeat(OVERRIDE_REASON_MIN_LENGTH);
+    await expect(
+      assignDirect({ bookingId, vanId, driverId, override: true, overrideReason: justLongEnough }),
+    ).resolves.toEqual({ ok: true });
+
+    const rows = await auditRowsFor('bookings', bookingId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.data).toMatchObject({
+      vehicleOverride: { pax: 6, vanCapacity: 4, reason: justLongEnough },
+    });
   });
 
   /**

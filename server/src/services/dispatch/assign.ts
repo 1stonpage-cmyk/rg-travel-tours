@@ -93,6 +93,7 @@
 import { and, eq, ne, sql } from 'drizzle-orm';
 import {
   civilDateFromDate,
+  OVERRIDE_REASON_MIN_LENGTH,
   type AssignRefusal,
   type BookingStatus,
   type ProductType,
@@ -136,7 +137,14 @@ export interface AssignVanAndDriverInput {
    * both can apply to one submission (a mid-trip swap onto a smaller van).
    */
   override?: boolean;
-  /** REQUIRED whenever `override` is true — `assignInputSchema` enforces it. */
+  /**
+   * REQUIRED whenever `override` is true, and at least
+   * `OVERRIDE_REASON_MIN_LENGTH` characters after trimming. Enforced TWICE,
+   * against that one constant: by `assignInputSchema` for anything arriving
+   * over tRPC, and again by step 6b below for a caller that never went
+   * through Zod. An `override` with no usable reason is simply not an
+   * override, from either direction.
+   */
   overrideReason?: string;
 }
 
@@ -524,13 +532,26 @@ export async function assignVanAndDriver(
     if (seatsShort || luggageShort) {
       const trimmedOverrideReason = override ? overrideReason?.trim() : undefined;
       /*
-       * `assignInputSchema`'s `.refine()` already guarantees `overrideReason`
-       * is >= 5 trimmed characters whenever `override` is true, so a present
-       * value here is valid. This is defence in depth for a non-tRPC caller
-       * of the service, not duplicate validation — and it fails CLOSED: no
-       * reason means no override, however `override` was set.
+       * Defence in depth for a caller that never went through Zod — a job, a
+       * backfill, a future in-process caller — and it fails CLOSED: no
+       * usable reason means no override, however `override` was set.
+       *
+       * **It enforces the SAME threshold as `assignInputSchema`, from the
+       * same constant** (`OVERRIDE_REASON_MIN_LENGTH`). A dedicated review
+       * on 2026-11-03 found this check had drifted below the schema's: it
+       * tested presence only, so a direct caller could bank a one-character
+       * "reason" and leave an audit row claiming a reasoned override. Two
+       * layers that disagree are one layer plus a false sense of security.
+       * The direct-service tests in `dispatch-assign.test.ts` call this
+       * function without the router precisely so this branch is exercised on
+       * its own — through tRPC, Zod always refuses first, which is why the
+       * review's mutation of this line went unnoticed by the whole suite.
        */
-      if (!override || !trimmedOverrideReason) {
+      if (
+        !override ||
+        !trimmedOverrideReason ||
+        trimmedOverrideReason.length < OVERRIDE_REASON_MIN_LENGTH
+      ) {
         return refuse('vehicle_too_small');
       }
       vehicleOverride = {

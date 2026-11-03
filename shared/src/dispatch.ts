@@ -499,6 +499,23 @@ export type AssignRefusal =
   /** An `in_progress` re-assignment arrived without a reason (owner Q3). */
   | 'reason_required';
 
+/**
+ * The shortest acceptable reason for assigning an undersized vehicle anyway
+ * (pre-task 0C, owner decision 2026-11-03) — written ONCE, here, because it
+ * is enforced in TWO places and they must not disagree.
+ *
+ * `assignInputSchema` below is the primary gate for anything arriving over
+ * tRPC. `assignVanAndDriver`'s step 6b re-checks it for a caller that never
+ * went through Zod at all — a job, a backfill, a later in-process caller —
+ * and a dedicated review on 2026-11-03 found the two had already drifted:
+ * the schema demanded five trimmed characters while the service accepted any
+ * non-empty string, so a direct caller could bank a one-character "reason"
+ * and leave an audit row claiming a reasoned override. Importing this
+ * constant in both is what makes that drift impossible rather than merely
+ * unlikely.
+ */
+export const OVERRIDE_REASON_MIN_LENGTH = 5;
+
 export const assignInputSchema = z
   .object({
     bookingId: z.number().int().positive(),
@@ -513,20 +530,24 @@ export const assignInputSchema = z
      * condition this exists to override can never occur there.
      */
     override: z.boolean().optional(),
-    overrideReason: z.string().trim().min(5).max(500).optional(),
+    overrideReason: z.string().trim().min(OVERRIDE_REASON_MIN_LENGTH).max(500).optional(),
   })
   .strict()
   /*
-   * An override with no reason is not an override. The refusal is pinned to
-   * `overrideReason`'s own path so the dispatcher's message lands beside the
-   * box they left empty rather than on the panel as a whole (CLAUDE.md: no
-   * form may show raw Zod JSON).
+   * An override with no reason is not an override. The field rule above
+   * cannot see this case — a key that is ABSENT is a valid `.optional()` —
+   * so the cross-field refinement owns it, and it is the only rule of the
+   * two that does. The refusal is pinned to `overrideReason`'s own path so
+   * the dispatcher's message lands beside the box they left empty rather
+   * than on the panel as a whole (CLAUDE.md: no form may show raw Zod JSON).
    */
-  .refine((data) => !data.override || (data.overrideReason?.length ?? 0) >= 5, {
-    message:
-      'A reason of at least 5 characters is required to assign an undersized vehicle anyway.',
-    path: ['overrideReason'],
-  });
+  .refine(
+    (data) => !data.override || (data.overrideReason?.length ?? 0) >= OVERRIDE_REASON_MIN_LENGTH,
+    {
+      message: `A reason of at least ${OVERRIDE_REASON_MIN_LENGTH} characters is required to assign an undersized vehicle anyway.`,
+      path: ['overrideReason'],
+    },
+  );
 export type AssignInput = z.infer<typeof assignInputSchema>;
 
 /**
