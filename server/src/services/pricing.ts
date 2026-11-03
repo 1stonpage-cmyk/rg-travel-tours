@@ -110,8 +110,16 @@ function addonsTotalCentavos(addons: QuoteAddon[], pax: number): number {
  * subtotal itself (`Math.min` — a discount must never make a total
  * negative) and, on the percent branch, rounded DOWN (`Math.floor` — a
  * discount never rounds up against the business).
+ *
+ * **Exported for `services/transfers/pricing.ts` (Task T9), and for nothing
+ * else.** A transfer's subtotal is computed differently (a flat per-vehicle
+ * catalog rate rather than a per-person tier), but a coupon takes the same
+ * discount off it in the same way, and two near-identical discount formulas is
+ * how the two come to disagree about a percent that rounds. One definition,
+ * two callers — the same discipline that keeps `depositCentavos()` in exactly
+ * one place.
  */
-function discountCentavosFor(
+export function discountCentavosFor(
   coupon: QuoteCoupon | null | undefined,
   subtotalCentavos: number,
 ): number {

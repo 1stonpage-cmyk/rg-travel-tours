@@ -28,6 +28,7 @@ import { portalRouter } from './public/portal';
 import { reviewsRouter } from './public/reviews';
 import { settingsRouter } from './public/settings';
 import { toursRouter } from './public/tours';
+import { transferRoutesRouter } from './public/transfers';
 import { mergeRouters, publicProcedure, router } from '../trpc';
 
 export const appRouter = router({
@@ -46,6 +47,16 @@ export const appRouter = router({
   tours: toursRouter,
   packages: packagesRouter,
   reviews: reviewsRouter,
+
+  /*
+   * The public private-transfer route catalog (transfers-launch plan, Task
+   * T9). TOP level, beside `tours` and `packages`, because this project's
+   * public routers are not nested under a `public.*` namespace — so
+   * `transferRoutes.list` stands to `admin.transferRoutes.*` exactly as
+   * `tours.list` stands to `admin.tours.*`. Read-only, active routes only, and
+   * it carries no admin-only field (see the router's own note).
+   */
+  transferRoutes: transferRoutesRouter,
 
   // Public mutations (Task 1.7) — rate-limited in app.ts.
   inquiries: inquiriesRouter,

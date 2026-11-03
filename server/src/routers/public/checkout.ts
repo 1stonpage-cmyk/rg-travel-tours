@@ -1,6 +1,11 @@
 /**
  * `checkout.quote`, `checkout.availability`, `checkout.createHold` — Week 3
- * checkout plan, Task 6 — and `checkout.startPayment`, Task 7.
+ * checkout plan, Task 6 — and `checkout.startPayment`, Task 7. Plus
+ * `checkout.quoteTransfer` (transfers-launch plan, Task T9): the same thin
+ * resolver over the private-transfer product, whose centavos come from
+ * `quoteTransfer()` / `vehiclePriceForRouteAndType()`
+ * (services/transfers/pricing.ts). It is a QUERY, so it adds no mutation to the
+ * two this router is allowed (see the enumeration test below).
  *
  * **This router computes nothing.** Every centavo here comes from
  * `priceQuote()` / `loadQuoteInputs()` (pricing.ts) or `createHold()`
@@ -83,11 +88,13 @@ import {
   PAYMENT_HOLD_MINUTES,
   PAYMONGO_MIN_CENTAVOS,
   quoteInput,
+  quoteTransferInput,
   type BookingStatus,
   type PayMode,
   type QuoteResult,
+  type QuoteTransferResult,
 } from '@rg/shared';
-import { readSettingBlock, resolvePaymentMethods } from '../../content/settings';
+import { readSettingBlock, readTrustSettings, resolvePaymentMethods } from '../../content/settings';
 import { getDb } from '../../db/client';
 import { bookings, tourBlockedDates, tours } from '../../db/schema';
 import { env } from '../../env';
@@ -120,7 +127,11 @@ import {
   TourDatePastError,
 } from '../../services/create-hold';
 import { findBookingByCredentials } from '../../services/portal-auth';
-import { loadQuoteInputs, priceQuote, quoteDigest } from '../../services/pricing';
+import { loadQuoteInputs, priceQuote, quoteDigest, type QuoteCoupon } from '../../services/pricing';
+import {
+  quoteTransfer as quoteTransferPrice,
+  vehiclePriceForRouteAndType,
+} from '../../services/transfers/pricing';
 import { publicProcedure, router } from '../../trpc';
 
 /**
@@ -399,6 +410,30 @@ function translateQuoteError(error: unknown): TRPCError {
   return internalError(error);
 }
 
+/**
+ * `quoteTransfer`'s own translator (Task T9).
+ *
+ * Shorter than `translateQuoteError` above because the transfer path has no
+ * message-matched plain `Error` to recognise: `vehiclePriceForRouteAndType()`
+ * answers `null` for every "we cannot quote that" case rather than throwing
+ * (see its own note), so the only deliberate refusals reaching here are the
+ * `TRPCError`s the resolver raises itself — the unquotable route and the
+ * gateway floor — plus the coupon vocabulary, which is the SAME set of typed
+ * errors the tour quote translates, through the same shared function. A
+ * transfer guest and a tour guest must be told the same thing about the same
+ * coupon.
+ *
+ * The `TRPCError` pass-through is first for `translateStartPaymentError`'s
+ * reason: without it the resolver's own chosen `NOT_FOUND` / `BAD_REQUEST`
+ * would be rewritten as a generic 500 by its own catch block.
+ */
+function translateQuoteTransferError(error: unknown): TRPCError {
+  if (error instanceof TRPCError) return error;
+  const coupon = translateCouponError(error);
+  if (coupon) return coupon;
+  return internalError(error);
+}
+
 /** Every typed refusal `createHold()` (create-hold.ts) can throw, translated. */
 function translateHoldError(error: unknown): TRPCError {
   const coupon = translateCouponError(error);
@@ -642,6 +677,101 @@ export const checkoutRouter = router({
       throw translateQuoteError(error);
     }
   }),
+
+  /**
+   * The PRIVATE-TRANSFER quote (transfers-launch plan, Task T9; Architecture
+   * §3) — the same kind of read as `quote` above, over a different product.
+   *
+   * **A transfer's price is a flat per-vehicle catalog rate.** The input names
+   * a route, a vehicle type and a product and nothing else (`.strict()`), the
+   * server reads the price from `transfer_route_vehicle_prices`, and no number
+   * on the wire can influence the figure — not even a head count, which is a
+   * capacity question for the hold and never a pricing one (see
+   * `quoteTransferInput`'s own note).
+   *
+   * This resolver computes nothing either: `quoteTransfer()`
+   * (services/transfers/pricing.ts) does the arithmetic, reusing
+   * `discountCentavosFor()` and `depositCentavos()` rather than restating
+   * them.
+   *
+   * **Deposit percent is `trust.depositPercent` — the SAME setting tours
+   * read.** The plan's owner answer 4 calls a transfer's payment "the existing
+   * deposit/driver-cash flow, unchanged", and §3's formula spells
+   * `depositCentavos(total, depositPercent)` with no transfer-specific
+   * percentage anywhere in the decisions. There is exactly one deposit-percent
+   * setting in this system, and inventing a second one is a settings key no
+   * owner asked for.
+   *
+   * **No `quoteId`.** See `quoteTransferResultSchema`'s note: T10's hold
+   * re-derives the price server-side from this same catalog function, so there
+   * is nothing for the tour's replay digest to protect against here.
+   *
+   * The coupon check is a SECOND call for the reason the tour quote's is (see
+   * this module's header): the arithmetic above is happy to price with no
+   * coupon, and a guest who typed a code deserves to be told which rule it
+   * failed. And the ₱100 / ₱0 refusals are the same constant, the same shared
+   * message chooser and the same `BAD_REQUEST` the tour preview gives — the
+   * plan's Global Constraints: "Existing ₱100 gateway minimum and ₱0-booking
+   * refusals apply unchanged."
+   */
+  quoteTransfer: publicProcedure
+    .input(quoteTransferInput)
+    .query(async ({ input }): Promise<QuoteTransferResult> => {
+      try {
+        const catalog = await vehiclePriceForRouteAndType(
+          input.routeId,
+          input.vehicleType,
+          input.productType,
+        );
+        /*
+         * One refusal for every unquotable combination — an unknown route id, a
+         * retired route, a vehicle type with no price row. Deliberately not
+         * three sentences: a guest picking from the public list can only reach
+         * this by holding a stale page, and distinguishing "that route is
+         * retired" from "that route never existed" over a numeric id would make
+         * this procedure an enumeration oracle for the catalog.
+         */
+        if (!catalog) {
+          throw new TRPCError({
+            code: 'NOT_FOUND',
+            message: 'No price is available for that route and vehicle.',
+          });
+        }
+
+        /*
+         * `validateCoupon` returns `ValidCoupon`, which is `{ id, code } &
+         * CouponDiscount` — structurally the same type `priceQuote`'s
+         * `QuoteCoupon` is. No conversion: `loadCoupon()`'s hand-shaping in
+         * pricing.ts exists because it builds the union from raw COLUMNS, and
+         * this value has already been through that narrowing.
+         */
+        let coupon: QuoteCoupon | null = null;
+        if (input.couponCode) {
+          coupon = await validateCoupon(input.couponCode, catalog.priceCentavos, new Date());
+        }
+
+        const trust = await readTrustSettings();
+        const quote = quoteTransferPrice({
+          priceCentavos: catalog.priceCentavos,
+          coupon,
+          depositPercent: trust.depositPercent,
+        });
+
+        // Identical to `quote`'s own guard, same constant, same chooser: a
+        // preview that succeeded on an amount no gateway will take would only
+        // be refused once the guest tried to hold the booking.
+        if (quote.totalCentavos < PAYMONGO_MIN_CENTAVOS) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: gatewayMinimumMessage(quote.totalCentavos),
+          });
+        }
+
+        return { ...quote, freeCancelHours: catalog.freeCancelHours };
+      } catch (error) {
+        throw translateQuoteTransferError(error);
+      }
+    }),
 
   /**
    * An advisory capacity read — NOT the authoritative check. `createHold()`
