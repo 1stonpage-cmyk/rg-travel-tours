@@ -551,6 +551,14 @@ async function loadCoupon(tx: Transaction, code: string): Promise<QuoteCoupon | 
  * ordered: on a pooled connection, or before the locks, two concurrent
  * submits both read "one active hold" and both pass.
  *
+ * **Exported since the transfers-launch plan's Task T10**, which calls it
+ * UNCHANGED from `services/transfers/create-booking.ts`: the cap counts every
+ * `pending_payment` row for an email or phone with no `product_type` filter, so
+ * a guest's tour holds and transfer holds share ONE pool of
+ * {@link MAX_ACTIVE_HOLDS_PER_GUEST}. That is the deliberate reading — no plan
+ * task gives transfers a cap of their own, and two separate caps would let one
+ * guest hold four slots by taking two of each.
+ *
  * **Residual — PARKED by Ruling 21, do not "fix" it in passing:** the locks
  * only serialise holds for the same tour and DATE. Two submits by the same guest for
  * different dates contend for nothing, so a determined guest can still land
@@ -560,7 +568,11 @@ async function loadCoupon(tx: Transaction, code: string): Promise<QuoteCoupon | 
  * 15-minute hold that expires on its own, with the per-IP limiter covering
  * the scripted case. Surfaced to the owner; not built here.
  */
-async function assertUnderHoldCaps(tx: Transaction, email: string, phone: string): Promise<void> {
+export async function assertUnderHoldCaps(
+  tx: Transaction,
+  email: string,
+  phone: string,
+): Promise<void> {
   const [counts] = await tx
     .select({
       byEmail: sql<number>`SUM(${bookings.leadEmail} = ${email})`,
@@ -595,6 +607,11 @@ async function assertUnderHoldCaps(tx: Transaction, email: string, phone: string
  * earlier would let two guests holding different tours with the same coupon
  * each hold one lock the other needs.
  *
+ * **Exported since the transfers-launch plan's Task T10**, which calls it
+ * unchanged as the LAST lock of a transfer hold — `fleet → coupon` there, with
+ * no `tour_date_slots` row to sit between them. One definition, so the two
+ * products cannot come to disagree about when a coupon's use becomes real.
+ *
  * `used_count` is read with the same `FOR UPDATE` that takes the lock, so
  * there is no window between locking the row and reading it. The refusal is
  * {@link CouponExhaustedUnderLockError} — a subclass, so callers still see a
@@ -605,7 +622,7 @@ async function assertUnderHoldCaps(tx: Transaction, email: string, phone: string
  * "37" has reached its usage limit`, which is both the wrong vocabulary for
  * a guest and an internal identifier in guest-facing copy.
  */
-async function reserveCouponUnderLock(tx: Transaction, coupon: QuoteCoupon): Promise<void> {
+export async function reserveCouponUnderLock(tx: Transaction, coupon: QuoteCoupon): Promise<void> {
   const [rows] = (await tx.execute(
     sql`SELECT usage_limit, used_count FROM coupons WHERE id = ${coupon.id} FOR UPDATE`,
   )) as unknown as [Array<{ usage_limit: number | null; used_count: number }>, unknown];

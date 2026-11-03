@@ -36,7 +36,7 @@ import {
   PAY_MODES,
   PRODUCT_TYPES,
   VEHICLE_TYPES,
-  type PriceSnapshot,
+  type BookingPriceSnapshot,
 } from '@rg/shared';
 
 export const settings = mysqlTable('settings', {
@@ -1102,14 +1102,26 @@ export const bookings = mysqlTable(
      * existing bookings; freezing `free_cancel_hours` extends the same
      * guarantee to their refund rights.
      *
-     * The shape is `priceSnapshotSchema` / `PriceSnapshot` in @rg/shared, so
-     * a writer that drops a field fails to typecheck rather than silently
-     * storing a snapshot that cannot answer "may this guest cancel free?".
+     * The shape is `bookingPriceSnapshotSchema` / `BookingPriceSnapshot` in
+     * @rg/shared, so a writer that drops a field fails to typecheck rather than
+     * silently storing a snapshot that cannot answer "may this guest cancel
+     * free?".
+     *
+     * **It is a UNION of two shapes since the transfers-launch plan** (Task
+     * T10): `PriceSnapshot` for a tour (tier, add-ons) and
+     * `TransferPriceSnapshot` for a transfer (route, vehicle type, the flat
+     * per-vehicle rate, where the price came from). The tour shape is unchanged
+     * byte for byte, so every row written before this keeps parsing. The fields
+     * every reader actually wants — `depositPercent`, `freeCancelHours` and the
+     * three totals — are on BOTH members, so nothing reading those needs to
+     * narrow; anything reading `tier` or `addons` must narrow with
+     * `isTransferPriceSnapshot()` first. See that union's own note in
+     * `shared/src/booking.ts`.
      *
      * The `*_centavos` columns below are a queryable SUMMARY of this blob,
      * not a second source of truth.
      */
-    priceSnapshot: json('price_snapshot').$type<PriceSnapshot>().notNull(),
+    priceSnapshot: json('price_snapshot').$type<BookingPriceSnapshot>().notNull(),
     subtotalCentavos: int('subtotal_centavos').notNull(),
     discountCentavos: int('discount_centavos').notNull().default(0),
     totalCentavos: int('total_centavos').notNull(),
