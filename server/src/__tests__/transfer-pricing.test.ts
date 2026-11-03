@@ -256,11 +256,19 @@ let retiredDestination = { id: 0, destinationName: '' };
 let cheapRoute = { id: 0, destinationName: '' };
 
 beforeAll(async () => {
-  // `aaa` / `zzz` share a sort order, so the destination-name tie-break is
-  // what decides their relative position in the list.
-  bothVehicles = await makeRoute({ nameSeed: 'aaa', sortOrder: 10 });
-  vanOnly = await makeRoute({ nameSeed: 'zzz', sortOrder: 10, vehicles: ['van'] });
+  /*
+   * **Inserted in the REVERSE of the order the list must return them in**
+   * (T9 review, Minor finding). `aaa` / `zzz` share a sort order, so the
+   * destination-name tie-break decides their relative position — but with the
+   * three inserted lowest-sort-order-first, MySQL's natural row order already
+   * satisfied the ordering assertion below and deleting the `.orderBy()` clause
+   * outright left that test GREEN. Creating the highest sort order first, and
+   * the `zzz` tie-break before the `aaa` one, makes insertion order the exact
+   * opposite of the expected order, so both ORDER BY keys are genuinely pinned.
+   */
   cheapRoute = await makeRoute({ nameSeed: 'cheap', sortOrder: 30, vanOneWayCentavos: 5_000 });
+  vanOnly = await makeRoute({ nameSeed: 'zzz', sortOrder: 10, vehicles: ['van'] });
+  bothVehicles = await makeRoute({ nameSeed: 'aaa', sortOrder: 10 });
   retiredRoute = await makeRoute({ nameSeed: 'retired-route', sortOrder: 1, routeActive: false });
   retiredDestination = await makeRoute({
     nameSeed: 'retired-dest',
@@ -310,6 +318,21 @@ describeWithDb('vehiclePriceForRouteAndType', () => {
   it('answers null for a RETIRED route rather than quoting a withdrawn product', async () => {
     await expect(
       vehiclePriceForRouteAndType(retiredRoute.id, 'van', 'transfer_one_way'),
+    ).resolves.toBeNull();
+  });
+
+  it('answers null for an ACTIVE route whose DESTINATION is retired', async () => {
+    /*
+     * T9 review, Important finding: this function used to check only the
+     * route's own `is_active`, so deactivating a destination on the existing
+     * destinations screen took the route off `transferRoutes.list` and left it
+     * quotable here — a live price for a place the business has withdrawn,
+     * reachable from a stale tab or by probing small route ids. The route in
+     * this fixture is ACTIVE; only its destination is not, which is what makes
+     * this a test of the second filter rather than the first.
+     */
+    await expect(
+      vehiclePriceForRouteAndType(retiredDestination.id, 'van', 'transfer_one_way'),
     ).resolves.toBeNull();
   });
 
@@ -450,6 +473,15 @@ describeWithDb('checkout.quoteTransfer', () => {
       caller.checkout.quoteTransfer({
         routeId: vanOnly.id,
         vehicleType: 'suv',
+        productType: 'transfer_one_way',
+      }),
+    ).rejects.toMatchObject(expected);
+    // The retired DESTINATION gets the same sentence as the retired route
+    // (T9 review, Important finding) — the router distinguishes none of them.
+    await expect(
+      caller.checkout.quoteTransfer({
+        routeId: retiredDestination.id,
+        vehicleType: 'van',
         productType: 'transfer_one_way',
       }),
     ).rejects.toMatchObject(expected);

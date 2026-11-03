@@ -15,8 +15,11 @@
  * DESTINATION is still active — the same rule `tours.list` enforces (its I1
  * finding: soft-deleting a destination has to hide what hangs off it, or the
  * catalog keeps selling a place the site no longer offers). Retiring either one
- * takes the route off this list, and `vehiclePriceForRouteAndType()` refuses to
- * quote a retired route independently, so neither surface relies on the other.
+ * takes the route off this list — and `vehiclePriceForRouteAndType()` checks the
+ * SAME TWO flags, so neither surface relies on the other having filtered first.
+ * That parity is new (T9 review, Important finding): while the quote checked
+ * only the route's own flag, deactivating a destination hid the route here and
+ * left it quotable there.
  *
  * No admin-only field reaches the wire: `isActive`, `destinationId` and
  * `sortOrder` are all absent from `TransferRoutePublicRow`. `sortOrder` still

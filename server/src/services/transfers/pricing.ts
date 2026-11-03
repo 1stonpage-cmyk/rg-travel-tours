@@ -36,7 +36,7 @@
 import { and, eq } from 'drizzle-orm';
 import { depositCentavos, type TransferProductType, type VehicleType } from '@rg/shared';
 import { getDb, type Database, type Transaction } from '../../db/client';
-import { transferRouteVehiclePrices, transferRoutes } from '../../db/schema';
+import { destinations, transferRouteVehiclePrices, transferRoutes } from '../../db/schema';
 import { discountCentavosFor, type QuoteCoupon } from '../pricing';
 
 export interface TransferQuoteInput {
@@ -119,12 +119,22 @@ export interface TransferVehiclePrice {
  * The catalog price for one route + vehicle type at one product, or `null`.
  *
  * `null` means every normal "we cannot quote that" case: no such route, a
- * RETIRED route (`is_active = false` — a route an owner has withdrawn is not
- * quotable, and the soft delete has to mean that here as much as it does on the
- * public list), or a route with no price row for the requested vehicle type.
- * **None of those throws.** They are all guest-reachable answers a router turns
- * into a `NOT_FOUND`, not internal failures that deserve a 500 — the same
- * treatment `loadQuoteInputs`' add-on sweep gives a stale add-on id.
+ * RETIRED route, a route whose DESTINATION is retired, or a route with no price
+ * row for the requested vehicle type. **None of those throws.** They are all
+ * guest-reachable answers a router turns into a `NOT_FOUND`, not internal
+ * failures that deserve a 500 — the same treatment `loadQuoteInputs`' add-on
+ * sweep gives a stale add-on id.
+ *
+ * **Both halves of the soft delete are checked, and that is the point of the
+ * join to `destinations`** (T9 review, Important finding). `transferRoutes.list`
+ * filters on `transfer_routes.is_active` AND `destinations.is_active`; this
+ * function at first filtered only on the route's own flag, so deactivating a
+ * destination on the existing destinations screen took the route off the public
+ * list while this still quoted it — a live price for a place the business has
+ * withdrawn, reachable from a stale tab or by probing small route ids. The two
+ * surfaces now ask the same question, which is what lets each stand alone:
+ * neither relies on the other having filtered first, and T10 turns this answer
+ * into a real reservation.
  *
  * `productType` picks the COLUMN: `one_way_price_centavos` for a one-way trip,
  * `day_use_price_centavos` for a day-use hire. Both columns are `NOT NULL`, so
@@ -164,7 +174,17 @@ export async function vehiclePriceForRouteAndType(
         eq(transferRouteVehiclePrices.vehicleType, vehicleType),
       ),
     )
-    .where(and(eq(transferRoutes.id, routeId), eq(transferRoutes.isActive, true)))
+    // `transfer_routes.destination_id` is NOT NULL with a RESTRICT foreign key,
+    // so this join drops nothing a route could have — it exists only to reach
+    // `destinations.is_active`, the second half of the soft delete (see above).
+    .innerJoin(destinations, eq(destinations.id, transferRoutes.destinationId))
+    .where(
+      and(
+        eq(transferRoutes.id, routeId),
+        eq(transferRoutes.isActive, true),
+        eq(destinations.isActive, true),
+      ),
+    )
     .limit(1);
 
   if (!row) return null;
