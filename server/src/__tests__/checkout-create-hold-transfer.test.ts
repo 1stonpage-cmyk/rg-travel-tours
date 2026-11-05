@@ -458,6 +458,45 @@ describeWithDb('checkout.createHoldTransfer', () => {
     expect(messagesAt(flight, 'airline')).toHaveLength(1);
   });
 
+  /**
+   * **T11 review, Important finding: an unpadded `pickupTime` must not mark a
+   * perfectly good `dayUseEndTime` invalid too.**
+   *
+   * Zod 4 runs `superRefine` even when a field-level check has already failed,
+   * so the day-use cross-field comparison used to run against a `pickupTime`
+   * it only ASSUMED was padded `HH:mm`. `'17:00' <= '8:00'` is lexicographically
+   * true, so a guest who typed `8:00` instead of `08:00` was told, on a second
+   * field, that their nine-hour window ends before it starts — and might well
+   * have "fixed" the one field that was right. The same class as BUG-120, and
+   * the reason the comparison is now gated on the clock pattern.
+   *
+   * Both halves matter: the `pickupTime` issue must still fire (the request IS
+   * malformed), and `dayUseEndTime` must carry NOTHING.
+   */
+  it('does not mark a valid dayUseEndTime invalid when pickupTime itself is malformed', async () => {
+    const routeId = await makeRoute();
+    await makeFleet();
+
+    const error = await refusal(
+      holdInput({
+        routeId,
+        productType: 'transfer_day_use',
+        // The typo under test: a real nine-hour window, 08:00 to 17:00, with
+        // the hour left unpadded.
+        pickupTime: '8:00',
+        dayUseEndTime: '17:00',
+        flightNumber: undefined,
+        airline: undefined,
+      }),
+    );
+
+    expect(messagesAt(error, 'pickupTime')).toEqual(['Enter a pickup time as HH:mm, like 08:30.']);
+    expect(
+      messagesAt(error, 'dayUseEndTime'),
+      'a malformed pickup time must not accuse the end time of anything',
+    ).toEqual([]);
+  });
+
   it('refuses a missing drop-off address — required, unlike a tour pickup', async () => {
     const routeId = await makeRoute();
     await makeFleet();

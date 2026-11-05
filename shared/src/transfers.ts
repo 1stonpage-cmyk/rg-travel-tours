@@ -12,10 +12,12 @@
  * and `./checkout` — and `./booking` imports THIS file (for
  * `TRANSFER_PRODUCT_TYPES` / `VEHICLE_TYPES`), so importing either of them
  * from here is a module cycle. Measured, not theorised: the whole suite failed
- * at import time with `z.enum(undefined)` inside `checkout.ts`, because
- * `transfers.ts` loaded first and got a half-initialised `./booking` back. So
- * the hold input sits DOWNSTREAM of all three, in a module nothing else
- * imports. Keep adding guest-form fields there rather than widening
+ * at import time with `z.enum(undefined)` thrown from inside `checkout.ts` —
+ * `./booking` was already mid-load when this file imported `./checkout`, so
+ * **`checkout.ts` got a half-initialised `booking.ts`** and `PAY_MODES` was
+ * still `undefined`. So the hold input sits DOWNSTREAM of all three, in a
+ * module nothing else imports. Keep adding guest-form fields there rather than
+ * widening
  * `quoteTransferInput` below: a quote names a product, a hold describes a
  * journey. Anything admin-shaped belongs in `transfers-admin.ts`.
  */

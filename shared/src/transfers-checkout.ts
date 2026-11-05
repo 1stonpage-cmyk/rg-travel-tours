@@ -6,9 +6,12 @@
  * (`./booking`), `civilDateSchema` and `leadSchema` (`./checkout`) rather than
  * declaring a second copy of any of them — and `./booking` imports
  * `./transfers`, so putting this schema in `./transfers` beside
- * `quoteTransferInput` made a cycle that broke the whole suite at import time
- * (`z.enum(undefined)` thrown from inside `checkout.ts`, because `transfers.ts`
- * loaded first and got a half-initialised `./booking`). This file is imported
+ * `quoteTransferInput` made a cycle that broke the whole suite at import time:
+ * `./booking` starts loading, reaches its `./transfers` import, `./transfers`
+ * then imports `./checkout`, and `./checkout`'s own `./booking` import is
+ * answered from the module ALREADY IN PROGRESS — so **`checkout.ts` is handed a
+ * half-initialised `booking.ts`**, `PAY_MODES` is still `undefined`, and
+ * `z.enum(undefined)` throws from inside `checkout.ts`. This file is imported
  * by nothing but `./index.ts`, so it can depend on all three safely.
  *
  * A plan-ordering note for whoever picks up **T12** ("shared Zod inputs for
@@ -22,19 +25,31 @@ import { civilDateSchema, leadSchema } from './checkout';
 import { quoteTransferInput } from './transfers';
 
 /**
- * A civil `HH:mm` clock label, Asia/Manila — **the exact format
+ * A civil `HH:mm` clock label, Asia/Manila — **the exact pattern
  * `clockTimeToMinutes()` (`server/src/services/transfers/overlap.ts`) accepts**,
- * with a guest-facing sentence instead of Zod's own.
+ * character for character: a label this schema accepts and that function
+ * rejects would reach `assertBookableShape`'s `pickup_time_unreadable`
+ * refusal, which is written to fail closed rather than to be friendly.
  *
- * The pattern is deliberately identical to that function's, character for
- * character: a label this schema accepts and that one rejects would reach
- * `assertBookableShape`'s `pickup_time_unreadable` refusal, which is written to
- * fail closed rather than to be friendly. The MESSAGE is a parameter because
- * "pickup time" and "end time" are two different boxes on one form, and task
- * A4's rule is that every message names its own field.
+ * **Named rather than inlined because the `superRefine` below has to ask the
+ * same question a second time** (T11 review, Important finding): Zod 4 runs a
+ * `superRefine` even when a field-level check has already failed, so the
+ * cross-field comparison down there cannot assume `pickupTime` matched — it
+ * tests it against this same constant first. Two copies of this pattern is how
+ * the two answers come to disagree.
+ *
+ * No `/g` flag, deliberately: a global regex carries `lastIndex` between
+ * `.test()` calls, and this one is tested from two places.
  */
-const clockTimeField = (message: string) =>
-  z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/, message);
+const CLOCK_TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
+/**
+ * One clock field, with a guest-facing sentence instead of Zod's own. The
+ * MESSAGE is a parameter because "pickup time" and "end time" are two
+ * different boxes on one form, and task A4's rule is that every message names
+ * its own field.
+ */
+const clockTimeField = (message: string) => z.string().regex(CLOCK_TIME_PATTERN, message);
 
 /**
  * What the browser may send `checkout.createHoldTransfer` (Task T11) — the
@@ -157,16 +172,36 @@ export const createHoldTransferInput = quoteTransferInput
           path: ['dayUseEndTime'],
           message: 'Tell us what time you need the vehicle until.',
         });
-      } else if (value.dayUseEndTime <= value.pickupTime) {
+      } else if (
         /*
-         * A plain string compare, safe only because both sides are
-         * zero-padded 24-hour `HH:mm` (the regex above guarantees it), so
-         * lexicographic order IS chronological order — the same reasoning
-         * `bookableDateRange()` documents for its cutoff compare.
+         * **`pickupTime` is re-tested here, and that gate is the fix for a real
+         * bug** (T11 review, Important finding). The comparison below is a
+         * plain string compare, which is only chronological while BOTH sides
+         * are zero-padded 24-hour `HH:mm` — and Zod 4 runs a `superRefine`
+         * even when a field-level check has already failed, so reaching this
+         * line proves nothing about `pickupTime`. Measured: a day-use request
+         * with `pickupTime: '8:00'` and `dayUseEndTime: '17:00'` produced TWO
+         * messages, the correct one on `pickupTime` and a FALSE one on
+         * `dayUseEndTime`, because `'17:00' <= '8:00'` is lexicographically
+         * true when the hour is not padded. A nine-hour window reported as
+         * ending before it starts is exactly the "one bad field marks another
+         * field invalid" class BUG-120 exists for, and it would send a guest
+         * "fixing" a field that was never wrong.
          *
-         * STRICTLY after, mirroring `day_use_end_time_not_after_pickup`: a
-         * window of `[x, x)` is empty, so the hire would occupy no vehicle at
-         * all and be sold against nothing.
+         * A known-bad `pickupTime` therefore skips this comparison entirely —
+         * its own field-level issue has already fired, and once the guest pads
+         * the hour the pair is compared for real.
+         */
+        CLOCK_TIME_PATTERN.test(value.pickupTime) &&
+        // STRICTLY after, mirroring `day_use_end_time_not_after_pickup`: a
+        // window of `[x, x)` is empty, so the hire would occupy no vehicle at
+        // all and be sold against nothing.
+        value.dayUseEndTime <= value.pickupTime
+      ) {
+        /*
+         * Lexicographic order IS chronological order on a padded `HH:mm` —
+         * the same reasoning `bookableDateRange()` documents for its cutoff
+         * compare, now with the padding actually guaranteed at this point.
          */
         ctx.addIssue({
           code: 'custom',
