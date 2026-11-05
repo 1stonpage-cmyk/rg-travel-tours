@@ -81,6 +81,21 @@ const DAY_USE_PRICE = 650_000;
 const ROUTE_FREE_CANCEL_HOURS = 24;
 
 /**
+ * An unknown route id, a retired route, a vehicle type with no price row, and
+ * (Task 0D, owner decision 2026-11-06 #1) a route whose DESTINATION is
+ * retired — all four get the SAME one `NOT_FOUND` sentence, deliberately
+ * non-distinguishing: naming which of the four it was would make a numeric
+ * id an enumeration oracle for the catalog. Hoisted to one constant (review
+ * finding, Minor) so the two tests that assert it cannot drift apart — a
+ * future wording change that updates one and misses the other is now a
+ * compile-time-shared reference, not a second string to remember to edit.
+ */
+const UNQUOTABLE_ROUTE_REFUSAL = {
+  code: 'NOT_FOUND',
+  message: 'That route is no longer available for that vehicle.',
+};
+
+/**
  * A pickup day far enough out that the minimum-notice rule is never what
  * refuses — thirty days, the same offset and the same reasoning as
  * `checkout-router.test.ts`'s `DAY`. (A transfer is NOT subject to the
@@ -672,16 +687,14 @@ describeWithDb('checkout.createHoldTransfer', () => {
     await makeFleet();
     const retired = await makeRoute({ isActive: false });
     const vanOnly = await makeRoute({ vehicleTypes: ['van'] });
-    const expected = {
-      code: 'NOT_FOUND',
-      message: 'That route is no longer available for that vehicle.',
-    };
 
-    expect(await refusal(holdInput({ routeId: retired }))).toMatchObject(expected);
+    expect(await refusal(holdInput({ routeId: retired }))).toMatchObject(UNQUOTABLE_ROUTE_REFUSAL);
     expect(await refusal(holdInput({ routeId: vanOnly, vehicleType: 'suv' }))).toMatchObject(
-      expected,
+      UNQUOTABLE_ROUTE_REFUSAL,
     );
-    expect(await refusal(holdInput({ routeId: 2_000_000_000 }))).toMatchObject(expected);
+    expect(await refusal(holdInput({ routeId: 2_000_000_000 }))).toMatchObject(
+      UNQUOTABLE_ROUTE_REFUSAL,
+    );
   });
 
   /**
@@ -698,10 +711,9 @@ describeWithDb('checkout.createHoldTransfer', () => {
     const inactiveDestination = await makeRoute({ destinationActive: false });
     const before = await writtenRowCounts();
 
-    expect(await refusal(holdInput({ routeId: inactiveDestination }))).toMatchObject({
-      code: 'NOT_FOUND',
-      message: 'That route is no longer available for that vehicle.',
-    });
+    expect(await refusal(holdInput({ routeId: inactiveDestination }))).toMatchObject(
+      UNQUOTABLE_ROUTE_REFUSAL,
+    );
     expect(
       await writtenRowCounts(),
       'a hold refused for a retired destination must leave no slot, booking or audit row',

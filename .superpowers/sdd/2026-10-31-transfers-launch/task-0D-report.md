@@ -188,3 +188,89 @@ None observed while doing this task.
 
 All five ran in this order, each one re-run after the format fix where relevant, and this
 report is written before committing.
+
+---
+
+## Follow-up: Opus review fixes (commit 2987906 review)
+
+Review on commit `2987906` came back clean on spec compliance with 1 Important + 2 Minor on
+test quality. All three addressed below.
+
+### 1. Important — the "label is additive, not a replacement" assertion could not fail
+
+`client/src/__tests__/admin-transfer-routes-page.test.tsx`'s new test asserted
+`screen.getAllByText(/^(Active|Inactive)$/).map(...).toContain('Active')` — unscoped, so it
+collected every status badge across all three fixture routes and both render surfaces. Since
+Mactan Airport's badge is also "Active", the assertion passed regardless of what happened to
+Cebu City's own badge specifically — it would have stayed green even if that badge were deleted
+and replaced by the amber label, which is exactly the regression the test claimed to prove.
+
+**Fix:** replaced the unscoped check with `within()`, scoped to Cebu City's own rendered
+container on each surface. The test now:
+- Finds Cebu City's two containers (`.closest('li')` for the phone card, `.closest('tr')` for
+  the table) by walking up from the two "Cebu City" text nodes.
+- For each container, asserts (via `within(container)`) that the existing `'Active'` badge text
+  is present AND the amber label (`getByTestId('destination-inactive-label')`) is present in the
+  SAME container — proving the two coexist rather than one replacing the other.
+
+**Proof it can fail (re-done for the fixed assertion):** temporarily made the phone-card branch
+hide the Active badge whenever `destinationIsActive === false` (simulating the exact regression
+the reviewer described — the badge disappearing when the amber label appears). Re-ran the test
+alone: it went red with `TestingLibraryElementError: Unable to find an element with the text:
+Active`, inside the `within(container)` scope for Cebu City's own `<li>` — i.e. the fixed
+assertion caught the regression the old one missed. Restored the component
+(`git diff --stat` on `AdminTransferRoutesPage.tsx` showed no diff after restoring, confirming
+an exact revert); re-ran — green, all 5 tests passing.
+
+### 2. Minor — dead `data-testid`
+
+`data-testid="destination-inactive-label"` was already on both render surfaces but unused by
+the test (which matched on the literal sentence only). Kept the attribute (more robust than
+matching the literal twice) and put it to use: the label-count assertion now reads
+`screen.getAllByTestId('destination-inactive-label')` (asserting `toHaveLength(2)` and that each
+has the expected text via `toHaveTextContent`), and the per-surface scoped checks above also
+query by this test id rather than the literal text a second time.
+
+### 3. Minor — duplicated refusal-sentence literal
+
+`checkout-create-hold-transfer.test.ts` re-typed `'That route is no longer available for that
+vehicle.'` in the new destination-inactive test instead of reusing the `expected` const the
+route-retired test (directly above it) already defined for the same sentence. Hoisted that
+object to a module-level constant, `UNQUOTABLE_ROUTE_REFUSAL`, placed beside the file's other
+shared catalog constants near the top, with a doc comment explaining why all four unquotable
+cases (unknown id, retired route, no price row for the vehicle type, and now retired
+destination) share one sentence on purpose. Both tests now reference
+`UNQUOTABLE_ROUTE_REFUSAL` instead of a locally-typed object literal — a future wording change
+updates one constant and both tests move together; it is no longer possible to edit one and miss
+the other.
+
+### Files touched (this follow-up)
+
+- `client/src/__tests__/admin-transfer-routes-page.test.tsx` — scoped the Cebu-City assertion
+  with `within()`, switched the label lookups to `getAllByTestId`/`getByTestId`, added `within`
+  to the `@testing-library/react` import.
+- `server/src/__tests__/checkout-create-hold-transfer.test.ts` — hoisted
+  `UNQUOTABLE_ROUTE_REFUSAL` to module scope; both affected tests now reference it.
+
+No change to `shared/src/transfers-admin.ts`, `server/src/routers/admin/transfer-routes.ts`, or
+`server/src/services/transfers/pricing.ts` was needed for this follow-up — all three review
+findings were test-quality issues, not implementation gaps.
+
+### Verification (follow-up) — all five commands, final tree
+
+1. `pnpm lint` — exit 0.
+2. `pnpm typecheck` — exit 0 (shared/server/client all `Done`).
+3. `pnpm test` — exit 0. `check-coming-soon` and `check-contact-parity` both clean. Shared 7
+   files / 93 tests, client 68 files / 889 tests (unchanged counts — this follow-up only
+   strengthened existing tests, added none), server 119 files / 2431 tests (unchanged counts,
+   same reason).
+4. `pnpm format:check` — failed once on `checkout-create-hold-transfer.test.ts` (prettier
+   wanted to re-wrap the three `toMatchObject(UNQUOTABLE_ROUTE_REFUSAL)` call sites across
+   multiple lines); ran `prettier --write` on that one file, re-ran `pnpm format:check` — exit 0,
+   clean across the whole repo. Re-ran the affected test file afterward to confirm the reformat
+   changed no behaviour (still 23/23 passing).
+5. `ALLOW_PLACEHOLDER_BUILD=1 pnpm build` — exit 0, same shape as the first report (2078
+   modules, dist written, only the pre-existing `zod` comment-annotation and >500kB chunk-size
+   warnings, neither new).
+
+All five re-run in order against the final tree before committing this follow-up.

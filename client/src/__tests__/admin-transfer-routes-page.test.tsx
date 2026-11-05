@@ -8,7 +8,7 @@
  * and the server's own ambiguous duplicate-destination/slug `CONFLICT`
  * sentence shown as a friendly banner rather than raw JSON.
  */
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -235,21 +235,44 @@ describe('AdminTransferRoutesPage', () => {
    * the other two routes — whose destinations are both still active — shows
    * it, including Oslob, whose own route is Inactive for an unrelated
    * reason.
+   *
+   * The "still says Active" half is asserted with `within()`, scoped to
+   * Cebu City's own card/row on each surface — review finding (Important),
+   * fixed here. `screen.getAllByText(/^(Active|Inactive)$/)` is unscoped and
+   * collects every status badge across all three fixture routes and both
+   * surfaces, so `.toContain('Active')` would still pass even if Cebu
+   * City's OWN badge were deleted and replaced by the amber label, because
+   * Mactan Airport's badge also reads "Active" — exactly the regression
+   * this test exists to catch. Scoping to Cebu City's own container is what
+   * makes the assertion about Cebu City rather than about the page.
    */
   it('shows an amber "Destination inactive" label only for a route whose destination is retired', async () => {
     renderPage({ 'admin.transferRoutes.list': [AIRPORT_ROUTE, OSLOB_ROUTE, CEBU_CITY_ROUTE] });
     await screen.findAllByText('Mactan Airport');
     await screen.findAllByText('Cebu City');
 
-    const labels = screen.getAllByText('Destination inactive — hidden from guests');
+    const labels = screen.getAllByTestId('destination-inactive-label');
     // One per surface (the phone card and the table), never zero and never
     // duplicated across the other two routes.
-    expect(labels.length).toBe(2);
+    expect(labels).toHaveLength(2);
+    for (const label of labels) {
+      expect(label).toHaveTextContent('Destination inactive — hidden from guests');
+    }
 
-    const cebuCityStates = screen
-      .getAllByText(/^(Active|Inactive)$/)
-      .map((node) => node.textContent);
-    expect(cebuCityStates).toContain('Active');
+    // Cebu City's own card (phone) and row (table) — found by walking up
+    // from its destination-name text node, one per surface.
+    const cebuCityContainers = screen
+      .getAllByText('Cebu City')
+      .map((node) => node.closest('li') ?? node.closest('tr'));
+    expect(cebuCityContainers).toHaveLength(2);
+    for (const container of cebuCityContainers) {
+      expect(container).not.toBeNull();
+      const scoped = within(container as HTMLElement);
+      // The existing Active badge is STILL there...
+      expect(scoped.getByText('Active')).toBeInTheDocument();
+      // ...alongside the new amber label, not instead of it.
+      expect(scoped.getByTestId('destination-inactive-label')).toBeInTheDocument();
+    }
   });
 
   it('shows the denied state, not a blank screen, when the role is refused', async () => {
