@@ -86,10 +86,10 @@ All five checks (`lint`, `typecheck`, `test`, `format:check`, `ALLOW_PLACEHOLDER
 
 ## Open owner questions (carried forward or new this batch)
 
-1. **(Carried, unanswered) T6's cross-batch sequencing note:** notification-copy sweep (T24) should land before a real transfer booking becomes guest-reachable, so a transfer guest doesn't get tour-flavored email copy ("Your tour is tomorrow"). T9/T10/T11 have now made real transfer bookings reachable (once T11's fix lands) — **this note is now live, not theoretical.** Worth prioritizing T24 relatively soon after this batch, or accepting tour-flavored copy for a window.
+1. **(Resolved 2026-11-06)** T6's cross-batch sequencing note (notification-copy sweep T24 vs. real transfer bookings going guest-reachable): owner decision 2026-11-06 #3 keeps T24 in Batch 6, no reorder — tour-flavored copy accepted for the window.
 2. **(Carried, unanswered) T7's duration-freeze column:** confirmed correct by the owner in pre-task 0B (ruling #1 above settles this one — no longer open).
-3. **(New) Should a transfer route be sellable when its DESTINATION is inactive but the route itself is active?** T9's fix made the two surfaces (public list, price lookup) AGREE with each other, but both now hide a route the moment its destination goes inactive — which may be wrong for a destination the business runs no TOUR to anymore but still wants to sell airport transfers for. Flagged by T9's reviewer as a real product question, not settled here.
-4. **(New) Rate-limit sharing (ruling #6 above):** confirm the owner is fine with transfers and tours sharing one hold-creation budget rather than getting independent ones.
+3. **(Resolved 2026-11-06)** Should a transfer route be sellable when its DESTINATION is inactive but the route itself is active? Owner decision 2026-11-06 #1: **no** — hidden from the public list, refused by quote and hold, regardless of the route's own `is_active`. Built as Task 0D (this batch).
+4. **(Resolved 2026-11-06)** Rate-limit sharing (ruling #6 above): owner decision 2026-11-06 #2 confirms the shared budget stays as built — no split.
 
 ## Test counts
 
