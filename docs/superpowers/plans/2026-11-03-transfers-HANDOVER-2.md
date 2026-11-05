@@ -1,6 +1,6 @@
 # Transfers Launch — Handover 2, 2026-11-03 (Batch 3)
 
-**Status: Pre-tasks 0A/0B/0C done, T9/T10 done, T11 implemented but its fix round was interrupted mid-way (user paused to save credit) — NOT yet reviewed clean. Not pushed. Next step: finish T11's fix round, then T12.**
+**Status: Pre-tasks 0A/0B/0C done, T9/T10/T11 done and CLEAN. Not pushed. Next step: T12.**
 
 Plan: `docs/superpowers/plans/2026-10-31-transfers-launch.md`. `main` was `origin/main` at `cb527b3` (T1–T8 + prior handover) when this batch started. This session ran pre-tasks 0A/0B/0C, then T9, T10, T11 in order via `superpowers:subagent-driven-development`.
 
@@ -17,18 +17,13 @@ Plan: `docs/superpowers/plans/2026-10-31-transfers-launch.md`. `main` was `origi
 | T10       | `f190fa9`     | feat(transfers): createTransferBooking — the one shared booking-writer (T10)                             |
 | T10 fix 1 | `5e50697`     | test(bookings): pin the price-snapshot union's disjointness (T10 review fix)                             |
 | **T11**   | **`98fbe1c`** | **feat(transfers): checkout.createHoldTransfer — the guest-facing hold (T11)**                           |
+| docs fmt  | `30b5e7a`     | chore(docs): format the two transfer handover docs with prettier                                         |
+| T11 fix 1 | `fa5f395`     | fix(transfers): gate the day-use end-time compare on a valid pickupTime (T11 review)                     |
+| T11 fix 2 | `d35e9f1`     | test(transfers): pin the whole issue list on the T11 malformed-pickupTime regression (re-review)         |
 
-**T11's fix round is UNCOMMITTED, in the working tree, interrupted mid-way:**
+**T11 is now CLEAN.** Its fix round (the regex guard for the Important finding below) is committed (`fa5f395`), a scoped Opus re-review of that fix found 0 Critical, 0 Important, 3 Minor (two pre-existing/not-bugs, parked; one — strengthen the regression test to pin the whole issue list, not just the two paths it already checked — applied in `d35e9f1`). All five checks pass; test counts below.
 
-```
- M server/src/__tests__/checkout-create-hold-transfer.test.ts
- M shared/src/transfers-checkout.ts
- M shared/src/transfers.ts
-```
-
-This is the regex-guard fix for a reviewed Important finding (see "T11, what's left" below) — do NOT discard it (`git checkout .` / `git clean` / `git stash` would destroy real work). Finish it, verify, commit, then re-review per the loop below.
-
-Nothing in this batch has been pushed. `git log --oneline -3` on `main` currently shows `98fbe1c` then `5e50697` then `f190fa9`.
+Nothing in this batch has been pushed. `git log --oneline -4` on `main` currently shows `d35e9f1` then `fa5f395` then `30b5e7a` then `98fbe1c`.
 
 ## What each task built
 
@@ -42,11 +37,19 @@ Nothing in this batch has been pushed. `git log --oneline -3` on `main` currentl
 
 **T10** — `server/src/services/transfers/create-booking.ts`, `createTransferBooking()` — the ONE function both the guest path (T11) and the future staff path (T19) call. The plan's own "other half" of its highest-scrutiny pairing with T7. `takeFleetDateLock` first, no plain read before it (proven by a mutation that reddened both concurrency races). `routeId` XOR `customRouteDescription` enforced as the one writer. A plain (non-discriminated) `z.union` price-snapshot design — a deliberate, reviewed deviation from the brief, verified sound. Review: 0 Critical, 1 Important (fixed — pinned the union's disjointness with a regression test, since that property was true but unasserted), 6 Minor parked (carried forward notes for T11/T19: an empty `customRouteDescription` slips past the XOR; a past-pickup gets no distinguishable error from a too-short-notice one; no direct test of the staff-price floor; a test-teardown leak risk; audit CSV-escaping awareness; minor wording/double-read nits).
 
-**T11** — `checkout.createHoldTransfer`, the thin guest-facing wrapper over T10, plus the FULL guest-facing hold input (absorbing T12's "hold" half — see "Rulings" below) in a new file `shared/src/transfers-checkout.ts` (not `transfers.ts`, to avoid a real import cycle `transfers.ts → booking.ts → checkout.ts → booking.ts`, verified by the reviewer). Beyond the brief: `checkout.createHoldTransfer` now shares ONE combined per-IP rate-limit budget (5 holds/15 min) with tours' `createHold` — verified as a real shared mechanism and judged correct (Ruling 5 caps hold _creations_, product-blind). **Review: 0 Critical, 1 Important, 2 Minor — the fix round for the Important finding was interrupted by the pause and is sitting uncommitted (see above).**
+**T11** — `checkout.createHoldTransfer`, the thin guest-facing wrapper over T10, plus the FULL guest-facing hold input (absorbing T12's "hold" half — see "Rulings" below) in a new file `shared/src/transfers-checkout.ts` (not `transfers.ts`, to avoid a real import cycle `transfers.ts → booking.ts → checkout.ts → booking.ts`, verified by the reviewer). Beyond the brief: `checkout.createHoldTransfer` now shares ONE combined per-IP rate-limit budget (5 holds/15 min) with tours' `createHold` — verified as a real shared mechanism and judged correct (Ruling 5 caps hold _creations_, product-blind). **Review: 0 Critical, 1 Important, 2 Minor — the Important finding's fix round is done and re-reviewed clean (see below).**
 
-### T11, what's left (the in-progress fix)
+### T11's fix round (now closed)
 
-A malformed `pickupTime` on a day-use request (e.g. `'8:00'` instead of `'08:00'`) falsely marks a VALID `dayUseEndTime` as invalid too — the day-use `superRefine` branch compares the two clock strings lexicographically on the stated assumption both are already zero-padded, which Zod 4 does not guarantee holds at that point (object-level refinements still run after a field-level check has already failed). Reproduced: `pickupTime: '8:00'` / `dayUseEndTime: '17:00'` (a valid 9-hour window) produces two errors, one correct, one false. No money/security impact. Fix dispatched: gate the comparison on `pickupTime` actually passing the clock regex first, plus a regression test. **This is the uncommitted work in the tree right now** — finish it, run the five checks, commit, then dispatch one scoped re-review before marking T11 complete.
+A malformed `pickupTime` on a day-use request (e.g. `'8:00'` instead of `'08:00'`) falsely marked a VALID `dayUseEndTime` as invalid too — the day-use `superRefine` branch compared the two clock strings lexicographically on the stated assumption both were already zero-padded, which Zod 4 does not guarantee holds at that point (object-level refinements still run after a field-level check has already failed). Reproduced: `pickupTime: '8:00'` / `dayUseEndTime: '17:00'` (a valid 9-hour window) produced two errors, one correct, one false. No money/security impact.
+
+**Fixed in `fa5f395`:** the comparison is now gated on `pickupTime` matching the same `CLOCK_TIME_PATTERN` the field-level schema uses (a named, non-global regex shared between the two call sites — no global `lastIndex` state to carry between them), plus a regression test. A scoped Opus re-review of that commit (money/guest-hold path, so reviewed rather than taken on faith) found 0 Critical, 0 Important, 3 Minor:
+
+1. The gate is one-sided — a malformed `dayUseEndTime` against a valid `pickupTime` still produces two issues on that path (the regex message and the "must be later than pickup" message). Measured as contained, not a bug: the field is genuinely invalid either way, and `getFieldErrors`/`firstString` takes the first message, which is the correct one. Parked.
+2. The regression test pinned the two paths it checked individually, not the whole issue list — a spurious third-path issue could have slipped past. **Fixed in `d35e9f1`**: added one assertion pinning the full issue-path list to `['pickupTime']`.
+3. `server/src/content/settings-schema.ts` holds a third, equivalent copy of the same clock-time pattern, unpinned by any "these must match" test. Pre-existing, not worsened by this fix. Not fixed here — flagged below as an unrelated item.
+
+All five checks (`lint`, `typecheck`, `test`, `format:check`, `ALLOW_PLACEHOLDER_BUILD=1 build`) pass clean on the final state. The pre-existing `format:check` failure on both handover docs (see "Unrelated bugs found" below) was fixed in its own commit (`30b5e7a`) along the way, per CLAUDE.md's rule to keep formatting changes separate from feature work.
 
 ## Migrations owed on the server
 
@@ -76,7 +79,10 @@ A malformed `pickupTime` on a day-use request (e.g. `'8:00'` instead of `'08:00'
 
 ## Unrelated bugs found
 
-**None new this batch.** The one pre-existing, unrelated item carried forward from the start of this batch — `pnpm format:check` fails on `docs/superpowers/plans/2026-11-03-transfers-HANDOVER.md` (the PRIOR handover doc, confirmed pre-existing since its own commit `cb527b3`, before this batch began) — is still unfixed, still logged, still not blocking anything. It would take one `prettier --write` in its own formatting-only commit.
+**One fixed in passing, one new and still open.**
+
+- `pnpm format:check` failing on `docs/superpowers/plans/2026-11-03-transfers-HANDOVER.md` (the PRIOR handover doc, pre-existing since its own commit `cb527b3`) is now **fixed** — `30b5e7a`, prettier `--write` on that doc and this one, its own formatting-only commit.
+- **(New, Minor, not fixed)** `server/src/content/settings-schema.ts` holds a third copy of the same clock-time regex pattern that `shared/src/transfers-checkout.ts`'s `CLOCK_TIME_PATTERN` and `server/src/services/transfers/overlap.ts`'s `clockTimeToMinutes()` already carry — three independent copies, with no test pinning them equal to each other. Flagged by T11's scoped re-review, not fixed in this task (out of scope — touches a file T11 doesn't own). Low cost today (all three are currently identical and narrowly scoped), but a future edit to one and not the others would drift silently.
 
 ## Open owner questions (carried forward or new this batch)
 
@@ -87,8 +93,14 @@ A malformed `pickupTime` on a day-use request (e.g. `'8:00'` instead of `'08:00'
 
 ## Test counts
 
-Full suite as of the last fully-committed state (`98fbe1c`, before the uncommitted, in-progress T11 fix): shared 93, client 888, server 2428 — all green. (The in-progress fix adds tests on top of this; exact final count pending its completion.)
+Full suite as of the final state (`d35e9f1`), each workspace run directly via `vitest run` to get a clean signal on a machine that was also running unrelated heavy jobs (other Kong PMS worktree dev servers, Remotion video renders) — all green:
+
+- shared: 7 files, 93 tests
+- client: 68 files, 888 tests
+- server: 119 files, 2429 tests (2428 + the new T11 regression test)
+
+All five checks (`lint`, `typecheck`, `test`, `format:check`, `ALLOW_PLACEHOLDER_BUILD=1 pnpm build`) pass on this state.
 
 ---
 
-**Next task: finish T11's fix round** (regex guard in `shared/src/transfers-checkout.ts`'s day-use `superRefine`, already dispatched and partially done in the uncommitted working tree), re-run the five checks, commit, dispatch one scoped re-review, mark T11 complete in the SDD ledger, then proceed to **T12** (`shared/src/transfers.ts` — whatever's left of "Zod inputs for quote/hold" after T9/T11 already built the real ones; re-brief against what exists before dispatching, don't re-read the original plan text as if nothing has changed).
+**Next task: T12** (`shared/src/transfers.ts` — whatever's left of "Zod inputs for quote/hold" after T9/T11 already built the real ones; re-brief against what exists before dispatching, don't re-read the original plan text as if nothing has changed).
