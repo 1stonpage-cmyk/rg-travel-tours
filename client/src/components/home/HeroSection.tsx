@@ -331,11 +331,23 @@ export default function HeroSection() {
           </form>
 
           {/*
-           * SECONDARY — the tour search, demoted (lower contrast surface, no
-           * shadow, a smaller outline button) but otherwise byte-for-byte
+           * SECONDARY — the tour search, demoted (a lighter `shadow-sm` and
+           * an outline, not solid, submit button) but otherwise byte-for-byte
            * the form that already existed: same aria-label, ids, labels and
-           * `hero.ctaLabel` copy, mounted and visible at every viewport. A
-           * tabbed toggle was ruled out deliberately — it would unmount or
+           * `hero.ctaLabel` copy, mounted and visible at every viewport.
+           *
+           * **`bg-background/95` + `backdrop-blur` are the ORIGINAL card's
+           * own values, deliberately unchanged (T14 review fix, Important
+           * 4).** A first pass of this demotion lowered them to `/80` with no
+           * blur — a real contrast regression this guard test cannot see
+           * (`contrast.test.ts` only resolves `bg-brand-*`/`text-brand-*`
+           * pairs in one class string; it has no notion of a translucent
+           * card composited over the hero's separate photo+gradient layers,
+           * which is exactly what the blur existed to make reliable). The
+           * demotion itself — position, shadow weight, button variant —
+           * stays; only the background/blur treatment was restored.
+           *
+           * A tabbed toggle was ruled out deliberately — it would unmount or
            * `hidden` this form on first render, which breaks both the
            * existing test suite (`getByRole('form', {name: /search
            * tours/i})` et al.) and `FloatingWhatsApp.tsx`'s own
@@ -344,7 +356,7 @@ export default function HeroSection() {
           <p className="text-brand-blue-100 mt-5 text-sm">Looking for a guided day tour instead?</p>
           <form
             onSubmit={handleSubmit}
-            className="bg-background/80 mt-2 grid gap-3 rounded-xl p-3 shadow-sm sm:p-4 lg:grid-cols-[1.4fr_1fr_0.8fr_auto]"
+            className="bg-background/95 mt-2 grid gap-3 rounded-xl p-3 shadow-sm backdrop-blur sm:p-4 lg:grid-cols-[1.4fr_1fr_0.8fr_auto]"
             aria-label="Search tours"
           >
             <div className="space-y-1.5">

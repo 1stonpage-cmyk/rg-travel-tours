@@ -1,5 +1,5 @@
 import { keepPreviousData } from '@tanstack/react-query';
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   TRANSFER_PRODUCT_TYPES,
@@ -18,7 +18,12 @@ import TransferGuestDetailsForm from '@/components/transfer/TransferGuestDetails
 import TransferTypePicker from '@/components/transfer/TransferTypePicker';
 import VehicleOptionCard from '@/components/transfer/VehicleOptionCard';
 import { Button } from '@/components/ui/button';
-import { getFieldErrors, getFormErrors, hasAnyNestedFieldError } from '@/lib/field-errors';
+import {
+  firstValidationMessage,
+  getFieldErrors,
+  getFormErrors,
+  hasAnyNestedFieldError,
+} from '@/lib/field-errors';
 import { describeCheckoutError } from '@/lib/mutation-errors';
 import { trpc } from '@/lib/trpc';
 
@@ -59,6 +64,30 @@ import { trpc } from '@/lib/trpc';
  * that component's internals. A guest arriving with `?date=...&pax=...`
  * reaches a working flow and simply re-types those two fields at step 3 —
  * ledgered in the report rather than worked around with a DOM query.
+ *
+ * **A bad coupon must not be mistaken for an unavailable vehicle (T14 review
+ * fix, Critical 1).** `quoteTransfer` validates the coupon BEFORE pricing, so
+ * a bad/expired code throws the SAME refusal on both the van and the suv
+ * query at once — distinct from a route/vehicle-shape refusal (no price row
+ * for one vehicle type), which can only ever hit ONE of the two queries. The
+ * `useEffect` below uses exactly that discriminator: only when `couponCode`
+ * is set AND both queries are erroring simultaneously does it treat the
+ * failure as the coupon's, surface the server's own sentence beside
+ * `CouponField` (mirroring `CheckoutPage.tsx`'s own coupon-recovery effect),
+ * and revert to a coupon-free quote. A single query erroring alone is left
+ * exactly as before — that one vehicle is unavailable, and the coupon is
+ * untouched.
+ *
+ * **A placeholder (stale) quote must render as loading, never as a
+ * selectable but outdated price (T14 review fix, Critical 2).**
+ * `keepPreviousData` is scoped to the WHOLE query key, which includes
+ * `productType` — so switching one-way → day-use without this would keep
+ * showing the van card's one-way total, still clickable, until the day-use
+ * quote resolves. Each card's `isLoading` therefore reads
+ * `isPending || isPlaceholderData`, not `isPending` alone: a placeholder
+ * result is "stale", and this codebase treats a stale price as strictly
+ * worse than an unavailable one. `keepPreviousData` itself stays — dropping
+ * it would reintroduce the coupon-recovery blanking it was added to prevent.
  */
 
 function readInitialProductType(raw: string | null): TransferProductType | null {
@@ -186,18 +215,87 @@ export default function TransferBookingPage() {
   const quotesByType: Record<VehicleType, typeof vanQuote> = { van: vanQuote, suv: suvQuote };
 
   /*
-   * `undefined` on either an in-flight load OR a settled error — the one
-   * card state T13's `VehicleOptionCard` renders for both (see its own
-   * note). `isLoading` reads `isPending`, never `isFetching`: with
-   * `keepPreviousData`, a coupon-driven refetch keeps `isPending` false
-   * once the first load has settled, so the card keeps showing its
-   * previous figure instead of flashing back to a skeleton on every
-   * keystroke — which is the whole reason the brief calls for
-   * `keepPreviousData` in the first place.
+   * The last CONFIRMED (non-placeholder) successful quote per vehicle type,
+   * for the CURRENT `routeId`/`productType` only — reset the instant either
+   * changes, so a value from a different route or product can never be
+   * offered as anyone's fallback. This exists for one reason: when a bad
+   * coupon makes both queries settle to `isError`, React Query's own `data`
+   * for each becomes `undefined` (placeholderData only covers the PENDING
+   * phase, not a settled error) — without something to fall back to,
+   * `selectedQuote` below would go `undefined` for one render, unmounting
+   * `<TransferGuestDetailsForm>` and destroying every uncontrolled field the
+   * guest had already typed, before the effect two lines down even gets a
+   * chance to clear the coupon (Critical 1).
+   */
+  const [lastGoodQuotes, setLastGoodQuotes] = useState<
+    Partial<Record<VehicleType, QuoteTransferResult>>
+  >({});
+
+  useEffect(() => {
+    setLastGoodQuotes({});
+  }, [routeId, productType]);
+
+  useEffect(() => {
+    if (vanQuote.isSuccess && !vanQuote.isPlaceholderData) {
+      setLastGoodQuotes((prev) =>
+        prev.van === vanQuote.data ? prev : { ...prev, van: vanQuote.data },
+      );
+    }
+  }, [vanQuote.data, vanQuote.isSuccess, vanQuote.isPlaceholderData]);
+
+  useEffect(() => {
+    if (suvQuote.isSuccess && !suvQuote.isPlaceholderData) {
+      setLastGoodQuotes((prev) =>
+        prev.suv === suvQuote.data ? prev : { ...prev, suv: suvQuote.data },
+      );
+    }
+  }, [suvQuote.data, suvQuote.isSuccess, suvQuote.isPlaceholderData]);
+
+  /*
+   * Critical 1 fix — see this file's own header note. Fires only when a
+   * coupon is applied AND both queries are erroring at the SAME time, which
+   * is what a bad/expired coupon looks like (it fails validation identically
+   * for both vehicle types) and a route/vehicle-shape refusal (no price row
+   * for one vehicle) never does. `vanQuote.error` is read as the
+   * representative message — a coupon refusal is deterministic across both
+   * queries, so the two never actually disagree.
+   */
+  useEffect(() => {
+    if (couponCode && vanQuote.isError && suvQuote.isError) {
+      setCouponError(
+        firstValidationMessage(vanQuote.error) ?? describeCheckoutError(vanQuote.error),
+      );
+      setCouponCode(undefined);
+    }
+  }, [couponCode, vanQuote.isError, suvQuote.isError, vanQuote.error]);
+
+  /*
+   * `undefined` on either an in-flight load OR a settled error that is NOT a
+   * transient coupon self-heal — the one card state T13's `VehicleOptionCard`
+   * renders for both (see its own note). The card's own `isLoading` prop
+   * (below, where this is called) reads `isPending || isPlaceholderData`,
+   * not `isPending` alone — see the Critical 2 fix in this file's header
+   * note: `isPlaceholderData` is what catches a STALE quote left over from a
+   * different query key (a product-type switch) so it renders as loading
+   * rather than as a selectable, outdated price. A coupon-only refetch still
+   * keeps `isPending` false and shows its previous figure without flashing
+   * to a skeleton — `isPlaceholderData` only lasts for the brief window
+   * until the new key's real data lands, same as it would for any key
+   * change.
+   *
+   * While BOTH queries are erroring with a coupon applied, this falls back
+   * to `lastGoodQuotes` (above) instead of `undefined` — see Critical 1.
+   * The fallback is scoped to exactly that condition: a vehicle that is
+   * genuinely unavailable for the current route (no coupon involved, or
+   * only one query erroring) still returns `undefined` here, unchanged.
    */
   function quoteFor(type: VehicleType): QuoteTransferResult | undefined {
     const q = quotesByType[type];
-    return q.isError ? undefined : q.data;
+    if (!q.isError) return q.data;
+    if (couponCode && vanQuote.isError && suvQuote.isError) {
+      return lastGoodQuotes[type];
+    }
+    return undefined;
   }
 
   const selectedQuote = vehicleType ? quoteFor(vehicleType) : undefined;
@@ -338,7 +436,7 @@ export default function TransferBookingPage() {
                     key={type}
                     vehicleType={type}
                     quote={quoteFor(type)}
-                    isLoading={quotesByType[type].isPending}
+                    isLoading={quotesByType[type].isPending || quotesByType[type].isPlaceholderData}
                     isSelected={vehicleType === type}
                     onSelect={() => setVehicleType(type)}
                     payMode={payMode}
