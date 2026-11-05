@@ -6,17 +6,17 @@ Plan: `docs/superpowers/plans/2026-10-31-transfers-launch.md`. `main` was `origi
 
 ## Commits, this batch
 
-| Task | Commit | Label |
-| ---- | ------ | ----- |
-| 0B | `4d7befc` | docs(transfers): record 2026-11-03 owner decisions in the plan (0B) |
-| 0A | `4b9ce07` | fix(settings): fall back to owner defaults for a missing/malformed transfer_operations row (pre-task 0A) |
-| 0C | `a0ce37d` | feat(transfers): soft, overridable vehicle seat+luggage check at transfer dispatch (0C) |
-| 0C fix 1 | `960caf3` | fix(transfers): prove and align step 6b's service-layer override re-check (0C review F1) |
-| T9 | `b500915` | feat(transfers): transfer pricing, checkout.quoteTransfer and the public route list (T9) |
-| T9 fix 1 | `603ed9e` | fix(transfers): quote a retired destination's route no more, and really pin the list order (T9 review) |
-| T10 | `f190fa9` | feat(transfers): createTransferBooking — the one shared booking-writer (T10) |
-| T10 fix 1 | `5e50697` | test(bookings): pin the price-snapshot union's disjointness (T10 review fix) |
-| **T11** | **`98fbe1c`** | **feat(transfers): checkout.createHoldTransfer — the guest-facing hold (T11)** |
+| Task      | Commit        | Label                                                                                                    |
+| --------- | ------------- | -------------------------------------------------------------------------------------------------------- |
+| 0B        | `4d7befc`     | docs(transfers): record 2026-11-03 owner decisions in the plan (0B)                                      |
+| 0A        | `4b9ce07`     | fix(settings): fall back to owner defaults for a missing/malformed transfer_operations row (pre-task 0A) |
+| 0C        | `a0ce37d`     | feat(transfers): soft, overridable vehicle seat+luggage check at transfer dispatch (0C)                  |
+| 0C fix 1  | `960caf3`     | fix(transfers): prove and align step 6b's service-layer override re-check (0C review F1)                 |
+| T9        | `b500915`     | feat(transfers): transfer pricing, checkout.quoteTransfer and the public route list (T9)                 |
+| T9 fix 1  | `603ed9e`     | fix(transfers): quote a retired destination's route no more, and really pin the list order (T9 review)   |
+| T10       | `f190fa9`     | feat(transfers): createTransferBooking — the one shared booking-writer (T10)                             |
+| T10 fix 1 | `5e50697`     | test(bookings): pin the price-snapshot union's disjointness (T10 review fix)                             |
+| **T11**   | **`98fbe1c`** | **feat(transfers): checkout.createHoldTransfer — the guest-facing hold (T11)**                           |
 
 **T11's fix round is UNCOMMITTED, in the working tree, interrupted mid-way:**
 
@@ -42,7 +42,7 @@ Nothing in this batch has been pushed. `git log --oneline -3` on `main` currentl
 
 **T10** — `server/src/services/transfers/create-booking.ts`, `createTransferBooking()` — the ONE function both the guest path (T11) and the future staff path (T19) call. The plan's own "other half" of its highest-scrutiny pairing with T7. `takeFleetDateLock` first, no plain read before it (proven by a mutation that reddened both concurrency races). `routeId` XOR `customRouteDescription` enforced as the one writer. A plain (non-discriminated) `z.union` price-snapshot design — a deliberate, reviewed deviation from the brief, verified sound. Review: 0 Critical, 1 Important (fixed — pinned the union's disjointness with a regression test, since that property was true but unasserted), 6 Minor parked (carried forward notes for T11/T19: an empty `customRouteDescription` slips past the XOR; a past-pickup gets no distinguishable error from a too-short-notice one; no direct test of the staff-price floor; a test-teardown leak risk; audit CSV-escaping awareness; minor wording/double-read nits).
 
-**T11** — `checkout.createHoldTransfer`, the thin guest-facing wrapper over T10, plus the FULL guest-facing hold input (absorbing T12's "hold" half — see "Rulings" below) in a new file `shared/src/transfers-checkout.ts` (not `transfers.ts`, to avoid a real import cycle `transfers.ts → booking.ts → checkout.ts → booking.ts`, verified by the reviewer). Beyond the brief: `checkout.createHoldTransfer` now shares ONE combined per-IP rate-limit budget (5 holds/15 min) with tours' `createHold` — verified as a real shared mechanism and judged correct (Ruling 5 caps hold *creations*, product-blind). **Review: 0 Critical, 1 Important, 2 Minor — the fix round for the Important finding was interrupted by the pause and is sitting uncommitted (see above).**
+**T11** — `checkout.createHoldTransfer`, the thin guest-facing wrapper over T10, plus the FULL guest-facing hold input (absorbing T12's "hold" half — see "Rulings" below) in a new file `shared/src/transfers-checkout.ts` (not `transfers.ts`, to avoid a real import cycle `transfers.ts → booking.ts → checkout.ts → booking.ts`, verified by the reviewer). Beyond the brief: `checkout.createHoldTransfer` now shares ONE combined per-IP rate-limit budget (5 holds/15 min) with tours' `createHold` — verified as a real shared mechanism and judged correct (Ruling 5 caps hold _creations_, product-blind). **Review: 0 Critical, 1 Important, 2 Minor — the fix round for the Important finding was interrupted by the pause and is sitting uncommitted (see above).**
 
 ### T11, what's left (the in-progress fix)
 
@@ -52,10 +52,10 @@ A malformed `pickupTime` on a day-use request (e.g. `'8:00'` instead of `'08:00'
 
 **0015 through 0021**, in order — none applied anywhere but local `rg_travel`/`rg_travel_test` (0015–0020 were already owed per the prior handover; **0021 is new this batch**):
 
-| # | What |
-| - | ---- |
+| #         | What                                                                                                                                                                                                                                                                                 |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 0015–0020 | (unchanged from the prior handover — vans.vehicle_type; transfer_routes/prices; bookings product_type/route_id/vehicle_type_requested + CHECK + booking_transfer_details; CHECK correction; drivers.max_transfer_jobs_per_day; booking_transfer_details.route_duration_minutes_used) |
-| **0021** | **`vans.luggage_capacity`** (nullable int, no default) — pre-task 0C |
+| **0021**  | **`vans.luggage_capacity`** (nullable int, no default) — pre-task 0C                                                                                                                                                                                                                 |
 
 **After applying these, re-run `pnpm --filter @rg/server db:seed`** (the insert-only base seed) — unchanged advice from the prior handover, still true.
 

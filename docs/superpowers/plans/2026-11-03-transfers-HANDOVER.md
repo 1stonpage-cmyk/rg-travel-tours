@@ -6,15 +6,15 @@ Plan: `docs/superpowers/plans/2026-10-31-transfers-launch.md`. `main` was `origi
 
 ## Commits, T1–T8
 
-| Task | Commit | Label |
-| ---- | ------ | ----- |
-| T1–T4 | (pushed, pre-session) | Spec correction, vehicle types, transfer routes/pricing schema |
-| T5 | `27574e6` | product_type discriminator, nullable tour_id, booking_transfer_details (T5) |
-| — | `3540d92` | a tour may not carry a route_id; unfail-open the schema test gate (T5 review I1-I3) |
-| T6 | `2b16a34` | fix(bookings): audit every tours-joined query for a null tour_id (T6) |
-| — | `a105df9` | test(bookings): move the T6 surface fixtures off admin-reports' EMPTY_MONTH (I1) — **origin/main HEAD at session start** |
-| **T7** | **`85f8682`** | **feat(transfers): window-aware vehicle+driver capacity for transfers (T7)** |
-| **T8** | **`056f05b`** | **feat(transfers): window-aware dispatch assignment for transfers (T8)** |
+| Task   | Commit                | Label                                                                                                                    |
+| ------ | --------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| T1–T4  | (pushed, pre-session) | Spec correction, vehicle types, transfer routes/pricing schema                                                           |
+| T5     | `27574e6`             | product_type discriminator, nullable tour_id, booking_transfer_details (T5)                                              |
+| —      | `3540d92`             | a tour may not carry a route_id; unfail-open the schema test gate (T5 review I1-I3)                                      |
+| T6     | `2b16a34`             | fix(bookings): audit every tours-joined query for a null tour_id (T6)                                                    |
+| —      | `a105df9`             | test(bookings): move the T6 surface fixtures off admin-reports' EMPTY_MONTH (I1) — **origin/main HEAD at session start** |
+| **T7** | **`85f8682`**         | **feat(transfers): window-aware vehicle+driver capacity for transfers (T7)**                                             |
+| **T8** | **`056f05b`**         | **feat(transfers): window-aware dispatch assignment for transfers (T8)**                                                 |
 
 Nothing has been pushed. `git log --oneline -2` on `main` currently shows `056f05b` then `85f8682`.
 
@@ -42,14 +42,14 @@ Nothing has been pushed. `git log --oneline -2` on `main` currently shows `056f0
 
 **0015 through 0020**, in order — none of these have been applied anywhere but local `rg_travel`/`rg_travel_test`:
 
-| # | What |
-| - | ---- |
-| 0015 | `vans.vehicle_type` |
-| 0016 | `transfer_routes`, `transfer_route_vehicle_prices` |
+| #    | What                                                                                                                   |
+| ---- | ---------------------------------------------------------------------------------------------------------------------- |
+| 0015 | `vans.vehicle_type`                                                                                                    |
+| 0016 | `transfer_routes`, `transfer_route_vehicle_prices`                                                                     |
 | 0017 | `bookings` nullable `tour_id` + `product_type`/`route_id`/`vehicle_type_requested` + CHECK; `booking_transfer_details` |
-| 0018 | `bookings_product_type_shape` CHECK correction (adds the `route_id IS NULL` tour clause) |
-| 0019 | `drivers.max_transfer_jobs_per_day` |
-| 0020 | `booking_transfer_details.route_duration_minutes_used` |
+| 0018 | `bookings_product_type_shape` CHECK correction (adds the `route_id IS NULL` tour clause)                               |
+| 0019 | `drivers.max_transfer_jobs_per_day`                                                                                    |
+| 0020 | `booking_transfer_details.route_duration_minutes_used`                                                                 |
 
 **After applying these to the production/staging server, also re-run `pnpm --filter @rg/server db:seed`** (the insert-only base seed) — the new `transfer_operations` settings row does not exist until that runs, and `readDefaultDriverTransferCap`/`readTransferOperationsSettings` throw "Missing setting" without it, which 500s every tour quote and hold, not just transfer ones.
 
