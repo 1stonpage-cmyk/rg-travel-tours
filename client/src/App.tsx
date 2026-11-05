@@ -37,6 +37,7 @@ import RefundPolicyPage from '@/pages/public/RefundPolicyPage';
 import TermsPage from '@/pages/public/TermsPage';
 import TourDetailPage from '@/pages/public/TourDetailPage';
 import ToursPage from '@/pages/public/ToursPage';
+import TransferBookingPage from '@/pages/public/TransferBookingPage';
 
 /**
  * `BOOKING_PAGE_ROUTE` (`@rg/shared`) is `'/booking/:ref'` — an absolute
@@ -71,6 +72,15 @@ export default function App() {
          * CheckoutPage.tsx's module note.
          */}
         <Route path="checkout/:tourSlug" element={<CheckoutPage />} />
+        {/*
+         * Task T14 (transfers-launch plan) — the transfer booking flow.
+         * Unlike `checkout/:tourSlug`, this page owns a working no-param
+         * state (no URL identity is required to start): the home hero's
+         * mini-flow (HeroSection.tsx) hands off here with
+         * `?productType=...&routeId=...&date=...&pax=...`, but a guest
+         * landing on `/transfer` directly sees the same flow from step 1.
+         */}
+        <Route path="transfer" element={<TransferBookingPage />} />
         {/*
          * The package detail page (Week 7 plan, Task 3) — `/packages/:slug`
          * now renders, which is what lets `resolvePackage` (seo/resolvers.ts)

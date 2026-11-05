@@ -1,6 +1,7 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import type { TransferRoutePublicRow } from '@rg/shared';
 import { describe, expect, it } from 'vitest';
 import HeroSection from '@/components/home/HeroSection';
 import TrustBar from '@/components/home/TrustBar';
@@ -46,6 +47,40 @@ function renderTrustBar() {
   );
 }
 
+const MACTAN: TransferRoutePublicRow = {
+  id: 1,
+  destinationName: 'Mactan-Cebu International Airport',
+  slug: 'mactan-airport',
+  estimatedDurationMinutes: 45,
+  freeCancelHours: 24,
+  inclusionsText: null,
+  exclusionsText: null,
+  prices: {
+    van: { oneWayPriceCentavos: 150_000, dayUsePriceCentavos: 400_000 },
+    suv: { oneWayPriceCentavos: 200_000, dayUsePriceCentavos: 500_000 },
+  },
+};
+
+/** Echoes the current location so a test can assert what a submit actually navigated to. */
+function LocationEcho() {
+  const location = useLocation();
+  return <p data-testid="location">{location.pathname + location.search}</p>;
+}
+
+function renderHeroWithRoutes() {
+  return render(
+    <TrpcProviders>
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route path="/" element={<HeroSection />} />
+          <Route path="/tours" element={<LocationEcho />} />
+          <Route path="/transfer" element={<LocationEcho />} />
+        </Routes>
+      </MemoryRouter>
+    </TrpcProviders>,
+  );
+}
+
 /**
  * The hidden native `<select>` Radix always renders (mirrors every
  * SelectItem as an <option>, aria-hidden, regardless of open state) — lets
@@ -56,9 +91,17 @@ function renderTrustBar() {
  * `scrollIntoView` make that a silent dead end (the click resolves, the
  * popover never actually opens, and the assertion below it stops proving
  * anything while still reporting green).
+ *
+ * Scoped to `form[aria-label="Search tours"]` (Task T14): the hero now
+ * renders a SECOND form, with its own `Select`s and so its own hidden
+ * native `<select>`s, ahead of the tour search in DOM order. An unscoped
+ * `container.querySelector` would silently grab the transfer form's
+ * destination-shaped stand-in instead of the one these tests mean to read.
  */
 function nativeOptionTexts(container: HTMLElement): string[] {
-  const native = container.querySelector('select[aria-hidden="true"]');
+  const native = container.querySelector(
+    'form[aria-label="Search tours"] select[aria-hidden="true"]',
+  );
   if (!native) return [];
   return Array.from(native.querySelectorAll('option')).map((o) => o.textContent ?? '');
 }
@@ -320,5 +363,76 @@ describe('TrustBar — settings-driven', () => {
     expect(await screen.findByText(/dot accredited/i)).toBeInTheDocument();
     expect(screen.queryByText(/guests served/i)).not.toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/\bnull\b/i);
+  });
+});
+
+/**
+ * Task T14, owner decision 8 — transfers lead the hero. A new PRIMARY
+ * "Find a transfer" form sits above the existing tour search, which stays
+ * mounted, visible and fully functional (a tabbed toggle was ruled out —
+ * see HeroSection.tsx's own note — so both forms are always on screen and
+ * these tests assert real navigation, not just field presence).
+ */
+describe('HeroSection — transfers lead the hero (Task T14)', () => {
+  it('still submits the EXISTING tour search to /tours with the typed date and guests — no regression', async () => {
+    mockTrpc({
+      'settings.get': SETTINGS_FIXTURE,
+      'destinations.list': DESTINATIONS_FIXTURE,
+      'transferRoutes.list': [MACTAN],
+    });
+    const user = userEvent.setup();
+    renderHeroWithRoutes();
+
+    const form = await screen.findByRole('form', { name: /^search tours$/i });
+    fireEvent.change(within(form).getByLabelText(/^date$/i), { target: { value: '2026-12-01' } });
+    fireEvent.change(within(form).getByLabelText(/guests/i), { target: { value: '4' } });
+    await user.click(within(form).getByRole('button', { name: /search tours/i }));
+
+    const location = await screen.findByTestId('location');
+    expect(location.textContent).toMatch(/^\/tours\?/);
+    expect(location.textContent).toContain('date=2026-12-01');
+    expect(location.textContent).toContain('guests=4');
+  });
+
+  it('submits the NEW transfer mini-flow to /transfer with the chosen route and typed date/pax', async () => {
+    mockTrpc({
+      'settings.get': SETTINGS_FIXTURE,
+      'destinations.list': DESTINATIONS_FIXTURE,
+      'transferRoutes.list': [MACTAN],
+    });
+    const user = userEvent.setup();
+    renderHeroWithRoutes();
+
+    const form = await screen.findByRole('form', { name: /^find a transfer$/i });
+
+    await user.click(within(form).getByRole('combobox', { name: /route/i }));
+    const listbox = await screen.findByRole('listbox');
+    await user.click(within(listbox).getByRole('option', { name: /mactan/i }));
+
+    fireEvent.change(within(form).getByLabelText(/pickup date/i), {
+      target: { value: '2026-12-10' },
+    });
+    fireEvent.change(within(form).getByLabelText(/^passengers$/i), { target: { value: '3' } });
+
+    await user.click(within(form).getByRole('button', { name: /find my transfer/i }));
+
+    const location = await screen.findByTestId('location');
+    expect(location.textContent).toMatch(/^\/transfer\?/);
+    expect(location.textContent).toContain('productType=transfer_one_way');
+    expect(location.textContent).toContain('routeId=1');
+    expect(location.textContent).toContain('date=2026-12-10');
+    expect(location.textContent).toContain('pax=3');
+  });
+
+  it('keeps BOTH forms mounted and visible at once (demoted, never hidden/unmounted)', async () => {
+    mockTrpc({
+      'settings.get': SETTINGS_FIXTURE,
+      'destinations.list': DESTINATIONS_FIXTURE,
+      'transferRoutes.list': [MACTAN],
+    });
+    renderHero();
+
+    expect(await screen.findByRole('form', { name: /^find a transfer$/i })).toBeInTheDocument();
+    expect(screen.getByRole('form', { name: /^search tours$/i })).toBeInTheDocument();
   });
 });

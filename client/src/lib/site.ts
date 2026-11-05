@@ -24,6 +24,11 @@ export const SITE = {
   legalOperator: 'R&G Travel & Tours',
   tagline: 'Cebu day tours and multi-day packages, booked direct.',
   nav: [
+    // Transfers lead (Task T14, owner decision 8) — ahead of Tours, which
+    // stays fully reachable, unchanged, right behind it. Tours is not
+    // hidden; this is a deliberate demotion, not the T15 `show_tours` switch
+    // (a separate, later task).
+    { label: 'Transfers', href: '/transfer' },
     { label: 'Tours', href: '/tours' },
     { label: 'Packages', href: '/#packages' },
     { label: 'Reviews', href: '/#reviews' },

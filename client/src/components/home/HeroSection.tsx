@@ -1,5 +1,5 @@
-import { HERO_IMAGE_PRELOAD } from '@rg/shared';
-import { Search } from 'lucide-react';
+import { HERO_IMAGE_PRELOAD, TRANSFER_PRODUCT_TYPES, type TransferProductType } from '@rg/shared';
+import { Car, Search } from 'lucide-react';
 import { Fragment, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import CountUpStat from '@/components/common/CountUpStat';
@@ -38,6 +38,19 @@ function HeroCopySkeleton() {
 }
 
 /**
+ * Transfers lead the hero (owner decision 8, Task T14) — the same two labels
+ * `TransferTypePicker` uses on the booking page itself, kept here as a small,
+ * local copy rather than imported: that component is a card-and-radio picker
+ * built for a full booking step, not a fit for this form's compact one-row
+ * grid, and this task may not touch its internals (see HeroSection's own
+ * note below).
+ */
+const TRANSFER_TYPE_LABELS: Record<TransferProductType, string> = {
+  transfer_one_way: 'Airport transfer',
+  transfer_day_use: 'Day use',
+};
+
+/**
  * The hero is above the fold — the first thing every guest sees, often over
  * a slow Philippine mobile connection. So unlike every other settings-driven
  * section, it must NOT gate its photo, overlays or search form behind a
@@ -61,6 +74,21 @@ function HeroCopySkeleton() {
  * Before `settingsQuery` resolves, `min`/`max` are simply omitted (not
  * computed from anything) rather than reintroducing a client clock as a
  * fallback.
+ *
+ * **Transfers lead (Task T14, owner decision 8).** A second, PRIMARY form
+ * sits above this one: a product-type `Select`, a route `Select` fed by
+ * `trpc.transferRoutes.list.useQuery()`, a pickup-date `Input` and a
+ * passengers `Input`, built from the same plain `Select`/`Input` primitives
+ * as the fields below rather than the T13 card-and-radio pickers
+ * (`TransferTypePicker`/`RoutePicker`), which are full-width booking-step
+ * UI and not a fit for this compact one-row grid — and this task may not
+ * touch their internals either way. It is a teaser only: on submit it hands
+ * off to `/transfer` via a query string, never calling `quoteTransfer` or
+ * any pricing procedure itself. The tour search below is UNCHANGED —
+ * same `aria-label="Search tours"` (which `FloatingWhatsApp.tsx` also
+ * selects by, to know when to hide behind this card), same field ids and
+ * labels, same `hero.ctaLabel` copy — only its surrounding treatment is
+ * quieter, so it stays demoted rather than hidden or unmounted.
  */
 export default function HeroSection() {
   const navigate = useNavigate();
@@ -68,8 +96,15 @@ export default function HeroSection() {
   const [date, setDate] = useState('');
   const [guests, setGuests] = useState('2');
 
+  const [transferProductType, setTransferProductType] =
+    useState<TransferProductType>('transfer_one_way');
+  const [transferRouteId, setTransferRouteId] = useState('');
+  const [transferDate, setTransferDate] = useState('');
+  const [transferPax, setTransferPax] = useState('2');
+
   const settingsQuery = trpc.settings.get.useQuery();
   const destinationsQuery = trpc.destinations.list.useQuery();
+  const transferRoutesQuery = trpc.transferRoutes.list.useQuery();
 
   const heroImageRef = useRef<HTMLImageElement>(null);
   useHeroParallax(heroImageRef);
@@ -81,6 +116,16 @@ export default function HeroSection() {
     if (date) params.set('date', date);
     if (guests) params.set('guests', guests);
     navigate(`/tours?${params.toString()}`);
+  }
+
+  function handleTransferSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const params = new URLSearchParams();
+    params.set('productType', transferProductType);
+    if (transferRouteId) params.set('routeId', transferRouteId);
+    if (transferDate) params.set('date', transferDate);
+    if (transferPax) params.set('pax', transferPax);
+    navigate(`/transfer?${params.toString()}`);
   }
 
   return (
@@ -195,18 +240,120 @@ export default function HeroSection() {
           </QueryBoundary>
         </div>
 
-        <form
-          onSubmit={handleSubmit}
-          className="bg-background/95 motion-rise mt-10 grid gap-4 rounded-2xl p-4 shadow-xl backdrop-blur [animation-delay:320ms] sm:p-6 lg:grid-cols-[1.4fr_1fr_0.8fr_auto]"
-          aria-label="Search tours"
-        >
-          <div className="space-y-1.5">
-            <Label htmlFor="hero-destination">Destination</Label>
-            <Select value={destination} onValueChange={setDestination}>
-              <SelectTrigger id="hero-destination" className="tap-target w-full">
-                <SelectValue placeholder="Anywhere in Cebu" />
-              </SelectTrigger>
-              {/* Handled by hand, not QueryBoundary: a <SelectContent> is a
+        <div className="motion-rise mt-10 [animation-delay:320ms]">
+          {/*
+           * PRIMARY — the transfer mini-flow (Task T14, owner decision 8).
+           * A teaser only: it hands off to `/transfer` via a query string
+           * and never prices anything itself (see the component comment).
+           */}
+          <form
+            onSubmit={handleTransferSubmit}
+            className="bg-background grid gap-4 rounded-2xl p-4 shadow-xl sm:p-6 lg:grid-cols-[1fr_1.3fr_0.9fr_0.7fr_auto]"
+            aria-label="Find a transfer"
+          >
+            <div className="space-y-1.5">
+              <Label htmlFor="hero-transfer-type">Transfer type</Label>
+              <Select
+                value={transferProductType}
+                onValueChange={(value) => setTransferProductType(value as TransferProductType)}
+              >
+                <SelectTrigger id="hero-transfer-type" className="tap-target w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {TRANSFER_PRODUCT_TYPES.map((type) => (
+                    <SelectItem key={type} value={type}>
+                      {TRANSFER_TYPE_LABELS[type]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="hero-transfer-route">Route</Label>
+              {/* Same loading/empty handling as the destination Select
+                  below, by hand rather than QueryBoundary, for the same
+                  reason — a Radix listbox must never render a "Try again"
+                  button. */}
+              <Select value={transferRouteId} onValueChange={setTransferRouteId}>
+                <SelectTrigger id="hero-transfer-route" className="tap-target w-full">
+                  <SelectValue placeholder="Choose a route" />
+                </SelectTrigger>
+                <SelectContent>
+                  {transferRoutesQuery.isPending && (
+                    <SelectItem value="__loading" disabled>
+                      Loading routes…
+                    </SelectItem>
+                  )}
+                  {transferRoutesQuery.data?.map((route) => (
+                    <SelectItem key={route.id} value={String(route.id)}>
+                      {route.destinationName}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="hero-transfer-date">Pickup date</Label>
+              <Input
+                id="hero-transfer-date"
+                type="date"
+                min={settingsQuery.data?.bookingWindow.earliest}
+                max={settingsQuery.data?.bookingWindow.latest}
+                value={transferDate}
+                onChange={(e) => setTransferDate(e.target.value)}
+                className="tap-target"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="hero-transfer-pax">Passengers</Label>
+              <Input
+                id="hero-transfer-pax"
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={30}
+                value={transferPax}
+                onChange={(e) => setTransferPax(e.target.value)}
+                className="tap-target"
+              />
+            </div>
+
+            <div className="flex items-end">
+              <Button type="submit" size="lg" className="tap-target w-full lg:w-auto">
+                <Car className="size-4" aria-hidden="true" />
+                Find my transfer
+              </Button>
+            </div>
+          </form>
+
+          {/*
+           * SECONDARY — the tour search, demoted (lower contrast surface, no
+           * shadow, a smaller outline button) but otherwise byte-for-byte
+           * the form that already existed: same aria-label, ids, labels and
+           * `hero.ctaLabel` copy, mounted and visible at every viewport. A
+           * tabbed toggle was ruled out deliberately — it would unmount or
+           * `hidden` this form on first render, which breaks both the
+           * existing test suite (`getByRole('form', {name: /search
+           * tours/i})` et al.) and `FloatingWhatsApp.tsx`'s own
+           * `form[aria-label="Search tours"]` selector.
+           */}
+          <p className="text-brand-blue-100 mt-5 text-sm">Looking for a guided day tour instead?</p>
+          <form
+            onSubmit={handleSubmit}
+            className="bg-background/80 mt-2 grid gap-3 rounded-xl p-3 shadow-sm sm:p-4 lg:grid-cols-[1.4fr_1fr_0.8fr_auto]"
+            aria-label="Search tours"
+          >
+            <div className="space-y-1.5">
+              <Label htmlFor="hero-destination">Destination</Label>
+              <Select value={destination} onValueChange={setDestination}>
+                <SelectTrigger id="hero-destination" className="tap-target w-full">
+                  <SelectValue placeholder="Anywhere in Cebu" />
+                </SelectTrigger>
+                {/* Handled by hand, not QueryBoundary: a <SelectContent> is a
                   Radix listbox (role="listbox"), and QueryBoundary's error
                   state renders a <button> ("Try again") — a control that
                   must never appear inside a listbox. On failure this
@@ -214,55 +361,60 @@ export default function HeroSection() {
                   the form stays usable and a destination-less search is a
                   valid search. The trigger itself is never gated — it's
                   outside this block entirely. */}
-              <SelectContent>
-                {destinationsQuery.isPending && (
-                  <SelectItem value="__loading" disabled>
-                    Loading destinations…
-                  </SelectItem>
-                )}
-                {destinationsQuery.data?.map((d) => (
-                  <SelectItem key={d.slug} value={d.slug}>
-                    {d.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+                <SelectContent>
+                  {destinationsQuery.isPending && (
+                    <SelectItem value="__loading" disabled>
+                      Loading destinations…
+                    </SelectItem>
+                  )}
+                  {destinationsQuery.data?.map((d) => (
+                    <SelectItem key={d.slug} value={d.slug}>
+                      {d.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="hero-date">Date</Label>
-            <Input
-              id="hero-date"
-              type="date"
-              min={settingsQuery.data?.bookingWindow.earliest}
-              max={settingsQuery.data?.bookingWindow.latest}
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              className="tap-target"
-            />
-          </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="hero-date">Date</Label>
+              <Input
+                id="hero-date"
+                type="date"
+                min={settingsQuery.data?.bookingWindow.earliest}
+                max={settingsQuery.data?.bookingWindow.latest}
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="tap-target"
+              />
+            </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="hero-guests">Guests</Label>
-            <Input
-              id="hero-guests"
-              type="number"
-              inputMode="numeric"
-              min={1}
-              max={12}
-              value={guests}
-              onChange={(e) => setGuests(e.target.value)}
-              className="tap-target"
-            />
-          </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="hero-guests">Guests</Label>
+              <Input
+                id="hero-guests"
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={12}
+                value={guests}
+                onChange={(e) => setGuests(e.target.value)}
+                className="tap-target"
+              />
+            </div>
 
-          <div className="flex items-end">
-            <Button type="submit" size="lg" className="tap-target w-full lg:w-auto">
-              <Search className="size-4" aria-hidden="true" />
-              {settingsQuery.data?.hero.ctaLabel ?? 'Search tours'}
-            </Button>
-          </div>
-        </form>
+            <div className="flex items-end">
+              <Button
+                type="submit"
+                variant="outline"
+                className="tap-target bg-background w-full lg:w-auto"
+              >
+                <Search className="size-4" aria-hidden="true" />
+                {settingsQuery.data?.hero.ctaLabel ?? 'Search tours'}
+              </Button>
+            </div>
+          </form>
+        </div>
       </div>
     </section>
   );

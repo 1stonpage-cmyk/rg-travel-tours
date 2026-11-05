@@ -117,8 +117,15 @@ export default function SiteHeader() {
             <Phone className="size-4" aria-hidden="true" />
             {SITE.contact.phone.display}
           </a>
+          {/*
+           * Transfers lead (Task T14, owner decision 8): the primary header
+           * CTA now points at the transfer booking flow. Tours stays fully
+           * reachable via the "Tours" nav link just above — an intentional
+           * demotion from having its own CTA button, not an oversight, and
+           * not the T15 `show_tours` switch.
+           */}
           <Button asChild className="tap-target hidden sm:inline-flex">
-            <Link to="/tours">Book a tour</Link>
+            <Link to="/transfer">Book a transfer</Link>
           </Button>
           <Button
             variant="outline"
@@ -150,8 +157,8 @@ export default function SiteHeader() {
             ))}
             <li className="py-2">
               <Button asChild className="tap-target w-full">
-                <Link to="/tours" onClick={() => setOpen(false)}>
-                  Book a tour
+                <Link to="/transfer" onClick={() => setOpen(false)}>
+                  Book a transfer
                 </Link>
               </Button>
             </li>
