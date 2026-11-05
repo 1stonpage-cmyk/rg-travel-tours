@@ -61,9 +61,15 @@ export const APP_SURFACE_TITLES = {
    * (`/checkout` holds a lead guest's name, email and phone; `/booking`
    * looks a stay up by reference). "My booking" is already `/portal`'s
    * title, hence "Booking status" rather than a second "My booking".
+   *
+   * QA-1 (same BUG-116 pattern): `/transfer` (Task T14, transfers-launch
+   * plan) is the identical shape — a real, public, unauthenticated SPA route
+   * with no database-backed content — and was missed when it was added, so
+   * it 404'd the same way. Same fix, same reasoning.
    */
   '/checkout': 'Checkout',
   '/booking': 'Booking status',
+  '/transfer': 'Book a transfer',
 } as const;
 
 /**

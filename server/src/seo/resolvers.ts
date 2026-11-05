@@ -421,6 +421,16 @@ const APP_SURFACE_COPY: Record<
     title: `${APP_SURFACE_TITLES['/booking']} | ${BRAND}`,
     description: `Track your ${BRAND} booking.`,
   },
+  /*
+   * QA-1 (same BUG-116 pattern): `/transfer` (Task T14) is a real public SPA
+   * route — a guest's own flow, no auth, no database-backed content — that
+   * was never added here either, so it 404'd the same way `/checkout` and
+   * `/booking` did.
+   */
+  '/transfer': {
+    title: `${APP_SURFACE_TITLES['/transfer']} | ${BRAND}`,
+    description: `Book a private van or SUV transfer with ${BRAND}.`,
+  },
 };
 
 /**

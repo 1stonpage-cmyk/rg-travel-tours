@@ -256,6 +256,9 @@ describe('app surfaces (pure)', () => {
     ['/checkout/oslob-whale-shark-tumalog-falls', 'Checkout'],
     ['/booking', 'Booking status'],
     ['/booking/RG-7KQ4M9', 'Booking status'],
+    // QA-1 (BUG-116 pattern): /transfer is a real public SPA route (T14)
+    // that had no entry here either, so it 404'd the same way.
+    ['/transfer', 'Book a transfer'],
   ] as const;
 
   it.each(cases)('%s is 200, noindex and titled as its own place', (path, titleStart) => {
@@ -295,6 +298,7 @@ describe('app surfaces (pure)', () => {
       '/checkouts',
       '/bookingfoo',
       '/bookings',
+      '/transferable',
     ]) {
       expect(appSurfaceMeta(path), path).toBeNull();
     }
