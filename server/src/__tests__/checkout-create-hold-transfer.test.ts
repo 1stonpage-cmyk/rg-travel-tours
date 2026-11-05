@@ -495,6 +495,11 @@ describeWithDb('checkout.createHoldTransfer', () => {
       messagesAt(error, 'dayUseEndTime'),
       'a malformed pickup time must not accuse the end time of anything',
     ).toEqual([]);
+    // Belt-and-suspenders over the two path-scoped checks above: pins the
+    // WHOLE issue list to pickupTime alone, so a spurious issue on some third
+    // path would not slip past two assertions that only ever look where they
+    // expect trouble.
+    expect(zodCause(error).issues.map((issue) => issue.path.join('.'))).toEqual(['pickupTime']);
   });
 
   it('refuses a missing drop-off address — required, unlike a tour pickup', async () => {
