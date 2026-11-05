@@ -126,12 +126,15 @@ async function writtenRowCounts() {
 async function makeRoute(
   opts: {
     isActive?: boolean;
+    destinationActive?: boolean;
     vehicleTypes?: VehicleType[];
     oneWayPriceCentavos?: number;
   } = {},
 ) {
   const slug = `__t11__${unique()}`;
-  const [destination] = await getDb().insert(destinations).values({ name: slug, slug });
+  const [destination] = await getDb()
+    .insert(destinations)
+    .values({ name: slug, slug, isActive: opts.destinationActive ?? true });
   created.destinationIds.push(destination.insertId);
 
   const [route] = await getDb()
@@ -679,6 +682,30 @@ describeWithDb('checkout.createHoldTransfer', () => {
       expected,
     );
     expect(await refusal(holdInput({ routeId: 2_000_000_000 }))).toMatchObject(expected);
+  });
+
+  /**
+   * Task 0D (owner decision 2026-11-06 #1): a route whose DESTINATION is
+   * retired is not sellable even while the route's own flag is still active —
+   * `vehiclePriceForRouteAndType` joins to `destinations` and checks both
+   * flags, so this hold must be refused with the same sentence the
+   * route-retired case above gets (deliberately non-distinguishing — see this
+   * file's header and the T9 review finding it cites: naming WHY would make a
+   * numeric id an enumeration oracle for which destinations exist).
+   */
+  it('refuses a route whose destination is retired, even though the route itself is active', async () => {
+    await makeFleet();
+    const inactiveDestination = await makeRoute({ destinationActive: false });
+    const before = await writtenRowCounts();
+
+    expect(await refusal(holdInput({ routeId: inactiveDestination }))).toMatchObject({
+      code: 'NOT_FOUND',
+      message: 'That route is no longer available for that vehicle.',
+    });
+    expect(
+      await writtenRowCounts(),
+      'a hold refused for a retired destination must leave no slot, booking or audit row',
+    ).toEqual(before);
   });
 
   /**

@@ -47,6 +47,7 @@ const AIRPORT_ROUTE = {
   id: 1,
   destinationId: 10,
   destinationName: 'Mactan Airport',
+  destinationIsActive: true,
   slug: 'mactan-airport',
   isActive: true,
   sortOrder: 0,
@@ -64,6 +65,7 @@ const OSLOB_ROUTE = {
   id: 2,
   destinationId: 20,
   destinationName: 'Oslob',
+  destinationIsActive: true,
   slug: 'oslob-whale-sharks',
   isActive: false,
   sortOrder: 1,
@@ -74,6 +76,30 @@ const OSLOB_ROUTE = {
   prices: {
     van: { oneWayPriceCentavos: 250_000, dayUsePriceCentavos: 500_000 },
     suv: { oneWayPriceCentavos: 300_000, dayUsePriceCentavos: 600_000 },
+  },
+};
+
+/**
+ * Task 0D (owner decision 2026-11-06 #1): a route whose OWN flag is still
+ * Active but whose destination was retired separately — the case the
+ * amber "Destination inactive" label exists to surface, since the existing
+ * Active/Inactive badge alone would say this route is fine to sell.
+ */
+const CEBU_CITY_ROUTE = {
+  id: 3,
+  destinationId: 30,
+  destinationName: 'Cebu City',
+  destinationIsActive: false,
+  slug: 'cebu-city',
+  isActive: true,
+  sortOrder: 2,
+  estimatedDurationMinutes: 60,
+  freeCancelHours: 24,
+  inclusionsText: null,
+  exclusionsText: null,
+  prices: {
+    van: { oneWayPriceCentavos: 120_000, dayUsePriceCentavos: 300_000 },
+    suv: { oneWayPriceCentavos: 150_000, dayUsePriceCentavos: 350_000 },
   },
 };
 
@@ -199,6 +225,31 @@ describe('AdminTransferRoutesPage', () => {
     // The bug this guards against: tRPC's own default `ZodError` rendering
     // is `JSON.stringify(issues, null, 2)`, which reads like `[{"code":`.
     expect(screen.queryByText(/"code":/)).toBeNull();
+  });
+
+  /**
+   * Task 0D (owner decision 2026-11-06 #1). The label is additional to the
+   * existing Active/Inactive badge, not a replacement for it: Cebu City's
+   * own row still says "Active" (its route flag is true) AND carries the
+   * amber warning, because its DESTINATION is what was retired. Neither of
+   * the other two routes — whose destinations are both still active — shows
+   * it, including Oslob, whose own route is Inactive for an unrelated
+   * reason.
+   */
+  it('shows an amber "Destination inactive" label only for a route whose destination is retired', async () => {
+    renderPage({ 'admin.transferRoutes.list': [AIRPORT_ROUTE, OSLOB_ROUTE, CEBU_CITY_ROUTE] });
+    await screen.findAllByText('Mactan Airport');
+    await screen.findAllByText('Cebu City');
+
+    const labels = screen.getAllByText('Destination inactive — hidden from guests');
+    // One per surface (the phone card and the table), never zero and never
+    // duplicated across the other two routes.
+    expect(labels.length).toBe(2);
+
+    const cebuCityStates = screen
+      .getAllByText(/^(Active|Inactive)$/)
+      .map((node) => node.textContent);
+    expect(cebuCityStates).toContain('Active');
   });
 
   it('shows the denied state, not a blank screen, when the role is refused', async () => {

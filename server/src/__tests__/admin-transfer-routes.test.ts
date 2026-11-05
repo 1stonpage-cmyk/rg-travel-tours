@@ -275,6 +275,36 @@ describeWithDb('admin.transferRoutes', () => {
   });
 
   /**
+   * Task 0D (owner decision 2026-11-06 #1): the admin list already shows an
+   * inactive-destination route (it never filtered on `destinations.is_active`
+   * — only `setActive` touches a route's OWN flag), but until now the query
+   * did not select `destinations.is_active` at all, so the client had no way
+   * to tell that case apart from a plain Active route. This pins both halves:
+   * a normal route reads `true`, and a route whose destination was retired
+   * AFTER the route was created reads `false` — independent of the route's
+   * own `isActive`, which stays `true` throughout.
+   */
+  it('surfaces destinationIsActive on each row, false only once the destination is retired', async () => {
+    const stillActiveDestination = await makeDestination();
+    const { id: stillActiveRouteId } = await createRoute({
+      destinationId: stillActiveDestination,
+    });
+
+    const retiredDestination = await makeDestination();
+    const { id: retiredDestRouteId } = await createRoute({ destinationId: retiredDestination });
+    await getDb()
+      .update(destinations)
+      .set({ isActive: false })
+      .where(eq(destinations.id, retiredDestination));
+
+    const rows = await ownerApi().admin.transferRoutes.list();
+    const stillActiveRow = rows.find((r) => r.id === stillActiveRouteId);
+    const retiredDestRow = rows.find((r) => r.id === retiredDestRouteId);
+    expect(stillActiveRow).toMatchObject({ isActive: true, destinationIsActive: true });
+    expect(retiredDestRow).toMatchObject({ isActive: true, destinationIsActive: false });
+  });
+
+  /**
    * T4's M3 addition: `sortOrder` was a column `list` already ordered by,
    * but nothing on `create`/`update` could set it, so every route sorted at
    * the same value. This proves the field actually reaches the column and

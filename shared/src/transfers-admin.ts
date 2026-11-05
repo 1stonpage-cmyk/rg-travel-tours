@@ -233,6 +233,16 @@ export interface TransferRouteAdminRow {
   id: number;
   destinationId: number;
   destinationName: string;
+  /**
+   * `destinations.is_active` for this route's destination — denormalised
+   * alongside `destinationName` for the same reason: the list screen needs to
+   * flag "this route's destination is retired, so the route is not sellable
+   * even though it shows Active here" without a second lookup per row.
+   * Independent of this row's own `isActive` — a route can be active while
+   * its destination is not, which is exactly the case this field exists to
+   * surface (owner decision 2026-11-06 #1).
+   */
+  destinationIsActive: boolean;
   slug: string;
   isActive: boolean;
   sortOrder: number;

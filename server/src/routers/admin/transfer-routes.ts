@@ -91,6 +91,13 @@ export const adminTransferRoutesRouter = router({
         id: transferRoutes.id,
         destinationId: transferRoutes.destinationId,
         destinationName: destinations.name,
+        // Owner decision 2026-11-06 #1: the admin list already shows inactive
+        // ROUTES without filtering on `destinations.is_active`, so it can
+        // already hold a route whose destination is retired. This is what
+        // lets the client tell that case apart from a plain Active route —
+        // forwarded below through the `...row` spread, same as every other
+        // selected column.
+        destinationIsActive: destinations.isActive,
         slug: transferRoutes.slug,
         isActive: transferRoutes.isActive,
         sortOrder: transferRoutes.sortOrder,

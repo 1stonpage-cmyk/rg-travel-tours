@@ -93,6 +93,21 @@ const STATUS_BADGE_CLASS: Record<'Active' | 'Inactive', string> = {
   Inactive: 'border-0 bg-slate-100 text-brand-ink',
 };
 
+/**
+ * Owner decision 2026-11-06 #1: a route whose destination is retired is not
+ * sellable — hidden from the public list, refused at quote and at hold — even
+ * while the route's OWN Active/Inactive badge above still says Active. Amber,
+ * never red (CLAUDE.md), matching `AssignPanel.tsx`'s existing warning styling.
+ *
+ * A plain `<p>` rather than `<Badge>`: `Badge`'s base class is
+ * `whitespace-nowrap` and `w-fit`, which is fine for a one-word status but
+ * would force this sentence onto one unbroken line and overflow a 360px
+ * phone card — this needs to wrap instead.
+ */
+const DESTINATION_INACTIVE_CLASS =
+  'mt-2 rounded-[8px] border border-amber-300 bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900';
+const DESTINATION_INACTIVE_LABEL = 'Destination inactive — hidden from guests';
+
 /** The server's own sentence for any refusal under 500; a calm fallback otherwise. */
 function describeTransferRouteError(error: unknown, fallback: string): string {
   /*
@@ -702,6 +717,14 @@ function TransferRoutesAdmin() {
                     {statusLabel(route.isActive)}
                   </Badge>
                 </div>
+                {route.destinationIsActive === false ? (
+                  <p
+                    data-testid="destination-inactive-label"
+                    className={DESTINATION_INACTIVE_CLASS}
+                  >
+                    {DESTINATION_INACTIVE_LABEL}
+                  </p>
+                ) : null}
                 <p className="text-brand-error mt-2 text-xs">
                   {durationWords(route.estimatedDurationMinutes)}
                 </p>
@@ -761,6 +784,14 @@ function TransferRoutesAdmin() {
                       <Badge className={STATUS_BADGE_CLASS[statusLabel(route.isActive)]}>
                         {statusLabel(route.isActive)}
                       </Badge>
+                      {route.destinationIsActive === false ? (
+                        <p
+                          data-testid="destination-inactive-label"
+                          className={DESTINATION_INACTIVE_CLASS}
+                        >
+                          {DESTINATION_INACTIVE_LABEL}
+                        </p>
+                      ) : null}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <RouteActions route={route} onEdit={() => setEditingId(route.id)} />
