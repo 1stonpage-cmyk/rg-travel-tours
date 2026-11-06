@@ -783,6 +783,34 @@ All money columns are `INT` centavos. All timestamps are UTC `DATETIME`.
   - Privacy notice page.
   - Admin-only access to personal data.
 
+### Staff password management — owner decision, given directly by the owner 2026-11-06
+
+**Plaintext staff passwords must not live in `.env`.** `OWNER_EMAIL` / `OWNER_PASSWORD` are a
+**one-time bootstrap only**: they create the first owner account when no owner exists, and nothing
+else. They never overwrite an existing account's password, and once an owner exists they are dead
+configuration that should be deleted from `.env` — the server logs one startup warning while they
+are still set.
+
+From that point on, **staff manage passwords inside the app**, through three doors and no others:
+
+1. **Change your own password** (`staffAuth.changePassword`) — any signed-in staff member, for
+   their own account only. Verifies the current password first, so a borrowed session cannot set a
+   new one; ends that user's _other_ sessions and keeps the current one.
+2. **The owner resets someone else's** (`admin.staffUsers.resetPassword`, `staffAccounts` area, so
+   owner-only) — issues a temporary password, sets `must_change_password`, and ends **all** of that
+   user's sessions. The owner cannot use it on themselves; door 1 is the right one for that.
+3. **Forgot password** (self-service, email) — a single-use token valid 30 minutes, stored only as
+   a SHA-256 hash, emailed as a link. The request response is identical whether or not the account
+   exists. Completing it ends **all** that user's sessions and invalidates every other outstanding
+   token for them.
+
+A fourth door exists for local development only and is not reachable over HTTP:
+`pnpm --filter @rg/server dev:reset-password`, an interactive CLI that refuses to run against
+production. It exists so a locked-out developer never needs to put a password back in `.env`.
+
+Every one of these writes an `audit_log` row and **none of them records the password, the hash, or
+the reset token** — not in the row, not in an error message, not in a log line.
+
 ---
 
 ## 13. Build plan — 8 weeks
