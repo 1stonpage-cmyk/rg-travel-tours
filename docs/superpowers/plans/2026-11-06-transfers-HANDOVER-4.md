@@ -6,11 +6,11 @@ Plan: `docs/superpowers/plans/2026-10-31-transfers-launch.md`. `main` was at `04
 
 ## Commits, this batch
 
-| Task | Commit | Label |
-| --- | --- | --- |
-| T15 | `f97d4de` | feat(settings): show_tours — a second, independent visibility gate for tours (T15) |
-| T15 fix | `e646ad7` | docs(settings): finish the eighteen->nineteen key count in admin-settings.test.ts (T15) |
-| T16 | `3ce25ac` | feat(settings,drivers,public): show_tours toggle, driver transfer-job override, public hide/show (T16) |
+| Task    | Commit    | Label                                                                                                  |
+| ------- | --------- | ------------------------------------------------------------------------------------------------------ |
+| T15     | `f97d4de` | feat(settings): show_tours — a second, independent visibility gate for tours (T15)                     |
+| T15 fix | `e646ad7` | docs(settings): finish the eighteen->nineteen key count in admin-settings.test.ts (T15)                |
+| T16     | `3ce25ac` | feat(settings,drivers,public): show_tours toggle, driver transfer-job override, public hide/show (T16) |
 
 `git log --oneline -3` on `main` currently shows `3ce25ac`, `e646ad7`, `f97d4de`, then `0485edc` (prior batch's head). **Nothing in this batch has been pushed.**
 
@@ -50,18 +50,18 @@ T15 reported **NEEDS_CONTEXT**, not DONE, correctly: one pre-existing client gua
 - **(T15, parked Important, same item as Open Owner Question 1 above)** `checkout.availability` and `reviews.forTour` both independently resolve a tour slug and bypass `show_tours` — see question 1 for the full detail and the recommended fix shape.
 - **(T16, parked Important, see Open Owner Question 3 above)** The layout-shift cost of flipping `show_tours` ON, given every gate but the hero form defaults to hidden-while-pending.
 - **(T16, parked Important, documentation-only)** `performance-markup.test.tsx`'s `EXPECTED_HOME_IMAGE_COUNT = 16` has TWO undisclosed couplings to `show_tours`, not one: the mount-ordering effect the implementer's own report named, and a second, independent dependency on the shared client fixture's `showTours: true` default. Same root cause, same fix recommendation (fix the test's wait strategy, don't touch the gate) if either one ever actually breaks — it hasn't, this is a tripwire note for later, not a current failure.
-- **(T16, parked Minor, severity-corrected by the reviewer)** A driver whose phone is stored in `09...` form would have it silently rewritten to `+63...` form on ANY unrelated edit, because the patch-diff logic compares a normalized value against a possibly-unnormalized stored one. Confirmed real as a *mechanism*, but the reviewer traced every current write path (`create`, `update`, the seed data, the migrations) and found **no reachable way a `drivers.phone` row is in `09...` form today** — so this cannot actually fire against live data right now. It is a latent landmine for a future bypass of `driverInputSchema`, not an active bug. Worth a one-line entry in `docs/BUGS_LOG.md` so it isn't rediscovered from scratch; not worth chasing a live repro that doesn't exist.
+- **(T16, parked Minor, severity-corrected by the reviewer)** A driver whose phone is stored in `09...` form would have it silently rewritten to `+63...` form on ANY unrelated edit, because the patch-diff logic compares a normalized value against a possibly-unnormalized stored one. Confirmed real as a _mechanism_, but the reviewer traced every current write path (`create`, `update`, the seed data, the migrations) and found **no reachable way a `drivers.phone` row is in `09...` form today** — so this cannot actually fire against live data right now. It is a latent landmine for a future bypass of `driverInputSchema`, not an active bug. Worth a one-line entry in `docs/BUGS_LOG.md` so it isn't rediscovered from scratch; not worth chasing a live repro that doesn't exist.
 - **(T16, confirmed non-issue)** `tours.bySlug`'s `NOT_FOUND` takes ~1s to surface client-side, due to the global query-client `retry: 1` default retrying once before settling — pre-existing, not introduced this batch, not specific to this query.
 
 ## Migrations owed on the server
 
 **0015 through 0022, in order** — 0015–0021 carried unchanged from Handover 3 (unrelated to this batch; neither T15 nor T16 added a migration — both are settings/router/UI-only changes, confirmed by this batch's own research before each task started). **0022 is new since Handover 3**, but it is also unrelated to transfers — it belongs to the staff-password-reset work (`1e50161`, commit message "feat(auth): self-service staff password reset, §12's third door (1C)") that landed on `main` between Batch 4a and this batch:
 
-| # | What |
-| --- | --- |
+| #         | What                                                                                                                                                                                                                                           |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 0015–0020 | vans.vehicle_type; transfer_routes/prices; bookings product_type/route_id/vehicle_type_requested + CHECK + booking_transfer_details; CHECK correction; drivers.max_transfer_jobs_per_day; booking_transfer_details.route_duration_minutes_used |
-| 0021 | vans.luggage_capacity (nullable int, no default) |
-| 0022 | password_reset_tokens table (unrelated to transfers — staff password-reset feature, commit `1e50161`) |
+| 0021      | vans.luggage_capacity (nullable int, no default)                                                                                                                                                                                               |
+| 0022      | password_reset_tokens table (unrelated to transfers — staff password-reset feature, commit `1e50161`)                                                                                                                                          |
 
 **After applying these, re-run `pnpm --filter @rg/server db:seed` (the insert-only base seed).** This step is load-bearing for this batch specifically, not boilerplate: `show_tours` is a brand-new settings row, and until that command runs on a given database, `readSettings()`'s T15 carve-out silently resolves it to the fallback default (`false`, tours hidden) rather than 500ing — correct, fail-safe behavior, but worth knowing it's the carve-out doing the work in that window, not an already-seeded row.
 
