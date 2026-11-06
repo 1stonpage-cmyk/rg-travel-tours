@@ -98,6 +98,61 @@ describe('dev:reset-password hidden prompt', () => {
     expect(drawn).toBeLessThan(TYPED.length);
   });
 
+  /*
+   * Ctrl-C used to be a silent hang: readline closed the interface, so
+   * `rl.question`'s callback never fired and the promise stayed pending, with
+   * the mysql pool's idle sockets holding the event loop open. The M2 warning
+   * copy tells the developer to press this key, so it has to work.
+   *
+   * 0x03 (ETX) is what the tty delivers for Ctrl-C in raw mode, and readline's
+   * own keypress parser turns it into the `SIGINT` event — no process signal
+   * is involved, which is what makes this deterministic over a PassThrough.
+   */
+  const CTRL_C = '';
+
+  it('Ctrl-C at a hidden prompt rejects instead of hanging', async () => {
+    const { input, output, captured } = fakeTerminal();
+    const prompt = openPrompt(input, output);
+
+    const answer = prompt.askHidden(LABEL);
+    input.write(`${TYPED.slice(0, 6)}${CTRL_C}`);
+
+    await expect(answer).rejects.toThrow(/Cancelled/);
+    prompt.close();
+    // Half a password had been typed when the key was pressed.
+    expect(captured()).not.toContain(TYPED.slice(0, 6));
+  });
+
+  it('Ctrl-C at the VISIBLE email prompt rejects too', async () => {
+    const { input, output } = fakeTerminal();
+    const prompt = openPrompt(input, output);
+
+    const answer = prompt.ask('Staff email: ');
+    input.write(CTRL_C);
+
+    await expect(answer).rejects.toThrow(/Cancelled/);
+    prompt.close();
+  });
+
+  it('keeps no history, so Up-arrow cannot "confirm" the first password', async () => {
+    const { input, output, captured } = fakeTerminal();
+    const prompt = openPrompt(input, output);
+
+    const first = prompt.askHidden(LABEL);
+    input.write(`${TYPED}\n`);
+    expect(await first).toBe(TYPED);
+
+    // `ESC[A` is Up. With history disabled it recalls nothing, so the line is
+    // still empty and Enter answers '' — the confirmation cannot be satisfied
+    // without retyping, which is the entire point of asking twice.
+    const second = prompt.askHidden('Confirm new password (not shown): ');
+    input.write('[A\n');
+    expect(await second).toBe('');
+    prompt.close();
+
+    expect(captured()).not.toContain(TYPED);
+  });
+
   it('the VISIBLE prompt still echoes — the mute is scoped to askHidden', async () => {
     const { input, output, captured } = fakeTerminal();
     const prompt = openPrompt(input, output);

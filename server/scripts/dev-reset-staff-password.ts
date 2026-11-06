@@ -149,7 +149,19 @@ export function refuseReason(environment: RunEnvironment): string | null {
  * top-level handler prints exactly the same single line and exits 1.
  */
 function refuse(reason: string): never {
-  throw new Error(reason);
+  throw refusal(reason);
+}
+
+/**
+ * The error `refuse()` throws, as a value.
+ *
+ * The SIGINT handler needs to REJECT a pending prompt rather than throw —
+ * throwing inside an event listener is an uncaught exception and a stack
+ * trace, not a one-line refusal — so it rejects with this, and lands in the
+ * same top-level handler by the same path.
+ */
+function refusal(reason: string): Error {
+  return new Error(reason);
 }
 
 export interface Prompt {
@@ -189,7 +201,17 @@ export function openPrompt(
   input: NodeJS.ReadableStream = process.stdin,
   output: NodeJS.WritableStream = process.stdout,
 ): Prompt {
-  const rl: Interface = createInterface({ input, output, terminal: true });
+  /*
+   * `historySize: 0` disables readline's in-memory line history, and it is
+   * load-bearing rather than tidiness. `rl.question` adds every answered line
+   * to that history, so at the "Confirm new password" prompt an Up-arrow
+   * recalled the first password and "confirmed" it without it being retyped —
+   * which is exactly the mistake asking twice exists to catch. (It never
+   * leaked: a history recall is a full-line refresh, and the masked writer
+   * answers those with the label alone.) This is the documented public option
+   * for it; nothing in this script wants history.
+   */
+  const rl: Interface = createInterface({ input, output, terminal: true, historySize: 0 });
 
   const echo = rl as unknown as { _writeToOutput: (chunk: string) => void };
   const write = echo._writeToOutput.bind(rl);
@@ -216,22 +238,60 @@ export function openPrompt(
     write(chunk.startsWith(maskWith) ? maskWith : '');
   };
 
+  /**
+   * The pending prompt's `reject`, so SIGINT can cancel it.
+   *
+   * Without this, Ctrl-C was a silent HANG: readline closes the interface and
+   * `rl.question`'s callback is then never called, so the promise stayed
+   * pending forever — and by that point the mysql pool is open, whose idle
+   * sockets hold the event loop up, so the process just sat there until a
+   * second Ctrl-C. Nothing was ever written and nothing echoed, but the M2
+   * warning copy tells the developer to press this exact key.
+   */
+  let cancelPending: ((error: Error) => void) | null = null;
+
   const ask = (question: string) =>
-    new Promise<string>((resolve) => {
-      rl.question(question, resolve);
+    new Promise<string>((resolve, reject) => {
+      cancelPending = reject;
+      rl.question(question, (answer) => {
+        cancelPending = null;
+        resolve(answer);
+      });
     });
+
+  /*
+   * With a SIGINT listener attached, readline emits this instead of closing
+   * itself, so the cancel is ours to define. `rl.close()` here also restores
+   * the terminal out of raw mode; `main`'s `finally` closes it again
+   * (harmless, a closed interface ignores it) and the top-level handler still
+   * closes the pool, so Ctrl-C exits 1 by the same path as every other
+   * refusal — one line, nothing written.
+   */
+  rl.on('SIGINT', () => {
+    const cancel = cancelPending;
+    cancelPending = null;
+    // Off the prompt line before the refusal prints, whether the typed value
+    // was visible or masked.
+    output.write('\n');
+    rl.close();
+    cancel?.(refusal('Cancelled at the prompt. Nothing was changed.'));
+  });
 
   return {
     ask,
     askHidden: async (question: string) => {
       maskWith = question;
       try {
-        return await ask(question);
-      } finally {
-        maskWith = null;
+        const answer = await ask(question);
         // The Enter keystroke's own newline went through the muted hook with
-        // everything else, so the next line starts here.
+        // everything else, so the next line starts here. On the SIGINT path
+        // the handler has already written one, which is why this sits on the
+        // success path rather than in the `finally`.
         output.write('\n');
+        return answer;
+      } finally {
+        // Unmasking is the half that must happen either way.
+        maskWith = null;
       }
     },
     close: () => rl.close(),
