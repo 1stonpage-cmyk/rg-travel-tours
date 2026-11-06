@@ -94,6 +94,17 @@ export const SITE = {
   paymentMethods: ['GCash', 'Maya', 'GrabPay', 'QR Ph', 'Visa', 'Mastercard'],
 } as const;
 
+/**
+ * `SITE.nav`, minus "Tours" while `show_tours` is off (transfers-launch
+ * plan, Task T16). One shared filter rather than three independent
+ * `SITE.nav.map(...)` calls each re-deriving the same rule — `SiteHeader.tsx`
+ * (desktop nav and mobile nav) and `SiteFooter.tsx` (footer nav) all read
+ * this instead.
+ */
+export function visibleNav(showTours: boolean) {
+  return SITE.nav.filter((item) => item.href !== '/tours' || showTours);
+}
+
 /** Builds a wa.me deep link with an optional prefilled message. */
 export function whatsappLink(message?: string) {
   const base = `https://wa.me/${SITE.contact.phone.whatsapp}`;

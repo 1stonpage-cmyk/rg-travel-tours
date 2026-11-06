@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ViberGlyph, WhatsAppGlyph } from '@/components/common/BrandGlyphs';
 import { useConsent } from '@/lib/consent/useConsent';
-import { SITE, telLink, viberLink, whatsappLink } from '@/lib/site';
+import { SITE, telLink, viberLink, visibleNav, whatsappLink } from '@/lib/site';
 import { trpc } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
 
@@ -91,6 +91,9 @@ export default function SiteFooter() {
   const { reopen: reopenCookieSettings } = useConsent();
   const { data: settings } = trpc.settings.get.useQuery();
   const permits = settings?.permits ?? NO_PERMITS;
+  // `show_tours` gate (transfers-launch plan, Task T16) — see `visibleNav`'s
+  // own comment. Hidden by default before this resolves, same as SiteHeader.
+  const nav = visibleNav(settings?.showTours ?? false);
   const paymentMethods = settings?.paymentMethods ?? [];
   /** BUG-100 — same source as ContactSection's hours. See the Clock row below. */
   const hoursNote = settings?.contact.hoursNote ?? null;
@@ -221,7 +224,7 @@ export default function SiteFooter() {
             Explore
           </p>
           <ul className="mt-4 space-y-1 text-sm">
-            {SITE.nav.map((item) => (
+            {nav.map((item) => (
               <li key={item.href}>
                 <Link to={item.href} className="flex min-h-11 items-center hover:underline">
                   {item.label}

@@ -1,5 +1,5 @@
 /**
- * What each of the eighteen `settings` blocks looks like on the admin screen,
+ * What each of the nineteen `settings` blocks looks like on the admin screen,
  * and how its fields convert to and from the stored JSON (Week 7 plan, Task 9).
  *
  * Separate from `AdminSettingsPage.tsx` for two reasons: the page then holds
@@ -61,8 +61,18 @@ export interface BlockSpec {
   key: SettingKey;
   title: string;
   blurb: string;
-  /** `flag` is `content_unverified` alone: a bare boolean, not a record. */
-  shape: 'object' | 'array' | 'flag';
+  /**
+   * `flag` is `content_unverified` alone: a bare boolean with a consequence
+   * outside this screen (publishing the whole site to search engines), which
+   * is why it gets its own asymmetric two-step-confirm editor
+   * (`FlagBlockEditor`). `toggle` is also a bare boolean, but an ORDINARY
+   * reversible feature switch — `show_tours` (Task T16) is the first one —
+   * and draws a plain labeled switch that saves on change, no confirm, no
+   * separate Save button (`ToggleBlockEditor`). Do not reuse `flag` for a
+   * second boolean just because the stored shape matches: the shape here
+   * describes the EDITOR, not the JSON type.
+   */
+  shape: 'object' | 'array' | 'flag' | 'toggle';
   fields: readonly FieldSpec[];
   /** array only: what one row is called — "Question 2", "Monday". */
   rowName?: (index: number) => string;
@@ -304,6 +314,21 @@ export const BLOCKS: readonly BlockSpec[] = [
     ],
   },
   /*
+   * Added by the transfers-launch plan's Task T16. `show_tours` is a plain
+   * feature switch — reversible, no indexing consequence, no money, no legal
+   * surface — unlike `content_unverified`, so it gets the new `toggle` shape
+   * rather than reusing `flag`'s asymmetric confirm ceremony. See the `shape`
+   * union's own comment above.
+   */
+  {
+    key: 'show_tours',
+    title: 'Show tours on the website',
+    blurb:
+      'When this is off, tours disappear from the public site — the nav, the home page, and every /tours page — but existing tour bookings stay fully visible in admin and My Booking. Transfers are unaffected either way.',
+    shape: 'toggle',
+    fields: [],
+  },
+  /*
    * Added by the transfers-launch plan's Task T7, which registered the
    * `transfer_operations` block on the server. A block spec is not optional
    * once a key exists: `admin-settings-page.test.tsx` requires every key in
@@ -478,8 +503,8 @@ export const GROUPS: readonly GroupSpec[] = [
     id: 'business',
     title: 'Business',
     blurb:
-      'Opening hours, contact details, the bookable date window, how transfers are run, and the permits.',
-    keys: ['business_hours', 'contact', 'booking', 'transfer_operations', 'permits'],
+      'Opening hours, contact details, the bookable date window, whether tours are shown at all, how transfers are run, and the permits.',
+    keys: ['business_hours', 'contact', 'booking', 'show_tours', 'transfer_operations', 'permits'],
   },
   {
     id: 'payments',

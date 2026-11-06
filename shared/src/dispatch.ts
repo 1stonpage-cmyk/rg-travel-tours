@@ -104,6 +104,17 @@ export const driverInputSchema = z
     licenseExpiry: civilDateSchema.nullable(),
     languages: z.array(z.string().trim().min(1).max(40)).max(20).nullable(),
     emergencyContact: z.string().trim().max(200).nullable(),
+    /**
+     * Per-driver override of `transfer_operations.maxTransferJobsPerDriverPerDay`
+     * (transfers-launch plan, Task T16) — the admin-facing read/write path onto
+     * `drivers.max_transfer_jobs_per_day`, which `driverTransferCapsOn()`
+     * (`server/src/services/transfers/capacity.ts`) already read and enforced
+     * since Task T7. `null` means "use the admin default"; `0` means "no
+     * transfer jobs today" — two different, both legitimate states, which is
+     * why this is `.nullable()` and NOT `.optional()`: a `create` call must
+     * pass `null` explicitly, same as `licenseNo`/`licenseExpiry` above.
+     */
+    maxTransferJobsPerDay: z.number().int().min(0).nullable(),
   })
   .strict();
 export type DriverInput = z.infer<typeof driverInputSchema>;
@@ -137,6 +148,8 @@ export interface DriverRow {
   licenseExpiry: string | null;
   languages: string[] | null;
   emergencyContact: string | null;
+  /** See `driverInputSchema.maxTransferJobsPerDay` above — same null/0 meaning. */
+  maxTransferJobsPerDay: number | null;
   status: string;
   isActive: boolean;
   /**

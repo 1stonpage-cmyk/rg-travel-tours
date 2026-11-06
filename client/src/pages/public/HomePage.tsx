@@ -9,6 +9,7 @@ import PromoNewsletter from '@/components/home/PromoNewsletter';
 import ReviewsSection from '@/components/home/ReviewsSection';
 import TrustBar from '@/components/home/TrustBar';
 import WhyBookDirect from '@/components/home/WhyBookDirect';
+import { trpc } from '@/lib/trpc';
 import { useScrollReveal } from '@/lib/use-scroll-reveal';
 
 /**
@@ -33,14 +34,27 @@ const REVEAL_SECTIONS =
 export default function HomePage() {
   useScrollReveal(REVEAL_SECTIONS);
 
+  /*
+   * `show_tours` gate (transfers-launch plan, Task T16). CatalogPreview and
+   * MostVisited are not mounted at all while tours are hidden, rather than
+   * mounting and letting `tours.list` resolve to an empty "Tours" heading
+   * (CatalogPreview) or a destination grid whose only links lead into that
+   * hidden catalog (MostVisited) — both a worse experience than no section.
+   * Defaults to hidden before `settings.get` resolves, same as every other
+   * gate this task adds: the product default is tours off, so there is
+   * nothing to flash on while loading.
+   */
+  const { data: settings } = trpc.settings.get.useQuery();
+  const showTours = settings?.showTours ?? false;
+
   return (
     <>
       <HeroSection />
       <TrustBar />
-      <CatalogPreview />
+      {showTours && <CatalogPreview />}
       <HowItWorks />
       <WhyBookDirect />
-      <MostVisited />
+      {showTours && <MostVisited />}
       <PackagesSection />
       <ReviewsSection />
       <PromoNewsletter />

@@ -67,6 +67,7 @@ type DriverSelect = {
   licenseExpiry: Date | null;
   languages: unknown;
   emergencyContact: string | null;
+  maxTransferJobsPerDay: number | null;
   status: string;
   isActive: boolean;
   lockedUntil: Date | null;
@@ -111,6 +112,7 @@ function toDriverRow(
     licenseExpiry: civilDateFromDate(row.licenseExpiry),
     languages: (row.languages as string[] | null) ?? null,
     emergencyContact: row.emergencyContact,
+    maxTransferJobsPerDay: row.maxTransferJobsPerDay,
     status: row.status,
     isActive: row.isActive,
     isLockedOut:
@@ -130,6 +132,7 @@ function toInsertValues(input: DriverInput): Omit<DriverInsert, 'pinHash'> {
     licenseExpiry: toDbDate(input.licenseExpiry),
     languages: input.languages,
     emergencyContact: input.emergencyContact,
+    maxTransferJobsPerDay: input.maxTransferJobsPerDay,
   };
 }
 
@@ -148,6 +151,9 @@ function toUpdateValues(patch: Partial<DriverInput>): Partial<DriverInsert> {
   if (patch.licenseExpiry !== undefined) out.licenseExpiry = toDbDate(patch.licenseExpiry);
   if (patch.languages !== undefined) out.languages = patch.languages;
   if (patch.emergencyContact !== undefined) out.emergencyContact = patch.emergencyContact;
+  if (patch.maxTransferJobsPerDay !== undefined) {
+    out.maxTransferJobsPerDay = patch.maxTransferJobsPerDay;
+  }
   return out;
 }
 
@@ -211,6 +217,7 @@ export const adminDriversRouter = router({
         licenseExpiry: drivers.licenseExpiry,
         languages: drivers.languages,
         emergencyContact: drivers.emergencyContact,
+        maxTransferJobsPerDay: drivers.maxTransferJobsPerDay,
         status: drivers.status,
         isActive: drivers.isActive,
         /*

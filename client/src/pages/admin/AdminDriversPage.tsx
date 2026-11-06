@@ -156,6 +156,12 @@ const DRIVER_FIELDS: readonly EntityFormField[] = [
     type: 'text',
     hint: 'Name and phone number.',
   },
+  {
+    name: 'maxTransferJobsPerDay',
+    label: 'Transfer jobs per day (override)',
+    type: 'number',
+    hint: 'Leave blank to use the admin default (set in Settings → Business → Transfer operations). 0 means this driver takes no transfer jobs today.',
+  },
 ];
 
 const LEAVE_FIELDS: readonly EntityFormField[] = [
@@ -199,6 +205,18 @@ function rawDriverFromValues(values: Record<string, string>) {
     licenseExpiry: values.licenseExpiry || null,
     languages,
     emergencyContact: values.emergencyContact || null,
+    /*
+     * Blank -> null ("use the admin default"), a typed number -> that
+     * number — `AdminVansPage.tsx`'s `luggageCapacity` shape, copied rather
+     * than re-invented. The test reads the form's STRING, so a typed `0`
+     * survives (`!'0'` is false) and lands as `0`, never collapsed into the
+     * blank/null case: `maxTransferJobsPerDay: 0` ("no transfer jobs today")
+     * and `null` ("use the default") are different, both legitimate states
+     * (see the column's own comment in `server/src/db/schema.ts`).
+     */
+    maxTransferJobsPerDay: !values.maxTransferJobsPerDay
+      ? null
+      : Number(values.maxTransferJobsPerDay),
   };
 }
 
@@ -212,6 +230,8 @@ function valuesFromDriverRow(row: DriverRow): Record<string, string> {
     licenseExpiry: row.licenseExpiry ?? '',
     languages: row.languages ? row.languages.join(', ') : '',
     emergencyContact: row.emergencyContact ?? '',
+    maxTransferJobsPerDay:
+      row.maxTransferJobsPerDay === null ? '' : String(row.maxTransferJobsPerDay),
   };
 }
 
@@ -228,6 +248,9 @@ function buildDriverPatch(next: DriverInput, original: DriverRow): Partial<Drive
   }
   if (next.emergencyContact !== original.emergencyContact) {
     patch.emergencyContact = next.emergencyContact;
+  }
+  if (next.maxTransferJobsPerDay !== original.maxTransferJobsPerDay) {
+    patch.maxTransferJobsPerDay = next.maxTransferJobsPerDay;
   }
   return patch;
 }

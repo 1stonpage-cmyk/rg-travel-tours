@@ -1,5 +1,5 @@
 /**
- * The settings screens — all seventeen `settings` blocks (Week 7 plan, Task 9;
+ * The settings screens — all nineteen `settings` blocks (Week 7 plan, Task 9;
  * BUILD_SPEC §9 "Users, settings", client half).
  *
  * `admin.settings.*` is `adminProcedure('usersSettings')` server-side — OWNER
@@ -11,21 +11,25 @@
  * (`staffAuth.me`), and a refused `admin.settings.all` (a stale session, or a
  * role changed mid-visit).
  *
- * ## One declarative field list, seventeen blocks
+ * ## One declarative field list, nineteen blocks
  *
  * Every block is described once in `components/admin/settings-blocks.ts` — its
- * fields, their kinds, and the words beside them — and three renderers here
- * draw all of them. Seventeen hand-written forms would be seventeen places for
+ * fields, their kinds, and the words beside them — and four renderers here
+ * draw all of them. Nineteen hand-written forms would be nineteen places for
  * a label to go missing, and the shapes are not what varies between them:
  * `faqs` is a list of two-field rows and `how_it_works` is a list of
  * three-field rows, which is a difference in data, not in interface.
  *
- * A block is `object` (one record) or `array` (repeating rows), and
- * `content_unverified` is `flag` — a bare boolean with consequences outside
- * this screen, so it has its own component. Those three are the only shapes
- * the table has.
+ * A block is `object` (one record) or `array` (repeating rows); `content_unverified`
+ * is `flag` — a bare boolean with consequences outside this screen (it gates
+ * search indexing and the production build), so it keeps its own asymmetric
+ * two-step-confirm editor. `show_tours` (Task T16) is also a bare boolean but
+ * an ORDINARY, fully reversible feature switch, so it is `toggle` instead — a
+ * plain labeled switch that saves on change with no confirm and no separate
+ * Save button. Four shapes total; see `BlockSpec.shape`'s own comment for why
+ * `toggle` is not a second `flag`.
  *
- * ## Grouped behind disclosures, because seventeen forms is not a page
+ * ## Grouped behind disclosures, because nineteen forms is not a page
  *
  * Five `<section>`s — Site & SEO, Home content, Business, Payments, Legal —
  * each holding one `<details>` per block. A native `<details>`/`<summary>`
@@ -77,6 +81,7 @@ import {
 } from '@/components/admin/settings-blocks';
 import { firstValidationMessage } from '@/lib/field-errors';
 import { trpc } from '@/lib/trpc';
+import { cn } from '@/lib/utils';
 
 const CARD = 'border-brand-blue-100 rounded-[14px] border bg-white';
 const NOTICE =
@@ -722,11 +727,67 @@ function FlagBlockEditor({ block, stored }: { block: BlockSpec; stored: unknown 
 }
 
 /**
+ * `show_tours` and any future ordinary feature switch — a bare boolean with
+ * NO consequence outside this screen (no indexing, no money, no legal
+ * surface), unlike `content_unverified`'s `FlagBlockEditor`. One labeled
+ * switch that writes `admin.settings.write` the instant it is toggled: no
+ * confirm step, no separate Save button, both directions treated alike —
+ * see `BlockSpec.shape`'s own comment for why this is not a second `flag`.
+ *
+ * Feedback is the same minimal pattern every other block editor on this
+ * screen uses — `BlockBanners`' shared `role="alert"` / `role="status"` pair
+ * from `useSettingsWrite` — rather than a bespoke indicator invented for this
+ * one block.
+ */
+function ToggleBlockEditor({ block, stored }: { block: BlockSpec; stored: unknown }) {
+  const { write, banner, notice, reset } = useSettingsWrite(block);
+  const checked = stored === true;
+
+  function toggle() {
+    reset();
+    write.mutate({ key: block.key, value: !checked });
+  }
+
+  return (
+    <div className="space-y-3">
+      <BlockBanners banner={banner} notice={notice} />
+      <div className="flex items-center justify-between gap-4">
+        <span className="text-brand-ink text-sm font-semibold">{checked ? 'On' : 'Off'}</span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={checked}
+          aria-label={block.title}
+          disabled={write.isPending}
+          onClick={toggle}
+          className="tap-target focus-visible:ring-brand-blue-600 inline-flex items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-60"
+        >
+          <span
+            aria-hidden="true"
+            className={cn(
+              'relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors',
+              checked ? 'bg-brand-blue-600' : 'bg-slate-300',
+            )}
+          >
+            <span
+              className={cn(
+                'inline-block size-5 rounded-full bg-white shadow transition-transform',
+                checked ? 'translate-x-6' : 'translate-x-1',
+              )}
+            />
+          </span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
  * One block behind a native disclosure.
  *
  * The editor is mounted on the FIRST open and stays mounted afterwards, so an
  * owner who collapses a section to look at another one does not lose what they
- * typed — and a page of seventeen blocks does not build every input on load.
+ * typed — and a page of nineteen blocks does not build every input on load.
  */
 function BlockDisclosure({ block, stored }: { block: BlockSpec; stored: unknown }) {
   const [opened, setOpened] = useState(false);
@@ -744,6 +805,8 @@ function BlockDisclosure({ block, stored }: { block: BlockSpec; stored: unknown 
         {opened ? (
           block.shape === 'flag' ? (
             <FlagBlockEditor block={block} stored={stored} />
+          ) : block.shape === 'toggle' ? (
+            <ToggleBlockEditor block={block} stored={stored} />
           ) : block.shape === 'array' ? (
             <ArrayBlockEditor block={block} stored={stored} />
           ) : (
@@ -840,7 +903,7 @@ function SettingsAdmin() {
 /**
  * A convenience, not the control: the server refuses every `admin.settings`
  * call from anyone but the owner. This stops a dispatcher or finance user who
- * types the address from being shown seventeen forms that can only be refused.
+ * types the address from being shown nineteen forms that can only be refused.
  */
 export default function AdminSettingsPage() {
   const me = trpc.staffAuth.me.useQuery(undefined, { retry: false });

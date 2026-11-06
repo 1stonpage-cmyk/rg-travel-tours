@@ -1,9 +1,11 @@
 import { Check, Clock, MapPin, X } from 'lucide-react';
-import { useParams } from 'react-router-dom';
-import QueryBoundary from '@/components/common/QueryBoundary';
+import { Link, useParams } from 'react-router-dom';
+import { TRPCClientError } from '@trpc/client';
+import QueryBoundary, { EmptyState } from '@/components/common/QueryBoundary';
 import { Skeleton } from '@/components/common/Skeleton';
 import StarRating from '@/components/common/StarRating';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import BookingPicker from '@/components/tour/BookingPicker';
 import Gallery from '@/components/tour/Gallery';
 import PriceTierTable from '@/components/tour/PriceTierTable';
@@ -44,9 +46,47 @@ function DetailSkeleton() {
   );
 }
 
+/**
+ * Is this refusal `tours.bySlug`'s own `NOT_FOUND` — a slug that is wrong,
+ * retired, or (since the transfers-launch plan's Task T15) simply hidden
+ * while `show_tours` is off — rather than a transient failure?
+ */
+function isTourNotFound(error: unknown): boolean {
+  return error instanceof TRPCClientError && error.data?.code === 'NOT_FOUND';
+}
+
 export default function TourDetailPage() {
   const { slug } = useParams<{ slug: string }>();
   const query = trpc.tours.bySlug.useQuery({ slug: slug ?? '' }, { enabled: Boolean(slug) });
+
+  /*
+   * Task T16, C3. Before this, a `NOT_FOUND` (a wrong/retired slug, or a tour
+   * that is legitimately hidden because `show_tours` is off) fell into
+   * `QueryBoundary`'s generic error branch: "This tour could not load... Try
+   * again," with a retry button that would only fetch the exact same
+   * `NOT_FOUND` forever — misleading in general, and specifically wrong once
+   * a guest's old bookmark or a stale search-engine cache can legitimately
+   * 404 while the catalog is off. Handled ABOVE `QueryBoundary`, scoped to
+   * this one page, rather than inside `QueryBoundary` itself (which every
+   * other query-driven section also uses and whose generic error state is
+   * correct for them): a different failure (a network error, a 500) still
+   * falls through to the ordinary boundary below, unchanged.
+   */
+  if (query.isError && query.data === undefined && isTourNotFound(query.error)) {
+    return (
+      <div className="mx-auto max-w-5xl px-4 py-16 sm:px-6 lg:px-8">
+        <EmptyState
+          title="This tour isn't available"
+          body="It may have been removed or renamed, or tours may be temporarily off the public site."
+          action={
+            <Button asChild variant="outline" className="tap-target">
+              <Link to="/">Back to the homepage</Link>
+            </Button>
+          }
+        />
+      </div>
+    );
+  }
 
   return (
     <QueryBoundary

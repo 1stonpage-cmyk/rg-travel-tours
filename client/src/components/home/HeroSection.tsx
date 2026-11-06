@@ -352,20 +352,42 @@ export default function HeroSection() {
            * existing test suite (`getByRole('form', {name: /search
            * tours/i})` et al.) and `FloatingWhatsApp.tsx`'s own
            * `form[aria-label="Search tours"]` selector.
+           *
+           * **`show_tours` gate (transfers-launch plan, Task T16).** This
+           * whole block is now conditional on `showTours` — while tours are
+           * hidden there is no catalog for this form to search, and
+           * `FloatingWhatsApp.tsx` already degrades gracefully when its
+           * `form[aria-label="Search tours"]` selector finds nothing (see
+           * its own code comment).
+           *
+           * The check is `!== false`, not `?? false` (the "hidden until
+           * proven true" default `CatalogPreview`/`MostVisited`/the nav use
+           * elsewhere in this task): THIS form carries the explicit
+           * "renders unconditionally, every time, with no dependency on
+           * settingsQuery having resolved" contract from the component
+           * comment above, and `?? false` would break that the instant
+           * `settingsQuery` is pending or errors — reintroducing exactly
+           * the query-pending gate that comment forbids. `!== false` keeps
+           * the old behaviour (shown) for "not resolved yet" and "errored"
+           * alike, and hides only once the server has actually said so.
            */}
-          <p className="text-brand-blue-100 mt-5 text-sm">Looking for a guided day tour instead?</p>
-          <form
-            onSubmit={handleSubmit}
-            className="bg-background/95 mt-2 grid gap-3 rounded-xl p-3 shadow-sm backdrop-blur sm:p-4 lg:grid-cols-[1.4fr_1fr_0.8fr_auto]"
-            aria-label="Search tours"
-          >
-            <div className="space-y-1.5">
-              <Label htmlFor="hero-destination">Destination</Label>
-              <Select value={destination} onValueChange={setDestination}>
-                <SelectTrigger id="hero-destination" className="tap-target w-full">
-                  <SelectValue placeholder="Anywhere in Cebu" />
-                </SelectTrigger>
-                {/* Handled by hand, not QueryBoundary: a <SelectContent> is a
+          {settingsQuery.data?.showTours !== false && (
+            <>
+              <p className="text-brand-blue-100 mt-5 text-sm">
+                Looking for a guided day tour instead?
+              </p>
+              <form
+                onSubmit={handleSubmit}
+                className="bg-background/95 mt-2 grid gap-3 rounded-xl p-3 shadow-sm backdrop-blur sm:p-4 lg:grid-cols-[1.4fr_1fr_0.8fr_auto]"
+                aria-label="Search tours"
+              >
+                <div className="space-y-1.5">
+                  <Label htmlFor="hero-destination">Destination</Label>
+                  <Select value={destination} onValueChange={setDestination}>
+                    <SelectTrigger id="hero-destination" className="tap-target w-full">
+                      <SelectValue placeholder="Anywhere in Cebu" />
+                    </SelectTrigger>
+                    {/* Handled by hand, not QueryBoundary: a <SelectContent> is a
                   Radix listbox (role="listbox"), and QueryBoundary's error
                   state renders a <button> ("Try again") — a control that
                   must never appear inside a listbox. On failure this
@@ -373,59 +395,61 @@ export default function HeroSection() {
                   the form stays usable and a destination-less search is a
                   valid search. The trigger itself is never gated — it's
                   outside this block entirely. */}
-                <SelectContent>
-                  {destinationsQuery.isPending && (
-                    <SelectItem value="__loading" disabled>
-                      Loading destinations…
-                    </SelectItem>
-                  )}
-                  {destinationsQuery.data?.map((d) => (
-                    <SelectItem key={d.slug} value={d.slug}>
-                      {d.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+                    <SelectContent>
+                      {destinationsQuery.isPending && (
+                        <SelectItem value="__loading" disabled>
+                          Loading destinations…
+                        </SelectItem>
+                      )}
+                      {destinationsQuery.data?.map((d) => (
+                        <SelectItem key={d.slug} value={d.slug}>
+                          {d.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="hero-date">Date</Label>
-              <Input
-                id="hero-date"
-                type="date"
-                min={settingsQuery.data?.bookingWindow.earliest}
-                max={settingsQuery.data?.bookingWindow.latest}
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                className="tap-target"
-              />
-            </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="hero-date">Date</Label>
+                  <Input
+                    id="hero-date"
+                    type="date"
+                    min={settingsQuery.data?.bookingWindow.earliest}
+                    max={settingsQuery.data?.bookingWindow.latest}
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    className="tap-target"
+                  />
+                </div>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="hero-guests">Guests</Label>
-              <Input
-                id="hero-guests"
-                type="number"
-                inputMode="numeric"
-                min={1}
-                max={12}
-                value={guests}
-                onChange={(e) => setGuests(e.target.value)}
-                className="tap-target"
-              />
-            </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="hero-guests">Guests</Label>
+                  <Input
+                    id="hero-guests"
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    max={12}
+                    value={guests}
+                    onChange={(e) => setGuests(e.target.value)}
+                    className="tap-target"
+                  />
+                </div>
 
-            <div className="flex items-end">
-              <Button
-                type="submit"
-                variant="outline"
-                className="tap-target bg-background w-full lg:w-auto"
-              >
-                <Search className="size-4" aria-hidden="true" />
-                {settingsQuery.data?.hero.ctaLabel ?? 'Search tours'}
-              </Button>
-            </div>
-          </form>
+                <div className="flex items-end">
+                  <Button
+                    type="submit"
+                    variant="outline"
+                    className="tap-target bg-background w-full lg:w-auto"
+                  >
+                    <Search className="size-4" aria-hidden="true" />
+                    {settingsQuery.data?.hero.ctaLabel ?? 'Search tours'}
+                  </Button>
+                </div>
+              </form>
+            </>
+          )}
         </div>
       </div>
     </section>

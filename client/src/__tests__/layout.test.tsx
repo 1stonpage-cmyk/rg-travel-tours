@@ -1,4 +1,5 @@
 import { act, render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -163,6 +164,61 @@ describe('PublicLayout', () => {
     expect(badge).not.toHaveTextContent(
       /ratings, guest counts, prices, permits and photos are not real/i,
     );
+  });
+});
+
+/**
+ * `show_tours` gate (transfers-launch plan, Task T16). `SITE.nav`'s "Tours"
+ * entry is rendered identically in three places — `SiteHeader.tsx`'s
+ * desktop and mobile nav loops, and `SiteFooter.tsx`'s footer nav loop —
+ * from the one shared `visibleNav()` helper in `lib/site.ts`. Proven here,
+ * through `PublicLayout`, rather than against `SiteHeader`/`SiteFooter` in
+ * isolation, because the three real render sites matter more than the
+ * helper's own unit behaviour — a filter that is wired into only two of the
+ * three loops is the bug this guards against.
+ */
+describe('nav hides "Tours" while show_tours is off, in all three places', () => {
+  it('shows Tours in desktop nav, mobile nav, and the footer when showTours is true', async () => {
+    mockTrpc({ 'settings.get': SETTINGS_FIXTURE }); // SETTINGS_FIXTURE.showTours is true.
+    renderLayout();
+    const user = userEvent.setup();
+
+    const desktopNav = screen.getByRole('navigation', { name: /^main$/i });
+    expect(await within(desktopNav).findByRole('link', { name: /^tours$/i })).toBeInTheDocument();
+    // A neighbouring entry stays present too — catches a filter that is too broad.
+    expect(within(desktopNav).getByRole('link', { name: /^transfers$/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /open menu/i }));
+    const mobileNav = screen.getByRole('navigation', { name: /^mobile$/i });
+    expect(within(mobileNav).getByRole('link', { name: /^tours$/i })).toBeInTheDocument();
+    expect(within(mobileNav).getByRole('link', { name: /^transfers$/i })).toBeInTheDocument();
+
+    const footerNav = screen.getByRole('navigation', { name: /^footer$/i });
+    expect(within(footerNav).getByRole('link', { name: /^tours$/i })).toBeInTheDocument();
+    expect(within(footerNav).getByRole('link', { name: /^transfers$/i })).toBeInTheDocument();
+  });
+
+  it('hides Tours from all three while leaving Transfers in all three, when showTours is false', async () => {
+    mockTrpc({ 'settings.get': { ...SETTINGS_FIXTURE, showTours: false } });
+    renderLayout();
+    const user = userEvent.setup();
+
+    const desktopNav = screen.getByRole('navigation', { name: /^main$/i });
+    // Wait for the resolved (false) state rather than asserting on the
+    // transient pre-resolution render, which also hides Tours by default.
+    expect(
+      await within(desktopNav).findByRole('link', { name: /^transfers$/i }),
+    ).toBeInTheDocument();
+    expect(within(desktopNav).queryByRole('link', { name: /^tours$/i })).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: /open menu/i }));
+    const mobileNav = screen.getByRole('navigation', { name: /^mobile$/i });
+    expect(within(mobileNav).getByRole('link', { name: /^transfers$/i })).toBeInTheDocument();
+    expect(within(mobileNav).queryByRole('link', { name: /^tours$/i })).toBeNull();
+
+    const footerNav = screen.getByRole('navigation', { name: /^footer$/i });
+    expect(within(footerNav).getByRole('link', { name: /^transfers$/i })).toBeInTheDocument();
+    expect(within(footerNav).queryByRole('link', { name: /^tours$/i })).toBeNull();
   });
 });
 

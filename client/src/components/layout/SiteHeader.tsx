@@ -2,7 +2,8 @@ import { Menu, Phone, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { SITE, telLink } from '@/lib/site';
+import { SITE, telLink, visibleNav } from '@/lib/site';
+import { trpc } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
 
 /**
@@ -30,6 +31,19 @@ export default function SiteHeader() {
   const [open, setOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const { pathname, hash } = useLocation();
+  /*
+   * `show_tours` gate (transfers-launch plan, Task T16). Defaults to hidden
+   * (`false`) before `settings.get` resolves, same as `CatalogPreview`/
+   * `MostVisited` — the product default is tours OFF, so there is nothing
+   * to flash on while loading. Deliberately NOT the same default
+   * `HeroSection.tsx`'s tour-search form uses (`!== false`, shown unless
+   * proven false): that form carries a pre-existing "renders unconditionally,
+   * never gated on a query" contract this task had to preserve; a plain nav
+   * label never had that promise, so "hidden until proven true" is the
+   * conservative, deliberate choice here.
+   */
+  const { data: settings } = trpc.settings.get.useQuery();
+  const nav = visibleNav(settings?.showTours ?? false);
 
   // Header shrink/solidify (spec task 2.9F). Deliberately does not animate
   // `height`, or change it at all, in either direction: the box below is
@@ -90,7 +104,7 @@ export default function SiteHeader() {
         </Link>
 
         <nav aria-label="Main" className="hidden items-center gap-1 md:flex">
-          {SITE.nav.map((item) => {
+          {nav.map((item) => {
             const active = isNavItemActive(item.href, pathname, hash);
             return (
               <Link
@@ -144,7 +158,7 @@ export default function SiteHeader() {
       {open && (
         <nav id="mobile-nav" aria-label="Mobile" className="border-t md:hidden">
           <ul className="mx-auto max-w-7xl px-4 py-2 sm:px-6">
-            {SITE.nav.map((item) => (
+            {nav.map((item) => (
               <li key={item.href}>
                 <Link
                   to={item.href}

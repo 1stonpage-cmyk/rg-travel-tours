@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -57,8 +57,12 @@ describe('home page', () => {
     expect(within(form).getByLabelText(/guests/i)).toBeInTheDocument();
   });
 
-  it('exposes every section anchor used by the nav', () => {
+  it('exposes every section anchor used by the nav', async () => {
+    // Task T16: `#tours` (CatalogPreview) and `#places` (MostVisited) are
+    // now gated on `settings.get` resolving `showTours: true` — wait for one
+    // of them before checking the rest, rather than asserting synchronously.
     const { container } = renderHome();
+    await waitFor(() => expect(container.querySelector('#tours')).toBeTruthy());
     for (const id of ['tours', 'how', 'why', 'places', 'packages', 'reviews', 'faq', 'contact']) {
       expect(container.querySelector(`#${id}`), `missing #${id}`).toBeTruthy();
     }
@@ -183,6 +187,9 @@ describe('home page', () => {
   // --- Mandated correction 2(b): zero-count hide rule, both halves. ---
   it('hides the weekly booking badge only for the zero-booking tour, and shows it for a nonzero one', async () => {
     const { container } = renderHome();
+    // Task T16: #tours (CatalogPreview) is gated on `settings.get` resolving
+    // `showTours: true` — wait for it to mount before querying inside it.
+    await waitFor(() => expect(container.querySelector('#tours')).toBeTruthy());
     const toursSection = container.querySelector('#tours') as HTMLElement;
 
     // Moalboal (TOURS_FIXTURE[2]) has bookedThisWeek: 0 — no badge for it.
@@ -209,7 +216,9 @@ describe('home page', () => {
     const user = userEvent.setup();
     renderHome();
 
-    const group = screen.getByRole('group', { name: /filter tours by destination/i });
+    // Task T16: #tours (CatalogPreview, including this filter group) is
+    // gated on `settings.get` resolving `showTours: true`.
+    const group = await screen.findByRole('group', { name: /filter tours by destination/i });
 
     for (const destination of DESTINATIONS_FIXTURE) {
       const chip = await within(group).findByRole('button', { name: destination.name });
@@ -225,5 +234,88 @@ describe('home page', () => {
         expect(li.textContent).toContain(destination.name);
       }
     }
+  });
+});
+
+/**
+ * `show_tours` gate (transfers-launch plan, Task T16). `CatalogPreview` and
+ * `MostVisited` are not mounted at all while tours are hidden (rather than
+ * mounted and rendering an empty/dead-end section — see `HomePage.tsx`'s own
+ * comment), and the hero's SECONDARY tour-search form (`aria-label="Search
+ * tours"`) is hidden too. The PRIMARY transfer mini-flow form is unaffected
+ * either way — proving that is what actually catches a gate that hid too
+ * much rather than exactly the three tour-only surfaces.
+ */
+describe('home page — tours hidden (show_tours gate, Task T16)', () => {
+  // Self-contained rather than relying on the outer `describe('home page')`
+  // block's own `beforeEach` (a sibling describe, not a parent, so its hooks
+  // do not apply here) — the same five mocks that block uses, with
+  // `showTours` flipped off.
+  beforeEach(() => {
+    mockTrpc({
+      'settings.get': { ...SETTINGS_FIXTURE, showTours: false },
+      'destinations.list': DESTINATIONS_FIXTURE,
+      'tours.list': TOURS_FIXTURE,
+      'packages.list': PACKAGES_FIXTURE,
+      'reviews.published': REVIEWS_FIXTURE,
+    });
+  });
+
+  it('does not render CatalogPreview, MostVisited, or the hero tour-search form', async () => {
+    renderHome();
+
+    /*
+     * Wait for `settings.get` to actually resolve before asserting absence
+     * — the hero's transfer form (`find a transfer`) renders unconditionally
+     * regardless of that query's state (by design: `HeroSection.tsx`'s own
+     * "renders unconditionally... no dependency on settingsQuery having
+     * resolved" contract), so waiting on IT proves nothing about whether
+     * settings has resolved. The tour-search form, by contrast, is `!==
+     * false` rather than `?? false` precisely so it keeps rendering during
+     * that same pending window — so this must wait for the real resolution
+     * (the hero headline, gated on settings via QueryBoundary) or this
+     * assertion runs too early and catches the form mid-flight.
+     */
+    await screen.findByRole('heading', { level: 1 });
+
+    expect(screen.queryByRole('form', { name: /search tours/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('heading', { name: /popular cebu day tours/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /most visited places/i })).not.toBeInTheDocument();
+    expect(document.querySelector('#tours')).toBeNull();
+    expect(document.querySelector('#places')).toBeNull();
+  });
+
+  it('still renders the primary transfer mini-flow form, unaffected', async () => {
+    renderHome();
+    expect(await screen.findByRole('form', { name: /find a transfer/i })).toBeInTheDocument();
+  });
+});
+
+/**
+ * The same three surfaces, proven present with the baseline (`showTours:
+ * true`) fixture — the regression half of the pair above. If an existing
+ * test elsewhere already covers one of these (the search form is in the
+ * very first describe block above), this does not duplicate it; it only
+ * adds what that coverage is missing.
+ */
+describe('home page — tours shown (regression, Task T16)', () => {
+  beforeEach(() => {
+    mockTrpc({
+      'settings.get': SETTINGS_FIXTURE,
+      'destinations.list': DESTINATIONS_FIXTURE,
+      'tours.list': TOURS_FIXTURE,
+      'packages.list': PACKAGES_FIXTURE,
+      'reviews.published': REVIEWS_FIXTURE,
+    });
+  });
+
+  it('renders CatalogPreview and MostVisited', async () => {
+    renderHome();
+    expect(
+      await screen.findByRole('heading', { name: /popular cebu day tours/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /most visited places/i })).toBeInTheDocument();
   });
 });

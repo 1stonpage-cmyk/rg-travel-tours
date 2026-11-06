@@ -195,6 +195,14 @@ describe('HomePage — card-grid sections own their own card stagger, not the wh
       </TrpcProviders>,
     );
 
+    /*
+     * Task T16: `#tours` (CatalogPreview) is only mounted once `settings.get`
+     * resolves to `showTours: true` — before this task it was unconditional,
+     * so this synchronous `querySelector` always found it. Wait for it to
+     * actually mount before checking anything about it or its siblings.
+     */
+    await screen.findByRole('heading', { name: /popular cebu day tours/i });
+
     // #how is a plain, un-excluded section — useScrollReveal must still own it.
     expect(container.querySelector('#how')).toHaveAttribute('data-reveal', '');
 
@@ -451,10 +459,15 @@ describe('SiteHeader — shrink/solidify on scroll (spec task 2.9F)', () => {
   });
 
   function renderHeader() {
+    // Task T16 added a `trpc.settings.get.useQuery()` call to SiteHeader (to
+    // read `show_tours`) — every render now needs TrpcProviders and a mock.
+    mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
     render(
-      <MemoryRouter>
-        <SiteHeader />
-      </MemoryRouter>,
+      <TrpcProviders>
+        <MemoryRouter>
+          <SiteHeader />
+        </MemoryRouter>
+      </TrpcProviders>,
     );
     const header = screen.getByRole('banner');
     return { header, bar: header.firstElementChild as HTMLElement };

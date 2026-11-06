@@ -15,12 +15,12 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import TourDetailPage from '@/pages/public/TourDetailPage';
 import { TrpcProviders } from '@/lib/trpc';
 import type { TourDetail } from '../../../server/src/routers/public/tours';
 import { SETTINGS_FIXTURE } from './helpers/fixtures';
-import { mockTrpc } from './helpers/mock-trpc';
+import { mockTrpc, mockTrpcError, resetTrpcMock } from './helpers/mock-trpc';
 
 const TOUR_DETAIL_FIXTURE: TourDetail = {
   id: 6,
@@ -96,6 +96,10 @@ const TOUR_DETAIL_FIXTURE: TourDetail = {
 function detail(overrides: Partial<TourDetail> = {}): TourDetail {
   return { ...TOUR_DETAIL_FIXTURE, ...overrides };
 }
+
+afterEach(() => {
+  resetTrpcMock();
+});
 
 function renderDetail(entry = '/tours/oslob-whale-sharks') {
   return render(
@@ -249,6 +253,52 @@ describe('TourDetailPage — booking window and guest cap (corrections 2 & 3)', 
     // this fail.
     const guestsInput = screen.getByLabelText('Guests');
     expect(guestsInput).toHaveAttribute('max', '10');
+  });
+});
+
+/**
+ * Task T16, C3. `tours.bySlug` throws `NOT_FOUND` for a wrong/retired slug,
+ * or — since the transfers-launch plan's Task T15 — for a tour that is
+ * legitimately hidden because `show_tours` is off. Before this task, both
+ * fell into `QueryBoundary`'s generic error branch: "This tour could not
+ * load... Try again," whose retry button only re-fetches the same
+ * `NOT_FOUND` forever.
+ */
+describe('TourDetailPage — a NOT_FOUND slug gets a dedicated friendly state', () => {
+  it('renders "not available", with a way back, instead of the generic retry loop', async () => {
+    mockTrpcError('tours.bySlug', 'NOT_FOUND', 'No tour with that slug.');
+    mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
+    renderDetail();
+
+    // The query client's own default retries a failed query once before
+    // settling into `isError` (`query-client.ts`'s `retry: 1`, ~1s backoff
+    // delay for the first retry) — unchanged by this task, so the wait
+    // allows for it, the same idiom `catalog.test.tsx` and others use.
+    expect(
+      await screen.findByText(/this tour isn.t available/i, {}, { timeout: 3000 }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/could not load/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /try again/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /back to the homepage/i })).toHaveAttribute(
+      'href',
+      '/',
+    );
+  });
+
+  /**
+   * The load-bearing negative case: a DIFFERENT kind of failure must still
+   * fall through to `QueryBoundary`'s ordinary error state — proving this
+   * fix did not collapse every error into "not available".
+   */
+  it('still renders the generic retry state for a non-NOT_FOUND error', async () => {
+    mockTrpcError('tours.bySlug', 'INTERNAL_SERVER_ERROR', 'boom');
+    mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
+    renderDetail();
+
+    expect(
+      await screen.findByRole('button', { name: /try again/i }, { timeout: 3000 }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/this tour isn.t available/i)).not.toBeInTheDocument();
   });
 });
 

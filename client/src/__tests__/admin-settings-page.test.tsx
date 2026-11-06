@@ -43,7 +43,13 @@ afterEach(() => {
   resetTrpcMock();
 });
 
-/** A full, valid set of seventeen raw blocks — the shape `admin.settings.all` returns. */
+/**
+ * A full, valid set of all nineteen raw blocks — the shape `admin.settings.all`
+ * returns. `transfer_operations` (Task T7) and `show_tours` (Task T16) were
+ * both missing until this task; their absence is what left the "every shared
+ * settings key has exactly one group and one block" test below red at the
+ * end of T15 — see that task's report.
+ */
 const STORED: Record<string, unknown> = {
   content_unverified: true,
   site_seo: { title: 'TravelSugbo', description: 'Cebu day tours', ogImage: null },
@@ -106,6 +112,13 @@ const STORED: Record<string, unknown> = {
     otherServices: { before: 'We also offer', link: 'transfers', after: 'on request.' },
   },
   booking: { minLeadDays: 1, nextDayCutoffTime: '17:00', maxAdvanceDays: 180 },
+  show_tours: false,
+  transfer_operations: {
+    bufferMinutes: 30,
+    minNoticeHours: 2,
+    staffQuoteHoldHours: 24,
+    maxTransferJobsPerDriverPerDay: 4,
+  },
   payment_qr: {
     imagePath: null,
     accountName: null,
@@ -477,7 +490,69 @@ describe('AdminSettingsPage', () => {
     expect(area).toHaveValue('# Privacy');
   });
 
-  it('gives a dispatcher a denied state rather than seventeen forms', async () => {
+  /**
+   * Task T16, Part A/D. `show_tours` is an ORDINARY feature switch (unlike
+   * `content_unverified`'s two-step confirm above): one tap, no confirm,
+   * `admin.settings.write` called immediately with the flipped boolean.
+   */
+  describe('show_tours toggle', () => {
+    /**
+     * This is a different claim from "the settings block spec" describe's
+     * "exactly one group and one block" test above: that one proves
+     * `show_tours` is in exactly one group, but not WHICH one. Proven able
+     * to fail independently of that test by moving `show_tours` to a
+     * different single group (`site-seo`) — the spec test stayed green
+     * (still exactly one group) while this one correctly reddened on the
+     * missing "Business" heading.
+     */
+    it('is drawn exactly once, under Business', async () => {
+      mockOwner();
+      renderPage();
+
+      const business = await screen.findByRole('heading', { name: 'Business', level: 2 });
+      const section = business.closest('section') as HTMLElement;
+      expect(within(section).getAllByText('Show tours on the website')).toHaveLength(1);
+      // Not a second copy drawn anywhere else on the page.
+      expect(screen.getAllByText('Show tours on the website')).toHaveLength(1);
+    });
+
+    it('calls admin.settings.write with the flipped boolean on one tap, with no confirm step', async () => {
+      const posted: unknown[] = [];
+      mockOwner({
+        'admin.settings.write': (input: unknown) => {
+          posted.push(input);
+          return { ok: true };
+        },
+      });
+      renderPage();
+
+      const details = await openBlock('Show tours on the website');
+      const toggle = within(details).getByRole('switch');
+      // STORED.show_tours is false.
+      expect(toggle).toHaveAttribute('aria-checked', 'false');
+
+      await user.click(toggle);
+      await waitFor(() => expect(posted).toEqual([{ key: 'show_tours', value: true }]));
+      expect(await within(details).findByRole('status')).toHaveTextContent('Saved.');
+    });
+
+    it('surfaces a failed write in an alert, rather than appearing to succeed', async () => {
+      mockOwner();
+      mockTrpcError('admin.settings.write', 'INTERNAL_SERVER_ERROR', 'mock failure');
+      renderPage();
+
+      const details = await openBlock('Show tours on the website');
+      const toggle = within(details).getByRole('switch');
+      await user.click(toggle);
+
+      expect(await within(details).findByRole('alert')).toHaveTextContent(
+        /could not save show tours on the website/i,
+      );
+      expect(within(details).queryByRole('status')).toBeNull();
+    });
+  });
+
+  it('gives a dispatcher a denied state rather than nineteen forms', async () => {
     mockTrpc({
       'staffAuth.me': { userId: 2, role: 'dispatcher', mustChangePassword: false },
       'admin.settings.all': STORED,

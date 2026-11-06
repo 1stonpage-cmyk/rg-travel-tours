@@ -607,6 +607,7 @@ describeWithDb('drivers', () => {
           licenseExpiry: null,
           languages: null,
           emergencyContact: null,
+          maxTransferJobsPerDay: null,
         })
         .catch((e: unknown) => e),
       api.admin.drivers

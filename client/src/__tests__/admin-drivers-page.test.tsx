@@ -31,7 +31,7 @@
  * with the real id the server assigned, which the first version of this
  * page could never obtain.
  */
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -49,11 +49,20 @@ const DRIVER = {
   id: 1,
   name: 'Maria Santos',
   code: 'MS01',
-  phone: '09171234567',
+  // Already in `phPhoneSchema`'s normalized `+63...` form (not the `09...`
+  // form a dispatcher might type) so that `submitEdit`'s round trip through
+  // `driverInputSchema` — which always normalizes — never disagrees with
+  // this fixture's own stored value and sneaks an unrelated `phone` key into
+  // a patch that should only carry what a Task T16 test actually changed.
+  phone: '+639171234567',
   licenseNo: 'N01-23-456789',
   licenseExpiry: '2027-06-01',
   languages: ['English', 'Cebuano'],
   emergencyContact: 'Juan Santos 09179876543',
+  // Task T16 — per-driver transfer-job override. `null` ("use the admin
+  // default") is the realistic fixture default; individual tests below
+  // override it to a real number.
+  maxTransferJobsPerDay: null as number | null,
   status: 'available',
   isActive: true,
   // Server-derived (`admin.drivers.list` computes it against one `now`), and
@@ -73,10 +82,14 @@ interface RenderOverrides {
   isLockedOut?: boolean;
   /** The derived guide rating, or null below the threshold. */
   rating?: { average: number; count: number } | null;
+  /** Task T16 — the per-driver transfer-job override, as the server sends it. */
+  maxTransferJobsPerDay?: number | null;
   onResetPin?: (input: unknown) => void;
   onRemoveLeave?: (input: unknown) => void;
   /** Records what `setActive` was called with. */
   onSetActive?: (input: unknown) => void;
+  /** Records what `update` was called with (Task T16). */
+  onUpdate?: (input: unknown) => void;
   /** Records what `unlock` was called with. */
   onUnlock?: (input: unknown) => void;
   leaves?: Array<{ id: number; startDate: string; endDate: string; reason: string | null }>;
@@ -101,6 +114,9 @@ function renderPage(overrides: RenderOverrides = {}) {
     ...(overrides.isActive === undefined ? {} : { isActive: overrides.isActive }),
     ...(overrides.isLockedOut === undefined ? {} : { isLockedOut: overrides.isLockedOut }),
     ...(overrides.rating === undefined ? {} : { rating: overrides.rating }),
+    ...(overrides.maxTransferJobsPerDay === undefined
+      ? {}
+      : { maxTransferJobsPerDay: overrides.maxTransferJobsPerDay }),
   };
   // `list` answers from variables `setActive` and `unlock` flip, as the real
   // server does, so a test can see the page re-render what the server now
@@ -122,7 +138,10 @@ function renderPage(overrides: RenderOverrides = {}) {
       return { ok: true };
     },
     'admin.drivers.create': () => ({ id: 2, pin: '654321' }),
-    'admin.drivers.update': () => ({ ok: true }),
+    'admin.drivers.update': (input: unknown) => {
+      overrides.onUpdate?.(input);
+      return { ok: true };
+    },
     'admin.drivers.addLeave': overrides.addLeaveError
       ? () => {
           throw new Error(overrides.addLeaveError);
@@ -434,6 +453,83 @@ describe('AdminDriversPage', () => {
       expect(screen.getByText(/^active$/i)).toBeTruthy();
       expect(screen.queryByText(/inactive — not on the roster/i)).toBeNull();
       expect(screen.queryByRole('status')).toBeNull();
+    });
+  });
+
+  /*
+   * Task T16, Part B/D. `drivers.max_transfer_jobs_per_day` already existed
+   * and was already enforced (`driverTransferCapsOn()`, Task T7) — this is
+   * purely the admin read/write path. `null` ("use the admin default") and
+   * `0` ("no transfer jobs today") are different, both legitimate states,
+   * and the whole point of this block is proving the client-side string
+   * conversion never collapses one into the other.
+   */
+  /**
+   * The "Add a driver" card, the "Edit <name>" card, and a per-driver leave
+   * form all carry their own `EntityForm`/"More details" accordion — three
+   * `More details` triggers mount at once once Edit is open, so a bare
+   * `getByRole` is ambiguous. Scope to the Edit card specifically.
+   */
+  function openEditMoreDetails() {
+    const card = screen.getByText('Edit Maria Santos').closest('[data-slot="card"]') as HTMLElement;
+    return user.click(within(card).getByRole('button', { name: /^more details/i }));
+  }
+
+  describe('transfer-job override (maxTransferJobsPerDay)', () => {
+    it('shows blank for a null override, and saves a typed number as a number', async () => {
+      const calls: unknown[] = [];
+      renderPage({ maxTransferJobsPerDay: null, onUpdate: (v) => calls.push(v) });
+
+      await user.click(await screen.findByRole('button', { name: 'Edit' }));
+      // `maxTransferJobsPerDay` is optional, so `EntityForm` puts it behind
+      // the collapsed "More details" disclosure (collapsed by default in
+      // jsdom, which has no `matchMedia`).
+      await openEditMoreDetails();
+      const field = screen.getByLabelText(/transfer jobs per day \(override\)/i);
+      expect(field).toHaveValue(null);
+
+      await user.type(field, '3');
+      await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+      await waitFor(() => expect(calls).toEqual([{ id: 1, patch: { maxTransferJobsPerDay: 3 } }]));
+    });
+
+    it('shows a saved number, and clearing it back to blank saves null — not 0 or the empty string', async () => {
+      const calls: unknown[] = [];
+      renderPage({ maxTransferJobsPerDay: 5, onUpdate: (v) => calls.push(v) });
+
+      await user.click(await screen.findByRole('button', { name: 'Edit' }));
+      await openEditMoreDetails();
+      const field = screen.getByLabelText(/transfer jobs per day \(override\)/i);
+      expect(field).toHaveValue(5);
+
+      await user.clear(field);
+      await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+      await waitFor(() =>
+        expect(calls).toEqual([{ id: 1, patch: { maxTransferJobsPerDay: null } }]),
+      );
+    });
+
+    /**
+     * The load-bearing case: `!'0'` is `false` in JS (a non-empty string is
+     * truthy), so a typed `0` must survive the blank/null check rather than
+     * being read as "nothing typed". A conversion using a looser falsy check
+     * (e.g. comparing the parsed NUMBER instead of the form STRING) would
+     * collapse this into the null case and silently hand a tours-only driver
+     * the admin default's transfer jobs instead of zero.
+     */
+    it('round-trips a typed 0 as 0, never coerced to blank or null', async () => {
+      const calls: unknown[] = [];
+      renderPage({ maxTransferJobsPerDay: null, onUpdate: (v) => calls.push(v) });
+
+      await user.click(await screen.findByRole('button', { name: 'Edit' }));
+      await openEditMoreDetails();
+      const field = screen.getByLabelText(/transfer jobs per day \(override\)/i);
+      await user.type(field, '0');
+      await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+      await waitFor(() => expect(calls).toEqual([{ id: 1, patch: { maxTransferJobsPerDay: 0 } }]));
     });
   });
 });
