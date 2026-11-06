@@ -808,6 +808,16 @@ A fourth door exists for local development only and is not reachable over HTTP:
 `pnpm --filter @rg/server dev:reset-password`, an interactive CLI that refuses to run against
 production. It exists so a locked-out developer never needs to put a password back in `.env`.
 
+That refusal is **four independent checks**, each with its own message, because the two obvious
+ones do not hold on a real server: production's own database is also named `rg_travel`, and
+`NODE_ENV=production` lives in the **PM2 environment** rather than `.env`, so an interactive SSH
+shell on the VPS sees it unset. So alongside `NODE_ENV` and the database-name guard it also
+requires `SITE_ENV` not to be `production` (that one IS in the deployed `.env`, and it defaults
+to `development`) **and** `ALLOW_DEV_PASSWORD_RESET=1`, a deliberate opt-in with no default that
+ships blank and commented `# dev only — never set on the server` in `.env.example` — the same
+shape and the same reasoning as `ALLOW_DEMO_SEED`. The password itself has exactly one input
+channel, a hidden interactive prompt: never `argv`, an environment variable or a file.
+
 Every one of these writes an `audit_log` row and **none of them records the password, the hash, or
 the reset token** — not in the row, not in an error message, not in a log line.
 

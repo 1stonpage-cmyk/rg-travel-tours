@@ -360,6 +360,14 @@ never set on the server` in `.env.example`; **never set it in the production `.e
    the operator's judgement alone. `db:seed` (base) carries no such caveat: run it on production
    whenever a settings key or destination is genuinely missing, with no qualifier needed.
 
+   **`ALLOW_DEV_PASSWORD_RESET` is the same shape and the same rule — never set it on the
+   server.** It is the opt-in behind `pnpm --filter @rg/server dev:reset-password`, the local
+   interactive staff-password CLI (BUILD_SPEC §12's fourth door). Unset, it refuses; and it
+   refuses on `SITE_ENV=production` independently, which is the check that actually holds on this
+   box, since `NODE_ENV` is set in PM2's environment rather than in `.env` and an interactive SSH
+   shell therefore does not see it. Staff passwords on the server are reset through the owner's
+   Staff screen or the self-service "Forgot password" link, never that CLI.
+
 3. **Publish the build**: sync `client/dist` into `/var/www/travelsugbo/app`, confirm
    `pm2 restart` brings the API up on 3100, and smoke-test the whole flow on
    `preview.travelsugbo.com` while it is still behind basic auth.

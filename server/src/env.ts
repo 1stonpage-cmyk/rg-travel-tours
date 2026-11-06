@@ -84,6 +84,20 @@ const schema = z.object({
    * for that, nothing looser.
    */
   ALLOW_DEMO_SEED: z.string().optional(),
+  /*
+   * Task 1A review fix — the deliberate opt-in behind
+   * `pnpm --filter @rg/server dev:reset-password`, and the same shape and
+   * reasoning as `ALLOW_DEMO_SEED` above.
+   *
+   * That script's database-name guard does not protect production either:
+   * production's own database is also named `rg_travel`. Nor does `NODE_ENV`
+   * on its own — the launch checklist sets `NODE_ENV=production` in the PM2
+   * environment, not in `.env`, so an interactive SSH shell on the VPS sees
+   * it unset. This key, with `SITE_ENV`, is what actually keeps the script
+   * off a live server. No default, optional: unset means "refused", not
+   * "defaulted on", and it must be the exact string `'1'`.
+   */
+  ALLOW_DEV_PASSWORD_RESET: z.string().optional(),
 });
 
 /**

@@ -11,14 +11,19 @@
  * and re-seeding. That is precisely the habit the owner's decision exists to
  * kill, so this script is the replacement.
  *
- * Run it as `pnpm --filter @rg/server dev:reset-password`.
+ * Run it as `pnpm --filter @rg/server dev:reset-password`, with
+ * `ALLOW_DEV_PASSWORD_RESET=1` in your local `.env`.
  *
  * ## What it will not do
  *
- *  - **It never runs against production** (`NODE_ENV=production` refuses) and
- *    never against anything but the dev app database `rg_travel` — including
+ *  - **It never runs against production.** FOUR independent checks, all of
+ *    them BEFORE the first prompt and before any read: `NODE_ENV` is not
+ *    `production`, `SITE_ENV` is not `production`, `ALLOW_DEV_PASSWORD_RESET`
+ *    is exactly `'1'`, and the database is `rg_travel` — not
  *    `rg_travel_test`, which is the test suite's and not a developer's login.
- *    Both checks happen BEFORE the first prompt and before any read.
+ *    `refuseReason()` documents what each one is actually for; the short
+ *    version is that the two obvious ones (`NODE_ENV`, the database name) are
+ *    the two that a real production shell would walk straight past.
  *  - **It never creates an account.** An email with no row is a plain "no such
  *    user" and a non-zero exit; a CLI that quietly created staff accounts
  *    would be a backdoor around `admin.staffUsers.create` and its role gate.
@@ -58,7 +63,12 @@ import {
  * a process or a database — see `src/__tests__/dev-reset-password-guard.test.ts`.
  */
 export interface RunEnvironment {
+  /** `process.env.NODE_ENV` — unset on a VPS shell, hence not load-bearing alone. */
   nodeEnv: string | undefined;
+  /** `env.SITE_ENV`, which genuinely lives in the deployed `.env`. */
+  siteEnv: string | undefined;
+  /** `env.ALLOW_DEV_PASSWORD_RESET`; only the exact string `'1'` permits a run. */
+  allowDevPasswordReset: string | undefined;
   /** As `databaseNameFromUrl()` reads it: `null` when unparseable. */
   databaseName: string | null;
 }
@@ -66,9 +76,32 @@ export interface RunEnvironment {
 /**
  * Why this script may not run, or `null` when it may. **The only `null` is an
  * explicit pass** — every other path returns a reason, so an unreadable
- * `DATABASE_URL` refuses rather than falling through.
+ * `DATABASE_URL` or a missing opt-in refuses rather than falling through.
  *
- * The database half is `assertDatabaseName(…, 'app')` itself rather than a
+ * FOUR independent checks, each with its own message naming which one failed,
+ * following `seedDemo()`'s pattern for the same problem (see CLAUDE.md on
+ * `ALLOW_DEMO_SEED`). They are not interchangeable, and the two obvious ones
+ * are the two weakest:
+ *
+ *  - **The database name does not protect production**, because production's
+ *    own database is also named `rg_travel` (`APP_DATABASE_NAME`). It only
+ *    catches a genuinely FOREIGN database — Kong PMS's, or a `DATABASE_URL`
+ *    typo.
+ *  - **`NODE_ENV` does not protect production either.** `docs/LAUNCH_CHECKLIST.md`
+ *    sets `NODE_ENV=production` in the **PM2 environment**, and `.env.example`
+ *    deliberately keeps `NODE_ENV` out of `.env`, so on an interactive SSH
+ *    shell on the VPS — exactly where someone would run this — it is unset.
+ *  - **`SITE_ENV` does**, because the checklist requires it in the deployed
+ *    `.env` itself (LAUNCH_CHECKLIST.md's "SITE_ENV=production is set in the
+ *    deployed .env"), which `env.ts`'s dotenv load reads in any shell. It
+ *    defaults to `development`, so it fails closed locally rather than
+ *    needing to be set on every dev box.
+ *  - **`ALLOW_DEV_PASSWORD_RESET=1` is the deliberate opt-in**, the barrier
+ *    that holds even if a server's `.env` is somehow missing `SITE_ENV`.
+ *
+ * Do not drop one as redundant: each covers a case the others do not.
+ *
+ * The database check is `assertDatabaseName(…, 'app')` itself rather than a
  * second copy of the name rule: the one place that knows which database this
  * project may touch stays the one place, and its message is already written
  * to name the offending database and nothing secret.
@@ -77,7 +110,23 @@ export function refuseReason(environment: RunEnvironment): string | null {
   if (environment.nodeEnv === 'production') {
     return (
       'Refusing to run with NODE_ENV=production. This script is a local ' +
-      'development tool; on a server use the owner\'s "Reset password" screen.'
+      'development tool; on a server use the owner\'s "Reset password" screen ' +
+      'or the self-service "Forgot password" link.'
+    );
+  }
+
+  if (environment.siteEnv === 'production') {
+    return (
+      'Refusing to run with SITE_ENV=production. This script is a local ' +
+      'development tool; on a server use the owner\'s "Reset password" screen ' +
+      'or the self-service "Forgot password" link.'
+    );
+  }
+
+  if (environment.allowDevPasswordReset !== '1') {
+    return (
+      'Refusing to run without ALLOW_DEV_PASSWORD_RESET=1. Set it in your ' +
+      'LOCAL .env only — never on a server — and run this again.'
     );
   }
 
@@ -90,37 +139,81 @@ export function refuseReason(environment: RunEnvironment): string | null {
   return null;
 }
 
-/** Non-zero exit with a one-line reason and nothing else. */
+/**
+ * Stops the run with a one-line reason.
+ *
+ * It THROWS rather than calling `process.exit()`, which is what the first
+ * version did: `process.exit()` from inside the `try` skipped the `finally`
+ * that closes the readline interface and the handler that closes the database
+ * pool, and can truncate output already queued to a redirected stderr. The
+ * top-level handler prints exactly the same single line and exits 1.
+ */
 function refuse(reason: string): never {
-  console.error(`[dev:reset-password] ${reason}`);
-  process.exit(1);
+  throw new Error(reason);
+}
+
+export interface Prompt {
+  /** A visible prompt: the answer is echoed as it is typed. */
+  ask: (question: string) => Promise<string>;
+  /** A hidden prompt: the label shows, the typed value never does. */
+  askHidden: (question: string) => Promise<string>;
+  close: () => void;
 }
 
 /**
- * One readline interface for the whole run, with its output writer wrapped so
- * a password can be typed without appearing on screen.
+ * One readline interface for the whole run, with its line writer wrapped so a
+ * password can be typed without appearing on screen.
  *
- * `_writeToOutput` is readline's own internal echo hook; suppressing it is
- * the standard no-dependency way to mute a prompt (CLAUDE.md forbids adding
- * `inquirer`/`prompts`/`read` for this). The alternative, `setRawMode`, means
- * re-implementing backspace and Ctrl-C by hand.
+ * `_writeToOutput` is readline's own internal echo hook, and replacing it is
+ * the no-dependency way to mute a prompt (CLAUDE.md forbids adding
+ * `inquirer`/`prompts`/`read` for this). The alternative, driving
+ * `setRawMode` directly, means re-implementing backspace and Ctrl-C by hand.
+ *
+ * **The muted writer re-emits the LABEL, it does not write nothing.** Writing
+ * nothing was the first version's bug: readline sends its line-refresh
+ * escapes (`ESC[1G` to column 1, `ESC[0J` erase-to-end) **straight to
+ * `output`**, bypassing this hook, and only the line TEXT comes through it.
+ * So a hook that returned early erased the label it had just printed and drew
+ * nothing back, and the developer typed a password into a blank line. Emitting
+ * `question` on every refresh keeps the label on screen while the typed value
+ * still never renders.
+ *
+ * `_writeToOutput` is a private readline API and the bug above is proof it is
+ * not a stable contract: if a future Node moves the line text off this hook,
+ * muting fails OPEN — the password would echo. That is why
+ * `dev-reset-password-prompt.test.ts` drives this function over a
+ * `PassThrough` and asserts on the real captured bytes, rather than trusting
+ * it. `input`/`output` are parameters for exactly that reason.
  */
-function openPrompt(): {
-  ask: (q: string) => Promise<string>;
-  askHidden: (q: string) => Promise<string>;
-  close: () => void;
-} {
-  const rl: Interface = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    terminal: true,
-  });
+export function openPrompt(
+  input: NodeJS.ReadableStream = process.stdin,
+  output: NodeJS.WritableStream = process.stdout,
+): Prompt {
+  const rl: Interface = createInterface({ input, output, terminal: true });
 
   const echo = rl as unknown as { _writeToOutput: (chunk: string) => void };
   const write = echo._writeToOutput.bind(rl);
-  let muted = false;
+  /** The label to draw in place of the line while a password is being typed. */
+  let maskWith: string | null = null;
   echo._writeToOutput = (chunk: string) => {
-    if (!muted) write(chunk);
+    if (maskWith === null) {
+      write(chunk);
+      return;
+    }
+    /*
+     * Two kinds of chunk arrive while masked, and they need opposite answers
+     * — measured in a real console, where emitting the label for both
+     * reprinted it once per keystroke across the whole terminal:
+     *
+     *  - a FULL LINE draw (`prompt + line`), from `_refreshLine()` — the
+     *    initial prompt, a backspace, an arrow key, a wrap. The erase escapes
+     *    that precede it bypass this hook, so the label must be redrawn here
+     *    or it is wiped off the screen.
+     *  - a SINGLE CHARACTER, from `_insertString()`'s fast path when the
+     *    cursor is at the end of the line. Nothing is erased first, so the
+     *    right answer is to write nothing at all.
+     */
+    write(chunk.startsWith(maskWith) ? maskWith : '');
   };
 
   const ask = (question: string) =>
@@ -131,16 +224,14 @@ function openPrompt(): {
   return {
     ask,
     askHidden: async (question: string) => {
-      // Written straight to stdout, so the label shows even while the
-      // interface's own echo is muted.
-      process.stdout.write(question);
-      muted = true;
+      maskWith = question;
       try {
-        return await ask('');
+        return await ask(question);
       } finally {
-        muted = false;
-        // The Enter keystroke's newline was swallowed with everything else.
-        process.stdout.write('\n');
+        maskWith = null;
+        // The Enter keystroke's own newline went through the muted hook with
+        // everything else, so the next line starts here.
+        output.write('\n');
       }
     },
     close: () => rl.close(),
@@ -156,6 +247,8 @@ async function main(): Promise<void> {
 
   const reason = refuseReason({
     nodeEnv: process.env.NODE_ENV,
+    siteEnv: env.SITE_ENV,
+    allowDevPasswordReset: env.ALLOW_DEV_PASSWORD_RESET,
     databaseName: databaseNameFromUrl(env.DATABASE_URL),
   });
   if (reason) refuse(reason);
@@ -203,7 +296,7 @@ async function main(): Promise<void> {
     // email this script could not find but the login screen could would be
     // worse than useless.
     const [user] = await getDb()
-      .select({ id: users.id, email: users.email })
+      .select({ id: users.id, email: users.email, name: users.name, isActive: users.isActive })
       .from(users)
       .where(sql`LOWER(${users.email}) = ${email}`)
       .limit(1);
@@ -212,6 +305,24 @@ async function main(): Promise<void> {
       refuse(
         `No staff account exists for that email on "${APP_DATABASE_NAME}". ` +
           'This script never creates one — add the account in the admin Staff screen.',
+      );
+    }
+
+    // Who was found, before a password is typed for them — the email was
+    // matched case-insensitively, so this is also the confirmation that the
+    // row is the intended one.
+    console.log(
+      `Found: ${user.name} <${user.email}> (user #${user.id})${user.isActive ? '' : ' — DEACTIVATED'}`,
+    );
+    if (!user.isActive) {
+      // `verifyStaffPassword` checks `is_active` AFTER the hash and refuses
+      // regardless of the password, so a new password alone changes nothing
+      // for this account. Saying so here, before the prompts, is the
+      // difference between a confusing "updated" and a useful one.
+      console.warn(
+        'WARNING: this account is deactivated, so the sign-in screen will refuse it ' +
+          'whatever its password is. Reactivate it on the admin Staff screen as well, ' +
+          'or press Ctrl-C now.',
       );
     }
 
@@ -275,6 +386,11 @@ async function main(): Promise<void> {
       `Password updated for ${user.email} (user #${user.id}). ` +
         `Sessions ended: ${sessionsRevoked}.`,
     );
+    if (!user.isActive) {
+      console.warn(
+        'Reminder: the account is still deactivated, so this password cannot sign in yet.',
+      );
+    }
     console.log(
       `If the login screen is still refusing you, you are throttled: that counter lives in the ` +
         `dev server's memory, not the database, so it clears after ` +
