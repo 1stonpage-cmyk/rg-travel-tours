@@ -15,7 +15,8 @@
     "db:migrate": "node scripts/db-preflight.mjs && drizzle-kit migrate",
     "db:push": "node scripts/db-preflight.mjs && drizzle-kit push",
     "db:seed": "node scripts/db-preflight.mjs && tsx src/db/seed.ts",
-    "db:seed:demo": "node scripts/db-preflight.mjs && tsx src/db/seed-demo.ts"
+    "db:seed:demo": "node scripts/db-preflight.mjs && tsx src/db/seed-demo.ts",
+    "dev:reset-password": "tsx scripts/dev-reset-staff-password.ts"
   },
   "dependencies": {
     "@rg/shared": "workspace:*",
