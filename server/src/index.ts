@@ -1,9 +1,9 @@
 import { createApp } from './app';
 import { assertConnectedDatabase, assertDatabaseName, databaseNameFromUrl } from './db/guard';
+import { warnIfOwnerPasswordUnused } from './db/owner-bootstrap';
 import { env } from './env';
 import { CLIENT_DIST_DIR } from './html';
 import { startScheduledJobs } from './jobs';
-import { warnIfOwnerPasswordUnused } from './db/owner-bootstrap';
 
 try {
   assertDatabaseName(databaseNameFromUrl(env.DATABASE_URL), 'app');
@@ -12,16 +12,6 @@ try {
   console.error(`\n[rg-travel-tours] Database check failed.\n  ${(error as Error).message}\n`);
   process.exit(1);
 }
-
-/*
- * One line, once, if the one-time bootstrap credential is still sitting in
- * `.env` after the owner it was for already exists (Task 1D). It runs here
- * because the checks above have just proved the database reachable and the
- * right one — and it CANNOT stop the boot: it catches its own failures and
- * fails open on purpose. See db/owner-bootstrap.ts for why this is the one
- * guard in the tree that does.
- */
-await warnIfOwnerPasswordUnused();
 
 // Only production serves the built SPA (and its injected SEO meta) from
 // Express — in development Vite owns the HTML on CLIENT_PORT and runs the
@@ -34,6 +24,29 @@ const clientDistDir = env.NODE_ENV === 'production' ? CLIENT_DIST_DIR : undefine
 createApp(env.PUBLIC_BASE_URL, clientDistDir, env.SITE_ENV).listen(env.PORT, () => {
   console.log(`[rg-travel-tours] server listening on http://localhost:${env.PORT}`);
 });
+
+/*
+ * One line, once, if the one-time bootstrap credential is still sitting in
+ * `.env` after the owner it was for already exists (Task 1D).
+ *
+ * **Deliberately AFTER `listen()`, and deliberately NOT awaited** (review fix,
+ * I1). `warnIfOwnerPasswordUnused()` cannot reject — every path, the `env`
+ * read included, is inside its own `try` — so there is nothing to await; and
+ * awaiting it ahead of `listen()` made an advisory check able to cause the
+ * outage it exists to avoid. A thrown or rejected query was always handled,
+ * but a query that never ANSWERS is a third case neither a `catch` nor a
+ * `connectTimeout` covers: the pool is mysql2's default unbounded, untimed
+ * queue (see db/client.ts), so a metadata lock on `users` during a deploy —
+ * a concurrent `ALTER TABLE users`, say — would leave `listen()` unreached
+ * for as long as the lock held, with PM2 reporting the process online and
+ * nothing answering the port. Run after the listener is up, the worst that
+ * same stall can do is never print a reminder.
+ *
+ * It still runs after the database checks above, for the same reason the cron
+ * does: there is no point asking a database that has not been proved to be
+ * the right one.
+ */
+void warnIfOwnerPasswordUnused();
 
 /*
  * The cron, started after the database checks above have passed — a sweep

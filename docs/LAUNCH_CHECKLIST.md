@@ -240,10 +240,11 @@ works around, so finding it late means a rewrite rather than a fix.
 
 ### The owner account, the origin allowlist and the public base URL — BLOCKING
 
-Each is a `.env` value whose default is wrong in production, and the app is wrong in a
-different way for each one that is left alone: no owner can sign in, every browser request
-is refused, or every link the server builds — including a staff password-reset link —
-points at `localhost`.
+None of the three has a safe default: `OWNER_EMAIL` / `OWNER_PASSWORD` have no default at
+all, and `APP_ORIGIN` / `PUBLIC_BASE_URL` default to the local dev server. The app is wrong
+in a different way for each one left alone: no owner can sign in, every browser request is
+refused, or every link the server builds — including a staff password-reset link — points
+at `localhost`.
 
 - [ ] **Set `OWNER_EMAIL` and `OWNER_PASSWORD` in the deployed `.env`**, then run
       `pnpm --filter @rg/server db:seed`. Use a **strong, unique** password of at least 12

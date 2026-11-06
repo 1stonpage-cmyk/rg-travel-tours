@@ -40,13 +40,20 @@
  * Not the value, not its length, not a hash, not a masked form. One fixed
  * line and nothing else.
  *
- * ## Nothing imports this except `src/index.ts`
+ * ## No PRODUCTION module imports this except `src/index.ts`
  *
- * The same discipline `startScheduledJobs()` keeps: the only caller of
- * `warnIfOwnerPasswordUnused()` is the startup entry, which no test imports,
- * so the suite never runs the boot check and never gets noisy from it.
- * Importing this module runs nothing — the decision below is a pure function
- * and the tests drive it directly.
+ * The same discipline `startScheduledJobs()` keeps, and the same limit: the
+ * only production caller of `warnIfOwnerPasswordUnused()` is the startup
+ * entry, which no test imports — so the boot wiring is pinned by reading
+ * `src/index.ts` as TEXT (`__tests__/owner-password-warning.test.ts`, review
+ * fix I2) rather than by running it, the same trick the client's contrast and
+ * no-red guards use on real source.
+ *
+ * The wrapper itself IS exercised directly, by that file and by
+ * `owner-seed.test.ts`; the suite stays quiet because every one of those
+ * callers spies on `console.warn` / `console.debug` and restores it.
+ * Importing this module still runs nothing at all — no top-level side effect,
+ * and the decision below is a pure function the tests drive directly.
  */
 import { and, eq } from 'drizzle-orm';
 import { getDb } from './client';
@@ -97,10 +104,21 @@ export async function warnIfOwnerPasswordUnused(): Promise<void> {
       console.warn(UNUSED_OWNER_PASSWORD_WARNING);
     }
   } catch (error) {
-    // Fail OPEN — see the module docblock. A hygiene reminder must never
-    // become an outage, so the worst a broken check can do is this line.
+    /*
+     * Fail OPEN — see the module docblock. A hygiene reminder must never
+     * become an outage, so the worst a broken check can do is this line.
+     *
+     * It carries the driver's fixed error CODE and never the raw message
+     * (review note): `db/guard.ts` discards raw errors for exactly this
+     * reason, since a thrown database error can carry a credentialed URL or a
+     * username in its text, and a debug line is still a log line. The code
+     * (`ER_LOCK_WAIT_TIMEOUT`, say) is the useful half and is non-secret by
+     * construction.
+     */
+    const code = (error as { code?: unknown }).code;
     console.debug(
-      `[rg-travel-tours] owner-password hygiene check skipped: ${(error as Error).message}`,
+      '[rg-travel-tours] owner-password hygiene check skipped' +
+        (typeof code === 'string' ? ` (${code})` : ''),
     );
   }
 }
