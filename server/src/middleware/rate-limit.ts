@@ -331,6 +331,65 @@ export function createStaffLoginLimiter(): RequestHandler {
   });
 }
 
+/**
+ * Self-service staff password reset, per IP (§12's third door; owner
+ * decision 2026-11-06, task 1C): **10 attempts per 15 minutes**.
+ *
+ * ## Its own group, and NOT `STAFF_LOGIN_PROCEDURES` — which is the whole
+ * reason this constant exists rather than two names appended to that list
+ *
+ * `createStaffLoginLimiter()` sets `skipSuccessfulRequests: true`, so it
+ * counts **failures only**. That is right for a login, where a staff member
+ * who signs in correctly must never spend budget. It is exactly WRONG here,
+ * because for `requestPasswordReset` a *successful* request is the thing
+ * that needs limiting: every success puts an email in somebody's inbox and
+ * costs us an outbound send, and the procedure answers 200 for an unknown
+ * address by design. Added to that group, the limit would have applied to
+ * nothing at all — the one call shape an attacker uses is the one that is
+ * always "successful".
+ *
+ * So `skipSuccessfulRequests` is left at its default (`false`): every
+ * matched call counts, like the checkout-hold, review-vote and driver-login
+ * limiters and unlike the two login ones.
+ *
+ * ## Why both procedures share ONE budget
+ *
+ * They are one flow and one attack surface. A real staff member spends two
+ * or three of the ten (ask, then set, with a mistyped confirmation in
+ * between); an attacker grinding tokens and an attacker spamming an inbox
+ * are both bounded by the same figure. Two budgets would simply hand each
+ * of them ten.
+ *
+ * Ten rather than five, matching `STAFF_LOGIN_MAX_PER_IP`: this is the same
+ * surface, several staff may sit behind one office NAT, and a mail that does
+ * not arrive is a thing people retry.
+ *
+ * The per-EMAIL half (`RESET_MAX_PER_EMAIL`, three per 15 minutes) is in
+ * `services/password-reset.ts`, and both are needed for the same reason the
+ * login needs both: this one stops one address hammering the endpoint, that
+ * one stops an attacker spreading inbox-spam for ONE victim across many
+ * addresses.
+ *
+ * **Mounted immediately** in `app.ts`, because this task ships both
+ * procedures in the same commit — so there is no guessed-procedure-name
+ * problem of the kind that left `createDriverLoginLimiter()` unmounted for
+ * two weeks.
+ */
+export const STAFF_PASSWORD_RESET_WINDOW_MS = 15 * 60_000;
+export const STAFF_PASSWORD_RESET_MAX_PER_IP = 10;
+export const STAFF_PASSWORD_RESET_PROCEDURES = [
+  'staffAuth.requestPasswordReset',
+  'staffAuth.resetPassword',
+] as const;
+
+export function createStaffPasswordResetLimiter(): RequestHandler {
+  return createProcedureRateLimit([...STAFF_PASSWORD_RESET_PROCEDURES], {
+    windowMs: STAFF_PASSWORD_RESET_WINDOW_MS,
+    max: STAFF_PASSWORD_RESET_MAX_PER_IP,
+    // Deliberately NOT `skipSuccessfulRequests` — see this group's note.
+  });
+}
+
 export function createBookingLookupLimiter(): RequestHandler {
   return createProcedureRateLimit([...BOOKING_LOOKUP_PROCEDURES], {
     windowMs: BOOKING_LOOKUP_WINDOW_MS,

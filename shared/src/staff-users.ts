@@ -73,3 +73,61 @@ export const changePasswordInputSchema = z
   })
   .strict();
 export type ChangePasswordInput = z.infer<typeof changePasswordInputSchema>;
+
+/* ------------------------------------------------------------------ *
+ * Forgot password — §12's third door (owner decision 2026-11-06, 1C).
+ * ------------------------------------------------------------------ */
+
+/**
+ * The ONE sentence `staffAuth.requestPasswordReset` answers with, for every
+ * outcome there is: the account exists, it does not exist, it is
+ * deactivated, the throttle refused the request, SMTP is not configured, the
+ * send failed. One constant rather than a string typed on both sides,
+ * because the whole security property of that procedure is that the response
+ * is byte-identical — and two copies of a sentence are two sentences waiting
+ * to diverge.
+ *
+ * It is phrased as a conditional on purpose ("If that email belongs to…"):
+ * a staff member who typed their address correctly reads it as "it is
+ * coming", and someone probing for staff addresses learns nothing from it.
+ */
+export const PASSWORD_RESET_REQUESTED_MESSAGE =
+  'If that email belongs to a staff account, a reset link is on its way. ' +
+  'It expires in 30 minutes.';
+
+/**
+ * The ONE refusal `staffAuth.resetPassword` gives for an unknown token, an
+ * expired one, one already spent, and one belonging to a deactivated
+ * account — the same single-refusal rule the login follows, for the same
+ * reason: four distinguishable answers make the endpoint an oracle for which
+ * links and which accounts are live.
+ */
+export const PASSWORD_RESET_REFUSED_MESSAGE =
+  'That reset link is not valid any more. Ask for a new one.';
+
+/**
+ * `.strict()`, like `loginInput`: a request carrying anything else — a
+ * `userId`, a `role`, a `token` — is refused at the input stage rather than
+ * ignored. `staffEmailSchema` trims and lowercases, so the throttle key and
+ * the account lookup agree with every other staff surface.
+ */
+export const requestPasswordResetInputSchema = z.object({ email: staffEmailSchema }).strict();
+export type RequestPasswordResetInput = z.infer<typeof requestPasswordResetInputSchema>;
+
+/**
+ * The token is a `base64url` encoding of 32 random bytes — 43 characters —
+ * so the bounds are generous rather than exact: a length rule here would be
+ * a second place that has to agree with `randomBytes(32)`, and it would
+ * refuse a link issued by an older deploy. The real check is that the
+ * SHA-256 of whatever arrives matches a live row.
+ *
+ * `newPassword` is `staffPasswordSchema`, the same rule the owner's reset
+ * and the voluntary change both use. Not restated here.
+ */
+export const resetPasswordInputSchema = z
+  .object({
+    token: z.string().min(1, 'This reset link is incomplete.').max(400),
+    newPassword: staffPasswordSchema,
+  })
+  .strict();
+export type ResetPasswordInput = z.infer<typeof resetPasswordInputSchema>;

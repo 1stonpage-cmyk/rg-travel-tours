@@ -16,7 +16,9 @@ import AdminStaffPage from '@/pages/admin/AdminStaffPage';
 import AdminToursPage from '@/pages/admin/AdminToursPage';
 import AdminTransferRoutesPage from '@/pages/admin/AdminTransferRoutesPage';
 import AdminChangePasswordPage from '@/pages/admin/AdminChangePasswordPage';
+import AdminForgotPasswordPage from '@/pages/admin/AdminForgotPasswordPage';
 import AdminLoginPage from '@/pages/admin/AdminLoginPage';
+import AdminResetPasswordPage from '@/pages/admin/AdminResetPasswordPage';
 import AdminPaymentsPage from '@/pages/admin/AdminPaymentsPage';
 import AdminSettingsPage from '@/pages/admin/AdminSettingsPage';
 import AdminVansPage from '@/pages/admin/AdminVansPage';
@@ -109,6 +111,19 @@ export default function App() {
        * `X-Robots-Tag` middleware already keeps out of every index.
        */}
       <Route path="admin/login" element={<AdminLoginPage />} />
+
+      {/*
+       * §12's self-service password reset (task 1C), beside the sign-in and
+       * outside `AdminLayout` for the same reason it is: both are reached by
+       * a staff member who CANNOT sign in, so a layout that demands a
+       * session would send them to the sign-in screen they just came from.
+       *
+       * No SEO change is needed for either — `appSurfaceMeta` keys on the
+       * first path segment, so `/admin` already gives both of these the
+       * "Staff console" title and `noindex,nofollow`.
+       */}
+      <Route path="admin/forgot-password" element={<AdminForgotPasswordPage />} />
+      <Route path="admin/reset-password" element={<AdminResetPasswordPage />} />
 
       {/*
        * The dispatch shell (Week 5, Task 1) and everything under it.

@@ -20,6 +20,7 @@ import {
   createReviewSubmitLimiter,
   createReviewVoteLimiter,
   createStaffLoginLimiter,
+  createStaffPasswordResetLimiter,
 } from './middleware/rate-limit';
 import { robotsHeader } from './middleware/robots-header';
 import { appRouter } from './routers/_app';
@@ -174,6 +175,16 @@ export function createApp(
   // Staff login, 10 failed attempts per IP per 15 minutes (Week 4, Task 5).
   // The per-email half is in `services/staff-auth.ts`.
   app.use('/trpc', createStaffLoginLimiter());
+
+  /*
+   * §12's self-service password reset, 10 attempts per IP per 15 minutes
+   * (task 1C). A SEPARATE group from the staff login above, and the reason
+   * is `skipSuccessfulRequests`: that limiter counts failures only, which
+   * for `requestPasswordReset` — a procedure that answers 200 for an
+   * unknown address on purpose — would have limited nothing at all. Here
+   * every matched call counts. See middleware/rate-limit.ts.
+   */
+  app.use('/trpc', createStaffPasswordResetLimiter());
 
   /*
    * Driver login, §8's third limit: 10 attempts per IP per 15 minutes

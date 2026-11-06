@@ -37,7 +37,7 @@
  */
 import { useState, type FormEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff, Loader2, Lock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -50,7 +50,16 @@ const ERROR_ID = 'staff-login-error';
 
 export default function AdminLoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
+  /*
+   * Set by `AdminResetPasswordPage` on a successful reset (task 1C), as
+   * router STATE rather than a query parameter: "your password is set" is a
+   * one-shot fact about something that just happened in this tab, not a
+   * property of a URL anybody might share or reload into.
+   */
+  const passwordReset =
+    (location.state as { passwordReset?: boolean } | null)?.passwordReset === true;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [revealed, setRevealed] = useState(false);
@@ -100,6 +109,22 @@ export default function AdminLoginPage() {
           <h2 id="staff-login-heading" className="sr-only">
             Sign in to the admin
           </h2>
+
+          {/*
+           * Task 1C. Shown once, after a self-service reset lands here.
+           * `role="status"` not `role="alert"`: it is the expected outcome
+           * of what the person just did. It is suppressed the moment a
+           * login attempt fails, so the screen never says "your password is
+           * set" and "that email and password do not match" at once.
+           */}
+          {passwordReset && !login.isError ? (
+            <p
+              role="status"
+              className="bg-brand-blue-50 text-brand-blue-900 border-brand-blue-200 rounded-xl border p-3 text-sm font-medium"
+            >
+              Your new password is set. Sign in with it below.
+            </p>
+          ) : null}
 
           {/*
            * ONE notice for the credential pair — see the file note. `role="alert"`
@@ -194,7 +219,21 @@ export default function AdminLoginPage() {
           </Button>
         </form>
 
-        <p className="text-brand-error mt-4 text-center text-xs">
+        {/*
+         * §12's third door (task 1C). BELOW the form rather than beside the
+         * password label: a staff member who knows their password should
+         * reach the submit button next, not a link away from it.
+         */}
+        <p className="mt-4 text-center text-sm">
+          <Link
+            to="/admin/forgot-password"
+            className="text-brand-blue-700 hover:text-brand-blue-800 focus-visible:ring-brand-blue-600 tap-target inline-flex items-center justify-center rounded-[10px] px-3 font-medium underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2"
+          >
+            Forgot password?
+          </Link>
+        </p>
+
+        <p className="text-brand-error mt-2 text-center text-xs">
           Repeated failed attempts are temporarily blocked.
         </p>
       </div>

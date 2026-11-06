@@ -221,6 +221,16 @@ function linkHtml(url: string, label: string): string {
   );
 }
 
+/*
+ * Shared with `staff-password-reset.ts`, which sends the one mail that is
+ * NOT a `NotifyEvent` (§12's self-service reset; task 1C). Aliases rather
+ * than renamed definitions, so every call site above is untouched: a staff
+ * reset mail has to look like every other mail this system sends, and the
+ * way to guarantee that is to render it through the same shell rather than
+ * to copy 16 lines of inline table styles into a second file.
+ */
+export { document_ as mailDocument, linkHtml as mailLink };
+
 /**
  * Renders one event. Pure: no clock, no database, no network — so every
  * template is testable without any of them, and the §11 "no red" and

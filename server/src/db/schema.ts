@@ -984,6 +984,72 @@ export const sessions = mysqlTable(
 );
 
 /**
+ * Self-service staff password reset — §12's third door (owner decision
+ * 2026-11-06, task 1C).
+ *
+ * One row per "forgot password" click that actually matched an active staff
+ * account. A row is spent by `staffAuth.resetPassword` and never deleted:
+ * `used_at` is the record that this link was redeemed, and when.
+ *
+ * ## SHA-256 here, scrypt on `users.password_hash` — and the difference is
+ * the ENTROPY of what is being hashed, not a weaker standard for tokens
+ *
+ * `users.password_hash` protects something a human chose: perhaps 40 bits of
+ * real entropy, enumerable offline, which is exactly what a memory-hard KDF
+ * exists to make expensive (see `services/password.ts`). This column
+ * protects 32 bytes from `randomBytes` — 256 bits with no structure, no
+ * dictionary and nothing to guess — so there is no brute-force search to
+ * slow down, and a 250ms/128MB scrypt derivation per reset-link click would
+ * buy nothing while handing an unauthenticated endpoint a memory-exhaustion
+ * lever. A single fast SHA-256 is the right primitive for a high-entropy
+ * bearer token, which is the identical reasoning `sessions.token_hash`
+ * already records for the session cookie.
+ *
+ * What the hash DOES buy, and why the column is not the raw token: a
+ * database leak hands over a list of 64-character digests rather than a
+ * folder of live reset links. The raw token exists only in memory for the
+ * length of one request and in the emailed URL.
+ */
+export const passwordResetTokens = mysqlTable(
+  'password_reset_tokens',
+  {
+    id: int('id').autoincrement().primaryKey(),
+    /**
+     * A real foreign key, unlike `sessions.subject_id`: a reset token belongs
+     * to a staff account and to nothing else, so there is no polymorphism to
+     * express and no reason to give up the constraint.
+     */
+    userId: int('user_id')
+      .notNull()
+      .references(() => users.id),
+    /** SHA-256 of the raw token, as 64 hex characters. See the table note. */
+    tokenHash: varchar('token_hash', { length: 64 }).notNull().unique(),
+    /**
+     * Non-nullable, like `sessions.expires_at` and for the same reason: a
+     * reset link with no expiry is a permanent credential sitting in an
+     * inbox. 30 minutes from issue (`RESET_TOKEN_TTL_MS`), in UTC.
+     */
+    expiresAt: datetime('expires_at', { mode: 'date' }).notNull(),
+    /**
+     * Non-null means spent and the row is dead. Single use is arbitrated by
+     * a conditional `UPDATE ... WHERE used_at IS NULL`, so two simultaneous
+     * clicks of one link cannot both win — see `staffAuth.resetPassword`.
+     */
+    usedAt: datetime('used_at', { mode: 'date' }),
+    createdAt: datetime('created_at', { mode: 'date' })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [
+    /**
+     * "Invalidate every other outstanding token for this user", which a
+     * successful reset does inside its own transaction.
+     */
+    index('password_reset_tokens_user_idx').on(t.userId),
+  ],
+);
+
+/**
  * The central record of the whole system (BUILD_SPEC §10, §5, §6).
  *
  * Money, in four `int` centavos columns and no others:
