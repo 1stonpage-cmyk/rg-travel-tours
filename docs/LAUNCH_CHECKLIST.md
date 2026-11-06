@@ -238,10 +238,12 @@ works around, so finding it late means a rewrite rather than a fix.
       at `p=none` so nothing is silently discarded while the records are being proven, then
       tighten it.
 
-### The owner account and the origin allowlist — BLOCKING
+### The owner account, the origin allowlist and the public base URL — BLOCKING
 
-Both are `.env` values with no safe default, and the app is wrong in a different way for
-each if they are missing: no owner can sign in, or every browser request is refused.
+Each is a `.env` value whose default is wrong in production, and the app is wrong in a
+different way for each one that is left alone: no owner can sign in, every browser request
+is refused, or every link the server builds — including a staff password-reset link —
+points at `localhost`.
 
 - [ ] **Set `OWNER_EMAIL` and `OWNER_PASSWORD` in the deployed `.env`**, then run
       `pnpm --filter @rg/server db:seed`. Use a **strong, unique** password of at least 12
@@ -254,8 +256,15 @@ each if they are missing: no owner can sign in, or every browser request is refu
       2026-10-30:** re-adding it and re-seeding is no longer a password-reset path — the
       2026-10-23 owner decision made `seedFirstOwner` create-only, so it returns early when an
       active owner exists and warns-and-skips on a duplicate email rather than updating it.
-      There is still no reset screen until the admin weeks; resetting a forgotten owner
-      password today needs a direct database update, not a re-seed.
+      **Since Task 1D the server says so itself:** at boot, with `OWNER_PASSWORD` still set
+      and an active owner already in the database, it logs exactly one line —
+      `OWNER_PASSWORD is set but unused — remove it from .env` — so this item is verifiable
+      from the PM2 log rather than from memory. The check never prints the password and can
+      never stop the boot (it fails open on purpose; see `server/src/db/owner-bootstrap.ts`),
+      so a line that is ABSENT proves nothing on its own — tick this by reading the `.env`.
+      Resetting a forgotten staff password is now an in-app matter (change-your-own, the
+      owner's reset for someone else, forgot-password by email — which needs `PUBLIC_BASE_URL`
+      and SMTP right, both below), never a re-seed and never a direct database update.
 - [ ] **Set `APP_ORIGIN=https://travelsugbo.com`** in the deployed `.env`. It is the only
       origin allowed to make a state-changing request (CSRF, §12), and outside production the
       Vite dev server on 5180 is allowed as well — which is exactly why production must be set
@@ -265,6 +274,16 @@ each if they are missing: no owner can sign in, or every browser request is refu
       protected by signature verification instead, so a check there would reject every real
       payment notification. Confirm a signed test webhook still succeeds when you do the
       gateway wire check below.
+- [ ] **Set `PUBLIC_BASE_URL=https://travelsugbo.com`** in the deployed `.env`. It defaults to
+      `http://localhost:5180`, which is why production must set it explicitly. It is this
+      project's one base-URL setting, and since Task 1C it is **load-bearing for an
+      authentication credential**: the staff password-reset email builds its link from it
+      (`/admin/reset-password?token=…`), as do the gateway return URLs, the portal sign-in
+      link, every canonical and Open Graph URL, and `sitemap.xml`. A wrong value here is
+      **silent and undiagnosable** — the staff member is told a reset link is on its way, the
+      link arrives pointing at `localhost`, and nothing reports a problem, because the
+      generic response reveals nothing by design. Verify after deploy: trigger one staff
+      forgot-password and open the link from the email it actually sends.
 
 ### The gateway wire check — BLOCKING, and no test in the suite can substitute for it
 

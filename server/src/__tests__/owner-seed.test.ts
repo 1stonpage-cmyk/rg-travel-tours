@@ -11,11 +11,12 @@
  * environment the way a deployer would, which is also the only way to prove
  * the wiring is real rather than the helper being correct in isolation.
  */
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { and, eq, inArray, like } from 'drizzle-orm';
 import { getDb } from '../db/client';
 import { users } from '../db/schema';
 import { env } from '../env';
+import { UNUSED_OWNER_PASSWORD_WARNING, warnIfOwnerPasswordUnused } from '../db/owner-bootstrap';
 import { seed } from '../db/seed';
 import { hashPassword, verifyPassword } from '../services/password';
 import { describeWithDb } from './helpers/db';
@@ -222,5 +223,68 @@ describeWithDb('the owner seed', () => {
 
     const rows = await getDb().select({ id: users.id }).from(users).where(eq(users.email, EMAIL));
     expect(rows, 'a second owner was seeded alongside the existing one').toHaveLength(0);
+  }, 60_000);
+});
+
+/**
+ * Task 1D — the other half of "the bootstrap is one-time": the server SAYS so
+ * at boot while the plaintext is still in `.env`.
+ *
+ * These two live here rather than beside the pure decision
+ * (`owner-password-warning.test.ts`) because this file already owns the
+ * machinery the live path needs — the ambient owner set aside in `beforeEach`
+ * and restored in `afterEach` — and because what they add over the truth
+ * table is exactly the part a pure function cannot cover: that the query
+ * really asks for an ACTIVE owner, the same question `seedFirstOwner` asks.
+ */
+describeWithDb('the boot-time OWNER_PASSWORD reminder, against the real users table', () => {
+  it('warns, once and exactly, while an active owner exists', async () => {
+    await getDb()
+      .insert(users)
+      .values({
+        name: 'Existing Owner',
+        email: EMAIL,
+        passwordHash: await hashPassword('the-original-password-1'),
+        role: 'owner',
+        isActive: true,
+      });
+    (env as { OWNER_PASSWORD?: string }).OWNER_PASSWORD = STRONG;
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await warnIfOwnerPasswordUnused();
+      expect(warn.mock.calls).toEqual([[UNUSED_OWNER_PASSWORD_WARNING]]);
+    } finally {
+      warn.mockRestore();
+    }
+  }, 60_000);
+
+  /**
+   * An owner row exists but is DEACTIVATED (the file's `beforeEach` has
+   * already switched any ambient one off, so this is the only owner row that
+   * matters). That is still a database where the bootstrap would legitimately
+   * run, so advising the deployer to delete their only way in would be wrong
+   * — and it is why this check keys on `is_active`, exactly as
+   * `seedFirstOwner` does.
+   */
+  it('stays silent when the only owner row is inactive', async () => {
+    await getDb()
+      .insert(users)
+      .values({
+        name: 'Retired Owner',
+        email: EMAIL,
+        passwordHash: await hashPassword('the-original-password-1'),
+        role: 'owner',
+        isActive: false,
+      });
+    (env as { OWNER_PASSWORD?: string }).OWNER_PASSWORD = STRONG;
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await warnIfOwnerPasswordUnused();
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   }, 60_000);
 });
