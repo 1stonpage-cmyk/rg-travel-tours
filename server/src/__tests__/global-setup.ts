@@ -14,7 +14,8 @@
  *     always reads DATABASE_URL and has no notion of a test database).
  *  3. Seed it once with the canonical seed data, so every suite starts from
  *     the same baseline (`resetTestDb()` re-applies this between suites
- *     that need a clean slate).
+ *     that need a clean slate) — through `seedTestBaseline()`, which is
+ *     `seed('test')` plus the harness's `show_tours: true` flip (Task T15).
  *  4. Record that baseline's row counts, and return a TEARDOWN that fails
  *     the run if the suite ends with more rows than it started with — see
  *     `LEAK_TABLES` below.
@@ -41,7 +42,7 @@ import { migrate } from 'drizzle-orm/mysql2/migrator';
 import { assertConnectedDatabase, assertDatabaseName, databaseNameFromUrl } from '../db/guard';
 import { closeDb, getDb } from '../db/client';
 import { env } from '../env';
-import { seed } from '../db/seed';
+import { seedTestBaseline } from './helpers/test-db';
 
 const MIGRATIONS_FOLDER = fileURLToPath(new URL('../db/migrations', import.meta.url));
 
@@ -151,7 +152,10 @@ export default async function setup(): Promise<() => Promise<void>> {
   await assertConnectedDatabase('test');
 
   await migrate(getDb(), { migrationsFolder: MIGRATIONS_FOLDER });
-  await seed('test');
+  // Not a bare `seed('test')`: the harness's baseline flips `show_tours` on
+  // (Task T15). See `seedTestBaseline`'s own note on why that is one shared
+  // function rather than a flip here.
+  await seedTestBaseline();
 
   const baseline = await countRows();
   await closeDb();

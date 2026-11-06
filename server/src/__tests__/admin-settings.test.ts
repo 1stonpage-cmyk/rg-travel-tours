@@ -177,14 +177,14 @@ afterAll(async () => {
  * are built from; `SETTING_SCHEMAS` in the server is what validates a block.
  * The shared list cannot be derived from the schemas (the client must not
  * import the server), so this is the seam that keeps them one list: a
- * eighteenth-and-a-half key added to one side and not the other fails here,
+ * nineteenth-and-a-half key added to one side and not the other fails here,
  * rather than becoming an editing screen for a key nothing validates.
  *
  * No database — a pure test, outside `describeWithDb`.
  */
-it('offers the shared key list and the server schemas the SAME eighteen keys', () => {
+it('offers the shared key list and the server schemas the SAME nineteen keys', () => {
   expect([...SHARED_SETTING_KEYS].sort()).toEqual([...SETTING_KEYS].sort());
-  expect(SHARED_SETTING_KEYS).toHaveLength(18);
+  expect(SHARED_SETTING_KEYS).toHaveLength(19);
 });
 
 describeWithDb('admin.settings', () => {

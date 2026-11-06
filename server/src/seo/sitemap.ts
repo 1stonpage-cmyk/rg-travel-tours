@@ -30,7 +30,7 @@
  */
 import { and, asc, eq } from 'drizzle-orm';
 import type { RequestHandler } from 'express';
-import { readContentUnverified } from '../content/settings';
+import { readContentUnverified, readShowTours } from '../content/settings';
 import { getDb } from '../db/client';
 import { destinations, packages, settings, tours } from '../db/schema';
 import type { SiteEnv } from '../env';
@@ -167,36 +167,52 @@ function buildPackageDetailUrls(rows: SitemapRows): SitemapEntry[] {
  * from a `settings` row any more. There is no `updated_at` left to read for them, and this file's
  * own rule is "read, never invented" — so `lastmod` is omitted for all four (`null`; the renderer
  * below drops the `<lastmod>` tag entirely rather than emit a guessed date).
+ *
+ * `show_tours` being off (transfers-launch plan, Task T15) drops BOTH tour
+ * halves — `/tours` and every `/tours/:slug` — because `resolveToursIndex`
+ * and `resolveTour` then answer `notFoundMeta`, i.e. 404 and `noindex`. That
+ * is this file's first rule applied to a second gate, not a new rule: the
+ * per-route decision is what the sitemap must agree with, and it is now
+ * decided by two independent flags rather than one.
  */
 export async function collectSitemapUrls(): Promise<SitemapEntry[]> {
-  const rows = await loadSitemapRows();
+  const [rows, showTours] = await Promise.all([loadSitemapRows(), readShowTours()]);
   const settingsNewest = newest(rows.settingRows.map((row) => row.updatedAt));
 
-  return [
-    { loc: absoluteUrl('/'), lastmod: settingsNewest },
-    {
+  const urls: SitemapEntry[] = [{ loc: absoluteUrl('/'), lastmod: settingsNewest }];
+
+  if (showTours) {
+    urls.push({
       loc: absoluteUrl('/tours'),
       lastmod: newest(rows.tourRows.map((tour) => tour.updatedAt)) ?? settingsNewest,
-    },
+    });
+  }
+
+  urls.push(
     { loc: absoluteUrl('/privacy'), lastmod: null },
     { loc: absoluteUrl('/terms'), lastmod: null },
     { loc: absoluteUrl('/refund-policy'), lastmod: null },
     { loc: absoluteUrl('/cookies'), lastmod: null },
+  );
 
+  if (showTours) {
     // Tour detail pages render now and `resolveTour` answers `index,follow`
     // (Task 2, Week 7 plan) — a sitemap may not list a URL whose own
     // resolver says noindex, and an indexable URL must be in the sitemap,
     // so both changes shipped in one commit. `buildTourDetailUrls` already
     // filters `is_active` on both sides and sorts by slug, so there is
     // nothing else to write here.
-    ...buildTourDetailUrls(rows),
+    urls.push(...buildTourDetailUrls(rows));
+  }
 
-    // Package detail pages render now too (Task 3, Week 7 plan) and
-    // `resolvePackage` answers `index,follow` — same reasoning as the tour
-    // half above, shipped in the same commit as that page and that robots
-    // line's deletion.
-    ...buildPackageDetailUrls(rows),
-  ];
+  // Package detail pages render now too (Task 3, Week 7 plan) and
+  // `resolvePackage` answers `index,follow` — same reasoning as the tour
+  // half above, shipped in the same commit as that page and that robots
+  // line's deletion. Not gated by `show_tours`: packages are a separate
+  // product and this flag is explicitly only about tours.
+  urls.push(...buildPackageDetailUrls(rows));
+
+  return urls;
 }
 
 // ---------------------------------------------------------------------------

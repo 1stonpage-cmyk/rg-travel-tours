@@ -64,6 +64,15 @@ const img = (slug: string) => `/placeholders/${slug}.svg`;
 
 export const SETTINGS_FIXTURE: SettingsPayload = {
   contentUnverified: true,
+  /*
+   * The transfers-launch plan's second visibility gate (Task T15). `true`
+   * here, not the product default of `false`: every client test that uses
+   * this fixture was written against a visible tour catalog, so this
+   * mirrors the server harness's own `seedTestBaseline()` flip. The
+   * surfaces that READ this flag arrive with Task T16, which owns the
+   * both-ways regression proof.
+   */
+  showTours: true,
   siteSeo: {
     title: 'TravelSugbo — Cebu Day Tours & Packages',
     description:

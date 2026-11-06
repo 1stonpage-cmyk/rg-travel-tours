@@ -247,6 +247,51 @@ describeWithDb('buildSitemap', () => {
     }
   });
 
+  /**
+   * The `show_tours` gate (transfers-launch plan, Task T15) — this file's
+   * own invariant applied to a second flag. `resolveToursIndex` and
+   * `resolveTour` answer `notFoundMeta` while the switch is off, so a
+   * sitemap that still listed `/tours` or any `/tours/:slug` would be
+   * listing URLs whose own resolver says `noindex` — the one thing this
+   * file exists to prevent.
+   *
+   * `content_unverified` stays at its seeded `true` here: the assertions
+   * are about which URLs `collectSitemapUrls()` emits, which the site-wide
+   * gate does not affect at all.
+   */
+  it('omits /tours and every tour detail URL while show_tours is off', async () => {
+    const db = getDb();
+
+    // The premise: both halves really are listed while the switch is on.
+    const before = (await collectSitemapUrls()).map((entry) => entry.loc);
+    expect(before).toContain(absoluteUrl('/tours'));
+    expect(before).toContain(absoluteUrl('/tours/oslob-whale-shark-tumalog-falls'));
+
+    await db.update(settings).set({ value: false }).where(eq(settings.key, 'show_tours'));
+    try {
+      const urls = await collectSitemapUrls();
+      const locs = urls.map((entry) => entry.loc);
+
+      expect(locs).not.toContain(absoluteUrl('/tours'));
+      expect(locs.filter((loc) => loc.includes('/tours/'))).toEqual([]);
+
+      // Everything else stays: home, the four legal pages, and every
+      // package detail URL — this flag is only about tours.
+      expect(locs).toContain(absoluteUrl('/'));
+      for (const path of ['/privacy', '/terms', '/refund-policy', '/cookies']) {
+        expect(locs, path).toContain(absoluteUrl(path));
+      }
+      expect(locs).toContain(absoluteUrl('/packages/cebu-highlights-3d2n'));
+
+      // And the document itself, not only the collector.
+      const xml = await buildSitemap();
+      expect(xml).not.toContain('<loc>' + absoluteUrl('/tours') + '</loc>');
+      expect(xml).not.toContain('/tours/oslob-whale-shark-tumalog-falls');
+    } finally {
+      await db.update(settings).set({ value: true }).where(eq(settings.key, 'show_tours'));
+    }
+  });
+
   it('uses updated_at for lastmod in W3C date format', async () => {
     const db = getDb();
     // Far enough in the future that it is the newest settings row regardless

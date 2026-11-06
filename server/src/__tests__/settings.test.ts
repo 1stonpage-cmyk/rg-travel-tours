@@ -3,8 +3,10 @@ import { eq } from 'drizzle-orm';
 import { getDb, getPool } from '../db/client';
 import { settings } from '../db/schema';
 import {
+  getSettingsPayload,
   readSettings,
   readRawSettings,
+  readShowTours,
   toSettingsPayload,
   readTransferOperationsSettings,
   readTransferOperationsSettingsTx,
@@ -120,6 +122,11 @@ function validValueFor(key: string): unknown {
         staffQuoteHoldHours: 48,
         maxTransferJobsPerDriverPerDay: 2,
       };
+    case 'show_tours':
+      // The harness's own baseline (Task T15, see `seedTestBaseline`), not
+      // the product default — these fixtures stand in for a database the
+      // tours tests can actually see a catalog in.
+      return true;
     case 'legal_privacy':
       return { markdown: '# Privacy', updatedAt: '2026-01-01T00:00:00.000Z' };
     case 'legal_terms':
@@ -131,7 +138,7 @@ function validValueFor(key: string): unknown {
 
 describeWithDb('readSettings()', () => {
   // rg_travel_test is a disposable database (task 1.4b): each test clears
-  // the whole `settings` table and writes its own fixture rows for all 18
+  // the whole `settings` table and writes its own fixture rows for all 19
   // keys, rather than colliding with (or snapshotting around) the seeded
   // rows. Once the suite is done, resetTestDb() restores the canonical
   // seeded baseline for whatever runs next.
@@ -432,5 +439,138 @@ describeWithDb('transfer_operations fallback (pre-task 0A)', () => {
 
     expect(result).toEqual(value);
     expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+/* =======================================================================
+ * `show_tours` fallback (Task T15). The SECOND exception to this file's
+ * fail-loud contract, and the one with the widest blast radius: unlike
+ * `transfer_operations`, whose fallback lives only in its own readers,
+ * `show_tours` is resolved inside `readSettings()` itself — because
+ * `readSettings()` is what the public `settings.get` every page calls
+ * runs, so a missing row here would 500 the WHOLE SITE rather than merely
+ * hide the tours. The site-outage test below is the one that proves that,
+ * and it is why the carve-out is in the loop rather than in
+ * `readShowTours()` alone.
+ *
+ * The fallback value is `false` — tours hidden. A database that cannot
+ * prove tours are meant to be visible must not show them.
+ * ======================================================================= */
+describeWithDb('show_tours fallback (Task T15)', () => {
+  async function setShowToursRow(value: unknown | undefined) {
+    await getDb().delete(settings).where(eq(settings.key, 'show_tours'));
+    if (value !== undefined) {
+      await getDb().insert(settings).values({
+        key: 'show_tours',
+        value,
+        updatedAt: new Date(),
+      });
+    }
+  }
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    // Back to the HARNESS baseline (`seedTestBaseline`, Part C), not the
+    // product default: every later test in this file and every later file
+    // expects the tour catalog to be visible.
+    await setShowToursRow(true);
+  });
+
+  afterAll(async () => {
+    // Belt and braces: the canonical seeded baseline, harness flip included,
+    // for whatever file runs next.
+    await resetTestDb();
+  });
+
+  it('missing row -> false, warning once and naming the missing row', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await setShowToursRow(undefined);
+
+    expect(await readShowTours()).toBe(false);
+    expect(warn).toHaveBeenCalledTimes(1);
+    const message = String(warn.mock.calls[0]![0]);
+    expect(message).toMatch(/show_tours/);
+    expect(message).toMatch(/missing/i);
+  });
+
+  it('malformed row -> false, warning once and never logging the stored value', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await setShowToursRow('yes');
+
+    expect(await readShowTours()).toBe(false);
+    expect(warn).toHaveBeenCalledTimes(1);
+    const message = String(warn.mock.calls[0]![0]);
+    expect(message).toMatch(/show_tours/);
+    expect(message).toMatch(/invalid/i);
+    expect(message).not.toContain('yes');
+  });
+
+  /**
+   * `0` and `1` are the shape a hand-written `UPDATE settings SET value =
+   * 0` leaves behind, and JSON does not make them booleans. They must warn
+   * and default, never be coerced — a stored `1` read as `true` would turn
+   * the catalog on from a value nothing validated.
+   *
+   * (`null` is not testable here: `settings.value` is NOT NULL in the
+   * schema, so the database refuses that row outright.)
+   */
+  it('a stored 0 or 1 is malformed, not a coerced boolean', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await setShowToursRow(0);
+    expect(await readShowTours()).toBe(false);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]![0])).toMatch(/invalid/i);
+
+    warn.mockClear();
+    await setShowToursRow(1);
+    expect(await readShowTours()).toBe(false);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]![0])).toMatch(/invalid/i);
+  });
+
+  it('valid row true -> true, with no warning', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await setShowToursRow(true);
+
+    expect(await readShowTours()).toBe(true);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('valid row false -> false, with no warning (the product default is not a failure)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await setShowToursRow(false);
+
+    expect(await readShowTours()).toBe(false);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  /**
+   * THE SITE-OUTAGE PROOF, and the reason the carve-out lives inside
+   * `readSettings()`'s own loop.
+   *
+   * A test that only drove `readShowTours()` would pass happily while
+   * `settings.get` — the query every single public page makes — was down
+   * with `Missing setting: "show_tours"` on any database that had not
+   * re-run `db:seed`. So this asserts the WHOLE payload path survives a
+   * missing row: `readSettings()` resolves rather than throws, every other
+   * block still parses, and `getSettingsPayload()` publishes
+   * `showTours: false`.
+   */
+  it('missing row does NOT take settings.get down — the whole payload still resolves', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await setShowToursRow(undefined);
+
+    const blocks = await readSettings();
+    expect(blocks.show_tours).toBe(false);
+    // Not just the one key: every other block still resolved, which is the
+    // claim "the site is up" actually rests on.
+    expect(blocks.content_unverified).toBeDefined();
+    expect(blocks.business_hours).toHaveLength(7);
+    expect(blocks.contact.email.length).toBeGreaterThan(0);
+
+    const payload = await getSettingsPayload(NOW);
+    expect(payload.showTours).toBe(false);
+    expect(payload.contact.email.length).toBeGreaterThan(0);
   });
 });

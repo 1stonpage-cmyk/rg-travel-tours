@@ -754,6 +754,12 @@ export const SEED_SETTINGS: SettingsBlocks = {
     maxAdvanceDays: 180,
   },
 
+  // Tours stay hidden until the owner flips this (transfers-launch plan,
+  // Task T15; owner default: OFF — transfers is the lead product at launch).
+  // Not gated behind content_unverified: this is a real feature switch, not
+  // placeholder content.
+  show_tours: false,
+
   /*
    * The owner's four transfer-operations defaults, 2026-10-31 (answers 1 and 2,
    * plus the same day's driver-capacity addendum): a 60-minute buffer after

@@ -258,6 +258,17 @@ export const TRANSFER_OPERATIONS_DEFAULTS: z.infer<typeof transferOperationsSche
   maxTransferJobsPerDriverPerDay: 2,
 };
 
+/**
+ * The fallback for `show_tours` when its row is missing or malformed —
+ * `false` (tours hidden), the conservative choice: a database that cannot
+ * prove tours are meant to be visible should not show them. See
+ * `content/settings.ts`'s `resolveShowTours()`, the one place this constant
+ * is used. Unlike `transfer_operations`, `show_tours` has no partial shape
+ * to merge (`z.boolean()`, not an object) — a malformed value is simply
+ * replaced wholesale.
+ */
+export const SHOW_TOURS_DEFAULT = false;
+
 const legalDocSchema = z.object({
   markdown: z.string(),
   updatedAt: z.string(),
@@ -279,6 +290,7 @@ export const SETTING_SCHEMAS = {
   contact: contactSchema,
   booking: bookingSchema,
   payment_qr: paymentQrSchema,
+  show_tours: z.boolean(),
   transfer_operations: transferOperationsSchema,
   legal_privacy: legalDocSchema,
   legal_terms: legalDocSchema,

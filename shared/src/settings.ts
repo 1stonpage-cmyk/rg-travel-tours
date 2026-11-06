@@ -1,7 +1,8 @@
 /**
- * The eighteen `settings` keys, and the shape `admin.settings.write` accepts
+ * The nineteen `settings` keys, and the shape `admin.settings.write` accepts
  * (Week 7 plan, Task 9; BUILD_SPEC §9 "Users, settings"). The eighteenth,
- * `transfer_operations`, arrived with the transfers-launch plan's Task T7.
+ * `transfer_operations`, arrived with the transfers-launch plan's Task T7. The
+ * nineteenth, `show_tours`, arrived with the same plan's Task T15.
  *
  * **Why the key list lives here as well as in the server.** The per-block Zod
  * schemas are `SETTING_SCHEMAS` in `server/src/content/settings-schema.ts` and
@@ -15,7 +16,7 @@
  *
  * The duplication is pinned rather than trusted:
  * `server/src/__tests__/admin-settings.test.ts` asserts this list and
- * `SETTING_KEYS` from `settings-schema.ts` are the same eighteen. A key added
+ * `SETTING_KEYS` from `settings-schema.ts` are the same nineteen. A key added
  * to one side and not the other fails that test instead of becoming an editing
  * screen for a key nothing validates, or a validated block with no way to edit
  * it.
@@ -48,6 +49,7 @@ export const SETTING_KEYS = [
   'contact',
   'booking',
   'payment_qr',
+  'show_tours',
   'transfer_operations',
   'legal_privacy',
   'legal_terms',
@@ -63,7 +65,7 @@ export type SettingKey = (typeof SETTING_KEYS)[number];
  * `.strict()`, so a third field cannot be smuggled past a resolver that reads
  * only two. `value` is `z.unknown()` and therefore OPTIONAL in Zod's inferred
  * input — which is harmless here and deliberately not patched around: every
- * one of the eighteen block schemas refuses `undefined`, so a `write` with no
+ * one of the nineteen block schemas refuses `undefined`, so a `write` with no
  * `value` at all is a `BAD_REQUEST` from the real validator rather than a row
  * quietly set to null.
  */

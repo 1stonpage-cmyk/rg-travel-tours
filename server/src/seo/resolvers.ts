@@ -26,6 +26,7 @@ import { and, asc, eq, sql } from 'drizzle-orm';
 import {
   readContentUnverified,
   readSettingBlock,
+  readShowTours,
   resolvePaymentMethods,
 } from '../content/settings';
 import { getDb } from '../db/client';
@@ -526,6 +527,11 @@ const resolveHome: Resolver = async () => {
  * copy on the page.
  */
 const resolveToursIndex: Resolver = async () => {
+  // The `show_tours` gate (transfers-launch plan, Task T15). A hidden
+  // catalog is a page that does not exist, so it gets `notFoundMeta` —
+  // 404 and `noindex,nofollow`, the same answer a nonsense path gets, and
+  // the reason `collectSitemapUrls` drops `/tours` under the same flag.
+  if (!(await readShowTours())) return notFoundMeta('/tours');
   const { siteSeo, hero } = await readSiteBlocks();
   const ogImage = firstImageUrl(siteSeo.ogImage, hero.imagePath);
   // The organization only. No ItemList of tours: a carousel of links to
@@ -601,6 +607,10 @@ function resolveLegal(page: keyof typeof LEGAL_PAGES): Resolver {
 
 const resolveTour: Resolver = async (params) => {
   const slug = params.slug ?? '';
+  // The `show_tours` gate (Task T15), checked before the tour and settings
+  // reads: a hidden tour is indistinguishable from a slug that names
+  // nothing, exactly as `tours.bySlug` refuses it.
+  if (!(await readShowTours())) return notFoundMeta(`/tours/${slug}`);
   const [tour, site] = await Promise.all([loadTourSeo(slug), readSiteBlocks()]);
   if (!tour) return notFoundMeta(`/tours/${slug}`);
 

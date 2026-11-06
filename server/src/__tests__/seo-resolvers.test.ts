@@ -95,6 +95,49 @@ describeWithDb('page resolution', () => {
     expect(meta.canonical).toBe('http://localhost:5180/tours');
   });
 
+  /**
+   * The `show_tours` gate on the two tour routes (transfers-launch plan,
+   * Task T15). Both answer `notFoundMeta()` — 404 and `noindex,nofollow`,
+   * exactly what a path that names nothing gets — rather than 200 with a
+   * title for a catalog the owner has taken off sale.
+   *
+   * The ON state is already proven by the two tests either side of this one
+   * ("gives /tours its own title…" above, and the tour-detail title/
+   * description/og:image tests below), all of which run against the
+   * harness's `show_tours: true` baseline and would go red if the gate
+   * misread the flag. `content_unverified` is deliberately left alone here:
+   * these assertions are about `status`, which the site-wide gate does not
+   * touch, and `robots` is `noindex,nofollow` under either flag.
+   */
+  it('serves /tours and /tours/:slug as 404 + noindex while show_tours is off', async () => {
+    const db = getDb();
+    const tourPath = '/tours/oslob-whale-shark-tumalog-falls';
+
+    // The premise: with the flag on, both are real pages.
+    expect((await resolvePage('/tours')).status).toBe(200);
+    expect((await resolvePage(tourPath)).status).toBe(200);
+
+    await db.update(settings).set({ value: false }).where(eq(settings.key, 'show_tours'));
+    try {
+      const index = await resolvePage('/tours');
+      expect(index.status).toBe(404);
+      expect(index.robots).toBe('noindex,nofollow');
+      expect(index.title).toBe('Page not found | TravelSugbo');
+      expect(index.canonical).toBe('http://localhost:5180/tours');
+
+      const detail = await resolvePage(tourPath);
+      expect(detail.status).toBe(404);
+      expect(detail.robots).toBe('noindex,nofollow');
+      expect(detail.title).toBe('Page not found | TravelSugbo');
+      expect(detail.canonical).toBe(`http://localhost:5180${tourPath}`);
+
+      // Packages are a different product and are NOT gated by this flag.
+      expect((await resolvePage('/packages/cebu-highlights-3d2n')).status).toBe(200);
+    } finally {
+      await db.update(settings).set({ value: true }).where(eq(settings.key, 'show_tours'));
+    }
+  });
+
   it('resolves the legal pages as articles', async () => {
     const privacy = await resolvePage('/privacy');
     expect(privacy.status).toBe(200);

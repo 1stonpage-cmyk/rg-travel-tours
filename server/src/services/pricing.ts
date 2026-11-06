@@ -35,7 +35,7 @@
 import { createHash } from 'node:crypto';
 import { and, eq, inArray } from 'drizzle-orm';
 import { depositCentavos, type CouponDiscount } from '@rg/shared';
-import { readSettingBlock } from '../content/settings';
+import { readSettingBlock, readShowTours } from '../content/settings';
 import { getDb } from '../db/client';
 import { coupons, tourAddons, tourPriceTiers, tours } from '../db/schema';
 import { normalizeCouponCode } from './coupons';
@@ -232,6 +232,19 @@ export async function loadQuoteInputs(
   couponCode: string | undefined,
 ): Promise<QuoteInputs> {
   void date;
+
+  /*
+   * The `show_tours` gate (transfers-launch plan, Task T15), checked before
+   * the tour lookup. The message is DELIBERATELY the same plain-Error text
+   * the "no active tour" branch below throws: `checkout.ts`'s
+   * `translateQuoteError()` already matches `/No active tour found for
+   * slug/` and turns it into a `NOT_FOUND` the guest can read ("No tour
+   * found for that selection."), so reusing it needs no change there and
+   * keeps one vocabulary rather than two for the same answer.
+   */
+  if (!(await readShowTours())) {
+    throw new Error(`No active tour found for slug "${slug}"`);
+  }
 
   const db = getDb();
   const [tour] = await db

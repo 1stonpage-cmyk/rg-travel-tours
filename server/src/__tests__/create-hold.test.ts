@@ -637,6 +637,41 @@ describeWithDb('createHold', () => {
   });
 
   /**
+   * The `show_tours` gate on the tour hold (transfers-launch plan, Task
+   * T15), refused in `resolveActiveTourId` — step 0, OUTSIDE the
+   * transaction, so nothing is written and no lock is taken.
+   *
+   * It reuses `CapacityRefusedError('tour_unavailable')` deliberately: to a
+   * guest "this tour is switched off" and "tours are not on sale yet" are
+   * the same sentence, and `translateHoldError` already renders that reason
+   * as "This tour is not available." The quote is taken BEFORE the flip,
+   * because `checkout.quote` is gated by the same flag.
+   */
+  it('refuses every tour hold while show_tours is off', async () => {
+    const tour = await makeTour({ groupsPerDay: 1 });
+    await makeFleet(1);
+    const { quoteId } = await quoteFor(tour.slug, DAY, 2);
+
+    const db = getDb();
+    await db.update(settings).set({ value: false }).where(eq(settings.key, 'show_tours'));
+
+    const before = await writtenRowCounts();
+    try {
+      const error = await hold(
+        holdInput({ tourSlug: tour.slug, date: DAY, pax: 2, quoteId }),
+      ).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(CapacityRefusedError);
+      expect((error as CapacityRefusedError).reason).toBe('tour_unavailable');
+      // Refused before the transaction opened: no booking, no add-on line,
+      // no audit row, no consumed coupon use.
+      expect(await writtenRowCounts()).toEqual(before);
+    } finally {
+      await db.update(settings).set({ value: true }).where(eq(settings.key, 'show_tours'));
+    }
+  });
+
+  /**
    * Owner decision Q3: the quote id is a CHANGE DETECTOR. A digest that no
    * longer matches the server's own recompute is refused — and the money on
    * the booking always comes from the recompute, never from the client.

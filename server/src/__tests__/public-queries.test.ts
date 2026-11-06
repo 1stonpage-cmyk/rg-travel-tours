@@ -143,6 +143,54 @@ describeWithDb('public queries', () => {
     expect(restored.some((t) => t.slug === tourSlug)).toBe(true);
   });
 
+  /**
+   * The `show_tours` gate (transfers-launch plan, Task T15) — the public
+   * catalog's half of it.
+   *
+   * `list` answers an EMPTY ARRAY rather than throwing: a hidden catalog is
+   * a catalog with nothing in it. `bySlug` answers `NOT_FOUND` with the
+   * same message an unknown slug gets, so the refusal cannot be used to
+   * confirm that a tour exists behind the switch.
+   *
+   * Restored through `resetTestDb()`, the same way the inactive-destination
+   * test above restores its flag — which also puts the harness's
+   * `show_tours: true` baseline back (`seedTestBaseline`).
+   */
+  it('tours.list and tours.bySlug are gated by show_tours', async () => {
+    const db = getDb();
+    const tourSlug = 'cebu-city-heritage-tour';
+
+    // The premise, asserted rather than assumed.
+    const before = await caller.tours.list({});
+    expect(before.length).toBe(6);
+    await expect(caller.tours.bySlug({ slug: tourSlug })).resolves.toBeDefined();
+
+    await db.update(settingsTable).set({ value: false }).where(eq(settingsTable.key, 'show_tours'));
+
+    try {
+      expect(await caller.tours.list({})).toEqual([]);
+      // Same filter, too: a destination filter does not get past the gate.
+      expect(await caller.tours.list({ destination: 'cebu-city' })).toEqual([]);
+      await expect(caller.tours.bySlug({ slug: tourSlug })).rejects.toThrow(/NOT_FOUND/);
+      // Byte-identical to an unknown slug's refusal — the gate must not be
+      // distinguishable from "no such tour".
+      const hidden = await caller.tours
+        .bySlug({ slug: tourSlug })
+        .catch((e: unknown) => (e as Error).message);
+      const unknown = await caller.tours
+        .bySlug({ slug: '__no_such_tour__' })
+        .catch((e: unknown) => (e as Error).message);
+      expect(hidden).toBe(`NOT_FOUND: no tour found for slug "${tourSlug}"`);
+      expect(unknown).toBe('NOT_FOUND: no tour found for slug "__no_such_tour__"');
+    } finally {
+      const { resetTestDb } = await import('./helpers/test-db');
+      await resetTestDb();
+    }
+
+    // Baseline restored — the catalog is visible again.
+    expect((await caller.tours.list({})).length).toBe(6);
+  });
+
   // Fix round 2 (review F1): placeholder-data.ts renders a "Free
   // cancellation" badge from an explicit per-tour boolean on five of the
   // six tours today. seed-data.ts left `free_cancel_hours` NULL on every
@@ -305,13 +353,14 @@ describeWithDb('public queries', () => {
     try {
       const tours = await caller.tours.list({});
       expect(tours.length).toBe(6);
-      // Exactly 4, proven by counting real pool.query() calls rather than
-      // trusting a comment: the grouped tours+destinations+min-price query,
-      // the batched first-image lookup, the batched rating aggregates, and
-      // (Task 1.9, R1) the single `trust` settings row for
-      // minReviewsForRating. Fixed regardless of how many tours exist —
-      // never one per tour.
-      expect(calls).toBe(4);
+      // Exactly 5, proven by counting real pool.query() calls rather than
+      // trusting a comment: the `show_tours` settings row (Task T15, read
+      // first so a hidden catalog costs nothing more), the grouped
+      // tours+destinations+min-price query, the batched first-image lookup,
+      // the batched rating aggregates, and (Task 1.9, R1) the single
+      // `trust` settings row for minReviewsForRating. Fixed regardless of
+      // how many tours exist — never one per tour, which is the claim.
+      expect(calls).toBe(5);
     } finally {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (pool as any).query = originalQuery;

@@ -96,7 +96,7 @@ import {
   type PayMode,
   type PriceSnapshot,
 } from '@rg/shared';
-import { readSettingBlockTx } from '../content/settings';
+import { readSettingBlockTx, readShowTours } from '../content/settings';
 import { getDb, type Transaction } from '../db/client';
 import { withDeadlockRetry } from '../db/deadlock';
 import {
@@ -345,8 +345,16 @@ function holdContention(tries: number, error: unknown): never {
  * that names nothing, or a tour switched off, is `tour_unavailable` — the
  * same reason `assessCapacity` returns for it, so the router has one
  * vocabulary rather than two.
+ *
+ * `show_tours` being off (transfers-launch plan, Task T15) joins that same
+ * vocabulary for the same reason: to a guest it is the identical answer —
+ * this tour cannot be booked — and `translateHoldError()` already renders
+ * `tour_unavailable` as "This tour is not available." A second reason code
+ * would tell the browser WHY the catalog is off, which is the owner's
+ * business and not the guest's.
  */
 async function resolveActiveTourId(slug: string): Promise<number> {
+  if (!(await readShowTours())) throw new CapacityRefusedError('tour_unavailable');
   const [tour] = await getDb()
     .select({ id: tours.id })
     .from(tours)

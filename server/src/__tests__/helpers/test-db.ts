@@ -28,6 +28,7 @@
  * with no session-level state to remember to restore — so that's what this
  * uses.
  */
+import { eq } from 'drizzle-orm';
 import { assertConnectedDatabase } from '../../db/guard';
 import { getDb } from '../../db/client';
 import * as schema from '../../db/schema';
@@ -48,6 +49,32 @@ const TABLES_IN_DELETE_ORDER = [
   schema.settings,
 ] as const;
 
+/**
+ * Seeds the test database, then flips `show_tours` to `true` — the test
+ * harness's own baseline, deliberately different from the real product
+ * default (`false`, Task T15). `SEED_SETTINGS` is shared verbatim between
+ * the app and test databases, so without this every pre-existing
+ * tours/checkout/SEO/sitemap test would need its own override just to see
+ * the tour catalog it was written against. Mirrors the
+ * `ALLOW_DEMO_SEED ??= '1'` split documented in CLAUDE.md for the same
+ * reason: a restrictive, honest product default with a permissive test
+ * baseline layered on top of it, never the other way round.
+ *
+ * It must be ONE shared function rather than two one-off flips:
+ * `resetTestDb()` DELETEs the whole `settings` table before reseeding, so a
+ * single flip in `global-setup.ts` would be silently undone by the first
+ * mid-run reset — and four of the files that reset mid-run
+ * (`public-queries`, `seo-resolvers`, `sitemap-robots`, `settings`) are
+ * exactly the ones that need the catalog visible.
+ */
+export async function seedTestBaseline(): Promise<void> {
+  await seed('test');
+  await getDb()
+    .update(schema.settings)
+    .set({ value: true })
+    .where(eq(schema.settings.key, 'show_tours'));
+}
+
 export async function resetTestDb(): Promise<void> {
   await assertConnectedDatabase('test');
 
@@ -55,5 +82,5 @@ export async function resetTestDb(): Promise<void> {
   for (const table of TABLES_IN_DELETE_ORDER) {
     await db.delete(table);
   }
-  await seed('test');
+  await seedTestBaseline();
 }

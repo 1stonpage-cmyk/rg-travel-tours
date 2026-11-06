@@ -31,6 +31,7 @@ import {
   coupons,
   destinations,
   drivers,
+  settings,
   tourBlockedDates,
   tourPriceTiers,
   tours,
@@ -311,6 +312,36 @@ describeWithDb('checkout router', () => {
       })
       .catch((e: unknown) => e);
     expect(error).toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  /**
+   * The `show_tours` gate on the tour quote (transfers-launch plan, Task
+   * T15). It reuses `loadQuoteInputs`'s own "no active tour" plain-Error
+   * text on purpose, so `translateQuoteError`'s existing regex turns it
+   * into the SAME guest-facing `NOT_FOUND` a slug that names nothing gets —
+   * no new error class and no new guest sentence. Asserted against the real
+   * tour the test just created, so the refusal is the gate's and not a
+   * missing fixture's.
+   */
+  it('quote refuses every tour while show_tours is off, with the unknown-slug refusal', async () => {
+    const tour = await makeTour();
+    const db = getDb();
+
+    // The premise: this exact call succeeds while the gate is open.
+    await expect(
+      caller.checkout.quote({ tourSlug: tour.slug, date: DAY, pax: 2, addonIds: [] }),
+    ).resolves.toBeDefined();
+
+    await db.update(settings).set({ value: false }).where(eq(settings.key, 'show_tours'));
+    try {
+      const error = await caller.checkout
+        .quote({ tourSlug: tour.slug, date: DAY, pax: 2, addonIds: [] })
+        .catch((e: unknown) => e);
+      expect(error).toMatchObject({ code: 'NOT_FOUND' });
+      expect((error as Error).message).toBe('No tour found for that selection.');
+    } finally {
+      await db.update(settings).set({ value: true }).where(eq(settings.key, 'show_tours'));
+    }
   });
 
   it('quote returns BAD_REQUEST for a head count no tier covers', async () => {

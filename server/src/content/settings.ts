@@ -7,14 +7,30 @@
  * would put invented content on a live marketing page, which this project
  * forbids. Errors name the key, never the value.
  *
- * ONE narrow, explicitly-requested exception: `transfer_operations` (pre-task
- * 0A, 2026-11-03). It is operational configuration — buffer minutes, notice
- * hours, a per-driver job cap — not guest-facing content, and it is read on
- * EVERY tour quote and hold via `assessCapacity()`, not only transfer ones. A
- * missing or malformed row there must not 500 every booking on the site, so
- * `readTransferOperationsSettings()` / `readTransferOperationsSettingsTx()`
- * fall back to `TRANSFER_OPERATIONS_DEFAULTS` instead of throwing. Do not
- * extend this pattern to any other settings key without a new owner decision.
+ * TWO narrow, explicitly-requested exceptions, and no more:
+ *
+ * 1. `transfer_operations` (pre-task 0A, 2026-11-03). It is operational
+ *    configuration — buffer minutes, notice hours, a per-driver job cap — not
+ *    guest-facing content, and it is read on EVERY tour quote and hold via
+ *    `assessCapacity()`, not only transfer ones. A missing or malformed row
+ *    there must not 500 every booking on the site, so
+ *    `readTransferOperationsSettings()` / `readTransferOperationsSettingsTx()`
+ *    fall back to `TRANSFER_OPERATIONS_DEFAULTS` instead of throwing.
+ * 2. `show_tours` (transfers-launch plan, Task T15). It is a feature switch,
+ *    not content, and it is read on every tour-related public request —
+ *    `tours.list`/`bySlug`, the tour quote/hold path, the SEO resolver, the
+ *    sitemap. More importantly it gates the SAME `SettingsPayload` that every
+ *    single page's `settings.get` call reads, so a missing or malformed row
+ *    here must not take the WHOLE SITE down the way a missing
+ *    `content_unverified` or `transfer_operations` row theoretically could
+ *    today: `readSettings()` therefore resolves this one key through
+ *    `resolveShowTours()` rather than throwing on it (see the special case in
+ *    the loop below). The fallback is `false` — tours hidden — because a
+ *    database that cannot prove tours are meant to be visible must not show
+ *    them.
+ *
+ * Do not extend this pattern to any other settings key without a new owner
+ * decision.
  */
 import { eq } from 'drizzle-orm';
 import { bookableDateRange, type BookableDateRange } from '@rg/shared';
@@ -26,6 +42,7 @@ import { isWithinWindow } from '../services/schedule';
 import {
   SETTING_KEYS,
   SETTING_SCHEMAS,
+  SHOW_TOURS_DEFAULT,
   TRANSFER_OPERATIONS_DEFAULTS,
   transferOperationsSchema,
   type SettingKey,
@@ -46,12 +63,26 @@ export async function readRawSettings(): Promise<Record<string, unknown>> {
 /**
  * Every settings key, parsed through its schema. Throws naming the key if
  * it is missing from the table or its value fails validation.
+ *
+ * ONE key is exempt: `show_tours` resolves through `resolveShowTours()`
+ * instead (Task T15). This is load-bearing rather than cosmetic — this
+ * function is what `getSettingsPayload()`, i.e. the public `settings.get`
+ * every page calls, runs. Without the carve-out, the moment `show_tours`
+ * joined `SETTING_SCHEMAS` every page on any database that has not re-run
+ * `db:seed` would throw `Missing setting: "show_tours"`: a site-wide 500,
+ * not merely a tours problem. Every other key keeps the fail-loud contract
+ * this file's own top-of-file note describes, `transfer_operations`
+ * included — its fallback lives in its own readers, not here.
  */
 export async function readSettings(): Promise<SettingsBlocks> {
   const raw = await readRawSettings();
   const blocks: Record<string, unknown> = {};
 
   for (const key of SETTING_KEYS) {
+    if (key === 'show_tours') {
+      blocks[key] = resolveShowTours(raw[key]);
+      continue;
+    }
     if (!(key in raw)) {
       throw new Error(`Missing setting: "${key}"`);
     }
@@ -268,6 +299,38 @@ export async function readTransferOperationsSettingsTx(
   return resolveTransferOperations(row?.value);
 }
 
+/**
+ * `show_tours`, never throwing. Missing row -> `SHOW_TOURS_DEFAULT` (false).
+ * Row present but not a boolean -> the same default. A second, narrow
+ * carve-out alongside `transfer_operations` above — see this file's own
+ * top-of-file note on why. Logs exactly one console.warn naming which
+ * case fired, never the raw stored value.
+ */
+function resolveShowTours(raw: unknown): boolean {
+  if (raw === undefined) {
+    console.warn('[settings] show_tours row is missing; using default (tours hidden).');
+    return SHOW_TOURS_DEFAULT;
+  }
+  const result = SETTING_SCHEMAS.show_tours.safeParse(raw);
+  if (result.success) return result.data;
+  console.warn('[settings] show_tours value is invalid; using default (tours hidden).');
+  return SHOW_TOURS_DEFAULT;
+}
+
+/**
+ * Just the `show_tours` flag — for the five consultation points named in
+ * the transfers-launch plan's Architecture §4 (`tours.list`/`bySlug`,
+ * `checkout.quote`/`createHold`'s tour path, the SEO resolver, the
+ * sitemap). Plain pooled-connection read; none of those call sites run
+ * inside an existing transaction at the point they check this, so unlike
+ * `transfer_operations` there is no `...Tx` variant.
+ */
+export async function readShowTours(): Promise<boolean> {
+  const db = getDb();
+  const [row] = await db.select().from(settings).where(eq(settings.key, 'show_tours'));
+  return resolveShowTours(row?.value);
+}
+
 // ---------------------------------------------------------------------------
 // SettingsPayload — the RESOLVED shape `settings.get` sends to the browser
 // (Task 1.6, ruling 3). `SettingsBlocks` above is the raw, Zod-parsed row
@@ -296,6 +359,16 @@ export interface ResolvedPaymentMethod {
 
 export interface SettingsPayload {
   contentUnverified: SettingsBlocks['content_unverified'];
+  /**
+   * Whether tours may be shown/booked at all — the transfers-launch plan's
+   * second visibility gate (Task T15), independent of `contentUnverified`.
+   * `false` (hidden) is the built-in product default; an owner flips it on
+   * through the admin settings screen once real tour content is ready to
+   * sell alongside transfers. A missing or malformed row degrades to the
+   * same default rather than failing the whole payload — see
+   * `resolveShowTours()` in this file.
+   */
+  showTours: boolean;
   siteSeo: SettingsBlocks['site_seo'];
   trust: SettingsBlocks['trust'];
   hero: SettingsBlocks['hero'];
@@ -419,6 +492,7 @@ export function toSettingsPayload(
   const enabledPaymentMethods = resolvePaymentMethods(blocks.payment_methods);
   return {
     contentUnverified: blocks.content_unverified,
+    showTours: blocks.show_tours,
     siteSeo: blocks.site_seo,
     trust: blocks.trust,
     hero: blocks.hero,

@@ -13,7 +13,7 @@
 import { toursBySlugInput, toursListInput } from '@rg/shared';
 import { TRPCError } from '@trpc/server';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
-import { readTrustSettings } from '../../content/settings';
+import { readShowTours, readTrustSettings } from '../../content/settings';
 import { getDb } from '../../db/client';
 import {
   destinations,
@@ -204,6 +204,11 @@ async function firstImageByTour(tourIds: number[]): Promise<Map<number, TourImag
 
 export const toursRouter = router({
   list: publicProcedure.input(toursListInput).query(async ({ input }): Promise<TourListItem[]> => {
+    // The `show_tours` gate (transfers-launch plan, Task T15): an empty
+    // catalog, not an error — a hidden catalog is a catalog with nothing in
+    // it, and the SPA's tours page already renders that state. Checked
+    // first, so a hidden catalog costs one settings read and no tour query.
+    if (!(await readShowTours())) return [];
     const rows = await listRows(input.destination);
     const ids = rows.map((row) => row.id);
 
@@ -220,6 +225,17 @@ export const toursRouter = router({
   }),
 
   bySlug: publicProcedure.input(toursBySlugInput).query(async ({ input }): Promise<TourDetail> => {
+    // The `show_tours` gate (Task T15). The SAME message, byte for byte, the
+    // inactive-tour / inactive-destination branch below throws: "tours are
+    // globally hidden" and "that slug names nothing" must be
+    // indistinguishable, or the refusal itself advertises a catalog the
+    // owner has deliberately taken off sale.
+    if (!(await readShowTours())) {
+      throw new TRPCError({
+        code: 'NOT_FOUND',
+        message: `NOT_FOUND: no tour found for slug "${input.slug}"`,
+      });
+    }
     const db = getDb();
     const [row] = await db
       .select({

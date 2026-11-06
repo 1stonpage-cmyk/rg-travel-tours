@@ -297,14 +297,16 @@ describe('settings schemas', () => {
   /**
    * Fifteen from the dynamic-site plan, plus `booking` (the bookable date
    * window, owner decision 2026-10-13), `payment_qr` (the R&G payment QR and
-   * account, owner decision 2026-10-14 Q3) and `transfer_operations` (the
+   * account, owner decision 2026-10-14 Q3), `transfer_operations` (the
    * transfer buffer, notice, staff-quote hold and per-driver job cap, owner
-   * decisions 2026-10-31). Listed out rather than derived, so ADDING a key is a
-   * deliberate edit here: every key is a row `readSettings()` requires, and a
-   * key added without a seed row takes the whole public site down until the
-   * seed runs.
+   * decisions 2026-10-31) and `show_tours` (the second visibility gate,
+   * transfers-launch plan Task T15). Listed out rather than derived, so ADDING
+   * a key is a deliberate edit here: every key is a row `readSettings()`
+   * requires, and a key added without a seed row takes the whole public site
+   * down until the seed runs — `show_tours` being the one exception, since
+   * `readSettings()` resolves it through a fallback rather than throwing.
    */
-  it('covers all 18 settings keys — the 15 from the plan, plus booking, payment_qr and transfer_operations', () => {
+  it('covers all 19 settings keys — the 15 from the plan, plus booking, payment_qr, transfer_operations and show_tours', () => {
     const expectedKeys = [
       'content_unverified',
       'site_seo',
@@ -324,6 +326,7 @@ describe('settings schemas', () => {
       'booking',
       'payment_qr',
       'transfer_operations',
+      'show_tours',
     ];
     expect(Object.keys(SETTING_SCHEMAS).sort()).toEqual(expectedKeys.sort());
   });
