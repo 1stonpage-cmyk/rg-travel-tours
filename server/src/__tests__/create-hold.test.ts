@@ -46,6 +46,7 @@ import {
   tourPriceTiers,
   tours,
   vans,
+  vehicleTypes,
 } from '../db/schema';
 import { generateBookingRef } from '../services/booking-ref';
 import { takeSlotLocks } from '../services/capacity';
@@ -171,6 +172,23 @@ async function makeTour(
   };
 }
 
+/**
+ * The real, global `vehicle_types.id` for `'van'` — seeded by `seedBase`
+ * (migration 0023), never a literal id (CLAUDE.md). Cached per process.
+ */
+let cachedVanTypeId: number | undefined;
+async function vanVehicleTypeId(): Promise<number> {
+  if (cachedVanTypeId !== undefined) return cachedVanTypeId;
+  const [row] = await getDb()
+    .select({ id: vehicleTypes.id })
+    .from(vehicleTypes)
+    .where(eq(vehicleTypes.slug, 'van'))
+    .limit(1);
+  if (!row) throw new Error('No vehicle_types row for slug "van" — expected from seedBase.');
+  cachedVanTypeId = row.id;
+  return row.id;
+}
+
 async function makeVan(opts: { capacity?: number } = {}) {
   const suffix = unique();
   const [van] = await getDb()
@@ -179,6 +197,7 @@ async function makeVan(opts: { capacity?: number } = {}) {
       plate: `HOLD${suffix}`.slice(0, 20),
       model: 'Hold Fixture Van',
       capacity: opts.capacity ?? 12,
+      vehicleTypeId: await vanVehicleTypeId(),
       status: 'available',
       isActive: true,
     });

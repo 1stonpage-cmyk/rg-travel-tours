@@ -22,7 +22,7 @@
  */
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
-import type { BookingStatus, PriceSnapshot, VehicleType } from '@rg/shared';
+import type { BookingStatus, PriceSnapshot } from '@rg/shared';
 import { readTransferOperationsSettings } from '../content/settings';
 import { getDb, getPool } from '../db/client';
 import {
@@ -33,8 +33,10 @@ import {
   driverLeaves,
   drivers,
   tours,
+  transferPlaces,
   transferRoutes,
   vans,
+  vehicleTypes,
 } from '../db/schema';
 import { generateBookingRef } from '../services/booking-ref';
 import { assessCapacity } from '../services/capacity';
@@ -67,6 +69,7 @@ const created = {
   tourIds: [] as number[],
   routeIds: [] as number[],
   destinationIds: [] as number[],
+  placeIds: [] as number[],
   vanIds: [] as number[],
   driverIds: [] as number[],
   leaveIds: [] as number[],
@@ -78,6 +81,24 @@ const unique = () => `${Math.floor(Math.random() * 1e9)}_${Date.now()}`;
 async function count(statement: Parameters<ReturnType<typeof getDb>['execute']>[0]) {
   const [rows] = (await getDb().execute(statement)) as unknown as [Array<{ n: number }>, unknown];
   return Number(rows[0]?.n ?? -1);
+}
+
+/**
+ * The real, global `vehicle_types.id` for `'van'`/`'suv'` — seeded by
+ * `seedBase` (migration 0023), never a literal id (CLAUDE.md). Resolved
+ * fresh in `beforeEach` into `VAN_ID`/`SUV_ID`, below.
+ */
+let VAN_ID: number;
+let SUV_ID: number;
+
+async function vehicleTypeIdBySlug(slug: string): Promise<number> {
+  const [row] = await getDb()
+    .select({ id: vehicleTypes.id })
+    .from(vehicleTypes)
+    .where(eq(vehicleTypes.slug, slug))
+    .limit(1);
+  if (!row) throw new Error(`No vehicle_types row for slug "${slug}" — expected from seedBase.`);
+  return row.id;
 }
 
 /** A tour, plus the destination its foreign key needs. */
@@ -102,7 +123,7 @@ async function makeVan(
     capacity?: number;
     status?: (typeof VAN_STATUSES)[number];
     isActive?: boolean;
-    vehicleType?: VehicleType;
+    vehicleTypeId?: number;
   } = {},
 ) {
   const suffix = unique();
@@ -114,7 +135,7 @@ async function makeVan(
       capacity: opts.capacity ?? 12,
       status: opts.status ?? 'available',
       isActive: opts.isActive ?? true,
-      vehicleType: opts.vehicleType ?? 'van',
+      vehicleTypeId: opts.vehicleTypeId ?? VAN_ID,
     });
   created.vanIds.push(van.insertId);
   return van.insertId;
@@ -140,15 +161,24 @@ async function makeDriver(
   return driver.insertId;
 }
 
-/** A transfer route, plus the destination its UNIQUE foreign key needs. */
-async function makeRoute() {
+/** An admin-managed pickup/drop-off place — a route's `from`/`to` endpoint. */
+async function makePlace() {
   const db = getDb();
   const slug = `__avail__${unique()}`;
-  const [destination] = await db.insert(destinations).values({ name: slug, slug });
-  created.destinationIds.push(destination.insertId);
+  const [place] = await db.insert(transferPlaces).values({ name: slug, nameKey: slug.toLowerCase() });
+  created.placeIds.push(place.insertId);
+  return place.insertId;
+}
+
+/** A transfer route, plus the two places its `from`/`to` foreign keys need. */
+async function makeRoute() {
+  const db = getDb();
+  const fromPlaceId = await makePlace();
+  const toPlaceId = await makePlace();
+  const slug = `__avail__${unique()}`;
   const [route] = await db
     .insert(transferRoutes)
-    .values({ destinationId: destination.insertId, slug, estimatedDurationMinutes: DURATION });
+    .values({ fromPlaceId, toPlaceId, slug, estimatedDurationMinutes: DURATION });
   created.routeIds.push(route.insertId);
   return route.insertId;
 }
@@ -218,7 +248,7 @@ async function makeTransferBooking(opts: {
   pickupMinutes: number;
   dayUseEndMinutes?: number;
   productType?: TransferProductType;
-  vehicleType?: VehicleType;
+  vehicleTypeId?: number;
   date?: string;
   status?: BookingStatus;
   vanId?: number;
@@ -232,7 +262,7 @@ async function makeTransferBooking(opts: {
       tourId: null,
       productType,
       routeId: opts.routeId,
-      vehicleTypeRequested: opts.vehicleType ?? 'van',
+      vehicleTypeId: opts.vehicleTypeId ?? VAN_ID,
       tourDate: new Date(`${opts.date ?? DATE}T00:00:00Z`),
       pax: 2,
       leadName: 'Availability Transfer Fixture',
@@ -282,6 +312,9 @@ describeWithDb('vans', () => {
     expect(operations.maxTransferJobsPerDriverPerDay, 'the seeded driver cap changed').toBe(
       DEFAULT_DRIVER_CAP,
     );
+
+    VAN_ID = await vehicleTypeIdBySlug('van');
+    SUV_ID = await vehicleTypeIdBySlug('suv');
   });
 
   afterEach(async () => {
@@ -296,9 +329,12 @@ describeWithDb('vans', () => {
       await pool.query('DELETE FROM driver_leaves WHERE id = ?', [id]);
     }
     for (const id of created.tourIds) await pool.query('DELETE FROM tours WHERE id = ?', [id]);
-    // Before the destinations they reference.
+    // Before the places/destinations they reference.
     for (const id of created.routeIds) {
       await pool.query('DELETE FROM transfer_routes WHERE id = ?', [id]);
+    }
+    for (const id of created.placeIds) {
+      await pool.query('DELETE FROM transfer_places WHERE id = ?', [id]);
     }
     for (const id of created.destinationIds) {
       await pool.query('DELETE FROM destinations WHERE id = ?', [id]);
@@ -308,6 +344,7 @@ describeWithDb('vans', () => {
     created.bookingIds = [];
     created.leaveIds = [];
     created.tourIds = [];
+    created.placeIds = [];
     created.routeIds = [];
     created.destinationIds = [];
     created.driverIds = [];
@@ -492,7 +529,7 @@ describeWithDb('vans', () => {
     // A tour takes the van all day. A 20-minute airport run at 05:00 cannot
     // be squeezed around it, because nothing says when the tour is.
     const tourId = await makeTour();
-    const vanId = await makeVan({ vehicleType: 'van' });
+    const vanId = await makeVan({ vehicleTypeId: VAN_ID });
     const tourBooking = await makeBooking({ tourId, date: DATE });
     await getDb()
       .update(bookings)
@@ -501,7 +538,7 @@ describeWithDb('vans', () => {
 
     const free = await getDb().transaction((tx) =>
       vansFreeOn(tx, DATE, 0, {
-        vehicleType: 'van',
+        vehicleTypeId: VAN_ID,
         transferWindow: window(at(5), at(5, 20)),
       }),
     );
@@ -517,7 +554,7 @@ describeWithDb('vans', () => {
      * cannot also run a day tour, even though the two windows do not touch.
      */
     const routeId = await makeRoute();
-    const vanId = await makeVan({ vehicleType: 'van' });
+    const vanId = await makeVan({ vehicleTypeId: VAN_ID });
     await makeTransferBooking({ routeId, pickupMinutes: at(14), vanId });
 
     const free = await getDb().transaction((tx) => vansFreeOn(tx, DATE, 2));
@@ -528,11 +565,11 @@ describeWithDb('vans', () => {
     // This is the owner's "several jobs a day". [08:00, 11:00) then
     // [11:00, 14:00): half-open, so the touching pair is one van's work.
     const routeId = await makeRoute();
-    const vanId = await makeVan({ vehicleType: 'van' });
+    const vanId = await makeVan({ vehicleTypeId: VAN_ID });
     await makeTransferBooking({ routeId, pickupMinutes: MORNING_PICKUP, vanId });
 
     const free = await getDb().transaction((tx) =>
-      vansFreeOn(tx, DATE, 0, { vehicleType: 'van', transferWindow: window(at(11), at(14)) }),
+      vansFreeOn(tx, DATE, 0, { vehicleTypeId: VAN_ID, transferWindow: window(at(11), at(14)) }),
     );
     expect(free.map((v) => v.id)).toContain(vanId);
   });
@@ -546,22 +583,22 @@ describeWithDb('vans', () => {
      * the window, which a same-hour overlap test would not notice.
      */
     const routeId = await makeRoute();
-    const vanId = await makeVan({ vehicleType: 'van' });
+    const vanId = await makeVan({ vehicleTypeId: VAN_ID });
     await makeTransferBooking({ routeId, pickupMinutes: MORNING_PICKUP, vanId });
 
     const free = await getDb().transaction((tx) =>
-      vansFreeOn(tx, DATE, 0, { vehicleType: 'van', transferWindow: window(at(10, 30), at(12)) }),
+      vansFreeOn(tx, DATE, 0, { vehicleTypeId: VAN_ID, transferWindow: window(at(10, 30), at(12)) }),
     );
     expect(free.map((v) => v.id)).not.toContain(vanId);
   });
 
   it('offers only vans of the requested vehicle type', async () => {
-    const vanId = await makeVan({ vehicleType: 'van' });
-    const suvId = await makeVan({ vehicleType: 'suv' });
+    const vanId = await makeVan({ vehicleTypeId: VAN_ID });
+    const suvId = await makeVan({ vehicleTypeId: SUV_ID });
 
     const free = await getDb().transaction((tx) =>
       vansFreeOn(tx, DATE, 0, {
-        vehicleType: 'suv',
+        vehicleTypeId: SUV_ID,
         transferWindow: window(MORNING_PICKUP, at(11)),
       }),
     );
@@ -579,12 +616,12 @@ describeWithDb('vans', () => {
    * here rather than left to never be exercised.
    */
   it('ignores vehicleType entirely when transferWindow is absent — the TOUR shape', async () => {
-    const vanId = await makeVan({ vehicleType: 'van' });
-    const suvId = await makeVan({ vehicleType: 'suv' });
+    const vanId = await makeVan({ vehicleTypeId: VAN_ID });
+    const suvId = await makeVan({ vehicleTypeId: SUV_ID });
 
-    const free = await getDb().transaction((tx) => vansFreeOn(tx, DATE, 0, { vehicleType: 'suv' }));
+    const free = await getDb().transaction((tx) => vansFreeOn(tx, DATE, 0, { vehicleTypeId: SUV_ID }));
     const ids = free.map((v) => v.id);
-    // Both vans free — `vehicleType: 'suv'` did NOT narrow the pool to SUVs.
+    // Both vans free — `vehicleTypeId: SUV_ID` did NOT narrow the pool to SUVs.
     expect(ids).toContain(vanId);
     expect(ids).toContain(suvId);
   });
@@ -593,12 +630,12 @@ describeWithDb('vans', () => {
     // The fully-overlapping case on purpose: the same window, so only
     // `excludeBookingId` can keep this van in the answer.
     const routeId = await makeRoute();
-    const vanId = await makeVan({ vehicleType: 'van' });
+    const vanId = await makeVan({ vehicleTypeId: VAN_ID });
     const mineId = await makeTransferBooking({ routeId, pickupMinutes: MORNING_PICKUP, vanId });
 
     const free = await getDb().transaction((tx) =>
       vansFreeOn(tx, DATE, 0, {
-        vehicleType: 'van',
+        vehicleTypeId: VAN_ID,
         transferWindow: window(MORNING_PICKUP, at(11)),
         excludeBookingId: mineId,
       }),
@@ -723,7 +760,7 @@ describeWithDb('vans', () => {
     // reached through the new branch: a cancelled transfer's window is not a
     // claim on anything.
     const routeId = await makeRoute();
-    const vanId = await makeVan({ vehicleType: 'van' });
+    const vanId = await makeVan({ vehicleTypeId: VAN_ID });
     const driverId = await makeDriver();
     await makeTransferBooking({
       routeId,
@@ -735,7 +772,7 @@ describeWithDb('vans', () => {
 
     const [freeVans, freeDrivers] = await getDb().transaction(async (tx) => [
       await vansFreeOn(tx, DATE, 0, {
-        vehicleType: 'van',
+        vehicleTypeId: VAN_ID,
         transferWindow: window(MORNING_PICKUP, at(11)),
       }),
       await driversFreeOn(tx, DATE, { transferWindow: window(MORNING_PICKUP, at(11)) }),

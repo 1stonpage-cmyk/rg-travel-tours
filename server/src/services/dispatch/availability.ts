@@ -90,7 +90,7 @@
  * the database and the ordering done outside it too.
  */
 import { and, asc, eq, gte, inArray, isNotNull, ne, notExists, sql } from 'drizzle-orm';
-import { CAPACITY_HOLDING_STATUSES, type VehicleType } from '@rg/shared';
+import { CAPACITY_HOLDING_STATUSES } from '@rg/shared';
 import type { Transaction } from '../../db/client';
 import {
   bookingTransferDetails,
@@ -144,12 +144,12 @@ export interface FreeOnOptions {
 
 export interface VansFreeOnOptions extends FreeOnOptions {
   /**
-   * TRANSFER dispatch only: restrict to this vehicle type instead of
+   * TRANSFER dispatch only: restrict to this vehicle type's id instead of
    * filtering by `minCapacity` (the type IS the fit — see
    * `services/transfers/capacity.ts`'s own doc on why transfers aren't
    * seat-filtered). Pass `minCapacity: 0` alongside this for a transfer call.
    */
-  vehicleType?: VehicleType;
+  vehicleTypeId?: number;
 }
 
 /**
@@ -197,7 +197,7 @@ async function assignedLoadByResource(
       resourceId: resourceColumn,
       bookingId: bookings.id,
       productType: bookings.productType,
-      vehicleType: bookings.vehicleTypeRequested,
+      vehicleTypeId: bookings.vehicleTypeId,
       pickupTime: bookingTransferDetails.pickupTime,
       dayUseEndTime: bookingTransferDetails.dayUseEndTime,
       bufferMinutesUsed: bookingTransferDetails.bufferMinutesUsed,
@@ -261,14 +261,14 @@ function onDate(column: typeof bookings.tourDate, date: string) {
 }
 
 /** The base filters every van candidate passes, whichever branch is taken. */
-function vanBaseClauses(minCapacity: number, vehicleType: VehicleType | undefined) {
+function vanBaseClauses(minCapacity: number, vehicleTypeId: number | undefined) {
   const clauses = [
     eq(vans.isActive, true),
     eq(vans.status, VAN_STATUS_SELLABLE),
     gte(vans.capacity, minCapacity),
   ];
-  if (vehicleType !== undefined) {
-    clauses.push(eq(vans.vehicleType, vehicleType));
+  if (vehicleTypeId !== undefined) {
+    clauses.push(eq(vans.vehicleTypeId, vehicleTypeId));
   }
   return clauses;
 }
@@ -314,7 +314,7 @@ export async function vansFreeOn(
       tx
         .select(VAN_COLUMNS)
         .from(vans)
-        .where(and(...vanBaseClauses(minCapacity, opts?.vehicleType))),
+        .where(and(...vanBaseClauses(minCapacity, opts?.vehicleTypeId))),
       assignedLoadByResource(tx, date, bookings.vanId, opts?.excludeBookingId),
     ]);
     return rows.filter((van) => !blockedByLoad(load.get(van.id), candidate)).sort(byCapacityThenId);
@@ -337,12 +337,12 @@ export async function vansFreeOn(
     .from(vans)
     .where(
       and(
-        // `vehicleType` is a TRANSFER-only filter (dedicated review finding,
+        // `vehicleTypeId` is a TRANSFER-only filter (dedicated review finding,
         // T8). `undefined` here, always, regardless of what `opts` carries:
-        // a caller that passed `vehicleType` without `transferWindow` would
+        // a caller that passed `vehicleTypeId` without `transferWindow` would
         // otherwise silently narrow a TOUR'S van pool by type — a tour can
-        // use either type, and nothing about this branch should ever read
-        // `opts.vehicleType` at all.
+        // use any type, and nothing about this branch should ever read
+        // `opts.vehicleTypeId` at all.
         ...vanBaseClauses(minCapacity, undefined),
         notExists(
           tx

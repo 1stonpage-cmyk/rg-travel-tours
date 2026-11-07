@@ -6,13 +6,19 @@
  * ## Two resources, two different shapes of question
  *
  * **Vehicles are typed and windowed.** A transfer blocks its vehicle TYPE
- * (`van` or `suv` — the guest picks) for `[pickup, estimated end + buffer)`,
- * not for the whole day, so one vehicle serves several jobs. Nothing pins a
- * specific `van_id` at hold time (dispatch still does that later), so the only
- * answerable question is a pool question, and the interval-scheduling result
- * answers it exactly: the minimum number of same-type vehicles needed to serve
- * a set of windows IS the maximum number simultaneously active — the peak. See
- * `peakOverlap` in `./overlap.ts`.
+ * (an admin-managed `vehicle_types` row, identified by id — owner decision
+ * 2026-11-08, superseding the old hard-coded `van`/`suv` enum; see
+ * `docs/superpowers/plans/2026-11-08-flexible-routes.md`) for
+ * `[pickup, estimated end + buffer)`, not for the whole day, so one vehicle
+ * serves several jobs. Nothing pins a specific `van_id` at hold time (dispatch
+ * still does that later), so the only answerable question is a pool question,
+ * and the interval-scheduling result answers it exactly: the minimum number of
+ * same-type vehicles needed to serve a set of windows IS the maximum number
+ * simultaneously active — the peak. See `peakOverlap` in `./overlap.ts`. The
+ * SET of vehicle types is no longer fixed at two, so every count/window keyed
+ * by type below is a `Map<number, …>` keyed by `vehicle_type_id`, not a fixed
+ * `{van, suv}` record — see `assessTransferCapacity`'s own note on the key-set
+ * derivation this generalization hinges on.
  *
  * **Drivers are one undifferentiated pool with per-driver daily caps, and at
  * hold time the check is a job COUNT, not a time-of-day check** (the owner's
@@ -44,12 +50,18 @@
  * (`fleet_date_slots` → `tour_date_slots` → the booking row) is unchanged: a
  * transfer simply has no `tour_date_slots` row to take.
  *
- * ## Everything reads through `tx`
+ * ## Everything reads through `tx` — with ONE documented exception
  *
  * Every query here takes the caller's `Transaction` handle, never `getDb()` — a
  * read on a pooled connection is a read outside the locks, and a second
  * connection checked out while this one holds a row lock is the pool-starvation
- * hazard `create-hold.ts` documents.
+ * hazard `create-hold.ts` documents. **`sellableVehiclesByType` is the one
+ * function allowed to default to the pool instead** (owner decision
+ * 2026-11-08, design note §4) — see its own doc comment for why: it is
+ * read-only, it is the public route list's unlocked fleet-sellability check,
+ * and it never participates in a capacity DECISION that needs the lock.
+ * Every locked caller (`assessTransferCapacity`, `services/capacity.ts`'s
+ * Gate 2b) still passes its own `tx` explicitly.
  *
  * ## An EXISTING malformed row is not the same situation as a NEW candidate
  *
@@ -61,11 +73,20 @@
  * an unreadable existing booking is treated as occupying the WHOLE DAY, which
  * over-claims the fleet rather than under-claiming it, and warns with the
  * booking id (never guest data).
+ *
+ * **One narrow exception to "never under-claim": a row with a NULL
+ * `vehicle_type_id`.** That column is `NOT NULL` for a non-tour booking by the
+ * `bookings_product_type_shape` CHECK, so this is unreachable for anything the
+ * one real writer (`createTransferBooking()`) produces — but if it ever did
+ * happen, `transferWindowsByType` drops the row rather than over-claiming by
+ * charging it to every type (there is no longer a fixed pair to charge it to
+ * both of). See that function's own doc comment for why dropping, not
+ * guessing a type, is the chosen failure mode for this one unreachable case.
  */
 import { and, eq, ne, notExists, sql } from 'drizzle-orm';
-import type { ProductType, VehicleType } from '@rg/shared';
+import type { ProductType } from '@rg/shared';
 import { readTransferOperationsSettingsTx } from '../../content/settings';
-import type { Transaction } from '../../db/client';
+import { getDb, type Database, type Transaction } from '../../db/client';
 import {
   bookingTransferDetails,
   bookings,
@@ -110,11 +131,22 @@ export type TransferCapacityVerdict =
 /** The product types this module's windows are computed for. */
 export type TransferProductType = Exclude<ProductType, 'tour'>;
 
-/** Sellable vehicles by type — the raw type counts of Architecture §2. */
-export type SellableVehicleCounts = Record<VehicleType, number>;
+/**
+ * Sellable vehicles by type — the raw type counts of Architecture §2, keyed
+ * by `vehicle_type_id`. A type with zero sellable vehicles may be ABSENT from
+ * this map (it is filled in with an explicit `0` by
+ * {@link assessTransferCapacity}'s key-set derivation before it is read
+ * there) — callers that need every type represented must not assume a
+ * missing key means anything other than "ask `sellableVehiclesByType` again
+ * with the key you care about", and should prefer `.get(id) ?? 0`.
+ */
+export type SellableVehicleCounts = Map<number, number>;
 
-/** Booked transfer windows for one date, grouped by the type they claim. */
-export type TransferWindowsByType = Record<VehicleType, TimeWindow[]>;
+/**
+ * Booked transfer windows for one date, grouped by the `vehicle_type_id` they
+ * claim. A type with no booked windows is simply absent from this map.
+ */
+export type TransferWindowsByType = Map<number, TimeWindow[]>;
 
 /** The whole civil day. What an unreadable existing booking is assumed to hold. */
 const WHOLE_DAY: TimeWindow = { startMinutes: 0, endMinutes: MINUTES_PER_DAY };
@@ -127,23 +159,38 @@ const WHOLE_DAY: TimeWindow = { startMinutes: 0, endMinutes: MINUTES_PER_DAY };
  * and a van left `on_trip` is refused on every future date at once — that
  * consequence is documented beside the constant and is unchanged here.
  *
- * **Deliberately NOT filtered by seat capacity.** Architecture §2's
- * `vanSellable`/`suvSellable` are raw type counts, because a transfer's vehicle
- * is the guest's own choice of type rather than something sized against a
- * party, and the type is what the window claims. The tour gate's pax-filtered
- * count is a different question and still asked separately — see
- * `assessCapacity`'s Gate 2.
+ * **Deliberately NOT filtered by seat capacity.** Architecture §2's raw
+ * per-type counts exist because a transfer's vehicle is the guest's own
+ * choice of type rather than something sized against a party, and the type
+ * is what the window claims. The tour gate's pax-filtered count is a
+ * different question and still asked separately — see `assessCapacity`'s
+ * Gate 2.
+ *
+ * **`db` takes either handle, defaulting to the pool — and this is the ONE
+ * function in this module allowed that widening** (owner decision
+ * 2026-11-08, design note §4, mirroring `vehiclePriceForRouteAndType`'s own
+ * pattern in `./pricing.ts`). Every other function here takes `Transaction`
+ * only, because every other caller is inside a capacity DECISION that needs
+ * the `fleet_date_slots` lock. This function is different on both counts: it
+ * is read-only (a `COUNT … GROUP BY`, nothing written), and its one caller
+ * with no open transaction — the PUBLIC route list (`transferRoutes.list`,
+ * deciding which vehicle types to show a guest as "offered") — never holds a
+ * lock and never decides a hold. `assessTransferCapacity` and
+ * `services/capacity.ts`'s Gate 2b both still pass their own `tx` explicitly,
+ * exactly as before; the default is for the unlocked public reader alone.
  */
-export async function sellableVehiclesByType(tx: Transaction): Promise<SellableVehicleCounts> {
-  const rows = await tx
-    .select({ vehicleType: vans.vehicleType, n: sql<number>`COUNT(*)` })
+export async function sellableVehiclesByType(
+  db: Database | Transaction = getDb(),
+): Promise<SellableVehicleCounts> {
+  const rows = await db
+    .select({ vehicleTypeId: vans.vehicleTypeId, n: sql<number>`COUNT(*)` })
     .from(vans)
     .where(and(eq(vans.isActive, true), eq(vans.status, VAN_STATUS_SELLABLE)))
-    .groupBy(vans.vehicleType);
+    .groupBy(vans.vehicleTypeId);
 
-  const counts: SellableVehicleCounts = { van: 0, suv: 0 };
+  const counts: SellableVehicleCounts = new Map();
   for (const row of rows) {
-    counts[row.vehicleType] = Number(row.n);
+    counts.set(row.vehicleTypeId, Number(row.n));
   }
   return counts;
 }
@@ -159,7 +206,7 @@ export async function sellableVehiclesByType(tx: Transaction): Promise<SellableV
 export interface BookedTransferRow {
   bookingId: number;
   productType: ProductType;
-  vehicleType: VehicleType | null;
+  vehicleTypeId: number | null;
   pickupTime: string | null;
   dayUseEndTime: string | null;
   bufferMinutesUsed: number | null;
@@ -263,10 +310,13 @@ export function windowForBookedTransfer(row: BookedTransferRow): TimeWindow {
  * hold time, never the catalog row's current (possibly since-edited) value.
  * See that column's doc comment in `db/schema.ts`.
  *
- * `vehicle_type_requested` is `NOT NULL` for a non-tour booking by the
- * `bookings_product_type_shape` CHECK, so the null branch below is unreachable
- * — it counts such a row against BOTH types rather than neither, for the same
- * fail-closed reason.
+ * `vehicle_type_id` is `NOT NULL` for a non-tour booking by the
+ * `bookings_product_type_shape` CHECK, so the null branch below is
+ * unreachable — but there is no longer a fixed pair of types to count such a
+ * row against both of, so it is warned about and DROPPED from every type's
+ * peak instead. That under-counts the one row rather than inventing a type to
+ * over-count it against, and it is unreachable in practice for the same
+ * reason the CHECK makes it unreachable for the old two-type code.
  */
 export async function transferWindowsByType(
   tx: Transaction,
@@ -278,7 +328,7 @@ export async function transferWindowsByType(
     .select({
       bookingId: bookings.id,
       productType: bookings.productType,
-      vehicleType: bookings.vehicleTypeRequested,
+      vehicleTypeId: bookings.vehicleTypeId,
       pickupTime: bookingTransferDetails.pickupTime,
       dayUseEndTime: bookingTransferDetails.dayUseEndTime,
       bufferMinutesUsed: bookingTransferDetails.bufferMinutesUsed,
@@ -288,19 +338,22 @@ export async function transferWindowsByType(
     .leftJoin(bookingTransferDetails, eq(bookingTransferDetails.bookingId, bookings.id))
     .where(and(on(bookings.tourDate, date), ne(bookings.productType, 'tour'), holdsCapacity));
 
-  const byType: TransferWindowsByType = { van: [], suv: [] };
+  const byType: TransferWindowsByType = new Map();
   for (const row of rows) {
     const window = windowForBookedTransfer(row);
-    if (row.vehicleType === null) {
+    if (row.vehicleTypeId === null) {
       console.warn(
-        `[transfer-capacity] booking ${row.bookingId}: no vehicle_type_requested; ` +
-          'counting it against both vehicle types',
+        `[transfer-capacity] booking ${row.bookingId}: no vehicle_type_id; ` +
+          'cannot attribute its window to any vehicle type, dropping it from every peak',
       );
-      byType.van.push(window);
-      byType.suv.push(window);
       continue;
     }
-    byType[row.vehicleType].push(window);
+    const existing = byType.get(row.vehicleTypeId);
+    if (existing) {
+      existing.push(window);
+    } else {
+      byType.set(row.vehicleTypeId, [window]);
+    }
   }
   return byType;
 }
@@ -434,17 +487,59 @@ export function leftoverTransferCapacity(caps: readonly number[], toursConsuming
 }
 
 /**
- * The CURRENT peak claimed by booked transfers of each type on `date` — what
- * conditions (1)–(3) subtract. A candidate TOUR changes neither, which is why
- * the tour gate reads this and the transfer gate instead recomputes its own
- * type's peak with the candidate's window added.
+ * The CURRENT peak claimed by booked transfers of each type on `date`, keyed
+ * by `vehicle_type_id` — what conditions (1)–(3) subtract. A candidate TOUR
+ * changes neither, which is why the tour gate reads this and the transfer
+ * gate instead recomputes its own type's peak with the candidate's window
+ * added. A type with no booked windows is absent from the returned map —
+ * callers that need every sellable type represented use
+ * {@link sumLeftoverVehicles}, which handles the union itself.
  */
 export async function transferPeaksByType(
   tx: Transaction,
   date: string,
-): Promise<Record<VehicleType, number>> {
+): Promise<Map<number, number>> {
   const windows = await transferWindowsByType(tx, date);
-  return { van: peakOverlap(windows.van), suv: peakOverlap(windows.suv) };
+  const peaks = new Map<number, number>();
+  for (const [vehicleTypeId, typeWindows] of windows) {
+    peaks.set(vehicleTypeId, peakOverlap(typeWindows));
+  }
+  return peaks;
+}
+
+/**
+ * Sums `sellable[id] - peaks[id]` over the UNION of both maps' keys — never
+ * over one map's keys alone.
+ *
+ * **Why the union, not either map's own keys.** A type can be present in
+ * only one of the two maps: zero sellable vehicles of a type that still has
+ * a standing booked transfer (an admin deactivated the last van of that type
+ * after the booking was taken), or sellable vehicles of a type nobody has
+ * ever booked. Summing over `sellable`'s keys alone would silently DROP the
+ * first case's negative term — the exact gap this project's corrected
+ * key-set derivation exists to close (see {@link assessTransferCapacity}'s
+ * own note) — and summing over `peaks`' keys alone would drop a type's
+ * positive contribution when it has sellable vehicles but no bookings yet.
+ * The union, with an explicit `0` standing in for whichever side has no
+ * entry, is the only reading that cannot lose a term.
+ *
+ * A term whose peak exceeds its sellable count goes NEGATIVE here,
+ * deliberately left unclamped: a vehicle type with no vehicle left to serve
+ * it is a real claim on the day, and refusing the next whole-day tour is the
+ * conservative answer to it. This is the same "left unclamped on purpose"
+ * comment `assessTransferCapacity` carries, restated here because this is
+ * the OTHER caller of the same arithmetic — `services/capacity.ts`'s Gate 2b.
+ */
+export function sumLeftoverVehicles(
+  sellable: SellableVehicleCounts,
+  peaks: Map<number, number>,
+): number {
+  const ids = new Set<number>([...sellable.keys(), ...peaks.keys()]);
+  let total = 0;
+  for (const id of ids) {
+    total += (sellable.get(id) ?? 0) - (peaks.get(id) ?? 0);
+  }
+  return total;
 }
 
 /**
@@ -460,8 +555,8 @@ export async function readDefaultDriverTransferCap(tx: Transaction): Promise<num
 export interface TransferCapacityParams {
   /** The civil `tour_date` in Asia/Manila. */
   date: string;
-  /** The candidate's requested vehicle type. */
-  vehicleType: VehicleType;
+  /** The candidate's requested vehicle type's id (`vehicle_types.id`). */
+  vehicleTypeId: number;
   productType: TransferProductType;
   pickupTimeMinutes: number;
   dayUseEndTimeMinutes: number | null;
@@ -496,6 +591,23 @@ export interface TransferCapacityParams {
  *  4. Conditions (4)/(5): the driver pool, as a job count. `toursToday >= N`
  *     needs no separate test — it makes the leftover zero, so (5) refuses.
  *
+ * **The key-set derivation below is exact, not a simplification, and the
+ * order of these three lines is the whole point** (owner decision
+ * 2026-11-08, Opus review finding — design note §2): `windows` is computed
+ * FIRST, the candidate's own window is pushed into `windows` SECOND, and only
+ * THEN is the key set taken as `keys(windows) ∪ keys(sellable)` — with
+ * `sellable` given an explicit `0` for any id that is in `windows` but absent
+ * from it. Because the push happens before the key set is read, the
+ * candidate's own type is in the set BY CONSTRUCTION, even when it has zero
+ * sellable vehicles and zero existing bookings. A derivation that instead
+ * unions "active types with ≥1 sellable vehicle" with "types claimed by
+ * EXISTING bookings" — computed independently of the candidate — can leave
+ * the key set EMPTY for exactly that type, which makes conditions (1)/(2)
+ * below pass vacuously (an empty loop refuses nothing) and accepts a hold
+ * against a vehicle type the fleet does not have a single vehicle of. This
+ * is deliberately NOT the simpler-looking "active-sellable ∪ booked" union;
+ * do not refactor it into one.
+ *
  * Never throws a REFUSAL (it returns one), but it DOES throw on a malformed
  * argument, which includes a custom one-way transfer with no stored duration.
  * See `computeTransferWindow`.
@@ -520,14 +632,29 @@ export async function assessTransferCapacity(
   const windows = await transferWindowsByType(tx, params.date);
   const toursToday = await countToursOn(tx, params.date);
 
-  // 2. Conditions (1) and (2), with the candidate in its own type's peak.
-  windows[params.vehicleType].push(candidate.window);
-  const peaks: Record<VehicleType, number> = {
-    van: peakOverlap(windows.van),
-    suv: peakOverlap(windows.suv),
-  };
-  if (peaks.van > sellable.van || peaks.suv > sellable.suv) {
-    return { ok: false, reason: 'no_vehicle_available' };
+  // 2. Conditions (1) and (2), with the candidate pushed into ITS OWN type's
+  //    bucket BEFORE the key set is computed — see the function doc above.
+  const candidateBucket = windows.get(params.vehicleTypeId);
+  if (candidateBucket) {
+    candidateBucket.push(candidate.window);
+  } else {
+    windows.set(params.vehicleTypeId, [candidate.window]);
+  }
+
+  // The corrected key set: every type `windows` now claims, union every type
+  // `sellable` counts — with an explicit 0 standing in for whichever map has
+  // no entry for a given id, never a missing key read as "nothing to check".
+  const vehicleTypeIds = new Set<number>([...windows.keys(), ...sellable.keys()]);
+  const peaks = new Map<number, number>();
+  for (const id of vehicleTypeIds) {
+    peaks.set(id, peakOverlap(windows.get(id) ?? []));
+    if (!sellable.has(id)) sellable.set(id, 0);
+  }
+
+  for (const id of vehicleTypeIds) {
+    if (peaks.get(id)! > sellable.get(id)!) {
+      return { ok: false, reason: 'no_vehicle_available' };
+    }
   }
 
   /*
@@ -536,9 +663,13 @@ export async function assessTransferCapacity(
    * already recomputed. A type whose peak somehow exceeds its sellable count
    * contributes a NEGATIVE term; that is left unclamped on purpose, because the
    * transfer that has no vehicle is a real claim on the day and refusing one
-   * more tour is the conservative answer to it.
+   * more tour is the conservative answer to it — now summed over every id in
+   * the corrected key set rather than two named branches, via
+   * {@link sumLeftoverVehicles} (the SAME helper `services/capacity.ts`'s Gate
+   * 2b uses, so the two capacity gates can never read this arithmetic
+   * differently).
    */
-  const leftoverVehicles = sellable.van - peaks.van + (sellable.suv - peaks.suv);
+  const leftoverVehicles = sumLeftoverVehicles(sellable, peaks);
   if (toursToday > leftoverVehicles) {
     return { ok: false, reason: 'no_vehicle_available' };
   }

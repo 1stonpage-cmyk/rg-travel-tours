@@ -37,7 +37,7 @@
  * fleet), so every van and driver created here goes again.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import {
   TRIP_START_STOP_NAME,
   manilaCivilDate,
@@ -55,6 +55,7 @@ import {
   tours,
   users,
   vans,
+  vehicleTypes,
 } from '../db/schema';
 import { generateBookingRef } from '../services/booking-ref';
 import { tripProgress } from '../services/trips/progress';
@@ -96,6 +97,23 @@ const created = {
 async function count(statement: Parameters<ReturnType<typeof getDb>['execute']>[0]) {
   const [rows] = (await getDb().execute(statement)) as unknown as [Array<{ n: number }>, unknown];
   return Number(rows[0]?.n ?? -1);
+}
+
+/**
+ * The real, global `vehicle_types.id` for `'van'` — seeded by `seedBase`
+ * (migration 0023), never a literal id (CLAUDE.md). Cached per process.
+ */
+let cachedVanTypeId: number | undefined;
+async function vanVehicleTypeId(): Promise<number> {
+  if (cachedVanTypeId !== undefined) return cachedVanTypeId;
+  const [row] = await getDb()
+    .select({ id: vehicleTypes.id })
+    .from(vehicleTypes)
+    .where(eq(vehicleTypes.slug, 'van'))
+    .limit(1);
+  if (!row) throw new Error('No vehicle_types row for slug "van" — expected from seedBase.');
+  cachedVanTypeId = row.id;
+  return row.id;
 }
 
 async function makeDriver(label: string) {
@@ -268,6 +286,7 @@ describeWithDb('driver.trip', () => {
       plate,
       model: 'Trip Detail Fixture Van',
       capacity: 12,
+      vehicleTypeId: await vanVehicleTypeId(),
       status: 'available',
       isActive: true,
     });

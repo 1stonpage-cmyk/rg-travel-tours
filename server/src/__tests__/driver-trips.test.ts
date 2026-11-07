@@ -31,12 +31,12 @@
  * file creates is deleted again in `afterEach`.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { manilaCivilDate, type PriceSnapshot } from '@rg/shared';
 import { appRouter } from '../routers/_app';
 import { listDriverTrips } from '../routers/public/driver';
 import { getDb, getPool } from '../db/client';
-import { bookings, destinations, drivers, tours, users, vans } from '../db/schema';
+import { bookings, destinations, drivers, tours, users, vans, vehicleTypes } from '../db/schema';
 import { generateBookingRef } from '../services/booking-ref';
 import { customerContext, driverCaller, staffContext } from './helpers/ctx';
 import { describeWithDb } from './helpers/db';
@@ -98,6 +98,23 @@ async function makeTour(title: string) {
   return tour.insertId;
 }
 
+/**
+ * The real, global `vehicle_types.id` for `'van'` — seeded by `seedBase`
+ * (migration 0023), never a literal id (CLAUDE.md). Cached per process.
+ */
+let cachedVanTypeId: number | undefined;
+async function vanVehicleTypeId(): Promise<number> {
+  if (cachedVanTypeId !== undefined) return cachedVanTypeId;
+  const [row] = await getDb()
+    .select({ id: vehicleTypes.id })
+    .from(vehicleTypes)
+    .where(eq(vehicleTypes.slug, 'van'))
+    .limit(1);
+  if (!row) throw new Error('No vehicle_types row for slug "van" — expected from seedBase.');
+  cachedVanTypeId = row.id;
+  return row.id;
+}
+
 async function makeVan(plateSeed: string) {
   const [van] = await getDb()
     .insert(vans)
@@ -105,6 +122,7 @@ async function makeVan(plateSeed: string) {
       plate: `${plateSeed}${unique()}`.slice(0, 20),
       model: 'Driver Trips Fixture Van',
       capacity: 12,
+      vehicleTypeId: await vanVehicleTypeId(),
       status: 'available',
       isActive: true,
     });

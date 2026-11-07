@@ -40,7 +40,7 @@
  * `SELECT DATABASE()` before the first test).
  */
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import {
   BOOKING_STATUSES,
   CAPACITY_HOLDING_STATUSES,
@@ -56,6 +56,7 @@ import {
   drivers,
   tours,
   vans,
+  vehicleTypes,
 } from '../db/schema';
 import { generateBookingRef } from '../services/booking-ref';
 import { assessCapacity, takeSlotLocks } from '../services/capacity';
@@ -118,6 +119,23 @@ async function makeTour(opts: { groupsPerDay?: number; isActive?: boolean } = {}
   return tour.insertId;
 }
 
+/**
+ * The real, global `vehicle_types.id` for `'van'` — seeded by `seedBase`
+ * (migration 0023), never a literal id (CLAUDE.md). Resolved fresh in
+ * `beforeEach`, below.
+ */
+let VAN_ID: number;
+
+async function vehicleTypeIdBySlug(slug: string): Promise<number> {
+  const [row] = await getDb()
+    .select({ id: vehicleTypes.id })
+    .from(vehicleTypes)
+    .where(eq(vehicleTypes.slug, slug))
+    .limit(1);
+  if (!row) throw new Error(`No vehicle_types row for slug "${slug}" — expected from seedBase.`);
+  return row.id;
+}
+
 async function makeVan(
   opts: {
     capacity?: number;
@@ -132,6 +150,7 @@ async function makeVan(
       plate: `CAP${suffix}`.slice(0, 20),
       model: 'Capacity Fixture Van',
       capacity: opts.capacity ?? 12,
+      vehicleTypeId: VAN_ID,
       status: opts.status ?? 'available',
       isActive: opts.isActive ?? true,
     });
@@ -325,6 +344,8 @@ describeWithDb('capacity', () => {
       await count(sql`SELECT COUNT(*) n FROM drivers`),
       'leftover drivers in rg_travel_test',
     ).toBe(0);
+
+    VAN_ID = await vehicleTypeIdBySlug('van');
   });
 
   afterEach(cleanup);

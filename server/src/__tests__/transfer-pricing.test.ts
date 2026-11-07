@@ -33,7 +33,13 @@ import {
   quoteTransferResultSchema,
 } from '@rg/shared';
 import { getDb } from '../db/client';
-import { coupons, destinations, transferRouteVehiclePrices, transferRoutes } from '../db/schema';
+import {
+  coupons,
+  transferPlaces,
+  transferRouteVehiclePrices,
+  transferRoutes,
+  vehicleTypes,
+} from '../db/schema';
 import { appRouter } from '../routers/_app';
 import {
   quoteTransfer,
@@ -180,37 +186,75 @@ const PRICES = {
 
 const created = {
   routeIds: [] as number[],
-  destinationIds: [] as number[],
+  placeIds: [] as number[],
   couponIds: [] as number[],
+  vehicleTypeIds: [] as number[],
 };
 
 /**
- * A destination and a route hanging off it, with whatever price rows the caller
- * asks for. Both ids are tracked for teardown; the route's slug and the
- * destination's name carry a per-run suffix so parallel suites cannot collide
- * on the `UNIQUE` columns.
+ * The real, global `vehicle_types.id` for `'van'`/`'suv'` — seeded by
+ * `seedBase` (migration 0023), never a literal id (CLAUDE.md). Resolved once
+ * in `beforeAll`, below.
+ */
+let VAN_ID = 0;
+let SUV_ID = 0;
+
+async function vehicleTypeIdBySlug(slug: string): Promise<number> {
+  const [row] = await getDb()
+    .select({ id: vehicleTypes.id })
+    .from(vehicleTypes)
+    .where(eq(vehicleTypes.slug, slug))
+    .limit(1);
+  if (!row) throw new Error(`No vehicle_types row for slug "${slug}" — expected from seedBase.`);
+  return row.id;
+}
+
+/**
+ * A route between two fresh, admin-managed places, with whatever price rows
+ * the caller asks for (owner decision 2026-11-08: `destinationId` ->
+ * `fromPlaceId`/`toPlaceId`; `transfer_route_vehicle_prices.vehicleType` ->
+ * `.vehicleTypeId`). Every id is tracked for teardown; the route's slug and
+ * the TO-place's name carry a per-run suffix so parallel suites cannot
+ * collide on the `UNIQUE` columns.
+ *
+ * **`toPlaceActive` marks the TO-PLACE inactive (renamed from the old
+ * `destinationActive`), and `fromPlaceActive` does the same for the
+ * FROM-PLACE** — sellability moved from `destinations` to
+ * `transfer_places` (design note §1.3), and each half of the route's own
+ * soft-delete pair needs its own independent toggle: `vehiclePriceForRouteAndType`
+ * joins BOTH places and requires BOTH `is_active`, so a test that can only
+ * deactivate the TO-place could never tell the two `eq()` conditions apart.
  */
 async function makeRoute(options: {
   /** Suffixed and lowercased — it decides the name tie-break in the list order. */
   nameSeed: string;
   sortOrder: number;
   routeActive?: boolean;
-  destinationActive?: boolean;
+  fromPlaceActive?: boolean;
+  toPlaceActive?: boolean;
   vehicles?: Array<'van' | 'suv'>;
   vanOneWayCentavos?: number;
 }) {
   const db = getDb();
   const suffix = unique().replace('_', '-');
   const name = `__t9__${options.nameSeed}-${suffix}`;
-  const [destination] = await db.insert(destinations).values({
-    name,
-    slug: name.replace(/_/g, 'x'),
-    isActive: options.destinationActive ?? true,
+
+  const [fromPlace] = await db.insert(transferPlaces).values({
+    name: `${name}-from`,
+    nameKey: `${name}-from`.toLowerCase(),
+    isActive: options.fromPlaceActive ?? true,
   });
-  created.destinationIds.push(destination.insertId);
+  created.placeIds.push(fromPlace.insertId);
+  const [toPlace] = await db.insert(transferPlaces).values({
+    name,
+    nameKey: name.toLowerCase(),
+    isActive: options.toPlaceActive ?? true,
+  });
+  created.placeIds.push(toPlace.insertId);
 
   const [route] = await db.insert(transferRoutes).values({
-    destinationId: destination.insertId,
+    fromPlaceId: fromPlace.insertId,
+    toPlaceId: toPlace.insertId,
     slug: `t9-${options.nameSeed}-${suffix}`,
     isActive: options.routeActive ?? true,
     sortOrder: options.sortOrder,
@@ -224,7 +268,7 @@ async function makeRoute(options: {
   for (const vehicleType of options.vehicles ?? (['van', 'suv'] as const)) {
     await db.insert(transferRouteVehiclePrices).values({
       routeId: route.insertId,
-      vehicleType,
+      vehicleTypeId: vehicleType === 'van' ? VAN_ID : SUV_ID,
       oneWayPriceCentavos:
         vehicleType === 'van' && options.vanOneWayCentavos !== undefined
           ? options.vanOneWayCentavos
@@ -256,6 +300,9 @@ let retiredDestination = { id: 0, destinationName: '' };
 let cheapRoute = { id: 0, destinationName: '' };
 
 beforeAll(async () => {
+  VAN_ID = await vehicleTypeIdBySlug('van');
+  SUV_ID = await vehicleTypeIdBySlug('suv');
+
   /*
    * **Inserted in the REVERSE of the order the list must return them in**
    * (T9 review, Minor finding). `aaa` / `zzz` share a sort order, so the
@@ -273,7 +320,7 @@ beforeAll(async () => {
   retiredDestination = await makeRoute({
     nameSeed: 'retired-dest',
     sortOrder: 2,
-    destinationActive: false,
+    toPlaceActive: false,
   });
 }, 60_000);
 
@@ -285,10 +332,16 @@ afterAll(async () => {
       .where(inArray(transferRouteVehiclePrices.routeId, created.routeIds));
     await db.delete(transferRoutes).where(inArray(transferRoutes.id, created.routeIds));
   }
-  if (created.destinationIds.length > 0) {
-    await db.delete(destinations).where(inArray(destinations.id, created.destinationIds));
+  if (created.placeIds.length > 0) {
+    await db.delete(transferPlaces).where(inArray(transferPlaces.id, created.placeIds));
   }
   for (const id of created.couponIds) await db.delete(coupons).where(eq(coupons.id, id));
+  // Price rows for a test-owned type were already removed above (its only
+  // route id is in `created.routeIds`), so the type row itself is safe to
+  // delete last.
+  if (created.vehicleTypeIds.length > 0) {
+    await db.delete(vehicleTypes).where(inArray(vehicleTypes.id, created.vehicleTypeIds));
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -297,42 +350,86 @@ afterAll(async () => {
 
 describeWithDb('vehiclePriceForRouteAndType', () => {
   it('reads the ONE-WAY column for a one-way transfer and the DAY-USE column for a day-use hire', async () => {
-    const oneWay = await vehiclePriceForRouteAndType(bothVehicles.id, 'van', 'transfer_one_way');
-    const dayUse = await vehiclePriceForRouteAndType(bothVehicles.id, 'van', 'transfer_day_use');
+    const oneWay = await vehiclePriceForRouteAndType(bothVehicles.id, VAN_ID, 'transfer_one_way');
+    const dayUse = await vehiclePriceForRouteAndType(bothVehicles.id, VAN_ID, 'transfer_day_use');
     expect(oneWay?.priceCentavos).toBe(PRICES.van.oneWayPriceCentavos);
     expect(dayUse?.priceCentavos).toBe(PRICES.van.dayUsePriceCentavos);
   });
 
   it("reads the requested VEHICLE TYPE's row, not the other one's", async () => {
-    const suv = await vehiclePriceForRouteAndType(bothVehicles.id, 'suv', 'transfer_one_way');
+    const suv = await vehiclePriceForRouteAndType(bothVehicles.id, SUV_ID, 'transfer_one_way');
     expect(suv?.priceCentavos).toBe(PRICES.suv.oneWayPriceCentavos);
     expect(suv?.priceCentavos).not.toBe(PRICES.van.oneWayPriceCentavos);
   });
 
   it("carries the route's free-cancellation window and duration for the hold to freeze", async () => {
-    const price = await vehiclePriceForRouteAndType(bothVehicles.id, 'van', 'transfer_one_way');
+    const price = await vehiclePriceForRouteAndType(bothVehicles.id, VAN_ID, 'transfer_one_way');
     expect(price?.freeCancelHours).toBe(24);
     expect(price?.routeDurationMinutes).toBe(180);
   });
 
   it('answers null for a RETIRED route rather than quoting a withdrawn product', async () => {
     await expect(
-      vehiclePriceForRouteAndType(retiredRoute.id, 'van', 'transfer_one_way'),
+      vehiclePriceForRouteAndType(retiredRoute.id, VAN_ID, 'transfer_one_way'),
     ).resolves.toBeNull();
   });
 
-  it('answers null for an ACTIVE route whose DESTINATION is retired', async () => {
+  it('answers null for an ACTIVE route whose TO PLACE is retired', async () => {
     /*
      * T9 review, Important finding: this function used to check only the
      * route's own `is_active`, so deactivating a destination on the existing
      * destinations screen took the route off `transferRoutes.list` and left it
      * quotable here — a live price for a place the business has withdrawn,
      * reachable from a stale tab or by probing small route ids. The route in
-     * this fixture is ACTIVE; only its destination is not, which is what makes
+     * this fixture is ACTIVE; only its to-place is not, which is what makes
      * this a test of the second filter rather than the first.
      */
     await expect(
-      vehiclePriceForRouteAndType(retiredDestination.id, 'van', 'transfer_one_way'),
+      vehiclePriceForRouteAndType(retiredDestination.id, VAN_ID, 'transfer_one_way'),
+    ).resolves.toBeNull();
+  });
+
+  it('answers null for an ACTIVE route whose FROM PLACE is retired (Opus review finding)', async () => {
+    // The TO-place test above exercises `eq(toPlace.isActive, true)`; this one
+    // exercises the OTHER aliased join's condition, `eq(fromPlace.isActive,
+    // true)` — the two are independent conditions on independent joins, and
+    // nothing before this test ever deactivated the FROM place alone.
+    const retiredOrigin = await makeRoute({
+      nameSeed: 'retired-origin',
+      sortOrder: 3,
+      fromPlaceActive: false,
+    });
+    await expect(
+      vehiclePriceForRouteAndType(retiredOrigin.id, VAN_ID, 'transfer_one_way'),
+    ).resolves.toBeNull();
+  });
+
+  it('answers null for a DEACTIVATED vehicle type, even with a priced row on an active route (Opus review finding)', async () => {
+    // A test-OWNED vehicle type, never the shared seeded van/suv rows — this
+    // suite has no business flipping `is_active` on a row other suites rely
+    // on being active throughout the run.
+    const db = getDb();
+    const slug = `__t9-vt__${unique()}`;
+    const [vt] = await db
+      .insert(vehicleTypes)
+      .values({ name: `T9 fixture ${slug}`, slug, isActive: true, sortOrder: 999 });
+    created.vehicleTypeIds.push(vt.insertId);
+
+    await db.insert(transferRouteVehiclePrices).values({
+      routeId: bothVehicles.id,
+      vehicleTypeId: vt.insertId,
+      oneWayPriceCentavos: 111_00,
+      dayUsePriceCentavos: 222_00,
+    });
+
+    await expect(
+      vehiclePriceForRouteAndType(bothVehicles.id, vt.insertId, 'transfer_one_way'),
+    ).resolves.not.toBeNull();
+
+    await db.update(vehicleTypes).set({ isActive: false }).where(eq(vehicleTypes.id, vt.insertId));
+
+    await expect(
+      vehiclePriceForRouteAndType(bothVehicles.id, vt.insertId, 'transfer_one_way'),
     ).resolves.toBeNull();
   });
 
@@ -340,16 +437,16 @@ describeWithDb('vehiclePriceForRouteAndType', () => {
     // The same route answers a van fine, so this is the missing ROW and not a
     // missing route.
     await expect(
-      vehiclePriceForRouteAndType(vanOnly.id, 'van', 'transfer_one_way'),
+      vehiclePriceForRouteAndType(vanOnly.id, VAN_ID, 'transfer_one_way'),
     ).resolves.not.toBeNull();
     await expect(
-      vehiclePriceForRouteAndType(vanOnly.id, 'suv', 'transfer_one_way'),
+      vehiclePriceForRouteAndType(vanOnly.id, SUV_ID, 'transfer_one_way'),
     ).resolves.toBeNull();
   });
 
   it('answers null for a route id that does not exist — never throws', async () => {
     await expect(
-      vehiclePriceForRouteAndType(2_000_000_000, 'van', 'transfer_one_way'),
+      vehiclePriceForRouteAndType(2_000_000_000, VAN_ID, 'transfer_one_way'),
     ).resolves.toBeNull();
   });
 });
@@ -382,14 +479,14 @@ describeWithDb('transferRoutes.list (public)', () => {
     expect(row?.prices.suv).toBeNull();
   });
 
-  it('OMITS a retired route, and a route whose destination is retired', async () => {
+  it('OMITS a retired route, and a route whose TO place is retired', async () => {
     const ids = (await caller.transferRoutes.list()).map((r) => r.id);
     expect(ids).toContain(bothVehicles.id);
     expect(ids).not.toContain(retiredRoute.id);
     expect(ids).not.toContain(retiredDestination.id);
   });
 
-  it('orders by sort order, then by destination name', async () => {
+  it('orders by sort order, then by place name', async () => {
     const ids = (await caller.transferRoutes.list()).map((r) => r.id);
     const mine = ids.filter((id) => [bothVehicles.id, vanOnly.id, cheapRoute.id].includes(id));
     // sortOrder 10 ('…aaa…'), sortOrder 10 ('…zzz…'), sortOrder 30.
@@ -405,7 +502,7 @@ describeWithDb('checkout.quoteTransfer', () => {
   it('quotes a flat per-vehicle rate, with the deposit from the shared trust setting', async () => {
     const quote = await caller.checkout.quoteTransfer({
       routeId: bothVehicles.id,
-      vehicleType: 'van',
+      vehicleTypeId: VAN_ID,
       productType: 'transfer_one_way',
     });
 
@@ -425,7 +522,7 @@ describeWithDb('checkout.quoteTransfer', () => {
   it('prices the day-use product from the day-use column', async () => {
     const quote = await caller.checkout.quoteTransfer({
       routeId: bothVehicles.id,
-      vehicleType: 'suv',
+      vehicleTypeId: SUV_ID,
       productType: 'transfer_day_use',
     });
     expect(quote.totalCentavos).toBe(PRICES.suv.dayUsePriceCentavos);
@@ -435,7 +532,7 @@ describeWithDb('checkout.quoteTransfer', () => {
     const coupon = await makeCoupon(1000); // 10% off
     const quote = await caller.checkout.quoteTransfer({
       routeId: bothVehicles.id,
-      vehicleType: 'van',
+      vehicleTypeId: VAN_ID,
       productType: 'transfer_one_way',
       couponCode: coupon.code,
     });
@@ -447,7 +544,7 @@ describeWithDb('checkout.quoteTransfer', () => {
     await expect(
       caller.checkout.quoteTransfer({
         routeId: bothVehicles.id,
-        vehicleType: 'van',
+        vehicleTypeId: VAN_ID,
         productType: 'transfer_one_way',
         couponCode: 'NO-SUCH-T9-CODE',
       }),
@@ -465,14 +562,14 @@ describeWithDb('checkout.quoteTransfer', () => {
     await expect(
       caller.checkout.quoteTransfer({
         routeId: retiredRoute.id,
-        vehicleType: 'van',
+        vehicleTypeId: VAN_ID,
         productType: 'transfer_one_way',
       }),
     ).rejects.toMatchObject(expected);
     await expect(
       caller.checkout.quoteTransfer({
         routeId: vanOnly.id,
-        vehicleType: 'suv',
+        vehicleTypeId: SUV_ID,
         productType: 'transfer_one_way',
       }),
     ).rejects.toMatchObject(expected);
@@ -481,14 +578,14 @@ describeWithDb('checkout.quoteTransfer', () => {
     await expect(
       caller.checkout.quoteTransfer({
         routeId: retiredDestination.id,
-        vehicleType: 'van',
+        vehicleTypeId: VAN_ID,
         productType: 'transfer_one_way',
       }),
     ).rejects.toMatchObject(expected);
     await expect(
       caller.checkout.quoteTransfer({
         routeId: 2_000_000_000,
-        vehicleType: 'van',
+        vehicleTypeId: VAN_ID,
         productType: 'transfer_one_way',
       }),
     ).rejects.toMatchObject(expected);
@@ -498,7 +595,7 @@ describeWithDb('checkout.quoteTransfer', () => {
     const error = await caller.checkout
       .quoteTransfer({
         routeId: cheapRoute.id,
-        vehicleType: 'van',
+        vehicleTypeId: VAN_ID,
         productType: 'transfer_one_way',
       })
       .catch((e: unknown) => e);
@@ -513,7 +610,7 @@ describeWithDb('checkout.quoteTransfer', () => {
     const error = await caller.checkout
       .quoteTransfer({
         routeId: bothVehicles.id,
-        vehicleType: 'van',
+        vehicleTypeId: VAN_ID,
         productType: 'transfer_one_way',
         couponCode: coupon.code,
       })
@@ -526,7 +623,7 @@ describeWithDb('checkout.quoteTransfer', () => {
     await expect(
       caller.checkout.quoteTransfer({
         routeId: bothVehicles.id,
-        vehicleType: 'van',
+        vehicleTypeId: VAN_ID,
         productType: 'transfer_one_way',
         // @ts-expect-error — `.strict()` rejects it, and the type says so too.
         priceCentavos: 1,

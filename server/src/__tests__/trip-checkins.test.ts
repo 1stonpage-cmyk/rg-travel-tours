@@ -62,6 +62,7 @@ import {
   tours,
   tripCheckpoints,
   vans,
+  vehicleTypes,
 } from '../db/schema';
 import { generateBookingRef } from '../services/booking-ref';
 import { assessCapacity, takeSlotLocks } from '../services/capacity';
@@ -123,6 +124,23 @@ async function makeDriver(label: string) {
   return driver.insertId;
 }
 
+/**
+ * The real, global `vehicle_types.id` for `'van'` — seeded by `seedBase`
+ * (migration 0023), never a literal id (CLAUDE.md). Cached per process.
+ */
+let cachedVanTypeId: number | undefined;
+async function vanVehicleTypeId(): Promise<number> {
+  if (cachedVanTypeId !== undefined) return cachedVanTypeId;
+  const [row] = await getDb()
+    .select({ id: vehicleTypes.id })
+    .from(vehicleTypes)
+    .where(eq(vehicleTypes.slug, 'van'))
+    .limit(1);
+  if (!row) throw new Error('No vehicle_types row for slug "van" — expected from seedBase.');
+  cachedVanTypeId = row.id;
+  return row.id;
+}
+
 async function makeVan(status: 'available' | 'on_trip' | 'parked' | 'for_repair' = 'available') {
   const [van] = await getDb()
     .insert(vans)
@@ -130,6 +148,7 @@ async function makeVan(status: 'available' | 'on_trip' | 'parked' | 'for_repair'
       plate: `CIV${unique()}`.slice(0, 20),
       model: 'Check-in Fixture Van',
       capacity: 12,
+      vehicleTypeId: await vanVehicleTypeId(),
       status,
       isActive: true,
     });

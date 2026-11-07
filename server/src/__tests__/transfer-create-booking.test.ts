@@ -32,7 +32,7 @@ import {
   type BookingStatus,
   type PayMode,
   type PriceSnapshot,
-  type VehicleType,
+  type TransferDirection,
 } from '@rg/shared';
 import { getDb, getPool } from '../db/client';
 import {
@@ -43,9 +43,11 @@ import {
   destinations,
   drivers,
   tours,
+  transferPlaces,
   transferRouteVehiclePrices,
   transferRoutes,
   vans,
+  vehicleTypes,
 } from '../db/schema';
 import { readSettingBlock, readTransferOperationsSettings } from '../content/settings';
 import { generateBookingRef } from '../services/booking-ref';
@@ -110,6 +112,7 @@ const created = {
   tourIds: [] as number[],
   routeIds: [] as number[],
   destinationIds: [] as number[],
+  placeIds: [] as number[],
   couponIds: [] as number[],
   vanIds: [] as number[],
   driverIds: [] as number[],
@@ -123,6 +126,27 @@ async function count(statement: Parameters<ReturnType<typeof getDb>['execute']>[
   return Number(rows[0]?.n ?? -1);
 }
 
+/**
+ * The real, global `vehicle_types` rows for `'van'`/`'suv'` — seeded by
+ * `seedBase` (migration 0023), never a literal id (CLAUDE.md). Resolved
+ * fresh in `beforeEach` into these four, so a test can assert the frozen
+ * snapshot's `vehicleTypeName` against the real seeded name rather than a
+ * hand-typed guess.
+ */
+let VAN_ID: number;
+let SUV_ID: number;
+let VAN_NAME: string;
+
+async function vehicleTypeBySlug(slug: string): Promise<{ id: number; name: string }> {
+  const [row] = await getDb()
+    .select({ id: vehicleTypes.id, name: vehicleTypes.name })
+    .from(vehicleTypes)
+    .where(eq(vehicleTypes.slug, slug))
+    .limit(1);
+  if (!row) throw new Error(`No vehicle_types row for slug "${slug}" — expected from seedBase.`);
+  return row;
+}
+
 async function makeDestination(opts: { isActive?: boolean } = {}) {
   const slug = `__xferhold__${unique()}`;
   const [row] = await getDb()
@@ -132,13 +156,33 @@ async function makeDestination(opts: { isActive?: boolean } = {}) {
   return row.insertId;
 }
 
+/** An admin-managed pickup/drop-off place — a route's `from`/`to` endpoint. */
+async function makePlace(opts: { isActive?: boolean; isAirport?: boolean } = {}) {
+  const slug = `__xferhold__${unique()}`;
+  const [row] = await getDb()
+    .insert(transferPlaces)
+    .values({
+      name: slug,
+      nameKey: slug.toLowerCase(),
+      isActive: opts.isActive ?? true,
+      isAirport: opts.isAirport ?? false,
+    });
+  created.placeIds.push(row.insertId);
+  return row.insertId;
+}
+
 /**
- * A transfer route with a destination and, unless told otherwise, a price row
+ * A transfer route with two places and, unless told otherwise, a price row
  * for BOTH vehicle types — which `transfer-capacity.test.ts`'s own `makeRoute`
  * never needed, because nothing priced a transfer before T9.
  *
- * `vehicleTypes: ['van']` leaves the SUV unpriced, which is one of the two ways
- * `vehiclePriceForRouteAndType` answers `null`.
+ * `vehicleTypeIds: [VAN_ID]` leaves the SUV unpriced, which is one of the two
+ * ways `vehiclePriceForRouteAndType` answers `null`.
+ *
+ * `destinationActive` (kept under that name for minimal diff against this
+ * file's many call sites) now marks the route's TO-PLACE inactive, not a
+ * `destinations` row — sellability moved from `destinations` to
+ * `transfer_places` (owner decision 2026-11-08).
  */
 async function makeRoute(
   opts: {
@@ -146,17 +190,26 @@ async function makeRoute(
     freeCancelHours?: number;
     isActive?: boolean;
     destinationActive?: boolean;
-    vehicleTypes?: VehicleType[];
+    reverseEnabled?: boolean;
+    fromIsAirport?: boolean;
+    toIsAirport?: boolean;
+    vehicleTypeIds?: number[];
     oneWayPriceCentavos?: number;
     dayUsePriceCentavos?: number;
   } = {},
 ) {
-  const destinationId = await makeDestination({ isActive: opts.destinationActive ?? true });
+  const fromPlaceId = await makePlace({ isAirport: opts.fromIsAirport ?? false });
+  const toPlaceId = await makePlace({
+    isActive: opts.destinationActive ?? true,
+    isAirport: opts.toIsAirport ?? false,
+  });
   const slug = `xferhold-${unique()}`;
   const [row] = await getDb()
     .insert(transferRoutes)
     .values({
-      destinationId,
+      fromPlaceId,
+      toPlaceId,
+      reverseEnabled: opts.reverseEnabled ?? true,
       slug,
       estimatedDurationMinutes: opts.durationMinutes ?? DURATION,
       freeCancelHours: opts.freeCancelHours ?? ROUTE_FREE_CANCEL_HOURS,
@@ -164,12 +217,12 @@ async function makeRoute(
     });
   created.routeIds.push(row.insertId);
 
-  for (const vehicleType of opts.vehicleTypes ?? (['van', 'suv'] as VehicleType[])) {
+  for (const vehicleTypeId of opts.vehicleTypeIds ?? [VAN_ID, SUV_ID]) {
     await getDb()
       .insert(transferRouteVehiclePrices)
       .values({
         routeId: row.insertId,
-        vehicleType,
+        vehicleTypeId,
         oneWayPriceCentavos: opts.oneWayPriceCentavos ?? ONE_WAY_PRICE,
         dayUsePriceCentavos: opts.dayUsePriceCentavos ?? DAY_USE_PRICE,
       });
@@ -177,7 +230,7 @@ async function makeRoute(
   return row.insertId;
 }
 
-async function makeVan(opts: { vehicleType?: VehicleType; capacity?: number } = {}) {
+async function makeVan(opts: { vehicleTypeId?: number; capacity?: number } = {}) {
   const suffix = unique();
   const [row] = await getDb()
     .insert(vans)
@@ -185,7 +238,7 @@ async function makeVan(opts: { vehicleType?: VehicleType; capacity?: number } = 
       plate: `XH${suffix}`.slice(0, 20),
       model: 'Transfer Hold Fixture',
       capacity: opts.capacity ?? 12,
-      vehicleType: opts.vehicleType ?? 'van',
+      vehicleTypeId: opts.vehicleTypeId ?? VAN_ID,
       status: 'available',
       isActive: true,
     });
@@ -297,7 +350,8 @@ function transferInput(over: {
   routeId?: number | null;
   customRouteDescription?: string | null;
   date?: string;
-  vehicleType?: VehicleType;
+  vehicleTypeId?: number;
+  direction?: TransferDirection;
   productType?: 'transfer_one_way' | 'transfer_day_use';
   pickupTime?: string;
   dayUseEndTime?: string | null;
@@ -318,7 +372,8 @@ function transferInput(over: {
     routeId: over.routeId === undefined ? null : over.routeId,
     customRouteDescription:
       over.customRouteDescription === undefined ? null : over.customRouteDescription,
-    vehicleType: over.vehicleType ?? 'van',
+    vehicleTypeId: over.vehicleTypeId ?? VAN_ID,
+    direction: over.direction ?? 'forward',
     productType,
     pickupTime: over.pickupTime ?? '08:00',
     dayUseEndTime:
@@ -471,6 +526,9 @@ describeWithDb('createTransferBooking', () => {
     );
     const trust = await readSettingBlock('trust');
     expect(trust.depositPercent, 'the seeded deposit percent changed').toBe(DEPOSIT_PERCENT);
+
+    ({ id: VAN_ID, name: VAN_NAME } = await vehicleTypeBySlug('van'));
+    SUV_ID = (await vehicleTypeBySlug('suv')).id;
   });
 
   afterEach(cleanup);
@@ -500,7 +558,7 @@ describeWithDb('createTransferBooking', () => {
     expect(row.tourId, 'a transfer carries no tour_id').toBeNull();
     expect(row.productType).toBe('transfer_one_way');
     expect(row.routeId).toBe(routeId);
-    expect(row.vehicleTypeRequested).toBe('van');
+    expect(row.vehicleTypeId).toBe(VAN_ID);
     expect(row.pax).toBe(3);
     expect(row.pickup).toContain('Mactan-Cebu');
     expect(row.holdExpiresAt?.getTime()).toBe(NOW.getTime() + HOLD_MINUTES * 60_000);
@@ -527,7 +585,8 @@ describeWithDb('createTransferBooking', () => {
     const snapshot = transferPriceSnapshotSchema.parse(row.priceSnapshot);
     expect(snapshot).toEqual({
       productType: 'transfer_one_way',
-      vehicleType: 'van',
+      vehicleTypeId: VAN_ID,
+      vehicleTypeName: VAN_NAME,
       routeId,
       customRouteDescription: null,
       priceSource: 'catalog',
@@ -549,7 +608,7 @@ describeWithDb('createTransferBooking', () => {
       ref: result.ref,
       productType: 'transfer_one_way',
       routeId,
-      vehicleType: 'van',
+      vehicleTypeId: VAN_ID,
       tourDate: DAY,
       pickupTime: '08:00',
       priceSource: 'catalog',
@@ -790,6 +849,109 @@ describeWithDb('createTransferBooking', () => {
   });
 
   // -------------------------------------------------------------------------
+  // Direction and the airport flight-details rule (owner decision 2026-11-08)
+  // — both checked POST-catalog-read, inside the transaction, which is why
+  // they live here rather than beside `assertBookableShape`'s own pure cases
+  // above (see `TRANSFER_BOOKING_SHAPE_PROBLEMS`'s doc comment).
+  // -------------------------------------------------------------------------
+
+  it('refuses a reverse-direction hold on a route with reverseEnabled=false, and writes nothing', async () => {
+    const routeId = await makeRoute({ reverseEnabled: false });
+    await makeFleet(2);
+    const before = await writtenRowCounts();
+
+    const error = await createTransferBooking(
+      transferInput({ routeId, direction: 'reverse' }),
+      NOW,
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(TransferBookingShapeError);
+    expect((error as TransferBookingShapeError).reason).toBe('reverse_not_enabled_for_route');
+    expect(await writtenRowCounts()).toEqual(before);
+  });
+
+  it('accepts a reverse-direction hold on a route with reverseEnabled=true, and freezes it', async () => {
+    const routeId = await makeRoute({ reverseEnabled: true });
+    await makeFleet(2);
+
+    const result = await hold(transferInput({ routeId, direction: 'reverse', payMode: 'full' }));
+    expect((await detailsRow(result.bookingId)).direction).toBe('reverse');
+  });
+
+  it('refuses a one-way transfer touching an airport place with no flight details, and writes nothing', async () => {
+    const routeId = await makeRoute({ fromIsAirport: true });
+    await makeFleet(2);
+    const before = await writtenRowCounts();
+
+    const error = await createTransferBooking(
+      transferInput({ routeId, flightNumber: null, airline: null }),
+      NOW,
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(TransferBookingShapeError);
+    expect((error as TransferBookingShapeError).reason).toBe(
+      'flight_details_required_for_airport_route',
+    );
+    expect(await writtenRowCounts()).toEqual(before);
+  });
+
+  it('refuses a one-way airport transfer whose flight details are BLANK STRINGS, not just null, and writes nothing', async () => {
+    // A guest's form can post '' rather than omit the field entirely — the
+    // check must not pass vacuously on a value that is technically non-null
+    // but carries no usable flight detail (owner/Opus review finding).
+    const routeId = await makeRoute({ fromIsAirport: true });
+    await makeFleet(2);
+    const before = await writtenRowCounts();
+
+    const error = await createTransferBooking(
+      transferInput({ routeId, flightNumber: '', airline: '' }),
+      NOW,
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(TransferBookingShapeError);
+    expect((error as TransferBookingShapeError).reason).toBe(
+      'flight_details_required_for_airport_route',
+    );
+    expect(await writtenRowCounts()).toEqual(before);
+  });
+
+  it('accepts a one-way airport transfer once flight details are given', async () => {
+    const routeId = await makeRoute({ toIsAirport: true });
+    await makeFleet(2);
+
+    const result = await hold(
+      transferInput({
+        routeId,
+        flightNumber: '5J 561',
+        airline: 'Cebu Pacific',
+        payMode: 'full',
+      }),
+    );
+    expect((await bookingRow(result.bookingId)).status).toBe('pending_payment');
+  });
+
+  it('does NOT require flight details for a DAY-USE hire, even on an airport route', async () => {
+    // The airport rule is scoped to `transfer_one_way` only (design note §2) —
+    // a day-use hire has no flight to meet, and `assertBookableShape` already
+    // refuses flight fields on a day-use request regardless.
+    const routeId = await makeRoute({ fromIsAirport: true });
+    await makeFleet(2);
+
+    const result = await hold(
+      transferInput({
+        routeId,
+        productType: 'transfer_day_use',
+        pickupTime: '07:00',
+        dayUseEndTime: '17:00',
+        flightNumber: null,
+        airline: null,
+        payMode: 'full',
+      }),
+    );
+    expect((await bookingRow(result.bookingId)).status).toBe('pending_payment');
+  });
+
+  // -------------------------------------------------------------------------
   // Minimum notice (owner answer 2)
   // -------------------------------------------------------------------------
 
@@ -857,18 +1019,19 @@ describeWithDb('createTransferBooking', () => {
     await makeFleet(2);
     const retiredRoute = await makeRoute({ isActive: false });
     const retiredDestination = await makeRoute({ destinationActive: false });
-    const vanOnly = await makeRoute({ vehicleTypes: ['van'] });
+    const vanOnly = await makeRoute({ vehicleTypeIds: [VAN_ID] });
     const before = await writtenRowCounts();
 
-    for (const [routeId, vehicleType, label] of [
-      [retiredRoute, 'van', 'retired route'],
-      [retiredDestination, 'van', 'retired destination'],
-      [vanOnly, 'suv', 'no price row for that vehicle type'],
-      [999_999_999, 'van', 'a route id that never existed'],
+    for (const [routeId, vehicleTypeId, label] of [
+      [retiredRoute, VAN_ID, 'retired route'],
+      [retiredDestination, VAN_ID, 'retired destination'],
+      [vanOnly, SUV_ID, 'no price row for that vehicle type'],
+      [999_999_999, VAN_ID, 'a route id that never existed'],
     ] as const) {
-      const error = await createTransferBooking(transferInput({ routeId, vehicleType }), NOW).catch(
-        (e: unknown) => e,
-      );
+      const error = await createTransferBooking(
+        transferInput({ routeId, vehicleTypeId }),
+        NOW,
+      ).catch((e: unknown) => e);
       expect(error, label).toBeInstanceOf(TransferRouteNotQuotableError);
       expect((error as TransferRouteNotQuotableError).routeId, label).toBe(routeId);
     }
@@ -1140,7 +1303,7 @@ describeWithDb('createTransferBooking', () => {
    */
   it('serialises two OVERLAPPING transfers for the last vehicle', async () => {
     const routeId = await makeRoute();
-    await makeVan({ vehicleType: 'van' });
+    await makeVan({ vehicleTypeId: VAN_ID });
     await makeDriver({ maxTransferJobsPerDay: 4 });
     await warmPool();
 
@@ -1169,8 +1332,8 @@ describeWithDb('createTransferBooking', () => {
    */
   it('serialises two transfers for the last DRIVER job of the day', async () => {
     const routeId = await makeRoute();
-    await makeVan({ vehicleType: 'van' });
-    await makeVan({ vehicleType: 'van' });
+    await makeVan({ vehicleTypeId: VAN_ID });
+    await makeVan({ vehicleTypeId: VAN_ID });
     await makeDriver({ maxTransferJobsPerDay: 1 });
     await warmPool();
 
@@ -1198,7 +1361,7 @@ describeWithDb('createTransferBooking', () => {
    */
   it('does NOT falsely serialise two NON-overlapping transfers on one vehicle', async () => {
     const routeId = await makeRoute();
-    await makeVan({ vehicleType: 'van' });
+    await makeVan({ vehicleTypeId: VAN_ID });
     await makeDriver({ maxTransferJobsPerDay: 4 });
     await warmPool();
 
@@ -1435,6 +1598,9 @@ async function cleanup() {
     await db.delete(transferRouteVehiclePrices).where(eq(transferRouteVehiclePrices.routeId, id));
     await db.delete(transferRoutes).where(eq(transferRoutes.id, id));
   }
+  for (const id of created.placeIds) {
+    await db.delete(transferPlaces).where(eq(transferPlaces.id, id));
+  }
   for (const id of created.destinationIds) {
     await db.delete(destinations).where(eq(destinations.id, id));
   }
@@ -1447,6 +1613,7 @@ async function cleanup() {
   created.couponIds = [];
   created.tourIds = [];
   created.routeIds = [];
+  created.placeIds = [];
   created.destinationIds = [];
   created.driverIds = [];
   created.vanIds = [];

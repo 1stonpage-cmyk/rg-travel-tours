@@ -24,7 +24,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 import type { PriceSnapshot } from '@rg/shared';
 import { getDb, getPool } from '../db/client';
-import { bookings, destinations, drivers, tours, vans } from '../db/schema';
+import { bookings, destinations, drivers, tours, vans, vehicleTypes } from '../db/schema';
 import { checkOrphanedVans } from '../jobs/orphaned-vans';
 import { generateBookingRef } from '../services/booking-ref';
 import { orphanedOnTripVans } from '../services/dispatch/alerts';
@@ -89,6 +89,23 @@ async function backdateVan(id: number, isoSeconds: string) {
   await getPool().query('UPDATE vans SET updated_at = ? WHERE id = ?', [isoSeconds, id]);
 }
 
+/**
+ * The real, global `vehicle_types.id` for `'van'` — seeded by `seedBase`
+ * (migration 0023), never a literal id (CLAUDE.md). Cached per process.
+ */
+let cachedVanTypeId: number | undefined;
+async function vanVehicleTypeId(): Promise<number> {
+  if (cachedVanTypeId !== undefined) return cachedVanTypeId;
+  const [row] = await getDb()
+    .select({ id: vehicleTypes.id })
+    .from(vehicleTypes)
+    .where(eq(vehicleTypes.slug, 'van'))
+    .limit(1);
+  if (!row) throw new Error('No vehicle_types row for slug "van" — expected from seedBase.');
+  cachedVanTypeId = row.id;
+  return row.id;
+}
+
 /** A van, a driver and an assigned booking, all this file's own. */
 async function makeAssignedBooking(plateTag: string) {
   const db = getDb();
@@ -96,6 +113,7 @@ async function makeAssignedBooking(plateTag: string) {
     plate: `ORP${plateTag}${unique()}`.slice(0, 20),
     model: 'Orphaned Van Fixture',
     capacity: 12,
+    vehicleTypeId: await vanVehicleTypeId(),
     status: 'available',
     isActive: true,
   });

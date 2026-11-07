@@ -78,7 +78,7 @@ import { afterEach, beforeEach, expect, it } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 import type { PriceSnapshot } from '@rg/shared';
 import { getDb, getPool } from '../db/client';
-import { bookings, destinations, drivers, tours, vans } from '../db/schema';
+import { bookings, destinations, drivers, tours, vans, vehicleTypes } from '../db/schema';
 import { generateBookingRef } from '../services/booking-ref';
 import { assessCapacity, takeSlotLocks } from '../services/capacity';
 import { vansFreeOn } from '../services/dispatch/availability';
@@ -121,6 +121,24 @@ async function count(statement: Parameters<ReturnType<typeof getDb>['execute']>[
 async function vanStatus(id: number): Promise<string | undefined> {
   const [row] = await getDb().select({ status: vans.status }).from(vans).where(eq(vans.id, id));
   return row?.status;
+}
+
+/**
+ * The real, global `vehicle_types.id` for `'van'` — seeded by `seedBase`
+ * (migration 0023), never a literal id (CLAUDE.md). Cached per process:
+ * nothing in this file changes which id answers to `'van'`.
+ */
+let cachedVanTypeId: number | undefined;
+async function vanVehicleTypeId(): Promise<number> {
+  if (cachedVanTypeId !== undefined) return cachedVanTypeId;
+  const [row] = await getDb()
+    .select({ id: vehicleTypes.id })
+    .from(vehicleTypes)
+    .where(eq(vehicleTypes.slug, 'van'))
+    .limit(1);
+  if (!row) throw new Error('No vehicle_types row for slug "van" — expected from seedBase.');
+  cachedVanTypeId = row.id;
+  return row.id;
 }
 
 /**
@@ -197,6 +215,7 @@ describeWithDb('a van on a trip', () => {
       plate: `TVS${unique()}`.slice(0, 20),
       model: 'Van Status Fixture Van',
       capacity: 12,
+      vehicleTypeId: await vanVehicleTypeId(),
       status: 'available',
       isActive: true,
     });

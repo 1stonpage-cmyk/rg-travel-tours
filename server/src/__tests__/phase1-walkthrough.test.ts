@@ -47,6 +47,7 @@ import {
   tours,
   users,
   vans,
+  vehicleTypes,
 } from '../db/schema';
 import { expireHolds } from '../jobs/expire-holds';
 import { SESSION_COOKIE_BY_SUBJECT } from '../middleware/session-cookie';
@@ -128,6 +129,23 @@ const unique = () => `${Math.floor(Math.random() * 1e9)}${Date.now() % 1_000_000
  * gets a different number.
  */
 const uniquePhone = () => `0917${String(Math.floor(Math.random() * 1e7)).padStart(7, '0')}`;
+
+/**
+ * The real, global `vehicle_types.id` for `'van'` — seeded by `seedBase`
+ * (migration 0023), never a literal id (CLAUDE.md). Cached per process.
+ */
+let cachedVanTypeId: number | undefined;
+async function vanVehicleTypeId(): Promise<number> {
+  if (cachedVanTypeId !== undefined) return cachedVanTypeId;
+  const [row] = await getDb()
+    .select({ id: vehicleTypes.id })
+    .from(vehicleTypes)
+    .where(eq(vehicleTypes.slug, 'van'))
+    .limit(1);
+  if (!row) throw new Error('No vehicle_types row for slug "van" — expected from seedBase.');
+  cachedVanTypeId = row.id;
+  return row.id;
+}
 
 /* ------------------------------------------------------------------ *
  * Driving the app the way a browser does.
@@ -225,6 +243,7 @@ beforeAll(async () => {
       plate: `P1${unique()}`.slice(0, 20),
       model: 'Walkthrough Van',
       capacity: 12,
+      vehicleTypeId: await vanVehicleTypeId(),
       status: 'available',
       isActive: true,
     });

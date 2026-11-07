@@ -9,10 +9,19 @@
  * mobile number is withheld rather than merely unrendered.
  */
 import { afterAll, expect, it } from 'vitest';
-import { inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { RECEIPT_UPLOAD_MAX_PER_BOOKING, depositCentavos } from '@rg/shared';
 import { getDb, getPool } from '../db/client';
-import { bookings, destinations, drivers, payments, tours, users, vans } from '../db/schema';
+import {
+  bookings,
+  destinations,
+  drivers,
+  payments,
+  tours,
+  users,
+  vans,
+  vehicleTypes,
+} from '../db/schema';
 import { appRouter } from '../routers/_app';
 import { generateBookingRef } from '../services/booking-ref';
 import { hashPassword } from '../services/password';
@@ -35,6 +44,23 @@ const created = {
 };
 
 let seq = 0;
+
+/**
+ * The real, global `vehicle_types.id` for `'van'` — seeded by `seedBase`
+ * (migration 0023), never a literal id (CLAUDE.md). Cached per process.
+ */
+let cachedVanTypeId: number | undefined;
+async function vanVehicleTypeId(): Promise<number> {
+  if (cachedVanTypeId !== undefined) return cachedVanTypeId;
+  const [row] = await getDb()
+    .select({ id: vehicleTypes.id })
+    .from(vehicleTypes)
+    .where(eq(vehicleTypes.slug, 'van'))
+    .limit(1);
+  if (!row) throw new Error('No vehicle_types row for slug "van" — expected from seedBase.');
+  cachedVanTypeId = row.id;
+  return row.id;
+}
 
 async function makeBooking(
   opts: {
@@ -75,6 +101,7 @@ async function makeBooking(
       plate: `ABC${seq}${Math.floor(Math.random() * 1e4)}`,
       model: 'Toyota Hiace Commuter',
       capacity: 12,
+      vehicleTypeId: await vanVehicleTypeId(),
     });
     vanId = van.insertId;
     created.vanIds.push(van.insertId);

@@ -28,16 +28,18 @@
  * that rule gets normalised away.
  */
 import { describe, expect, it } from 'vitest';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { getTableConfig } from 'drizzle-orm/mysql-core';
-import { PRODUCT_TYPES, VEHICLE_TYPES, type PriceSnapshot } from '@rg/shared';
+import { PRODUCT_TYPES, type PriceSnapshot } from '@rg/shared';
 import { getDb, getPool, type Transaction } from '../db/client';
 import {
   bookingTransferDetails,
   bookings,
   destinations,
   tours,
+  transferPlaces,
   transferRoutes,
+  vehicleTypes,
 } from '../db/schema';
 
 const PRODUCT_TYPE_CHECK = 'bookings_product_type_shape';
@@ -131,16 +133,36 @@ async function makeTour(tx: Transaction): Promise<number> {
   return tour.insertId;
 }
 
-/** A transfer route and its destination, for the `route_id` FK. */
+/** A transfer route and its two places, for the `route_id` FK. */
 async function makeRoute(tx: Transaction): Promise<number> {
   const slug = unique().replace(/_/g, '-');
-  const [destination] = await tx.insert(destinations).values({ name: slug, slug });
+  const [fromPlace] = await tx
+    .insert(transferPlaces)
+    .values({ name: `${slug}-from`, nameKey: `${slug}-from`.toLowerCase() });
+  const [toPlace] = await tx
+    .insert(transferPlaces)
+    .values({ name: slug, nameKey: slug.toLowerCase() });
   const [route] = await tx.insert(transferRoutes).values({
-    destinationId: destination.insertId,
+    fromPlaceId: fromPlace.insertId,
+    toPlaceId: toPlace.insertId,
     slug,
     estimatedDurationMinutes: 120,
   });
   return route.insertId;
+}
+
+/**
+ * The real, global `vehicle_types.id` for `'van'`/`'suv'` — seeded by
+ * `seedBase` (migration 0023), never a literal id (CLAUDE.md).
+ */
+async function vehicleTypeIdBySlug(slug: string): Promise<number> {
+  const [row] = await getDb()
+    .select({ id: vehicleTypes.id })
+    .from(vehicleTypes)
+    .where(eq(vehicleTypes.slug, slug))
+    .limit(1);
+  if (!row) throw new Error(`No vehicle_types row for slug "${slug}" — expected from seedBase.`);
+  return row.id;
 }
 
 /** A public ref for a fixture. Nothing here is ever committed, so random is enough. */
@@ -167,20 +189,20 @@ function insertBookingShape(
     productType: string;
     tourId: number | null;
     routeId: number | null;
-    vehicleTypeRequested: string | null;
+    vehicleTypeId: number | null;
   },
 ): Promise<unknown> {
   const snapshot = JSON.stringify(validSnapshot());
   return tx.execute(
     sql`INSERT INTO bookings
-          (ref, tour_id, product_type, route_id, vehicle_type_requested,
+          (ref, tour_id, product_type, route_id, vehicle_type_id,
            tour_date, pax, lead_name, lead_email, lead_phone,
            status, pay_mode, price_snapshot,
            subtotal_centavos, discount_centavos, total_centavos, amount_paid_centavos,
            created_at, updated_at)
         VALUES
           (${nextRef()}, ${shape.tourId}, ${shape.productType}, ${shape.routeId},
-           ${shape.vehicleTypeRequested},
+           ${shape.vehicleTypeId},
            '2099-12-25', 2, 'Raw SQL Guest', 'raw@example.test', '09170000000',
            'pending_payment', 'full', ${snapshot},
            300000, 0, 300000, 0,
@@ -228,7 +250,7 @@ describe('bookings table — the transfer discriminator (declaration)', () => {
     ).toBe('tour');
   });
 
-  it('carries a nullable route_id pointing at transfer_routes, and a nullable vehicle type', () => {
+  it('carries a nullable route_id pointing at transfer_routes, and a nullable vehicle_type_id pointing at vehicle_types', () => {
     expect(bookingsColumn('route_id')?.notNull).toBe(false);
     const routeFk = bookingsConfig.foreignKeys
       .map((fk) => fk.reference())
@@ -236,8 +258,19 @@ describe('bookings table — the transfer discriminator (declaration)', () => {
     expect(routeFk, 'route_id is not a foreign key').toBeDefined();
     expect(getTableConfig(routeFk!.foreignTable).name).toBe('transfer_routes');
 
-    expect(bookingsColumn('vehicle_type_requested')?.enumValues).toEqual([...VEHICLE_TYPES]);
-    expect(bookingsColumn('vehicle_type_requested')?.notNull).toBe(false);
+    /*
+     * Owner decision 2026-11-08: vehicle types became an admin-managed list
+     * (`vehicle_types` table), so `vehicle_type_requested` (a fixed
+     * `van`/`suv` enum) was replaced by `vehicle_type_id`, a real nullable
+     * foreign key — the identical shape `route_id` already has, checked the
+     * same way rather than by an enum's member list.
+     */
+    expect(bookingsColumn('vehicle_type_id')?.notNull).toBe(false);
+    const vehicleTypeFk = bookingsConfig.foreignKeys
+      .map((fk) => fk.reference())
+      .find((r) => r.columns.some((c) => c.name === 'vehicle_type_id'));
+    expect(vehicleTypeFk, 'vehicle_type_id is not a foreign key').toBeDefined();
+    expect(getTableConfig(vehicleTypeFk!.foreignTable).name).toBe('vehicle_types');
   });
 
   it('cascades nothing, route_id included', () => {
@@ -384,6 +417,14 @@ async function tableExists(name: string): Promise<boolean> {
 const dbReachable = await tableExists('bookings');
 const dbIt = dbReachable ? it : it.skip;
 
+/**
+ * The real, global `vehicle_types.id` for `'van'`/`'suv'`, resolved once —
+ * gated on `dbReachable` so an unreachable database does not throw before
+ * `helpers/db.ts`'s own skip logic gets a chance to apply.
+ */
+const VAN_ID = dbReachable ? await vehicleTypeIdBySlug('van') : 0;
+const SUV_ID = dbReachable ? await vehicleTypeIdBySlug('suv') : 0;
+
 describe('bookings + booking_transfer_details, as actually migrated', () => {
   dbIt('declares the product-type CHECK as a real, enforced constraint', async () => {
     const [rows] = (await getPool().query(
@@ -405,8 +446,8 @@ describe('bookings + booking_transfer_details, as actually migrated', () => {
     expect(clause).toContain("product_type<>'tour'");
     expect(clause.match(/tour_idisnotnull/gi)?.length).toBe(1);
     expect(clause.match(/tour_idisnull/gi)?.length).toBe(1);
-    expect(clause.match(/vehicle_type_requestedisnotnull/gi)?.length).toBe(1);
-    expect(clause.match(/vehicle_type_requestedisnull/gi)?.length).toBe(1);
+    expect(clause.match(/vehicle_type_idisnotnull/gi)?.length).toBe(1);
+    expect(clause.match(/vehicle_type_idisnull/gi)?.length).toBe(1);
 
     /*
      * **The branches are asymmetric about `route_id`, and this is where that
@@ -447,7 +488,7 @@ describe('bookings + booking_transfer_details, as actually migrated', () => {
       `SELECT COLUMN_NAME, IS_NULLABLE, COLUMN_DEFAULT, COLUMN_TYPE
          FROM information_schema.columns
         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'bookings'
-          AND COLUMN_NAME IN ('tour_id', 'product_type', 'route_id', 'vehicle_type_requested')`,
+          AND COLUMN_NAME IN ('tour_id', 'product_type', 'route_id', 'vehicle_type_id')`,
     )) as [
       Array<{
         COLUMN_NAME: string;
@@ -460,7 +501,7 @@ describe('bookings + booking_transfer_details, as actually migrated', () => {
     const byName = Object.fromEntries(rows.map((r) => [String(r.COLUMN_NAME), r]));
     expect(byName['tour_id']?.IS_NULLABLE).toBe('YES');
     expect(byName['route_id']?.IS_NULLABLE).toBe('YES');
-    expect(byName['vehicle_type_requested']?.IS_NULLABLE).toBe('YES');
+    expect(byName['vehicle_type_id']?.IS_NULLABLE).toBe('YES');
     expect(byName['product_type']?.IS_NULLABLE).toBe('NO');
     expect(byName['product_type']?.COLUMN_DEFAULT).toBe('tour');
     expect(byName['product_type']?.COLUMN_TYPE).toBe(
@@ -509,7 +550,7 @@ describe('bookings + booking_transfer_details, as actually migrated', () => {
           productType: bookings.productType,
           tourId: bookings.tourId,
           routeId: bookings.routeId,
-          vehicleTypeRequested: bookings.vehicleTypeRequested,
+          vehicleTypeId: bookings.vehicleTypeId,
         })
         .from(bookings)
         .where(sql`id = ${result.insertId}`)
@@ -520,7 +561,7 @@ describe('bookings + booking_transfer_details, as actually migrated', () => {
       expect(row?.productType, 'a booking written without product_type is not a tour').toBe('tour');
       expect(row?.tourId).toBe(tourId);
       expect(row?.routeId).toBeNull();
-      expect(row?.vehicleTypeRequested).toBeNull();
+      expect(row?.vehicleTypeId).toBeNull();
     });
   });
 
@@ -532,7 +573,7 @@ describe('bookings + booking_transfer_details, as actually migrated', () => {
         tourId: null,
         productType: 'transfer_one_way',
         routeId,
-        vehicleTypeRequested: 'van',
+        vehicleTypeId: VAN_ID,
         tourDate: TOUR_DATE,
         pax: 3,
         leadName: 'Transfer Guest',
@@ -549,7 +590,7 @@ describe('bookings + booking_transfer_details, as actually migrated', () => {
           productType: bookings.productType,
           tourId: bookings.tourId,
           routeId: bookings.routeId,
-          vehicleTypeRequested: bookings.vehicleTypeRequested,
+          vehicleTypeId: bookings.vehicleTypeId,
         })
         .from(bookings)
         .where(sql`id = ${result.insertId}`)
@@ -558,7 +599,7 @@ describe('bookings + booking_transfer_details, as actually migrated', () => {
       expect(row?.tourId, 'a transfer booking must not carry a tour').toBeNull();
       expect(row?.productType).toBe('transfer_one_way');
       expect(row?.routeId).toBe(routeId);
-      expect(row?.vehicleTypeRequested).toBe('van');
+      expect(row?.vehicleTypeId).toBe(VAN_ID);
     });
   });
 
@@ -571,7 +612,7 @@ describe('bookings + booking_transfer_details, as actually migrated', () => {
             productType: 'transfer_day_use',
             tourId: null,
             routeId: null,
-            vehicleTypeRequested: 'suv',
+            vehicleTypeId: SUV_ID,
           }),
         ),
         'a day-use transfer with a custom route was refused',
@@ -594,13 +635,13 @@ describe('bookings + booking_transfer_details, as actually migrated', () => {
     productType: string;
     tourId: number | null | typeof REAL;
     routeId: number | null | typeof REAL;
-    vehicleTypeRequested: string | null;
+    vehicleTypeId: number | null;
   };
 
   const REJECTED: Array<[string, RawShape, string]> = [
     [
       'a tour with no tour_id',
-      { productType: 'tour', tourId: null, routeId: null, vehicleTypeRequested: null },
+      { productType: 'tour', tourId: null, routeId: null, vehicleTypeId: null },
       'a tour booking pointing at no tour was accepted — it is in no tour report and on no tour',
     ],
     [
@@ -609,13 +650,13 @@ describe('bookings + booking_transfer_details, as actually migrated', () => {
         productType: 'transfer_one_way',
         tourId: null,
         routeId: null,
-        vehicleTypeRequested: null,
+        vehicleTypeId: null,
       },
       'a transfer with no vehicle type was accepted — nothing says which vehicle to send',
     ],
     [
       'a tour carrying a vehicle type requested',
-      { productType: 'tour', tourId: REAL, routeId: null, vehicleTypeRequested: 'van' },
+      { productType: 'tour', tourId: REAL, routeId: null, vehicleTypeId: VAN_ID },
       'a tour booking carrying a vehicle-type-requested was accepted — "is this a transfer?" now has two answers',
     ],
     /*
@@ -628,7 +669,7 @@ describe('bookings + booking_transfer_details, as actually migrated', () => {
      */
     [
       'a tour carrying a route_id',
-      { productType: 'tour', tourId: REAL, routeId: REAL, vehicleTypeRequested: null },
+      { productType: 'tour', tourId: REAL, routeId: REAL, vehicleTypeId: null },
       'a tour booking carrying a route_id was accepted — it is a tour and a transfer at the same time',
     ],
   ];
@@ -638,7 +679,7 @@ describe('bookings + booking_transfer_details, as actually migrated', () => {
       await inRollback(async (tx) => {
         const resolved = {
           productType: shape.productType,
-          vehicleTypeRequested: shape.vehicleTypeRequested,
+          vehicleTypeId: shape.vehicleTypeId,
           tourId: shape.tourId === REAL ? await makeTour(tx) : shape.tourId,
           routeId: shape.routeId === REAL ? await makeRoute(tx) : shape.routeId,
         };
@@ -675,7 +716,7 @@ describe('bookings + booking_transfer_details, as actually migrated', () => {
             productType: 'transfer_one_way',
             tourId: null,
             routeId: null,
-            vehicleTypeRequested: 'van',
+            vehicleTypeId: VAN_ID,
           }),
         ),
         'route_id was added to the CHECK — a custom transfer can no longer be booked',
@@ -691,7 +732,7 @@ describe('bookings + booking_transfer_details, as actually migrated', () => {
         tourId: null,
         productType: 'transfer_day_use',
         routeId,
-        vehicleTypeRequested: 'suv',
+        vehicleTypeId: SUV_ID,
         tourDate: TOUR_DATE,
         pax: 4,
         leadName: 'Day Use Guest',
@@ -758,7 +799,7 @@ describe('bookings + booking_transfer_details, as actually migrated', () => {
         ref: nextRef(),
         tourId: null,
         productType: 'transfer_one_way',
-        vehicleTypeRequested: 'van',
+        vehicleTypeId: VAN_ID,
         tourDate: TOUR_DATE,
         pax: 2,
         leadName: 'Minimal Guest',

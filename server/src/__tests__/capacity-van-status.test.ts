@@ -21,6 +21,7 @@ import {
   vans,
   VAN_STATUSES,
   VAN_STATUS_SELLABLE,
+  vehicleTypes,
 } from '../db/schema';
 import { assessCapacity, takeSlotLocks } from '../services/capacity';
 import { describeWithDb } from './helpers/db';
@@ -30,6 +31,23 @@ const DATE = '2099-12-09';
 
 /** Random first, timestamp second — see capacity.test.ts for why. */
 const unique = () => `${Math.floor(Math.random() * 1e9)}_${Date.now()}`;
+
+/**
+ * The real, global `vehicle_types.id` for `'van'` — seeded by `seedBase`
+ * (migration 0023), never a literal id (CLAUDE.md). Cached per process.
+ */
+let cachedVanTypeId: number | undefined;
+async function vanVehicleTypeId(): Promise<number> {
+  if (cachedVanTypeId !== undefined) return cachedVanTypeId;
+  const [row] = await getDb()
+    .select({ id: vehicleTypes.id })
+    .from(vehicleTypes)
+    .where(eq(vehicleTypes.slug, 'van'))
+    .limit(1);
+  if (!row) throw new Error('No vehicle_types row for slug "van" — expected from seedBase.');
+  cachedVanTypeId = row.id;
+  return row.id;
+}
 
 it('names all four statuses from BUILD_SPEC §9', () => {
   expect([...VAN_STATUSES].sort()).toEqual(['available', 'for_repair', 'on_trip', 'parked']);
@@ -69,6 +87,7 @@ describeWithDb('vans', () => {
       plate: `VST${unique()}`.slice(0, 20),
       model: 'Van Status Fixture',
       capacity: 12,
+      vehicleTypeId: await vanVehicleTypeId(),
       status: 'available',
       isActive: true,
     });

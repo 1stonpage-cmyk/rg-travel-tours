@@ -98,21 +98,28 @@
  * the lock fire before the transaction opens at all) not even a
  * `fleet_date_slots` anchor row in the input-shape cases.
  */
+import { eq } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/mysql-core';
 import {
   HOLD_MINUTES,
   PAYMONGO_MIN_CENTAVOS,
   manilaInstant,
   transferPriceSnapshotSchema,
   type PayMode,
+  type TransferDirection,
   type TransferPriceSnapshot,
   type TransferPriceSource,
   type TransferProductType,
-  type VehicleType,
 } from '@rg/shared';
 import { readSettingBlockTx, readTransferOperationsSettingsTx } from '../../content/settings';
-import { getDb } from '../../db/client';
+import { getDb, type Transaction } from '../../db/client';
 import { withDeadlockRetry } from '../../db/deadlock';
-import { bookingTransferDetails } from '../../db/schema';
+import {
+  bookingTransferDetails,
+  transferPlaces,
+  transferRoutes,
+  vehicleTypes,
+} from '../../db/schema';
 import { writeAudit } from '../audit';
 import { insertBookingWithRef } from '../booking-ref';
 import { takeFleetDateLock } from '../capacity';
@@ -127,6 +134,17 @@ import {
 import { assessTransferCapacity, type TransferCapacityRefusalReason } from './capacity';
 import { clockTimeToMinutes } from './overlap';
 import { quoteTransfer, vehiclePriceForRouteAndType } from './pricing';
+
+/**
+ * Two aliases onto `transfer_places`, mirroring `pricing.ts`'s own (declared
+ * separately here rather than imported, the same way that file's own header
+ * explains — each module that needs both sides of a route declares its own
+ * pair). Used only by {@link loadRouteShape} below, to answer the two
+ * post-catalog-read checks `assertBookableShape` cannot: whether this route
+ * may be travelled in reverse, and whether either end is an airport.
+ */
+const fromPlace = alias(transferPlaces, 'fromPlace');
+const toPlace = alias(transferPlaces, 'toPlace');
 
 // ---------------------------------------------------------------------------
 // The input
@@ -176,8 +194,16 @@ export interface CreateTransferBookingInput {
   routeId: number | null;
   /** Set only when `routeId` is null. Exactly one of the two. */
   customRouteDescription: string | null;
-  vehicleType: VehicleType;
+  vehicleTypeId: number;
   productType: TransferProductType;
+  /**
+   * Which way a reversible route is being travelled (owner decision
+   * 2026-11-08). `'forward'` is `route.fromPlaceId → route.toPlaceId` as the
+   * route is stored. Checked against the resolved route's own
+   * `reverseEnabled` inside the transaction, in step 3a below — see that
+   * step's doc comment for why this cannot be a pre-transaction shape check.
+   */
+  direction: TransferDirection;
   /** `"HH:mm"` civil label, Asia/Manila. */
   pickupTime: string;
   /** `"HH:mm"`, day-use only. Null for a one-way transfer. */
@@ -212,6 +238,17 @@ export interface CreateTransferBookingInput {
  * all one kind of failure (the caller handed over a request that cannot describe
  * a bookable trip), and T11/T19's Zod inputs are what will make each of them
  * unreachable with a sentence a guest can act on.
+ *
+ * **Two members are an exception to this class's own "checked before the
+ * transaction opens" framing** (owner decision 2026-11-08; design note §2/§6
+ * item 3) — `reverse_not_enabled_for_route` and
+ * `flight_details_required_for_airport_route` both need the RESOLVED route
+ * (its `reverseEnabled` flag, and whether either end is an airport place),
+ * which does not exist until step 3a's catalog read, inside the transaction.
+ * `assertBookableShape` cannot check either one; they are thrown from
+ * `createTransferBooking()` itself, right after that read — see the comment
+ * there. They still roll the transaction back and still write nothing, same
+ * as every other member of this type; only WHEN they are checked differs.
  */
 export const TRANSFER_BOOKING_SHAPE_PROBLEMS = [
   /** Both a catalog route AND a custom description — which trip is this? */
@@ -231,6 +268,20 @@ export const TRANSFER_BOOKING_SHAPE_PROBLEMS = [
   'luggage_count_negative',
   /** A staff-quoted price that is not whole, non-negative centavos. */
   'staff_price_not_whole_centavos',
+  /**
+   * `direction: 'reverse'` against a route whose `reverseEnabled` is false.
+   * Checked post-catalog-read — see the class doc comment above.
+   */
+  'reverse_not_enabled_for_route',
+  /**
+   * A one-way trip on a route where either end is an airport place, with
+   * `flightNumber`/`airline` not BOTH present. Checked post-catalog-read —
+   * see the class doc comment above. Flagged to the owner as an open
+   * question (design note §6, item 4b): this refuses some one-way requests
+   * that were previously bookable, since flight fields used to be always
+   * optional on a one-way trip.
+   */
+  'flight_details_required_for_airport_route',
 ] as const;
 export type TransferBookingShapeProblem = (typeof TRANSFER_BOOKING_SHAPE_PROBLEMS)[number];
 
@@ -308,16 +359,82 @@ export class TransferNoticeTooShortError extends Error {
  */
 export class TransferRouteNotQuotableError extends Error {
   readonly routeId: number;
-  readonly vehicleType: VehicleType;
+  readonly vehicleTypeId: number;
   readonly productType: TransferProductType;
 
-  constructor(routeId: number, vehicleType: VehicleType, productType: TransferProductType) {
-    super(`Route ${routeId} cannot be quoted for a ${vehicleType} ${productType}`);
+  constructor(routeId: number, vehicleTypeId: number, productType: TransferProductType) {
+    super(`Route ${routeId} cannot be quoted for vehicle type ${vehicleTypeId} ${productType}`);
     this.name = 'TransferRouteNotQuotableError';
     this.routeId = routeId;
-    this.vehicleType = vehicleType;
+    this.vehicleTypeId = vehicleTypeId;
     this.productType = productType;
   }
+}
+
+/**
+ * `null` or whitespace-only. Used by the airport flight-details check below
+ * so that `flightNumber: ''`/`airline: ''` — a guest's form posting an empty
+ * string rather than omitting the field — refuses the same way an outright
+ * `null` does, instead of satisfying a `=== null` check and reaching the
+ * booking with no usable flight details at all.
+ */
+function blank(value: string | null): boolean {
+  return value === null || value.trim() === '';
+}
+
+/** What {@link loadRouteShape} answers about a resolved catalog route. */
+interface RouteShape {
+  reverseEnabled: boolean;
+  fromIsAirport: boolean;
+  toIsAirport: boolean;
+}
+
+/**
+ * Reads the two facts about a route that `vehiclePriceForRouteAndType()`
+ * does not carry — whether it may be travelled in reverse, and whether
+ * either end is an airport place — so `createTransferBooking()` can make its
+ * two post-catalog-read checks (owner decision 2026-11-08; see
+ * `TRANSFER_BOOKING_SHAPE_PROBLEMS`'s doc comment).
+ *
+ * Called only after `vehiclePriceForRouteAndType()` has already answered
+ * non-null for this exact `routeId`, so this function does not re-check
+ * `is_active` on the route or either place — that question is already
+ * settled. It can still answer `null` if the row vanished between the two
+ * reads inside the same transaction, which cannot happen under REPEATABLE
+ * READ and is handled only because an `undefined` destructure is worse than
+ * a named `null`.
+ */
+async function loadRouteShape(tx: Transaction, routeId: number): Promise<RouteShape | null> {
+  const [row] = await tx
+    .select({
+      reverseEnabled: transferRoutes.reverseEnabled,
+      fromIsAirport: fromPlace.isAirport,
+      toIsAirport: toPlace.isAirport,
+    })
+    .from(transferRoutes)
+    .innerJoin(fromPlace, eq(fromPlace.id, transferRoutes.fromPlaceId))
+    .innerJoin(toPlace, eq(toPlace.id, transferRoutes.toPlaceId))
+    .where(eq(transferRoutes.id, routeId))
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * The vehicle type's current name, for the unreachable-today custom-route
+ * branch alone (`catalog` is null there, so `TransferVehiclePrice
+ * .vehicleTypeName` is not available) — see `buildTransferSnapshot`'s
+ * caller. Answers `null` only for an id that does not exist, which
+ * `assertBookableShape`/Zod never let through; kept as a `null` rather than
+ * a throw because a frozen snapshot with no name still parses (see
+ * `transferPriceSnapshotSchema`'s `.optional()` on this field).
+ */
+async function loadVehicleTypeName(tx: Transaction, vehicleTypeId: number): Promise<string | null> {
+  const [row] = await tx
+    .select({ name: vehicleTypes.name })
+    .from(vehicleTypes)
+    .where(eq(vehicleTypes.id, vehicleTypeId))
+    .limit(1);
+  return row?.name ?? null;
 }
 
 /** Gives up in THIS module's vocabulary after the shared retry is exhausted. */
@@ -518,17 +635,58 @@ export async function createTransferBooking(
             ? null
             : await vehiclePriceForRouteAndType(
                 input.routeId,
-                input.vehicleType,
+                input.vehicleTypeId,
                 input.productType,
                 tx,
               );
         if (input.routeId !== null && catalog === null) {
           throw new TransferRouteNotQuotableError(
             input.routeId,
-            input.vehicleType,
+            input.vehicleTypeId,
             input.productType,
           );
         }
+
+        /*
+         * 3a (continued). The two post-catalog-read checks that
+         * `assertBookableShape` cannot make, because both need the RESOLVED
+         * route — see `TRANSFER_BOOKING_SHAPE_PROBLEMS`'s own doc comment on
+         * why these two members are an exception to "checked before the
+         * transaction opens". `routeShape` is null exactly when `catalog` is
+         * (no catalog route — the unreachable-today custom-route branch),
+         * and both checks below are skipped in that case: there is no
+         * resolved route to ask "reversible?" or "an airport?" of.
+         */
+        const routeShape = input.routeId === null ? null : await loadRouteShape(tx, input.routeId);
+
+        if (routeShape !== null) {
+          if (input.direction === 'reverse' && !routeShape.reverseEnabled) {
+            throw new TransferBookingShapeError(
+              'reverse_not_enabled_for_route',
+              `route ${input.routeId} does not allow the reverse direction`,
+            );
+          }
+          if (
+            input.productType === 'transfer_one_way' &&
+            (routeShape.fromIsAirport || routeShape.toIsAirport) &&
+            (blank(input.flightNumber) || blank(input.airline))
+          ) {
+            throw new TransferBookingShapeError(
+              'flight_details_required_for_airport_route',
+              `route ${input.routeId} touches an airport; flight number and airline are both required`,
+            );
+          }
+        }
+
+        /*
+         * The vehicle type's NAME, frozen into the price snapshot (§1.8).
+         * Resolved from the catalog read's own join when there is one
+         * (cheapest — no second query); a dedicated lookup only for the
+         * unreachable-today custom-route branch, which has no catalog row to
+         * carry it.
+         */
+        const vehicleTypeName =
+          catalog?.vehicleTypeName ?? (await loadVehicleTypeName(tx, input.vehicleTypeId));
 
         /*
          * The duration FROZEN onto this booking, and the one the capacity check
@@ -551,7 +709,7 @@ export async function createTransferBooking(
          */
         const verdict = await assessTransferCapacity(tx, {
           date: input.date,
-          vehicleType: input.vehicleType,
+          vehicleTypeId: input.vehicleTypeId,
           productType: input.productType,
           pickupTimeMinutes: times.pickupTimeMinutes,
           dayUseEndTimeMinutes: times.dayUseEndTimeMinutes,
@@ -642,6 +800,7 @@ export async function createTransferBooking(
           coupon,
           depositPercent: trust.depositPercent,
           freeCancelHours: catalog?.freeCancelHours ?? null,
+          vehicleTypeName,
           quote,
         });
 
@@ -652,7 +811,7 @@ export async function createTransferBooking(
           tourId: null,
           productType: input.productType,
           routeId: input.routeId,
-          vehicleTypeRequested: input.vehicleType,
+          vehicleTypeId: input.vehicleTypeId,
           // UTC midnight of the civil date: the pool runs at `timezone: 'Z'`,
           // so this stores the day the guest picked, in Cebu, exactly.
           tourDate: new Date(`${input.date}T00:00:00Z`),
@@ -688,6 +847,11 @@ export async function createTransferBooking(
           // Both frozen from the exact values the checks above were made with.
           bufferMinutesUsed: operations.bufferMinutes,
           routeDurationMinutesUsed,
+          // Which way this route-based transfer was travelled (owner decision
+          // 2026-11-08) — already validated against the route's own
+          // `reverseEnabled` above. Column default is `'forward'`, but this
+          // writer always states it explicitly rather than relying on that.
+          direction: input.direction,
           createdAt: now,
           updatedAt: now,
         });
@@ -726,7 +890,8 @@ export async function createTransferBooking(
             productType: input.productType,
             routeId: input.routeId,
             customRouteDescription: input.customRouteDescription,
-            vehicleType: input.vehicleType,
+            vehicleTypeId: input.vehicleTypeId,
+            direction: input.direction,
             tourDate: input.date,
             pickupTime: input.pickupTime,
             pax: input.pax,
@@ -762,12 +927,25 @@ function buildTransferSnapshot(
     coupon: ValidCoupon | null;
     depositPercent: number;
     freeCancelHours: number | null;
+    /**
+     * The vehicle type's name, frozen at booking time (owner decision
+     * 2026-11-08). `null` only if the id somehow failed to resolve — see
+     * `loadVehicleTypeName`'s own doc comment — in which case the snapshot
+     * is written with no `vehicleTypeName` at all rather than a fabricated
+     * one; `vehicleTypeId` alone still satisfies the schema's `.refine()`.
+     */
+    vehicleTypeName: string | null;
     quote: { subtotalCentavos: number; discountCentavos: number; totalCentavos: number };
   },
 ): TransferPriceSnapshot {
   return transferPriceSnapshotSchema.parse({
     productType: input.productType,
-    vehicleType: input.vehicleType,
+    // **No `vehicleType` (the legacy string literal) is ever written here**
+    // (owner decision 2026-11-08; design note §1.8) — every new write uses
+    // `vehicleTypeId`/`vehicleTypeName` instead. The legacy field stays in
+    // the schema only so an OLD snapshot still parses.
+    vehicleTypeId: input.vehicleTypeId,
+    ...(priced.vehicleTypeName !== null ? { vehicleTypeName: priced.vehicleTypeName } : {}),
     routeId: input.routeId,
     customRouteDescription: input.customRouteDescription,
     priceSource: priced.priceSource,

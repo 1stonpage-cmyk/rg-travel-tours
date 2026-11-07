@@ -31,8 +31,8 @@
  * serialises it.
  */
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { sql } from 'drizzle-orm';
-import { type BookingStatus, type PriceSnapshot, type VehicleType } from '@rg/shared';
+import { eq, sql } from 'drizzle-orm';
+import { type BookingStatus, type PriceSnapshot } from '@rg/shared';
 import { getDb, getPool } from '../db/client';
 import {
   bookingTransferDetails,
@@ -41,8 +41,10 @@ import {
   driverLeaves,
   drivers,
   tours,
+  transferPlaces,
   transferRoutes,
   vans,
+  vehicleTypes,
 } from '../db/schema';
 import { generateBookingRef } from '../services/booking-ref';
 import { assessCapacity, takeFleetDateLock, takeSlotLocks } from '../services/capacity';
@@ -81,9 +83,11 @@ const created = {
   tourIds: [] as number[],
   routeIds: [] as number[],
   destinationIds: [] as number[],
+  placeIds: [] as number[],
   vanIds: [] as number[],
   driverIds: [] as number[],
   leaveIds: [] as number[],
+  vehicleTypeIds: [] as number[],
 };
 
 /** Random FIRST, timestamp second — the reasoning is `capacity.test.ts`'s. */
@@ -94,6 +98,49 @@ async function count(statement: Parameters<ReturnType<typeof getDb>['execute']>[
   return Number(rows[0]?.n ?? -1);
 }
 
+/**
+ * The real, global `vehicle_types.id` for `'van'`/`'suv'` — seeded by
+ * `seedBase` (migration 0023), never a literal id (CLAUDE.md: "never a
+ * literal id, every later migration backfills by joining on slug"). Resolved
+ * once per test via `beforeEach` into `VAN_ID`/`SUV_ID` below, so every test
+ * body reads a plain number rather than re-querying.
+ */
+async function vehicleTypeIdBySlug(slug: string): Promise<number> {
+  const [row] = await getDb()
+    .select({ id: vehicleTypes.id })
+    .from(vehicleTypes)
+    .where(eq(vehicleTypes.slug, slug))
+    .limit(1);
+  if (!row) {
+    throw new Error(`No vehicle_types row for slug "${slug}" — expected from seedBase.`);
+  }
+  return row.id;
+}
+
+/** `'van'`'s and `'suv'`'s real ids, set fresh in `beforeEach` for every test. */
+let VAN_ID: number;
+let SUV_ID: number;
+
+/**
+ * A FRESH, test-owned vehicle type — never `'van'`/`'suv'`, which are global
+ * catalog rows shared with every other test file in this database. The
+ * three-vehicle-type generalization test and the deactivated-type tests both
+ * need a type they alone control (sellable count, active flag) without risking
+ * a suite running concurrently against the real fleet.
+ */
+async function makeVehicleType(opts: { isActive?: boolean } = {}) {
+  const suffix = unique();
+  const [row] = await getDb()
+    .insert(vehicleTypes)
+    .values({
+      name: `Transfer Capacity Fixture ${suffix}`,
+      slug: `xfercap-${suffix}`.slice(0, 40),
+      isActive: opts.isActive ?? true,
+    });
+  created.vehicleTypeIds.push(row.insertId);
+  return row.insertId;
+}
+
 async function makeDestination() {
   const slug = `__xfercap__${unique()}`;
   const [row] = await getDb().insert(destinations).values({ name: slug, slug });
@@ -101,14 +148,26 @@ async function makeDestination() {
   return row.insertId;
 }
 
-/** A transfer route, plus the destination its unique foreign key needs. */
+/** An admin-managed pickup/drop-off place — a route's `from`/`to` endpoint. */
+async function makePlace() {
+  const slug = `__xfercap__${unique()}`;
+  const [row] = await getDb()
+    .insert(transferPlaces)
+    .values({ name: slug, nameKey: slug.toLowerCase() });
+  created.placeIds.push(row.insertId);
+  return row.insertId;
+}
+
+/** A transfer route, plus the two places its `from`/`to` foreign keys need. */
 async function makeRoute(opts: { durationMinutes?: number } = {}) {
-  const destinationId = await makeDestination();
+  const fromPlaceId = await makePlace();
+  const toPlaceId = await makePlace();
   const slug = `xfercap-${unique()}`;
   const [row] = await getDb()
     .insert(transferRoutes)
     .values({
-      destinationId,
+      fromPlaceId,
+      toPlaceId,
       slug,
       estimatedDurationMinutes: opts.durationMinutes ?? DURATION,
     });
@@ -133,7 +192,7 @@ async function makeTour(opts: { groupsPerDay?: number } = {}) {
 }
 
 async function makeVan(
-  opts: { vehicleType?: VehicleType; capacity?: number; status?: 'available' | 'for_repair' } = {},
+  opts: { vehicleTypeId?: number; capacity?: number; status?: 'available' | 'for_repair' } = {},
 ) {
   const suffix = unique();
   const [row] = await getDb()
@@ -142,7 +201,7 @@ async function makeVan(
       plate: `XC${suffix}`.slice(0, 20),
       model: 'Transfer Capacity Fixture',
       capacity: opts.capacity ?? 12,
-      vehicleType: opts.vehicleType ?? 'van',
+      vehicleTypeId: opts.vehicleTypeId ?? VAN_ID,
       status: opts.status ?? 'available',
       isActive: true,
     });
@@ -222,7 +281,7 @@ async function makeTourBooking(opts: { tourId: number; date: string; status?: Bo
 interface TransferFixture {
   routeId: number;
   date: string;
-  vehicleType: VehicleType;
+  vehicleTypeId: number;
   productType?: TransferProductType;
   pickupMinutes: number;
   dayUseEndMinutes?: number;
@@ -250,7 +309,7 @@ async function makeTransferBooking(fixture: TransferFixture) {
       tourId: null,
       productType,
       routeId: fixture.routeId,
-      vehicleTypeRequested: fixture.vehicleType,
+      vehicleTypeId: fixture.vehicleTypeId,
       tourDate: new Date(`${fixture.date}T00:00:00Z`),
       pax: 2,
       leadName: 'Transfer Capacity Fixture',
@@ -279,7 +338,7 @@ async function makeTransferBooking(fixture: TransferFixture) {
 
 interface Candidate {
   date?: string;
-  vehicleType: VehicleType;
+  vehicleTypeId: number;
   productType?: TransferProductType;
   pickupMinutes: number;
   dayUseEndMinutes?: number | null;
@@ -291,7 +350,7 @@ function candidateParams(candidate: Candidate) {
   const productType = candidate.productType ?? 'transfer_one_way';
   return {
     date: candidate.date ?? DAY,
-    vehicleType: candidate.vehicleType,
+    vehicleTypeId: candidate.vehicleTypeId,
     productType,
     pickupTimeMinutes: candidate.pickupMinutes,
     dayUseEndTimeMinutes: candidate.dayUseEndMinutes ?? null,
@@ -340,7 +399,7 @@ function bookTransfer(routeId: number, candidate: Candidate) {
       tourId: null,
       productType: params.productType,
       routeId,
-      vehicleTypeRequested: params.vehicleType,
+      vehicleTypeId: params.vehicleTypeId,
       tourDate: new Date(`${params.date}T00:00:00Z`),
       pax: 2,
       leadName: 'Transfer Race Fixture',
@@ -413,6 +472,10 @@ describeWithDb('transfer capacity', () => {
     expect(operations.maxTransferJobsPerDriverPerDay, 'the seeded driver cap changed').toBe(
       DEFAULT_DRIVER_CAP,
     );
+
+    // The real seeded ids — never literals (CLAUDE.md).
+    VAN_ID = await vehicleTypeIdBySlug('van');
+    SUV_ID = await vehicleTypeIdBySlug('suv');
   });
 
   afterEach(cleanup);
@@ -422,10 +485,10 @@ describeWithDb('transfer capacity', () => {
   // -------------------------------------------------------------------------
 
   it('accepts a transfer when a sellable vehicle of that type and a driver are free', async () => {
-    await makeVan({ vehicleType: 'van' });
+    await makeVan({ vehicleTypeId: VAN_ID });
     await makeDriver();
 
-    expect(await assessTransfer({ vehicleType: 'van', pickupMinutes: at(8) })).toEqual({
+    expect(await assessTransfer({ vehicleTypeId: VAN_ID, pickupMinutes: at(8) })).toEqual({
       ok: true,
     });
   });
@@ -438,7 +501,7 @@ describeWithDb('transfer capacity', () => {
   it('refuses a window past midnight before it asks the fleet anything', async () => {
     expect(
       await assessTransfer({
-        vehicleType: 'van',
+        vehicleTypeId: VAN_ID,
         pickupMinutes: at(23),
         routeDurationMinutes: 180,
       }),
@@ -447,13 +510,13 @@ describeWithDb('transfer capacity', () => {
 
   it('refuses when the only vehicle of that type is claimed by an OVERLAPPING window', async () => {
     const routeId = await makeRoute();
-    await makeVan({ vehicleType: 'van' });
+    await makeVan({ vehicleTypeId: VAN_ID });
     await makeDriver();
     // [08:00, 11:00) — pickup 08:00 + 120 duration + 60 buffer.
-    await makeTransferBooking({ routeId, date: DAY, vehicleType: 'van', pickupMinutes: at(8) });
+    await makeTransferBooking({ routeId, date: DAY, vehicleTypeId: VAN_ID, pickupMinutes: at(8) });
 
     // [10:00, 13:00) overlaps it, so the peak would be 2 against 1 van.
-    expect(await assessTransfer({ vehicleType: 'van', pickupMinutes: at(10) })).toEqual({
+    expect(await assessTransfer({ vehicleTypeId: VAN_ID, pickupMinutes: at(10) })).toEqual({
       ok: false,
       reason: 'no_vehicle_available',
     });
@@ -466,15 +529,15 @@ describeWithDb('transfer capacity', () => {
    */
   it('accepts a BACK-TO-BACK second job on the same single vehicle', async () => {
     const routeId = await makeRoute();
-    await makeVan({ vehicleType: 'van' });
+    await makeVan({ vehicleTypeId: VAN_ID });
     await makeDriver();
-    await makeTransferBooking({ routeId, date: DAY, vehicleType: 'van', pickupMinutes: at(8) });
+    await makeTransferBooking({ routeId, date: DAY, vehicleTypeId: VAN_ID, pickupMinutes: at(8) });
 
-    expect(await assessTransfer({ vehicleType: 'van', pickupMinutes: at(11) })).toEqual({
+    expect(await assessTransfer({ vehicleTypeId: VAN_ID, pickupMinutes: at(11) })).toEqual({
       ok: true,
     });
     // One minute earlier overlaps, and is refused.
-    expect(await assessTransfer({ vehicleType: 'van', pickupMinutes: at(11) - 1 })).toEqual({
+    expect(await assessTransfer({ vehicleTypeId: VAN_ID, pickupMinutes: at(11) - 1 })).toEqual({
       ok: false,
       reason: 'no_vehicle_available',
     });
@@ -482,19 +545,19 @@ describeWithDb('transfer capacity', () => {
 
   it('does not let one vehicle TYPE answer for the other', async () => {
     const routeId = await makeRoute();
-    await makeVan({ vehicleType: 'van' });
+    await makeVan({ vehicleTypeId: VAN_ID });
     await makeDriver();
 
     // An SUV is asked for and the fleet has none, however free the van is.
-    expect(await assessTransfer({ vehicleType: 'suv', pickupMinutes: at(8) })).toEqual({
+    expect(await assessTransfer({ vehicleTypeId: SUV_ID, pickupMinutes: at(8) })).toEqual({
       ok: false,
       reason: 'no_vehicle_available',
     });
 
     // And a van-type booking does not raise the SUV peak.
-    await makeTransferBooking({ routeId, date: DAY, vehicleType: 'van', pickupMinutes: at(8) });
-    await makeVan({ vehicleType: 'suv' });
-    expect(await assessTransfer({ vehicleType: 'suv', pickupMinutes: at(9) })).toEqual({
+    await makeTransferBooking({ routeId, date: DAY, vehicleTypeId: VAN_ID, pickupMinutes: at(8) });
+    await makeVan({ vehicleTypeId: SUV_ID });
+    expect(await assessTransfer({ vehicleTypeId: SUV_ID, pickupMinutes: at(9) })).toEqual({
       ok: true,
     });
   });
@@ -502,9 +565,9 @@ describeWithDb('transfer capacity', () => {
   it('counts only a van that is active and sellable', async () => {
     await makeRoute();
     await makeDriver();
-    const vanId = await makeVan({ vehicleType: 'van', status: 'for_repair' });
+    const vanId = await makeVan({ vehicleTypeId: VAN_ID, status: 'for_repair' });
 
-    expect(await assessTransfer({ vehicleType: 'van', pickupMinutes: at(8) })).toEqual({
+    expect(await assessTransfer({ vehicleTypeId: VAN_ID, pickupMinutes: at(8) })).toEqual({
       ok: false,
       reason: 'no_vehicle_available',
     });
@@ -513,16 +576,18 @@ describeWithDb('transfer capacity', () => {
     // are excluded too, and a soft-deleted van does not count either.
     for (const status of ['on_trip', 'parked']) {
       await getPool().query('UPDATE vans SET status = ? WHERE id = ?', [status, vanId]);
-      expect(await assessTransfer({ vehicleType: 'van', pickupMinutes: at(8) }), status).toEqual({
-        ok: false,
-        reason: 'no_vehicle_available',
-      });
+      expect(await assessTransfer({ vehicleTypeId: VAN_ID, pickupMinutes: at(8) }), status).toEqual(
+        {
+          ok: false,
+          reason: 'no_vehicle_available',
+        },
+      );
     }
     await getPool().query('UPDATE vans SET status = ?, is_active = 0 WHERE id = ?', [
       'available',
       vanId,
     ]);
-    expect(await assessTransfer({ vehicleType: 'van', pickupMinutes: at(8) })).toEqual({
+    expect(await assessTransfer({ vehicleTypeId: VAN_ID, pickupMinutes: at(8) })).toEqual({
       ok: false,
       reason: 'no_vehicle_available',
     });
@@ -536,48 +601,48 @@ describeWithDb('transfer capacity', () => {
    */
   it('ignores seat capacity for a transfer, unlike the tour gate', async () => {
     await makeRoute();
-    await makeVan({ vehicleType: 'van', capacity: 4 });
+    await makeVan({ vehicleTypeId: VAN_ID, capacity: 4 });
     await makeDriver();
 
-    expect(await assessTransfer({ vehicleType: 'van', pickupMinutes: at(8) })).toEqual({
+    expect(await assessTransfer({ vehicleTypeId: VAN_ID, pickupMinutes: at(8) })).toEqual({
       ok: true,
     });
   });
 
   it('counts only the day asked for, not the days either side', async () => {
     const routeId = await makeRoute();
-    await makeVan({ vehicleType: 'van' });
+    await makeVan({ vehicleTypeId: VAN_ID });
     await makeDriver();
     for (const date of [DAY_BEFORE, DAY_AFTER]) {
-      await makeTransferBooking({ routeId, date, vehicleType: 'van', pickupMinutes: at(8) });
+      await makeTransferBooking({ routeId, date, vehicleTypeId: VAN_ID, pickupMinutes: at(8) });
     }
 
-    expect(await assessTransfer({ vehicleType: 'van', pickupMinutes: at(8) })).toEqual({
+    expect(await assessTransfer({ vehicleTypeId: VAN_ID, pickupMinutes: at(8) })).toEqual({
       ok: true,
     });
   });
 
   it('computes a DAY-USE window from its end time, not the route duration', async () => {
     const routeId = await makeRoute();
-    await makeVan({ vehicleType: 'van' });
+    await makeVan({ vehicleTypeId: VAN_ID });
     await makeDriver();
     // [07:00, 18:00) — 17:00 end + 60 buffer.
     await makeTransferBooking({
       routeId,
       date: DAY,
-      vehicleType: 'van',
+      vehicleTypeId: VAN_ID,
       productType: 'transfer_day_use',
       pickupMinutes: at(7),
       dayUseEndMinutes: at(17),
     });
 
     // 14:00 is inside that window even though the route's own duration is 2h.
-    expect(await assessTransfer({ vehicleType: 'van', pickupMinutes: at(14) })).toEqual({
+    expect(await assessTransfer({ vehicleTypeId: VAN_ID, pickupMinutes: at(14) })).toEqual({
       ok: false,
       reason: 'no_vehicle_available',
     });
     // 18:00 is not.
-    expect(await assessTransfer({ vehicleType: 'van', pickupMinutes: at(18) })).toEqual({
+    expect(await assessTransfer({ vehicleTypeId: VAN_ID, pickupMinutes: at(18) })).toEqual({
       ok: true,
     });
   });
@@ -598,12 +663,12 @@ describeWithDb('transfer capacity', () => {
    */
   it('freezes the route duration at hold time — a later shortened route does not free the vehicle early', async () => {
     const routeId = await makeRoute({ durationMinutes: 180 });
-    await makeVan({ vehicleType: 'van' });
+    await makeVan({ vehicleTypeId: VAN_ID });
     await makeDriver();
     await makeTransferBooking({
       routeId,
       date: DAY,
-      vehicleType: 'van',
+      vehicleTypeId: VAN_ID,
       pickupMinutes: at(8),
       routeDurationMinutes: 180,
     });
@@ -616,12 +681,12 @@ describeWithDb('transfer capacity', () => {
 
     // Un-fixed, the booking's window would recompute to [08:00, 09:00) and
     // let 11:00 through. Fixed, it is still [08:00, 12:00) and refuses it.
-    expect(await assessTransfer({ vehicleType: 'van', pickupMinutes: at(11) })).toEqual({
+    expect(await assessTransfer({ vehicleTypeId: VAN_ID, pickupMinutes: at(11) })).toEqual({
       ok: false,
       reason: 'no_vehicle_available',
     });
     // And a pickup genuinely after the FROZEN window (12:00, back-to-back) still fits.
-    expect(await assessTransfer({ vehicleType: 'van', pickupMinutes: at(12) })).toEqual({
+    expect(await assessTransfer({ vehicleTypeId: VAN_ID, pickupMinutes: at(12) })).toEqual({
       ok: true,
     });
   });
@@ -639,13 +704,13 @@ describeWithDb('transfer capacity', () => {
     const id = await makeTransferBooking({
       routeId,
       date: DAY,
-      vehicleType: 'van',
+      vehicleTypeId: VAN_ID,
       pickupMinutes: at(8),
     });
     await getPool().query('DELETE FROM booking_transfer_details WHERE booking_id = ?', [id]);
 
     const windows = await getDb().transaction((tx) => transferWindowsByType(tx, DAY));
-    expect(windows.van).toEqual([{ startMinutes: 0, endMinutes: MINUTES_PER_DAY }]);
+    expect(windows.get(VAN_ID)).toEqual([{ startMinutes: 0, endMinutes: MINUTES_PER_DAY }]);
   });
 
   it('counts a transfer with an unreadable pickup_time as occupying the whole day', async () => {
@@ -653,7 +718,7 @@ describeWithDb('transfer capacity', () => {
     const id = await makeTransferBooking({
       routeId,
       date: DAY,
-      vehicleType: 'van',
+      vehicleTypeId: VAN_ID,
       pickupMinutes: at(8),
     });
     await getPool().query(
@@ -662,7 +727,7 @@ describeWithDb('transfer capacity', () => {
     );
 
     const windows = await getDb().transaction((tx) => transferWindowsByType(tx, DAY));
-    expect(windows.van).toEqual([{ startMinutes: 0, endMinutes: MINUTES_PER_DAY }]);
+    expect(windows.get(VAN_ID)).toEqual([{ startMinutes: 0, endMinutes: MINUTES_PER_DAY }]);
   });
 
   it('counts a DAY-USE transfer with no end time as occupying the whole day', async () => {
@@ -670,7 +735,7 @@ describeWithDb('transfer capacity', () => {
     const id = await makeTransferBooking({
       routeId,
       date: DAY,
-      vehicleType: 'van',
+      vehicleTypeId: VAN_ID,
       productType: 'transfer_day_use',
       pickupMinutes: at(7),
       dayUseEndMinutes: at(17),
@@ -681,7 +746,7 @@ describeWithDb('transfer capacity', () => {
     );
 
     const windows = await getDb().transaction((tx) => transferWindowsByType(tx, DAY));
-    expect(windows.van).toEqual([{ startMinutes: 0, endMinutes: MINUTES_PER_DAY }]);
+    expect(windows.get(VAN_ID)).toEqual([{ startMinutes: 0, endMinutes: MINUTES_PER_DAY }]);
   });
 
   /**
@@ -696,14 +761,14 @@ describeWithDb('transfer capacity', () => {
     await makeTransferBooking({
       routeId,
       date: DAY,
-      vehicleType: 'van',
+      vehicleTypeId: VAN_ID,
       pickupMinutes: at(23),
       routeDurationMinutes: 180,
       bufferMinutes: 60,
     });
 
     const windows = await getDb().transaction((tx) => transferWindowsByType(tx, DAY));
-    expect(windows.van).toEqual([{ startMinutes: at(23), endMinutes: MINUTES_PER_DAY }]);
+    expect(windows.get(VAN_ID)).toEqual([{ startMinutes: at(23), endMinutes: MINUTES_PER_DAY }]);
   });
 
   /**
@@ -714,11 +779,11 @@ describeWithDb('transfer capacity', () => {
    */
   it('treats a leave range as inclusive on its START date too', async () => {
     await makeRoute();
-    await makeVan({ vehicleType: 'van' });
+    await makeVan({ vehicleTypeId: VAN_ID });
     const driverId = await makeDriver();
     const leaveId = await makeLeave(driverId, DAY, DAY_AFTER);
 
-    expect(await assessTransfer({ vehicleType: 'van', pickupMinutes: at(8) })).toEqual({
+    expect(await assessTransfer({ vehicleTypeId: VAN_ID, pickupMinutes: at(8) })).toEqual({
       ok: false,
       reason: 'no_driver_available',
     });
@@ -728,7 +793,7 @@ describeWithDb('transfer capacity', () => {
       DAY_AFTER,
       leaveId,
     ]);
-    expect(await assessTransfer({ vehicleType: 'van', pickupMinutes: at(8) })).toEqual({
+    expect(await assessTransfer({ vehicleTypeId: VAN_ID, pickupMinutes: at(8) })).toEqual({
       ok: true,
     });
   });
@@ -742,35 +807,35 @@ describeWithDb('transfer capacity', () => {
    * only be the vehicle pool.
    */
   it('refuses a transfer when the day’s tours need the vehicle it would take', async () => {
-    await makeVan({ vehicleType: 'van' });
+    await makeVan({ vehicleTypeId: VAN_ID });
     await makeDriver();
     await makeDriver();
     const tourId = await makeTour();
     const tourBookingId = await makeTourBooking({ tourId, date: DAY });
 
-    expect(await assessTransfer({ vehicleType: 'van', pickupMinutes: at(8) })).toEqual({
+    expect(await assessTransfer({ vehicleTypeId: VAN_ID, pickupMinutes: at(8) })).toEqual({
       ok: false,
       reason: 'no_vehicle_available',
     });
 
     // Cancel the tour and the same transfer fits — the tour was the refuser.
     await cancel(tourBookingId);
-    expect(await assessTransfer({ vehicleType: 'van', pickupMinutes: at(8) })).toEqual({
+    expect(await assessTransfer({ vehicleTypeId: VAN_ID, pickupMinutes: at(8) })).toEqual({
       ok: true,
     });
   });
 
   it('lets a leftover vehicle of the OTHER type cover the day’s tour', async () => {
     await makeRoute();
-    await makeVan({ vehicleType: 'van' });
-    await makeVan({ vehicleType: 'suv' });
+    await makeVan({ vehicleTypeId: VAN_ID });
+    await makeVan({ vehicleTypeId: SUV_ID });
     await makeDriver();
     await makeDriver();
     const tourId = await makeTour();
     await makeTourBooking({ tourId, date: DAY });
 
     // The van transfer takes the van; the tour can still have the SUV.
-    expect(await assessTransfer({ vehicleType: 'van', pickupMinutes: at(8) })).toEqual({
+    expect(await assessTransfer({ vehicleTypeId: VAN_ID, pickupMinutes: at(8) })).toEqual({
       ok: true,
     });
   });
@@ -782,12 +847,12 @@ describeWithDb('transfer capacity', () => {
   it('refuses when the only driver’s daily transfer cap is already used', async () => {
     const routeId = await makeRoute();
     // Two vans, non-overlapping windows: the vehicle gate cannot be the refuser.
-    await makeVan({ vehicleType: 'van' });
-    await makeVan({ vehicleType: 'van' });
+    await makeVan({ vehicleTypeId: VAN_ID });
+    await makeVan({ vehicleTypeId: VAN_ID });
     await makeDriver({ maxTransferJobsPerDay: 1 });
-    await makeTransferBooking({ routeId, date: DAY, vehicleType: 'van', pickupMinutes: at(6) });
+    await makeTransferBooking({ routeId, date: DAY, vehicleTypeId: VAN_ID, pickupMinutes: at(6) });
 
-    expect(await assessTransfer({ vehicleType: 'van', pickupMinutes: at(14) })).toEqual({
+    expect(await assessTransfer({ vehicleTypeId: VAN_ID, pickupMinutes: at(14) })).toEqual({
       ok: false,
       reason: 'no_driver_available',
     });
@@ -800,10 +865,10 @@ describeWithDb('transfer capacity', () => {
    */
   it('treats a per-driver cap of ZERO as no transfer jobs at all', async () => {
     await makeRoute();
-    await makeVan({ vehicleType: 'van' });
+    await makeVan({ vehicleTypeId: VAN_ID });
     await makeDriver({ maxTransferJobsPerDay: 0 });
 
-    expect(await assessTransfer({ vehicleType: 'van', pickupMinutes: at(8) })).toEqual({
+    expect(await assessTransfer({ vehicleTypeId: VAN_ID, pickupMinutes: at(8) })).toEqual({
       ok: false,
       reason: 'no_driver_available',
     });
@@ -811,17 +876,17 @@ describeWithDb('transfer capacity', () => {
 
   it('uses the admin default when a driver has no override', async () => {
     const routeId = await makeRoute();
-    for (let i = 0; i < 3; i += 1) await makeVan({ vehicleType: 'van' });
+    for (let i = 0; i < 3; i += 1) await makeVan({ vehicleTypeId: VAN_ID });
     await makeDriver(); // NULL override -> the seeded default of 2.
 
     // Two jobs fit the default; the third does not.
-    await makeTransferBooking({ routeId, date: DAY, vehicleType: 'van', pickupMinutes: at(6) });
-    expect(await assessTransfer({ vehicleType: 'van', pickupMinutes: at(12) })).toEqual({
+    await makeTransferBooking({ routeId, date: DAY, vehicleTypeId: VAN_ID, pickupMinutes: at(6) });
+    expect(await assessTransfer({ vehicleTypeId: VAN_ID, pickupMinutes: at(12) })).toEqual({
       ok: true,
     });
 
-    await makeTransferBooking({ routeId, date: DAY, vehicleType: 'van', pickupMinutes: at(12) });
-    expect(await assessTransfer({ vehicleType: 'van', pickupMinutes: at(18) })).toEqual({
+    await makeTransferBooking({ routeId, date: DAY, vehicleTypeId: VAN_ID, pickupMinutes: at(12) });
+    expect(await assessTransfer({ vehicleTypeId: VAN_ID, pickupMinutes: at(18) })).toEqual({
       ok: false,
       reason: 'no_driver_available',
     });
@@ -829,14 +894,14 @@ describeWithDb('transfer capacity', () => {
 
   it('does not count a driver on leave that day, or one off the roster', async () => {
     await makeRoute();
-    await makeVan({ vehicleType: 'van' });
+    await makeVan({ vehicleTypeId: VAN_ID });
     const driverId = await makeDriver();
     await makeDriver({ isActive: false });
     // DAY_BEFORE..DAY, so the end can later be shrunk to DAY_BEFORE without
     // tripping the `driver_leaves_date_order` CHECK (end >= start).
     const leaveId = await makeLeave(driverId, DAY_BEFORE, DAY);
 
-    expect(await assessTransfer({ vehicleType: 'van', pickupMinutes: at(8) })).toEqual({
+    expect(await assessTransfer({ vehicleTypeId: VAN_ID, pickupMinutes: at(8) })).toEqual({
       ok: false,
       reason: 'no_driver_available',
     });
@@ -846,28 +911,28 @@ describeWithDb('transfer capacity', () => {
       DAY_BEFORE,
       leaveId,
     ]);
-    expect(await assessTransfer({ vehicleType: 'van', pickupMinutes: at(8) })).toEqual({
+    expect(await assessTransfer({ vehicleTypeId: VAN_ID, pickupMinutes: at(8) })).toEqual({
       ok: true,
     });
   });
 
   it('gives a TOUR a whole driver for the day, not one job unit', async () => {
     await makeRoute();
-    await makeVan({ vehicleType: 'van' });
-    await makeVan({ vehicleType: 'van' });
+    await makeVan({ vehicleTypeId: VAN_ID });
+    await makeVan({ vehicleTypeId: VAN_ID });
     // One driver, default cap 2 — enough for two transfer jobs, or for one tour
     // and nothing else.
     await makeDriver();
     const tourId = await makeTour();
     const tourBookingId = await makeTourBooking({ tourId, date: DAY });
 
-    expect(await assessTransfer({ vehicleType: 'van', pickupMinutes: at(8) })).toEqual({
+    expect(await assessTransfer({ vehicleTypeId: VAN_ID, pickupMinutes: at(8) })).toEqual({
       ok: false,
       reason: 'no_driver_available',
     });
 
     await cancel(tourBookingId);
-    expect(await assessTransfer({ vehicleType: 'van', pickupMinutes: at(8) })).toEqual({
+    expect(await assessTransfer({ vehicleTypeId: VAN_ID, pickupMinutes: at(8) })).toEqual({
       ok: true,
     });
   });
@@ -884,15 +949,15 @@ describeWithDb('transfer capacity', () => {
    */
   it('hands tours the SMALLEST-capacity drivers, which leaves the most for transfers', async () => {
     const routeId = await makeRoute();
-    for (let i = 0; i < 4; i += 1) await makeVan({ vehicleType: 'van' });
+    for (let i = 0; i < 4; i += 1) await makeVan({ vehicleTypeId: VAN_ID });
     await makeDriver({ maxTransferJobsPerDay: 1 });
     await makeDriver({ maxTransferJobsPerDay: 3 });
     const tourId = await makeTour();
     await makeTourBooking({ tourId, date: DAY });
-    await makeTransferBooking({ routeId, date: DAY, vehicleType: 'van', pickupMinutes: at(6) });
-    await makeTransferBooking({ routeId, date: DAY, vehicleType: 'van', pickupMinutes: at(12) });
+    await makeTransferBooking({ routeId, date: DAY, vehicleTypeId: VAN_ID, pickupMinutes: at(6) });
+    await makeTransferBooking({ routeId, date: DAY, vehicleTypeId: VAN_ID, pickupMinutes: at(12) });
 
-    expect(await assessTransfer({ vehicleType: 'van', pickupMinutes: at(18) })).toEqual({
+    expect(await assessTransfer({ vehicleTypeId: VAN_ID, pickupMinutes: at(18) })).toEqual({
       ok: true,
     });
   });
@@ -921,14 +986,14 @@ describeWithDb('transfer capacity', () => {
    */
   it('refuses a TOUR when a transfer has already claimed the only vehicle', async () => {
     const routeId = await makeRoute();
-    await makeVan({ vehicleType: 'van', capacity: 12 });
+    await makeVan({ vehicleTypeId: VAN_ID, capacity: 12 });
     await makeDriver();
     await makeDriver();
     const tourId = await makeTour({ groupsPerDay: 5 });
     const transferId = await makeTransferBooking({
       routeId,
       date: DAY,
-      vehicleType: 'van',
+      vehicleTypeId: VAN_ID,
       productType: 'transfer_day_use',
       pickupMinutes: at(6),
       dayUseEndMinutes: at(20),
@@ -946,6 +1011,51 @@ describeWithDb('transfer capacity', () => {
   });
 
   /**
+   * **The test that proves `sumLeftoverVehicles`'s UNION is load-bearing on
+   * the tour side too** (owner decision 2026-11-08, Opus review finding).
+   * A THIRD vehicle type is pulled from sale (every one of its vans set
+   * `for_repair`) AFTER a standing transfer booking already claimed it, so
+   * `sellableVehiclesByType` has NO entry for it at all while `peaks` still
+   * does. Summing over `sellable.keys()` alone — the mutation this test
+   * exists to catch — would silently drop that type's negative term and
+   * leave only the VAN_ID van's own `1 - 0 = 1` leftover, which the
+   * candidate tour's `+1` does not exceed, wrongly accepting it. The
+   * correct union adds the third type's `0 - 1 = -1`, leftover becomes
+   * `0`, and `toursToday + 1 (1) > 0` correctly refuses.
+   */
+  it('refuses a TOUR when a type pulled from sale still holds a standing transfer (sumLeftoverVehicles union)', async () => {
+    const routeId = await makeRoute();
+    const thirdId = await makeVehicleType();
+    const thirdVanId = await makeVan({ vehicleTypeId: thirdId, capacity: 12 });
+    await makeVan({ vehicleTypeId: VAN_ID, capacity: 12 });
+    await makeDriver();
+    await makeDriver();
+    const tourId = await makeTour({ groupsPerDay: 5 });
+    const transferId = await makeTransferBooking({
+      routeId,
+      date: DAY,
+      vehicleTypeId: thirdId,
+      pickupMinutes: at(8),
+    });
+
+    // Pulled from sale AFTER the booking above already exists — the third
+    // type now sells ZERO vehicles, but still has a peak of 1.
+    await getPool().query("UPDATE vans SET status = 'for_repair' WHERE id = ?", [thirdVanId]);
+
+    expect(await assessTour(tourId, DAY, 4)).toEqual({
+      ok: false,
+      reason: 'no_van_available',
+    });
+
+    // Cancelling the transfer removes `thirdId` from `peaks` too, so the
+    // union has nothing left to claim against it — the one VAN_ID van is
+    // enough, proving the TRANSFER (not Gate 1 or the pax-filtered Gate 2)
+    // was the refuser.
+    await cancel(transferId);
+    expect(await assessTour(tourId, DAY, 4)).toEqual({ ok: true });
+  });
+
+  /**
    * The driver half of the same claim. One driver with a cap of 1, already
    * holding one transfer job: condition (5) with the candidate tour removing
    * that driver from the pool leaves 0 for a job that is already booked.
@@ -953,14 +1063,14 @@ describeWithDb('transfer capacity', () => {
    */
   it('refuses a TOUR when the only driver’s transfer jobs are already booked', async () => {
     const routeId = await makeRoute();
-    await makeVan({ vehicleType: 'van', capacity: 12 });
-    await makeVan({ vehicleType: 'van', capacity: 12 });
+    await makeVan({ vehicleTypeId: VAN_ID, capacity: 12 });
+    await makeVan({ vehicleTypeId: VAN_ID, capacity: 12 });
     await makeDriver({ maxTransferJobsPerDay: 1 });
     const tourId = await makeTour({ groupsPerDay: 5 });
     const transferId = await makeTransferBooking({
       routeId,
       date: DAY,
-      vehicleType: 'van',
+      vehicleTypeId: VAN_ID,
       pickupMinutes: at(8),
     });
 
@@ -983,12 +1093,12 @@ describeWithDb('transfer capacity', () => {
    */
   it('does not charge a tour for a transfer the fleet can still absorb', async () => {
     const routeId = await makeRoute();
-    await makeVan({ vehicleType: 'van', capacity: 12 });
-    await makeVan({ vehicleType: 'van', capacity: 12 });
+    await makeVan({ vehicleTypeId: VAN_ID, capacity: 12 });
+    await makeVan({ vehicleTypeId: VAN_ID, capacity: 12 });
     await makeDriver();
     await makeDriver();
     const tourId = await makeTour({ groupsPerDay: 5 });
-    await makeTransferBooking({ routeId, date: DAY, vehicleType: 'van', pickupMinutes: at(6) });
+    await makeTransferBooking({ routeId, date: DAY, vehicleTypeId: VAN_ID, pickupMinutes: at(6) });
 
     expect(await assessTour(tourId, DAY, 4)).toEqual({ ok: true });
   });
@@ -1009,12 +1119,12 @@ describeWithDb('transfer capacity', () => {
    */
   it('serialises two OVERLAPPING transfers for the last vehicle', async () => {
     const routeId = await makeRoute();
-    await makeVan({ vehicleType: 'van' });
+    await makeVan({ vehicleTypeId: VAN_ID });
     await makeDriver({ maxTransferJobsPerDay: 4 });
 
     const results = await Promise.allSettled([
-      bookTransfer(routeId, { vehicleType: 'van', pickupMinutes: at(8) }),
-      bookTransfer(routeId, { vehicleType: 'van', pickupMinutes: at(9) }),
+      bookTransfer(routeId, { vehicleTypeId: VAN_ID, pickupMinutes: at(8) }),
+      bookTransfer(routeId, { vehicleTypeId: VAN_ID, pickupMinutes: at(9) }),
     ]);
 
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
@@ -1035,12 +1145,12 @@ describeWithDb('transfer capacity', () => {
    */
   it('does NOT falsely serialise two NON-overlapping transfers on one vehicle', async () => {
     const routeId = await makeRoute();
-    await makeVan({ vehicleType: 'van' });
+    await makeVan({ vehicleTypeId: VAN_ID });
     await makeDriver({ maxTransferJobsPerDay: 4 });
 
     const results = await Promise.allSettled([
-      bookTransfer(routeId, { vehicleType: 'van', pickupMinutes: at(6) }),
-      bookTransfer(routeId, { vehicleType: 'van', pickupMinutes: at(14) }),
+      bookTransfer(routeId, { vehicleTypeId: VAN_ID, pickupMinutes: at(6) }),
+      bookTransfer(routeId, { vehicleTypeId: VAN_ID, pickupMinutes: at(14) }),
     ]);
 
     expect(rejectionMessages(results), 'a transfer that fitted was refused').toEqual([]);
@@ -1058,13 +1168,13 @@ describeWithDb('transfer capacity', () => {
    */
   it('serialises two transfers for the last DRIVER job of the day', async () => {
     const routeId = await makeRoute();
-    await makeVan({ vehicleType: 'van' });
-    await makeVan({ vehicleType: 'van' });
+    await makeVan({ vehicleTypeId: VAN_ID });
+    await makeVan({ vehicleTypeId: VAN_ID });
     await makeDriver({ maxTransferJobsPerDay: 1 });
 
     const results = await Promise.allSettled([
-      bookTransfer(routeId, { vehicleType: 'van', pickupMinutes: at(6) }),
-      bookTransfer(routeId, { vehicleType: 'van', pickupMinutes: at(14) }),
+      bookTransfer(routeId, { vehicleTypeId: VAN_ID, pickupMinutes: at(6) }),
+      bookTransfer(routeId, { vehicleTypeId: VAN_ID, pickupMinutes: at(14) }),
     ]);
 
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
@@ -1075,20 +1185,134 @@ describeWithDb('transfer capacity', () => {
   /** And the driver pool must not over-refuse when the day really has room. */
   it('does NOT falsely serialise two transfers when driver capacity covers both', async () => {
     const routeId = await makeRoute();
-    await makeVan({ vehicleType: 'van' });
-    await makeVan({ vehicleType: 'van' });
+    await makeVan({ vehicleTypeId: VAN_ID });
+    await makeVan({ vehicleTypeId: VAN_ID });
     await makeDriver({ maxTransferJobsPerDay: 1 });
     await makeDriver({ maxTransferJobsPerDay: 1 });
 
     // Overlapping windows this time: two vans, two drivers, one job each.
     const results = await Promise.allSettled([
-      bookTransfer(routeId, { vehicleType: 'van', pickupMinutes: at(8) }),
-      bookTransfer(routeId, { vehicleType: 'van', pickupMinutes: at(9) }),
+      bookTransfer(routeId, { vehicleTypeId: VAN_ID, pickupMinutes: at(8) }),
+      bookTransfer(routeId, { vehicleTypeId: VAN_ID, pickupMinutes: at(9) }),
     ]);
 
     expect(rejectionMessages(results), 'a transfer the fleet could run was refused').toEqual([]);
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(2);
     expect(await transfersHeldOn(DAY)).toBe(2);
+  });
+
+  // -------------------------------------------------------------------------
+  // The N-type generalization (owner decision 2026-11-08) — proving the fix
+  // is real for N vehicle types, not coincidentally correct for N=2
+  // -------------------------------------------------------------------------
+
+  /**
+   * **Three simultaneously active vehicle types, independently tracked.**
+   * `van`/`suv` are the real seeded types; a THIRD, test-owned type is
+   * created fresh. One vehicle of each type, one ample driver. Saturating
+   * the fresh type's single vehicle must refuse a second request of THAT
+   * type while leaving `van` and `suv` completely unaffected — which is
+   * exactly what a `Map<number, …>` keyed by id gives for free and a
+   * hard-coded `{van, suv}` record could never have expressed at all.
+   */
+  it('tracks three active vehicle types independently, not just van/suv', async () => {
+    const thirdId = await makeVehicleType();
+    const routeId = await makeRoute();
+    await makeVan({ vehicleTypeId: VAN_ID });
+    await makeVan({ vehicleTypeId: SUV_ID });
+    await makeVan({ vehicleTypeId: thirdId });
+    await makeDriver({ maxTransferJobsPerDay: 6 });
+
+    // [08:00, 11:00) on the fresh type's one vehicle.
+    await makeTransferBooking({ routeId, date: DAY, vehicleTypeId: thirdId, pickupMinutes: at(8) });
+
+    // Overlapping, same (saturated) type: refused.
+    expect(await assessTransfer({ vehicleTypeId: thirdId, pickupMinutes: at(10) })).toEqual({
+      ok: false,
+      reason: 'no_vehicle_available',
+    });
+
+    // The SAME overlapping window, but `van` or `suv`: each type's own
+    // vehicle is untouched by the third type's saturation.
+    expect(await assessTransfer({ vehicleTypeId: VAN_ID, pickupMinutes: at(10) })).toEqual({
+      ok: true,
+    });
+    expect(await assessTransfer({ vehicleTypeId: SUV_ID, pickupMinutes: at(10) })).toEqual({
+      ok: true,
+    });
+  });
+
+  /**
+   * **The exact hole the corrected key-set derivation closes.** A brand-new
+   * vehicle type: the fleet has NO vehicle of it at all, and NOBODY has ever
+   * booked it — both `sellableVehiclesByType()` and `transferWindowsByType()`
+   * answer with NO entry for its id at all, not an entry holding zero.
+   *
+   * A derivation built as "active types with >=1 sellable vehicle" UNION
+   * "types claimed by EXISTING bookings" — each computed INDEPENDENTLY of
+   * the candidate — produces an EMPTY key set for this exact id: it is in
+   * neither union member. Looping over an empty set refuses nothing, so that
+   * formulation would answer `{ ok: true }` here — accepting a hold against a
+   * vehicle type the fleet does not own a single vehicle of. The corrected
+   * derivation pushes the candidate's own window into `windows` BEFORE the
+   * key set is read, which puts this id in the set by construction. This
+   * test is the direct proof: it is written to FAIL under the naive
+   * formulation and PASS under the corrected one.
+   */
+  it('refuses a hold for a vehicle type the fleet owns none of and nobody has ever booked', async () => {
+    const thirdId = await makeVehicleType();
+    await makeDriver({ maxTransferJobsPerDay: 6 });
+    // Deliberately no `makeVan` call for `thirdId` at all, and no prior
+    // booking of it either — the exact "zero sellable, zero existing
+    // bookings" shape the design note's corrected derivation is for.
+
+    expect(await assessTransfer({ vehicleTypeId: thirdId, pickupMinutes: at(8) })).toEqual({
+      ok: false,
+      reason: 'no_vehicle_available',
+    });
+  });
+
+  /**
+   * **The other half of the fix: an explicit 0, never a missing key read as
+   * "nothing to check".** A fresh type's only vehicle takes a standing
+   * booking, THEN is pulled from sale (status moved off `available` — the
+   * capacity-affecting consequence of "this vehicle type was deactivated").
+   * `sellableVehiclesByType()`'s `GROUP BY` now returns NO ROW for this id —
+   * not a row holding zero — so a comparison that reads a missing map entry
+   * as `undefined` instead of `0` (`peak > undefined` is `false` in
+   * JavaScript, never a refusal) would silently ACCEPT a second hold against
+   * a type with zero sellable vehicles. The corrected derivation's explicit
+   * `sellable.set(id, 0)` for an id present in `windows` but absent from
+   * `sellable` is what this test pins.
+   */
+  it('refuses a hold against a type whose only vehicle was pulled from sale after a standing booking', async () => {
+    const thirdId = await makeVehicleType();
+    const routeId = await makeRoute();
+    const vanId = await makeVan({ vehicleTypeId: thirdId });
+    /*
+     * Plenty of VAN-type vehicles, deliberately — condition (3) sums the
+     * LEFTOVER across every type, so a lone short type can be masked by a
+     * surplus elsewhere and the refusal could come from the aggregate check
+     * instead of the per-type one this test means to pin. Five idle vans
+     * keep the aggregate comfortably positive (toursToday is 0 throughout
+     * this test), so the only thing that can still refuse the candidate
+     * below is the PER-TYPE comparison for `thirdId` alone.
+     */
+    for (let i = 0; i < 5; i += 1) await makeVan({ vehicleTypeId: VAN_ID });
+    await makeDriver({ maxTransferJobsPerDay: 6 });
+    // [08:00, 11:00) — the standing booking, taken while the vehicle was sellable.
+    await makeTransferBooking({ routeId, date: DAY, vehicleTypeId: thirdId, pickupMinutes: at(8) });
+
+    // The type's only vehicle is pulled from sale.
+    await getPool().query('UPDATE vans SET status = ? WHERE id = ?', ['for_repair', vanId]);
+
+    // A further, overlapping request of the SAME type must still be refused
+    // — sellable is 0, not "unknown" — and it cannot be condition (3) doing
+    // the refusing here, by construction (see above).
+    expect(await assessTransfer({ vehicleTypeId: thirdId, pickupMinutes: at(10) })).toEqual({
+      ok: false,
+      reason: 'no_vehicle_available',
+    });
   });
 });
 
@@ -1114,13 +1338,22 @@ async function cleanup() {
     await pool.query('DELETE FROM tours WHERE id = ?', [id]);
   }
   for (const id of created.routeIds) {
+    await pool.query('DELETE FROM transfer_route_vehicle_prices WHERE route_id = ?', [id]);
     await pool.query('DELETE FROM transfer_routes WHERE id = ?', [id]);
+  }
+  for (const id of created.placeIds) {
+    await pool.query('DELETE FROM transfer_places WHERE id = ?', [id]);
   }
   for (const id of created.destinationIds) {
     await pool.query('DELETE FROM destinations WHERE id = ?', [id]);
   }
   for (const id of created.driverIds) await pool.query('DELETE FROM drivers WHERE id = ?', [id]);
   for (const id of created.vanIds) await pool.query('DELETE FROM vans WHERE id = ?', [id]);
+  // Vans reference `vehicle_types` — deleted only after every van that could
+  // reference a fixture type is gone.
+  for (const id of created.vehicleTypeIds) {
+    await pool.query('DELETE FROM vehicle_types WHERE id = ?', [id]);
+  }
   for (const day of [DAY_BEFORE, DAY, DAY_AFTER]) {
     await pool.query('DELETE FROM fleet_date_slots WHERE date = ?', [day]);
   }
@@ -1129,6 +1362,8 @@ async function cleanup() {
   created.tourIds = [];
   created.routeIds = [];
   created.destinationIds = [];
+  created.placeIds = [];
   created.driverIds = [];
   created.vanIds = [];
+  created.vehicleTypeIds = [];
 }

@@ -97,7 +97,6 @@ import {
   type AssignRefusal,
   type BookingStatus,
   type ProductType,
-  type VehicleType,
 } from '@rg/shared';
 import type { Transaction } from '../../db/client';
 import { bookingTransferDetails, bookings, driverLeaves, drivers, vans } from '../../db/schema';
@@ -181,7 +180,7 @@ function refuse(reason: AssignRefusal): AssignVerdict {
 /** The transfer-shaped columns step 1's locking read carries along. */
 interface TransferBookingRow {
   productType: ProductType;
-  vehicleTypeRequested: VehicleType | null;
+  vehicleTypeId: number | null;
   pickupTime: string | null;
   dayUseEndTime: string | null;
   bufferMinutesUsed: number | null;
@@ -208,14 +207,14 @@ interface TransferBookingRow {
 function frozenTransferWindow(
   bookingId: number,
   booking: TransferBookingRow,
-): { window: TimeWindow; vehicleType: VehicleType } {
+): { window: TimeWindow; vehicleTypeId: number } {
   const corrupt = (why: string) => new Error(`booking ${bookingId} is a transfer but ${why}`);
 
   // `product_type <> 'tour'` whenever `tour_id IS NULL`, by the
   // `bookings_product_type_shape` CHECK. Narrowing the type, not guarding.
   if (booking.productType === 'tour') throw corrupt('its product_type is tour');
-  const { vehicleTypeRequested, pickupTime, bufferMinutesUsed } = booking;
-  if (vehicleTypeRequested === null) throw corrupt('has no vehicle_type_requested');
+  const { vehicleTypeId, pickupTime, bufferMinutesUsed } = booking;
+  if (vehicleTypeId === null) throw corrupt('has no vehicle_type_id');
   if (pickupTime === null || bufferMinutesUsed === null) {
     throw corrupt('has no booking_transfer_details row');
   }
@@ -246,7 +245,7 @@ function frozenTransferWindow(
   });
   if (!result.ok) throw corrupt(`has a window that crosses midnight (${result.reason})`);
 
-  return { window: result.window, vehicleType: vehicleTypeRequested };
+  return { window: result.window, vehicleTypeId };
 }
 
 /**
@@ -350,7 +349,7 @@ export async function assignVanAndDriver(
       vanId: bookings.vanId,
       driverId: bookings.driverId,
       productType: bookings.productType,
-      vehicleTypeRequested: bookings.vehicleTypeRequested,
+      vehicleTypeId: bookings.vehicleTypeId,
       pickupTime: bookingTransferDetails.pickupTime,
       dayUseEndTime: bookingTransferDetails.dayUseEndTime,
       bufferMinutesUsed: bookingTransferDetails.bufferMinutesUsed,
@@ -422,12 +421,12 @@ export async function assignVanAndDriver(
   const [freeVans, freeDrivers] = await Promise.all([
     transferWindow === undefined
       ? vansFreeOn(tx, tourDate, booking.pax, { excludeBookingId: bookingId })
-      : // `minCapacity: 0` with a `vehicleType`: the TYPE is the fit for a
+      : // `minCapacity: 0` with a `vehicleTypeId`: the TYPE is the fit for a
         // transfer, never the seat count — the same precedent
         // `sellableVehiclesByType` set at hold time.
         vansFreeOn(tx, tourDate, 0, {
           excludeBookingId: bookingId,
-          vehicleType: transferWindow.vehicleType,
+          vehicleTypeId: transferWindow.vehicleTypeId,
           transferWindow: transferWindow.window,
         }),
     driversFreeOn(tx, tourDate, {

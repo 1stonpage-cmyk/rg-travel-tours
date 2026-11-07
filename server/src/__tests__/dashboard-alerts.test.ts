@@ -24,7 +24,7 @@ import {
 } from '@rg/shared';
 import { appRouter } from '../routers/_app';
 import { getDb, getPool } from '../db/client';
-import { bookings, destinations, drivers, payments, tours, users, vans } from '../db/schema';
+import { bookings, destinations, drivers, payments, tours, users, vans, vehicleTypes } from '../db/schema';
 import { generateBookingRef } from '../services/booking-ref';
 import { dashboardAlerts } from '../services/dispatch/alerts';
 import { staffContext } from './helpers/ctx';
@@ -87,6 +87,23 @@ async function makeStaff(role: 'owner' | 'dispatcher' | 'finance') {
   return row.insertId;
 }
 
+/**
+ * The real, global `vehicle_types.id` for `'van'` — seeded by `seedBase`
+ * (migration 0023), never a literal id (CLAUDE.md). Cached per process.
+ */
+let cachedVanTypeId: number | undefined;
+async function vanVehicleTypeId(): Promise<number> {
+  if (cachedVanTypeId !== undefined) return cachedVanTypeId;
+  const [row] = await getDb()
+    .select({ id: vehicleTypes.id })
+    .from(vehicleTypes)
+    .where(eq(vehicleTypes.slug, 'van'))
+    .limit(1);
+  if (!row) throw new Error('No vehicle_types row for slug "van" — expected from seedBase.');
+  cachedVanTypeId = row.id;
+  return row.id;
+}
+
 async function makeVan(opts: {
   status?: 'available' | 'for_repair' | 'parked' | 'on_trip';
   isActive?: boolean;
@@ -102,6 +119,7 @@ async function makeVan(opts: {
       plate: `DSH${suffix}`.slice(0, 20),
       model: 'Dashboard Fixture Van',
       capacity: 10,
+      vehicleTypeId: await vanVehicleTypeId(),
       status: opts.status ?? 'available',
       isActive: opts.isActive ?? true,
       nextService: opts.nextService ? asDate(opts.nextService) : null,
@@ -156,11 +174,11 @@ async function makeBooking(opts: {
     .values({
       ref: generateBookingRef(),
       ...(opts.transfer
-        ? ({
+        ? {
             tourId: null,
-            productType: 'transfer_one_way',
-            vehicleTypeRequested: 'van',
-          } as const)
+            productType: 'transfer_one_way' as const,
+            vehicleTypeId: await vanVehicleTypeId(),
+          }
         : { tourId }),
       tourDate: asDate(opts.tourDate),
       pax: 2,

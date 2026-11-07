@@ -25,7 +25,6 @@ import {
   OVERRIDE_REASON_MIN_LENGTH,
   type BookingStatus,
   type PriceSnapshot,
-  type VehicleType,
 } from '@rg/shared';
 import { appRouter } from '../routers/_app';
 import { assignVanAndDriver } from '../services/dispatch/assign';
@@ -39,9 +38,11 @@ import {
   drivers,
   payments,
   tours,
+  transferPlaces,
   transferRoutes,
   users,
   vans,
+  vehicleTypes,
 } from '../db/schema';
 import { generateBookingRef } from '../services/booking-ref';
 import { resetTransportForTests, setTransportForTests } from '../services/notify';
@@ -60,10 +61,29 @@ const created = {
   tourIds: [] as number[],
   routeIds: [] as number[],
   destIds: [] as number[],
+  placeIds: [] as number[],
   vanIds: [] as number[],
   driverIds: [] as number[],
   leaveIds: [] as number[],
 };
+
+/**
+ * The real, global `vehicle_types.id` for `'van'`/`'suv'` — seeded by
+ * `seedBase` (migration 0023), never a literal id (CLAUDE.md). Resolved
+ * fresh in `beforeEach` into `VAN_ID`/`SUV_ID`, below.
+ */
+let VAN_ID: number;
+let SUV_ID: number;
+
+async function vehicleTypeIdBySlug(slug: string): Promise<number> {
+  const [row] = await getDb()
+    .select({ id: vehicleTypes.id })
+    .from(vehicleTypes)
+    .where(eq(vehicleTypes.slug, slug))
+    .limit(1);
+  if (!row) throw new Error(`No vehicle_types row for slug "${slug}" — expected from seedBase.`);
+  return row.id;
+}
 
 /* ----- Task T8: the transfer branch's window arithmetic ----- */
 
@@ -103,7 +123,7 @@ async function makeTour() {
  * the existing cases are untouched by the new check's luggage arm.
  */
 async function makeVan(
-  opts: { capacity?: number; vehicleType?: VehicleType; luggageCapacity?: number } = {},
+  opts: { capacity?: number; vehicleTypeId?: number; luggageCapacity?: number } = {},
 ) {
   const suffix = unique();
   const [van] = await getDb()
@@ -115,7 +135,7 @@ async function makeVan(
       luggageCapacity: opts.luggageCapacity ?? null,
       status: 'available',
       isActive: true,
-      vehicleType: opts.vehicleType ?? 'van',
+      vehicleTypeId: opts.vehicleTypeId ?? VAN_ID,
     });
   created.vanIds.push(van.insertId);
   return van.insertId;
@@ -139,15 +159,24 @@ async function makeDriver(opts: { maxTransferJobsPerDay?: number } = {}) {
   return driver.insertId;
 }
 
-/** A transfer route, plus the destination its UNIQUE foreign key needs. */
-async function makeRoute() {
+/** An admin-managed pickup/drop-off place — a route's `from`/`to` endpoint. */
+async function makePlace() {
   const db = getDb();
   const slug = `__dispassign__${unique()}`;
-  const [destination] = await db.insert(destinations).values({ name: slug, slug });
-  created.destIds.push(destination.insertId);
+  const [place] = await db.insert(transferPlaces).values({ name: slug, nameKey: slug.toLowerCase() });
+  created.placeIds.push(place.insertId);
+  return place.insertId;
+}
+
+/** A transfer route, plus the two places its `from`/`to` foreign keys need. */
+async function makeRoute() {
+  const db = getDb();
+  const fromPlaceId = await makePlace();
+  const toPlaceId = await makePlace();
+  const slug = `__dispassign__${unique()}`;
   const [route] = await db
     .insert(transferRoutes)
-    .values({ destinationId: destination.insertId, slug, estimatedDurationMinutes: DURATION });
+    .values({ fromPlaceId, toPlaceId, slug, estimatedDurationMinutes: DURATION });
   created.routeIds.push(route.insertId);
   return route.insertId;
 }
@@ -221,7 +250,7 @@ async function makeBooking(opts: {
 async function makeTransferBooking(opts: {
   routeId: number;
   pickupMinutes: number;
-  vehicleType?: VehicleType;
+  vehicleTypeId?: number;
   status?: BookingStatus;
   pax?: number;
   vanId?: number | null;
@@ -235,7 +264,7 @@ async function makeTransferBooking(opts: {
       tourId: null,
       productType: 'transfer_one_way',
       routeId: opts.routeId,
-      vehicleTypeRequested: opts.vehicleType ?? 'van',
+      vehicleTypeId: opts.vehicleTypeId ?? VAN_ID,
       tourDate: new Date(`${TOUR_DATE}T00:00:00Z`),
       pax: opts.pax ?? 2,
       leadName: 'Dispatch Assign Transfer Fixture',
@@ -344,6 +373,9 @@ describeWithDb('admin.dispatch.assign', () => {
       'leftover drivers in rg_travel_test',
     ).toBe(0);
 
+    VAN_ID = await vehicleTypeIdBySlug('van');
+    SUV_ID = await vehicleTypeIdBySlug('suv');
+
     sent.length = 0;
     setTransportForTests({
       sendMail: async (message) => {
@@ -381,9 +413,12 @@ describeWithDb('admin.dispatch.assign', () => {
     }
     await pool.query('DELETE FROM fleet_date_slots WHERE date = ?', [TOUR_DATE]);
     for (const id of created.tourIds) await pool.query('DELETE FROM tours WHERE id = ?', [id]);
-    // Before the destinations they reference.
+    // Before the places/destinations they reference.
     for (const id of created.routeIds) {
       await pool.query('DELETE FROM transfer_routes WHERE id = ?', [id]);
+    }
+    for (const id of created.placeIds) {
+      await pool.query('DELETE FROM transfer_places WHERE id = ?', [id]);
     }
     for (const id of created.destIds) {
       await pool.query('DELETE FROM destinations WHERE id = ?', [id]);
@@ -394,6 +429,7 @@ describeWithDb('admin.dispatch.assign', () => {
     created.leaveIds = [];
     created.tourIds = [];
     created.routeIds = [];
+    created.placeIds = [];
     created.destIds = [];
     created.driverIds = [];
     created.vanIds = [];
@@ -1139,8 +1175,8 @@ describeWithDb('admin.dispatch.assign', () => {
     const routeId = await makeRoute();
     // An SUV exists too, and must NOT be the one that satisfies this: the
     // booking asks for a van.
-    await makeVan({ capacity: 12, vehicleType: 'suv' });
-    const vanId = await makeVan({ capacity: 12, vehicleType: 'van' });
+    await makeVan({ capacity: 12, vehicleTypeId: SUV_ID });
+    const vanId = await makeVan({ capacity: 12, vehicleTypeId: VAN_ID });
     const driverId = await makeDriver();
     const bookingId = await makeTransferBooking({ routeId, pickupMinutes: at(8) });
 
@@ -1175,7 +1211,7 @@ describeWithDb('admin.dispatch.assign', () => {
 
   it('refuses a van of the WRONG vehicle type for a transfer', async () => {
     const routeId = await makeRoute();
-    const suvId = await makeVan({ capacity: 12, vehicleType: 'suv' });
+    const suvId = await makeVan({ capacity: 12, vehicleTypeId: SUV_ID });
     const driverId = await makeDriver();
     // `vehicle_type_requested = 'van'`, and the SUV is big enough for the
     // group — so `van_too_small` would be the wrong sentence and is not it.
@@ -1205,7 +1241,7 @@ describeWithDb('admin.dispatch.assign', () => {
     // wrong type, so the pre-fix diagnostic (`capacity < pax`) would have said
     // `van_too_small` here. The type mismatch is the true, and only, gate.
     const routeId = await makeRoute();
-    const suvId = await makeVan({ capacity: 1, vehicleType: 'suv' });
+    const suvId = await makeVan({ capacity: 1, vehicleTypeId: SUV_ID });
     const driverId = await makeDriver();
     const bookingId = await makeTransferBooking({ routeId, pickupMinutes: at(8), pax: 2 });
 
@@ -1217,7 +1253,7 @@ describeWithDb('admin.dispatch.assign', () => {
 
   it('refuses a van whose transfer window overlaps one it already holds', async () => {
     const routeId = await makeRoute();
-    const vanId = await makeVan({ capacity: 12, vehicleType: 'van' });
+    const vanId = await makeVan({ capacity: 12, vehicleTypeId: VAN_ID });
     const driverId = await makeDriver();
     // Held: [08:00, 11:00). Candidate: [10:00, 13:00).
     await makeTransferBooking({ routeId, pickupMinutes: at(8), vanId, status: 'assigned' });
@@ -1234,7 +1270,7 @@ describeWithDb('admin.dispatch.assign', () => {
     // The owner's "several jobs a day", through the real mutation. Without it
     // the test above would also pass against a whole-day exclusion.
     const routeId = await makeRoute();
-    const vanId = await makeVan({ capacity: 12, vehicleType: 'van' });
+    const vanId = await makeVan({ capacity: 12, vehicleTypeId: VAN_ID });
     const driverId = await makeDriver();
     await makeTransferBooking({ routeId, pickupMinutes: at(8), vanId, status: 'assigned' });
     const bookingId = await makeTransferBooking({ routeId, pickupMinutes: at(11) });
@@ -1253,8 +1289,8 @@ describeWithDb('admin.dispatch.assign', () => {
      * interchangeable and this pair is the proof.
      */
     const routeId = await makeRoute();
-    const vanId = await makeVan({ capacity: 12, vehicleType: 'van' });
-    const otherVanId = await makeVan({ capacity: 12, vehicleType: 'van' });
+    const vanId = await makeVan({ capacity: 12, vehicleTypeId: VAN_ID });
+    const otherVanId = await makeVan({ capacity: 12, vehicleTypeId: VAN_ID });
     const driverId = await makeDriver();
     await makeTransferBooking({
       routeId,
@@ -1282,7 +1318,7 @@ describeWithDb('admin.dispatch.assign', () => {
      * the driver.
      */
     const routeId = await makeRoute();
-    const vanId = await makeVan({ capacity: 12, vehicleType: 'van' });
+    const vanId = await makeVan({ capacity: 12, vehicleTypeId: VAN_ID });
     const driverId = await makeDriver();
     expect(DEFAULT_DRIVER_CAP).toBe(2);
     await makeTransferBooking({ routeId, pickupMinutes: at(6), driverId, status: 'assigned' });
@@ -1312,7 +1348,7 @@ describeWithDb('admin.dispatch.assign', () => {
    */
   it('says driver_unavailable, never driver_at_daily_cap, for a driver on leave who is also at cap', async () => {
     const routeId = await makeRoute();
-    const vanId = await makeVan({ capacity: 12, vehicleType: 'van' });
+    const vanId = await makeVan({ capacity: 12, vehicleTypeId: VAN_ID });
     const driverId = await makeDriver();
     expect(DEFAULT_DRIVER_CAP).toBe(2);
     await makeTransferBooking({ routeId, pickupMinutes: at(6), driverId, status: 'assigned' });
@@ -1363,7 +1399,7 @@ describeWithDb('admin.dispatch.assign', () => {
     // overlaps itself exactly, and its own job counts against its own driver,
     // so without the exclusion this is refused twice over.
     const routeId = await makeRoute();
-    const vanId = await makeVan({ capacity: 12, vehicleType: 'van' });
+    const vanId = await makeVan({ capacity: 12, vehicleTypeId: VAN_ID });
     const driverId = await makeDriver({ maxTransferJobsPerDay: 1 });
     const bookingId = await makeTransferBooking({ routeId, pickupMinutes: at(8) });
 
@@ -1384,7 +1420,7 @@ describeWithDb('admin.dispatch.assign', () => {
 
   it('changes no money when it assigns a transfer', async () => {
     const routeId = await makeRoute();
-    const vanId = await makeVan({ capacity: 12, vehicleType: 'van' });
+    const vanId = await makeVan({ capacity: 12, vehicleTypeId: VAN_ID });
     const driverId = await makeDriver();
     const bookingId = await makeTransferBooking({ routeId, pickupMinutes: at(8) });
 
@@ -1413,7 +1449,7 @@ describeWithDb('admin.dispatch.assign', () => {
     const routeId = await makeRoute();
     // Measured van: 12 seats, 10 bags. Booking: 6 guests, 3 bags. Both fit,
     // so neither half of the check fires.
-    const vanId = await makeVan({ capacity: 12, vehicleType: 'van', luggageCapacity: 10 });
+    const vanId = await makeVan({ capacity: 12, vehicleTypeId: VAN_ID, luggageCapacity: 10 });
     const driverId = await makeDriver();
     const bookingId = await makeTransferBooking({
       routeId,
@@ -1443,7 +1479,7 @@ describeWithDb('admin.dispatch.assign', () => {
    */
   it('skips the luggage check entirely when the van has no recorded luggage capacity', async () => {
     const routeId = await makeRoute();
-    const vanId = await makeVan({ capacity: 12, vehicleType: 'van' });
+    const vanId = await makeVan({ capacity: 12, vehicleTypeId: VAN_ID });
     const driverId = await makeDriver();
     const bookingId = await makeTransferBooking({
       routeId,
@@ -1464,7 +1500,7 @@ describeWithDb('admin.dispatch.assign', () => {
     const routeId = await makeRoute();
     // Right TYPE, genuinely free, and two seats short of the party — the
     // exact case `vansFreeOn`'s `minCapacity: 0` lets through.
-    const vanId = await makeVan({ capacity: 4, vehicleType: 'van' });
+    const vanId = await makeVan({ capacity: 4, vehicleTypeId: VAN_ID });
     const driverId = await makeDriver();
     const bookingId = await makeTransferBooking({ routeId, pickupMinutes: at(8), pax: 6 });
 
@@ -1490,7 +1526,7 @@ describeWithDb('admin.dispatch.assign', () => {
   it('refuses a transfer van short on stated LUGGAGE, even though the seats fit', async () => {
     const routeId = await makeRoute();
     // 12 seats for 2 guests — the seat half cannot be what refuses this.
-    const vanId = await makeVan({ capacity: 12, vehicleType: 'van', luggageCapacity: 2 });
+    const vanId = await makeVan({ capacity: 12, vehicleTypeId: VAN_ID, luggageCapacity: 2 });
     const driverId = await makeDriver();
     const bookingId = await makeTransferBooking({
       routeId,
@@ -1514,7 +1550,7 @@ describeWithDb('admin.dispatch.assign', () => {
 
   it('ASSIGNS an undersized transfer van when override and a reason came with it', async () => {
     const routeId = await makeRoute();
-    const vanId = await makeVan({ capacity: 4, vehicleType: 'van', luggageCapacity: 2 });
+    const vanId = await makeVan({ capacity: 4, vehicleTypeId: VAN_ID, luggageCapacity: 2 });
     const driverId = await makeDriver();
     const bookingId = await makeTransferBooking({
       routeId,
@@ -1577,7 +1613,7 @@ describeWithDb('admin.dispatch.assign', () => {
    */
   it('REJECTS override: true without a usable reason, at Zod', async () => {
     const routeId = await makeRoute();
-    const vanId = await makeVan({ capacity: 4, vehicleType: 'van' });
+    const vanId = await makeVan({ capacity: 4, vehicleTypeId: VAN_ID });
     const driverId = await makeDriver();
     const bookingId = await makeTransferBooking({ routeId, pickupMinutes: at(8), pax: 6 });
 
@@ -1678,7 +1714,7 @@ describeWithDb('admin.dispatch.assign', () => {
   async function undersizedTransferFixture() {
     const routeId = await makeRoute();
     // Right TYPE and genuinely free, two seats short of the party.
-    const vanId = await makeVan({ capacity: 4, vehicleType: 'van' });
+    const vanId = await makeVan({ capacity: 4, vehicleTypeId: VAN_ID });
     const driverId = await makeDriver();
     const bookingId = await makeTransferBooking({ routeId, pickupMinutes: at(8), pax: 6 });
     return { vanId, driverId, bookingId };
@@ -1779,7 +1815,7 @@ describeWithDb('admin.dispatch.assign', () => {
    */
   it('REFUSES finance an undersized-vehicle override — the gate comes first', async () => {
     const routeId = await makeRoute();
-    const vanId = await makeVan({ capacity: 4, vehicleType: 'van' });
+    const vanId = await makeVan({ capacity: 4, vehicleTypeId: VAN_ID });
     const driverId = await makeDriver();
     const bookingId = await makeTransferBooking({ routeId, pickupMinutes: at(8), pax: 6 });
 

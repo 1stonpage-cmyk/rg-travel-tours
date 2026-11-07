@@ -34,10 +34,27 @@
  * Integer centavos throughout. No float ever touches money.
  */
 import { and, eq } from 'drizzle-orm';
-import { depositCentavos, type TransferProductType, type VehicleType } from '@rg/shared';
+import { alias } from 'drizzle-orm/mysql-core';
+import { depositCentavos, type TransferProductType } from '@rg/shared';
 import { getDb, type Database, type Transaction } from '../../db/client';
-import { destinations, transferRouteVehiclePrices, transferRoutes } from '../../db/schema';
+import {
+  transferPlaces,
+  transferRouteVehiclePrices,
+  transferRoutes,
+  vehicleTypes,
+} from '../../db/schema';
 import { discountCentavosFor, type QuoteCoupon } from '../pricing';
+
+/**
+ * Two aliases onto the SAME `transfer_places` table — a route's `from_place`
+ * and `to_place` are two different rows of one table, and joining it twice
+ * unaliased is invalid SQL (`alias()` from `drizzle-orm/mysql-core`, per the
+ * design note §2's own instruction). Module-level, like `destinations` used
+ * to be imported module-level, so both queries in this file (were there a
+ * second) would share one spelling.
+ */
+const fromPlace = alias(transferPlaces, 'fromPlace');
+const toPlace = alias(transferPlaces, 'toPlace');
 
 export interface TransferQuoteInput {
   /** The catalog price for this route + vehicle type + product, in centavos. */
@@ -113,28 +130,52 @@ export interface TransferVehiclePrice {
    * `TransferWindowInput.routeDurationMinutes` exactly.
    */
   routeDurationMinutes: number;
+  /**
+   * `vehicle_types.name`, as it stood at the moment of this read (owner
+   * decision 2026-11-08) — here because `createTransferBooking()` freezes it
+   * onto the price snapshot's `vehicleTypeName` and the `vehicle_types` join
+   * already added for the is_active check (see this function's own doc
+   * comment) makes the name free to select alongside it, avoiding a second
+   * query the same way `routeDurationMinutes` above avoids one for the
+   * route.
+   */
+  vehicleTypeName: string;
 }
 
 /**
  * The catalog price for one route + vehicle type at one product, or `null`.
  *
  * `null` means every normal "we cannot quote that" case: no such route, a
- * RETIRED route, a route whose DESTINATION is retired, or a route with no price
- * row for the requested vehicle type. **None of those throws.** They are all
+ * RETIRED route, a route whose FROM or TO place is inactive, a DEACTIVATED
+ * vehicle type, or a route with no price row for the requested vehicle type.
+ * **None of those throws.** They are all
  * guest-reachable answers a router turns into a `NOT_FOUND`, not internal
  * failures that deserve a 500 — the same treatment `loadQuoteInputs`' add-on
  * sweep gives a stale add-on id.
  *
  * **Both halves of the soft delete are checked, and that is the point of the
- * join to `destinations`** (T9 review, Important finding). `transferRoutes.list`
- * filters on `transfer_routes.is_active` AND `destinations.is_active`; this
+ * joins to `transfer_places`** (T9 review, Important finding; retargeted from
+ * `destinations` to `from`/`to` PLACES by owner decision 2026-11-08 — design
+ * note §1.3 and §2 — because sellability now depends on the ROUTE'S OWN pair
+ * of places, not a single tour destination). `transferRoutes.list`
+ * filters on `transfer_routes.is_active` AND both places' `is_active`; this
  * function at first filtered only on the route's own flag, so deactivating a
- * destination on the existing destinations screen took the route off the public
+ * place on the admin places screen took the route off the public
  * list while this still quoted it — a live price for a place the business has
  * withdrawn, reachable from a stale tab or by probing small route ids. The two
  * surfaces now ask the same question, which is what lets each stand alone:
  * neither relies on the other having filtered first, and T10 turns this answer
  * into a real reservation.
+ *
+ * **Also joins `vehicle_types` and requires `is_active = true`** (owner
+ * decision 2026-11-08, design note §2 — NOT present in the original T9
+ * destination-only check). Vehicle types are now an admin-managed list, so
+ * the identical disclosure T9 fixed for destinations exists here too: without
+ * this join, an admin deactivating a vehicle type leaves its price rows
+ * quotable and bookable from a stale tab or a direct call naming its id. The
+ * money path must check the type's own `is_active` here, not only on the
+ * public route list — the two surfaces must ask the same question, exactly
+ * as the from/to place check above does.
  *
  * `productType` picks the COLUMN: `one_way_price_centavos` for a one-way trip,
  * `day_use_price_centavos` for a day-use hire. Both columns are `NOT NULL`, so
@@ -149,7 +190,7 @@ export interface TransferVehiclePrice {
  */
 export async function vehiclePriceForRouteAndType(
   routeId: number,
-  vehicleType: VehicleType,
+  vehicleTypeId: number,
   productType: TransferProductType,
   db: Database | Transaction = getDb(),
 ): Promise<TransferVehiclePrice | null> {
@@ -159,6 +200,7 @@ export async function vehiclePriceForRouteAndType(
       routeDurationMinutes: transferRoutes.estimatedDurationMinutes,
       oneWayPriceCentavos: transferRouteVehiclePrices.oneWayPriceCentavos,
       dayUsePriceCentavos: transferRouteVehiclePrices.dayUsePriceCentavos,
+      vehicleTypeName: vehicleTypes.name,
     })
     .from(transferRoutes)
     /*
@@ -171,18 +213,30 @@ export async function vehiclePriceForRouteAndType(
       transferRouteVehiclePrices,
       and(
         eq(transferRouteVehiclePrices.routeId, transferRoutes.id),
-        eq(transferRouteVehiclePrices.vehicleType, vehicleType),
+        eq(transferRouteVehiclePrices.vehicleTypeId, vehicleTypeId),
       ),
     )
-    // `transfer_routes.destination_id` is NOT NULL with a RESTRICT foreign key,
-    // so this join drops nothing a route could have — it exists only to reach
-    // `destinations.is_active`, the second half of the soft delete (see above).
-    .innerJoin(destinations, eq(destinations.id, transferRoutes.destinationId))
+    /*
+     * The vehicle type's own soft-delete half — new, see the doc comment
+     * above. An INNER join: a deactivated type must answer this function's
+     * `null` branch exactly as a retired route or place does, not a row with
+     * a price nobody may sell any more.
+     */
+    .innerJoin(vehicleTypes, eq(vehicleTypes.id, transferRouteVehiclePrices.vehicleTypeId))
+    // `transfer_routes.from_place_id`/`to_place_id` are both NOT NULL with a
+    // RESTRICT foreign key, so these joins drop nothing a route could have —
+    // they exist only to reach each place's `is_active`, the other half of
+    // the soft delete (see above). Two ALIASED joins, never two unaliased
+    // joins to the same table.
+    .innerJoin(fromPlace, eq(fromPlace.id, transferRoutes.fromPlaceId))
+    .innerJoin(toPlace, eq(toPlace.id, transferRoutes.toPlaceId))
     .where(
       and(
         eq(transferRoutes.id, routeId),
         eq(transferRoutes.isActive, true),
-        eq(destinations.isActive, true),
+        eq(fromPlace.isActive, true),
+        eq(toPlace.isActive, true),
+        eq(vehicleTypes.isActive, true),
       ),
     )
     .limit(1);
@@ -194,5 +248,6 @@ export async function vehiclePriceForRouteAndType(
       productType === 'transfer_one_way' ? row.oneWayPriceCentavos : row.dayUsePriceCentavos,
     freeCancelHours: row.freeCancelHours,
     routeDurationMinutes: row.routeDurationMinutes,
+    vehicleTypeName: row.vehicleTypeName,
   };
 }

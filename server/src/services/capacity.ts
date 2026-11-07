@@ -125,6 +125,7 @@ import {
   leftoverTransferCapacity,
   readDefaultDriverTransferCap,
   sellableVehiclesByType,
+  sumLeftoverVehicles,
   transferPeaksByType,
 } from './transfers/capacity';
 
@@ -366,16 +367,23 @@ export async function assessCapacity(
   /*
    * Gate 2b — Architecture §2's condition (3), with this candidate's `+ 1`:
    *
-   *   toursToday + 1 <= (vanSellable - vanPeak) + (suvSellable - suvPeak)
+   *   toursToday + 1 <= sum over every vehicle type id of (sellable[id] - peak[id])
    *
-   * A candidate TOUR changes neither type's transfer peak (conditions (1) and
-   * (2) are untouched by adding a tour), so the peaks read here are the current
-   * ones. A tour may be driven in either type, which is why the two leftovers
-   * are summed rather than asked separately.
+   * A candidate TOUR changes no type's transfer peak (conditions (1) and (2)
+   * are untouched by adding a tour), so the peaks read here are the current
+   * ones. A tour may be driven in ANY type, which is why every type's leftover
+   * is summed rather than asked separately — see {@link sumLeftoverVehicles}
+   * for the union this sum is taken over.
    */
   const sellable = await sellableVehiclesByType(tx);
   const peaks = await transferPeaksByType(tx, date);
-  const leftoverVehicles = sellable.van - peaks.van + (sellable.suv - peaks.suv);
+  /*
+   * Summed over however many vehicle types exist via `sumLeftoverVehicles`
+   * (owner decision 2026-11-08), not two named `van`/`suv` branches — the
+   * SAME helper `assessTransferCapacity`'s own condition (3) uses, so the
+   * two capacity gates can never disagree about this arithmetic.
+   */
+  const leftoverVehicles = sumLeftoverVehicles(sellable, peaks);
   if (toursToday + 1 > leftoverVehicles) return { ok: false, reason: 'no_van_available' };
 
   /*
