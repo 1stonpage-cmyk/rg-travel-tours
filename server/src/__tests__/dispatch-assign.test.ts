@@ -21,11 +21,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { ZodError } from 'zod';
-import {
-  OVERRIDE_REASON_MIN_LENGTH,
-  type BookingStatus,
-  type PriceSnapshot,
-} from '@rg/shared';
+import { OVERRIDE_REASON_MIN_LENGTH, type BookingStatus, type PriceSnapshot } from '@rg/shared';
 import { appRouter } from '../routers/_app';
 import { assignVanAndDriver } from '../services/dispatch/assign';
 import { getDb, getPool } from '../db/client';
@@ -163,7 +159,9 @@ async function makeDriver(opts: { maxTransferJobsPerDay?: number } = {}) {
 async function makePlace() {
   const db = getDb();
   const slug = `__dispassign__${unique()}`;
-  const [place] = await db.insert(transferPlaces).values({ name: slug, nameKey: slug.toLowerCase() });
+  const [place] = await db
+    .insert(transferPlaces)
+    .values({ name: slug, nameKey: slug.toLowerCase() });
   created.placeIds.push(place.insertId);
   return place.insertId;
 }

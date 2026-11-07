@@ -165,7 +165,9 @@ async function makeDriver(
 async function makePlace() {
   const db = getDb();
   const slug = `__avail__${unique()}`;
-  const [place] = await db.insert(transferPlaces).values({ name: slug, nameKey: slug.toLowerCase() });
+  const [place] = await db
+    .insert(transferPlaces)
+    .values({ name: slug, nameKey: slug.toLowerCase() });
   created.placeIds.push(place.insertId);
   return place.insertId;
 }
@@ -587,7 +589,10 @@ describeWithDb('vans', () => {
     await makeTransferBooking({ routeId, pickupMinutes: MORNING_PICKUP, vanId });
 
     const free = await getDb().transaction((tx) =>
-      vansFreeOn(tx, DATE, 0, { vehicleTypeId: VAN_ID, transferWindow: window(at(10, 30), at(12)) }),
+      vansFreeOn(tx, DATE, 0, {
+        vehicleTypeId: VAN_ID,
+        transferWindow: window(at(10, 30), at(12)),
+      }),
     );
     expect(free.map((v) => v.id)).not.toContain(vanId);
   });
@@ -619,7 +624,9 @@ describeWithDb('vans', () => {
     const vanId = await makeVan({ vehicleTypeId: VAN_ID });
     const suvId = await makeVan({ vehicleTypeId: SUV_ID });
 
-    const free = await getDb().transaction((tx) => vansFreeOn(tx, DATE, 0, { vehicleTypeId: SUV_ID }));
+    const free = await getDb().transaction((tx) =>
+      vansFreeOn(tx, DATE, 0, { vehicleTypeId: SUV_ID }),
+    );
     const ids = free.map((v) => v.id);
     // Both vans free — `vehicleTypeId: SUV_ID` did NOT narrow the pool to SUVs.
     expect(ids).toContain(vanId);

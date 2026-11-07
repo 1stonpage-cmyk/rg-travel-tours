@@ -24,7 +24,16 @@ import {
 } from '@rg/shared';
 import { appRouter } from '../routers/_app';
 import { getDb, getPool } from '../db/client';
-import { bookings, destinations, drivers, payments, tours, users, vans, vehicleTypes } from '../db/schema';
+import {
+  bookings,
+  destinations,
+  drivers,
+  payments,
+  tours,
+  users,
+  vans,
+  vehicleTypes,
+} from '../db/schema';
 import { generateBookingRef } from '../services/booking-ref';
 import { dashboardAlerts } from '../services/dispatch/alerts';
 import { staffContext } from './helpers/ctx';
