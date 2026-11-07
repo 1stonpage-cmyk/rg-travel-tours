@@ -1,6 +1,11 @@
 /**
- * Shared discriminators for the van/SUV transfer product (owner decision
- * 2026-10-28/31), plus the public QUOTE wire shapes (Task T9).
+ * Shared discriminators for the transfer product, plus the public QUOTE wire
+ * shapes (Task T9). Vehicle types used to be a hard-coded `van`/`suv` enum
+ * (owner decision 2026-10-28/31); as of owner decision 2026-11-08, vehicle
+ * types are an admin-managed list (`vehicle_types` table), so every surface
+ * that used to read `VehicleType`/`VEHICLE_TYPES` now identifies a vehicle
+ * type by its numeric id (`vehicleTypeId`). See
+ * `docs/superpowers/plans/2026-11-08-flexible-routes.md`.
  *
  * The constants are plain data with no database anywhere near them, so every
  * surface — schema, server, client — reads the same vocabulary. Task T9 added
@@ -10,21 +15,30 @@
  * and that is forced rather than chosen** (Task T11). It has to reuse
  * `PAY_MODES`, `civilDateSchema` and `leadSchema`, which live in `./booking`
  * and `./checkout` — and `./booking` imports THIS file (for
- * `TRANSFER_PRODUCT_TYPES` / `VEHICLE_TYPES`), so importing either of them
- * from here is a module cycle. Measured, not theorised: the whole suite failed
- * at import time with `z.enum(undefined)` thrown from inside `checkout.ts` —
+ * `TRANSFER_PRODUCT_TYPES`), so importing either of them from here is a
+ * module cycle. Measured, not theorised: the whole suite failed at import
+ * time with `z.enum(undefined)` thrown from inside `checkout.ts` —
  * `./booking` was already mid-load when this file imported `./checkout`, so
  * **`checkout.ts` got a half-initialised `booking.ts`** and `PAY_MODES` was
  * still `undefined`. So the hold input sits DOWNSTREAM of all three, in a
  * module nothing else imports. Keep adding guest-form fields there rather than
  * widening
  * `quoteTransferInput` below: a quote names a product, a hold describes a
- * journey. Anything admin-shaped belongs in `transfers-admin.ts`.
+ * journey (which is also why `direction` — new, owner decision 2026-11-08 —
+ * lives on the hold input in `./transfers-checkout.ts`, never here). Anything
+ * admin-shaped belongs in `transfers-admin.ts`.
  */
 import { z } from 'zod';
 
-export const VEHICLE_TYPES = ['van', 'suv'] as const;
-export type VehicleType = (typeof VEHICLE_TYPES)[number];
+/**
+ * Which way a reversible route was travelled (owner decision 2026-11-08).
+ * `'forward'` is `route.fromPlaceId → route.toPlaceId` as the route is
+ * stored; `'reverse'` is the same route, same price, same duration, the
+ * other way. Lives on the booking's `booking_transfer_details.direction`,
+ * never on `quoteTransferInput` (a quote has no journey to describe yet).
+ */
+export const TRANSFER_DIRECTIONS = ['forward', 'reverse'] as const;
+export type TransferDirection = (typeof TRANSFER_DIRECTIONS)[number];
 
 /**
  * What a booking IS — the `bookings.product_type` discriminator.
@@ -86,32 +100,59 @@ export interface TransferVehiclePriceRow {
   dayUsePriceCentavos: number;
 }
 
+/** A pickup/drop-off place, as a guest needs to see it (Task T9/1C). */
+export interface TransferPlacePublicRow {
+  id: number;
+  name: string;
+  isAirport: boolean;
+}
+
+/**
+ * One OFFERED vehicle type on one route — present only when a price row
+ * exists AND the fleet has at least one sellable vehicle of that type (owner
+ * decision 2026-11-08, decision 4's second half; design note §4). There is
+ * no `null` placeholder for an unoffered type here, unlike the old fixed
+ * `Record<VehicleType, ... | null>` shape: a type simply isn't in this array
+ * if it isn't offered, because the SET of possible types is no longer fixed
+ * at two and a guest's UI renders over however many entries exist.
+ */
+export interface TransferRoutePublicVehiclePrice extends TransferVehiclePriceRow {
+  vehicleTypeId: number;
+  vehicleTypeName: string;
+  slug: string;
+}
+
 /**
  * One row of the PUBLIC transfer-route list (Task T9) — what a guest choosing
  * a route is allowed to see.
  *
  * Deliberately narrower than `TransferRouteAdminRow`: `isActive` is absent
  * because the list only ever contains active routes (an inactive one is not
- * "shown as off", it is not shown), and `destinationId` / `sortOrder` are
- * absent because they are internal ordering and join keys a guest has no use
- * for. The destination's NAME is denormalised on, exactly as the admin row
- * does it, because the picker has to show a place name beside every route and a
- * lookup per row would be an N+1.
+ * "shown as off", it is not shown), and `sortOrder` is absent because it is
+ * an internal ordering key a guest has no use for.
  *
- * `prices` is `null` for a vehicle type with no stored row — never `0`. A
- * fabricated price is the one answer this project refuses to give (see
- * `TransferRouteVehiclePriceRow`'s own note); a null is a vehicle a surface
- * renders as unavailable rather than free.
+ * **Replaces the old single `destinationName` (owner decision 2026-11-08):**
+ * a route is now FROM one place TO another, and `reverseEnabled` tells the
+ * guest-facing picker whether to also offer the trip the other way (same
+ * price, same duration — see `shared/src/transfers.ts`'s `TransferDirection`).
+ *
+ * `vehiclePrices` is an ARRAY of only the OFFERED types (see
+ * `TransferRoutePublicVehiclePrice`'s own note) — never a fixed-shape record
+ * with nulls. A fabricated price is the one answer this project refuses to
+ * give; an unlisted type is a vehicle a surface renders as unavailable rather
+ * than free.
  */
 export interface TransferRoutePublicRow {
   id: number;
-  destinationName: string;
+  fromPlace: TransferPlacePublicRow;
+  toPlace: TransferPlacePublicRow;
+  reverseEnabled: boolean;
   slug: string;
   estimatedDurationMinutes: number;
   freeCancelHours: number;
   inclusionsText: string | null;
   exclusionsText: string | null;
-  prices: Record<VehicleType, TransferVehiclePriceRow | null>;
+  vehiclePrices: TransferRoutePublicVehiclePrice[];
 }
 
 /**
@@ -136,7 +177,7 @@ export interface TransferRoutePublicRow {
 export const quoteTransferInput = z
   .object({
     routeId: z.number().int().positive(),
-    vehicleType: z.enum(VEHICLE_TYPES),
+    vehicleTypeId: z.number().int().positive(),
     productType: z.enum(TRANSFER_PRODUCT_TYPES),
     /*
      * The ONE field on this input a guest types, and so the one whose bound a

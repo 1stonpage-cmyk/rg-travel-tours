@@ -872,6 +872,17 @@ export interface SeedVan {
   franchiseNo: string | null;
   franchiseExpiryInDays: number | null;
   repairNotes: string | null;
+  /**
+   * `vehicle_types.slug`, resolved to an id by `upsertFleet` — never a
+   * literal id (owner decision 2026-11-08: vehicle types are an
+   * admin-managed list, not an enum; see
+   * docs/superpowers/plans/2026-11-08-flexible-routes.md). All four of
+   * these pre-existing tours-era seed vans stay `'van'`, preserving exactly
+   * the behaviour the old `vehicle_type` enum's `.default('van')` gave them
+   * — task 1G is what adds real type diversity (an SUV, an MPV) to the
+   * app-only demo fleet.
+   */
+  vehicleTypeSlug: 'van' | 'suv';
 }
 
 export const SEED_VANS: SeedVan[] = [
@@ -887,6 +898,7 @@ export const SEED_VANS: SeedVan[] = [
     franchiseNo: 'FR-SEED-0001',
     franchiseExpiryInDays: 400,
     repairNotes: null,
+    vehicleTypeSlug: 'van',
   },
   {
     plate: 'SEED-002',
@@ -900,6 +912,7 @@ export const SEED_VANS: SeedVan[] = [
     // Inside PAPERS_EXPIRING_DAYS, so the "papers expiring" card has a row.
     franchiseExpiryInDays: 22,
     repairNotes: null,
+    vehicleTypeSlug: 'van',
   },
   {
     plate: 'SEED-003',
@@ -912,6 +925,7 @@ export const SEED_VANS: SeedVan[] = [
     franchiseNo: 'FR-SEED-0003',
     franchiseExpiryInDays: 500,
     repairNotes: null,
+    vehicleTypeSlug: 'van',
   },
   {
     plate: 'SEED-004',
@@ -926,6 +940,7 @@ export const SEED_VANS: SeedVan[] = [
     franchiseNo: 'FR-SEED-0004',
     franchiseExpiryInDays: 365,
     repairNotes: 'Clutch slipping under load. With the shop since Monday.',
+    vehicleTypeSlug: 'van',
   },
 ];
 

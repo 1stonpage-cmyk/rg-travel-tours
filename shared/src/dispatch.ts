@@ -17,7 +17,6 @@ import { z } from 'zod';
 import type { BookingStatus } from './booking';
 import type { TripProgress } from './driver';
 import { civilDateSchema, phPhoneSchema } from './checkout';
-import { VEHICLE_TYPES, type VehicleType } from './transfers';
 
 export const vanInputSchema = z
   .object({
@@ -33,16 +32,14 @@ export const vanInputSchema = z
      */
     luggageCapacity: z.number().int().min(0).max(200).nullable(),
     /**
-     * Required, with no Zod default, even though the database column has
-     * one (owner decision 2026-10-28): the admin must explicitly pick van
-     * or SUV for every new vehicle rather than silently defaulting.
+     * Required, with no Zod default and no FK-level default either (owner
+     * decision 2026-10-28, reaffirmed 2026-11-08 when vehicle types became
+     * an admin-managed list rather than an enum): the admin must explicitly
+     * pick a vehicle type for every new vehicle rather than silently
+     * defaulting — there is no longer an admin-meaningful "default type" to
+     * fall back to.
      */
-    /**
-     * Required, with no Zod default, even though the database column has
-     * one (owner decision 2026-10-28): the admin must explicitly pick van
-     * or SUV for every new vehicle rather than silently defaulting.
-     */
-    vehicleType: z.enum(VEHICLE_TYPES),
+    vehicleTypeId: z.number().int().positive(),
     odometer: z.number().int().min(0).max(5_000_000).nullable(),
     lastService: civilDateSchema.nullable(),
     nextService: civilDateSchema.nullable(),
@@ -70,7 +67,8 @@ export interface VanRow {
   capacity: number;
   /** Bags the luggage hold can take; NULL = not recorded for this vehicle. */
   luggageCapacity: number | null;
-  vehicleType: VehicleType;
+  vehicleTypeId: number;
+  vehicleTypeName: string;
   status: string;
   odometer: number | null;
   lastService: string | null;

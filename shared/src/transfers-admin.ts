@@ -1,6 +1,8 @@
 /**
  * Admin transfer-route editing — the shapes `admin.transferRoutes.*` accepts
  * and returns (transfers-launch plan, Task T3; Architecture §1 and §5).
+ * Restructured 2026-11-08 (owner decision: flexible places/routes/vehicle
+ * types — see `docs/superpowers/plans/2026-11-08-flexible-routes.md`).
  *
  * **This file describes money.** `oneWayPriceCentavos` and
  * `dayUsePriceCentavos` are what a guest is charged for a private transfer —
@@ -19,16 +21,25 @@
  *    a route.
  *  - `createdAt` / `updatedAt` — Drizzle's own `$defaultFn` / `$onUpdateFn`.
  *
- * **`prices` is an OBJECT keyed by vehicle type, not an array.** `{ van: …,
- * suv: … }` makes "a duplicate vehicle type" and "a missing vehicle type"
- * impossible to express rather than something a `.refine()` has to catch after
- * the fact — and a save that states one vehicle type's price always states the
- * other's too, which is the shape that keeps `services/transfers/upsert-route
- * .ts`'s delete-then-reinsert from ever being handed half a price card.
+ * **`prices` is keyed by vehicle-type id, as a SPARSE but COMPLETE card
+ * (owner decision 2026-11-08, decision 4 — reversing the old "exactly two
+ * rows" rule).** A key absent from the posted object means "not offered on
+ * this route" (zero price rows for that type), not "leave whatever was
+ * there" — there is no partial-patch form of `prices`: `update`'s patch
+ * either omits the `prices` key entirely (keep the stored card unchanged) or
+ * sends the WHOLE new card. The compile-time link `VEHICLE_TYPES.map(...)`
+ * used to provide (a third enum member became a type error here until this
+ * schema gained the key) is gone now that vehicle types are a runtime list,
+ * not a compile-time union — a runtime check and a dedicated test
+ * (`admin-transfer-routes.test.ts`, "a patch naming one type's price does
+ * not remove any other type's existing row") replace it. JSON object keys
+ * are always strings, so the wire shape is `Record<string, PriceInput |
+ * null>` keyed by the STRINGIFIED `vehicleTypeId`; the router is responsible
+ * for converting those keys back to numbers before calling the upsert
+ * service.
  */
 import { z } from 'zod';
 import { MAX_CENTAVOS } from './tours-admin';
-import type { VehicleType } from './transfers';
 
 /**
  * One transfer price, as this project stores money: integer centavos.
@@ -53,19 +64,16 @@ export const transferRouteVehiclePriceInputSchema = z
 export type TransferRouteVehiclePriceInput = z.infer<typeof transferRouteVehiclePriceInputSchema>;
 
 /**
- * A route's whole price card: both vehicle types, both products.
- *
- * Keyed rather than listed — see this file's header. The keys are spelled out
- * instead of built from `VEHICLE_TYPES` so that adding a third vehicle type to
- * that constant is a COMPILE error here and in the upsert service, rather than
- * a silently unpriced vehicle.
+ * A route's whole price card: every OFFERED vehicle type's one-way and
+ * day-use price, keyed by the stringified `vehicleTypeId`. A key absent from
+ * this object is "not offered" — see this file's header for the completeness
+ * contract a present `prices` object must satisfy. The key pattern refuses a
+ * non-numeric key before it ever reaches a database lookup.
  */
-export const transferRoutePricesInputSchema = z
-  .object({
-    van: transferRouteVehiclePriceInputSchema,
-    suv: transferRouteVehiclePriceInputSchema,
-  })
-  .strict();
+export const transferRoutePricesInputSchema = z.record(
+  z.string().regex(/^\d+$/, 'Vehicle type keys must be numeric ids.'),
+  transferRouteVehiclePriceInputSchema.nullable(),
+);
 export type TransferRoutePricesInput = z.infer<typeof transferRoutePricesInputSchema>;
 
 /** `transfer_routes.id`, and the id of a route being edited. */
@@ -128,16 +136,17 @@ export const transferRouteSlugSchema = z
   );
 
 /**
- * `admin.transferRoutes.create` — the whole route plus its whole price card.
- *
- * `prices` is REQUIRED, with no default: a route with no prices is one no
- * guest can book, and the wrong reading of an omitted price card ("leave them
- * alone" on a create, where there is nothing to leave alone) is the same
- * hazard `tours-admin.ts` records for an omitted `priceTiers`.
+ * The route's fields, unrefined — the base both `create` and the `update`
+ * patch are built from. Kept separate from `transferRouteCreateInputSchema`
+ * because `.refine()` turns a `ZodObject` into a `ZodEffects`, which has no
+ * `.partial()`; the patch needs the plain object to shallow-partial.
  */
-export const transferRouteCreateInputSchema = z
+const transferRouteFieldsSchema = z
   .object({
-    destinationId: z.number().int().positive(),
+    fromPlaceId: z.number().int().positive(),
+    toPlaceId: z.number().int().positive(),
+    /** Same route, same prices, same duration, the other way too. Owner decision 2026-11-08. */
+    reverseEnabled: z.boolean(),
     slug: transferRouteSlugSchema,
     /**
      * Where this route sorts among its siblings, lowest first — mirrors
@@ -156,30 +165,58 @@ export const transferRouteCreateInputSchema = z
     prices: transferRoutePricesInputSchema,
   })
   .strict();
+
+/**
+ * `admin.transferRoutes.create` — the whole route plus its whole price card.
+ *
+ * `prices` is REQUIRED, with no default: a route with no prices is one no
+ * guest can book, and the wrong reading of an omitted price card ("leave them
+ * alone" on a create, where there is nothing to leave alone) is the same
+ * hazard `tours-admin.ts` records for an omitted `priceTiers`.
+ *
+ * `fromPlaceId !== toPlaceId` is enforced here (both ids are always present
+ * on a create). The identical check for `update` cannot live in a schema —
+ * a patch may name only one of the two ids, and knowing whether it collides
+ * with the OTHER one requires the stored route — so it is enforced in
+ * `upsertTransferRoute()` after merging the patch over the stored row.
+ */
+export const transferRouteCreateInputSchema = transferRouteFieldsSchema.refine(
+  (input) => input.fromPlaceId !== input.toPlaceId,
+  { message: 'A route cannot start and end at the same place.', path: ['toPlaceId'] },
+);
 export type TransferRouteCreateInput = z.infer<typeof transferRouteCreateInputSchema>;
 
 /**
- * `transferRouteCreateInputSchema.partial()`, refined to require at least one
+ * `transferRouteFieldsSchema.partial()`, refined to require at least one
  * key — the same shape, and the same message, as `vanPatchSchema` in
- * `server/src/routers/admin/vans.ts`.
+ * `server/src/routers/admin/vans.ts`. Also refuses a patch that names BOTH
+ * ids and makes them equal — the one self-reference case a schema CAN catch
+ * without reading the stored row.
  *
  * `.partial()` is SHALLOW, which is load-bearing rather than incidental:
- * `prices` is either absent entirely or a complete price card for both vehicle
- * types. There is no way to post half of one, so the server never has to guess
- * what the unstated half was — and an absent `prices` means "do not touch the
- * price rows", which the router implements by merging the patch over the
- * STORED prices before handing a complete card to the upsert (see
+ * `prices` is either absent entirely or a complete price card. There is no
+ * way to post half of one, so the server never has to guess what the
+ * unstated half was — and an absent `prices` means "do not touch the price
+ * rows", which the router implements by merging the patch over the STORED
+ * prices before handing a complete card to the upsert (see
  * `mergeTransferRoutePatch`).
  *
  * `.strict()` on the base object carries through `.partial()` (proven for
  * `vanInputSchema` by `admin-vans.test.ts`), so `isActive` cannot be smuggled
  * through the `update` door instead of through `setActive`.
  */
-export const transferRoutePatchSchema = transferRouteCreateInputSchema
+export const transferRoutePatchSchema = transferRouteFieldsSchema
   .partial()
   .refine((patch) => Object.keys(patch).length > 0, {
     message: 'Provide at least one field to update.',
-  });
+  })
+  .refine(
+    (patch) =>
+      patch.fromPlaceId === undefined ||
+      patch.toPlaceId === undefined ||
+      patch.fromPlaceId !== patch.toPlaceId,
+    { message: 'A route cannot start and end at the same place.', path: ['toPlaceId'] },
+  );
 export type TransferRoutePatch = z.infer<typeof transferRoutePatchSchema>;
 
 /** `admin.transferRoutes.update` — which route, and what changed about it. */
@@ -203,27 +240,38 @@ export type TransferRouteActiveInput = z.infer<typeof transferRouteActiveInputSc
 /**
  * One vehicle type's stored prices, as `admin.transferRoutes.list` returns
  * them — or `null` when `transfer_route_vehicle_prices` holds no row for that
- * vehicle type on that route.
- *
- * **Nullable on purpose, and it is a money decision.** The upsert always
- * writes both rows, so a null here means something wrote this route without
- * going through it (a hand-written INSERT, a half-applied migration). The
- * honest answers are "missing" or a 500; reporting `0` would be a fabricated
- * price, and this project's rule is that a figure nobody entered is shown as
- * absent, never invented (the same treatment the pending DOT/DTI/BIR permit
- * numbers get). The admin screen renders the gap; `update` refuses to merge
- * over it (see `mergeTransferRoutePatch`'s caller).
+ * vehicle type on that route (owner decision 2026-11-08: `null` here now
+ * means "not offered on this route", a legitimate and common state, not an
+ * anomaly — see `TransferRoutePricesInput`'s header for the completeness
+ * contract this mirrors).
  */
 export type TransferRouteVehiclePriceRow = TransferRouteVehiclePriceInput;
 
+/** One active vehicle type's price row on the admin list — `price: null` means "not offered". */
+export interface TransferRouteAdminVehiclePrice {
+  vehicleTypeId: number;
+  vehicleTypeName: string;
+  slug: string;
+  price: TransferRouteVehiclePriceRow | null;
+}
+
+/** One pickup/drop-off place, as the admin route list/form needs it. */
+export interface TransferPlaceAdminRow {
+  id: number;
+  name: string;
+  isAirport: boolean;
+  isActive: boolean;
+}
+
 /**
- * One row of `admin.transferRoutes.list` — every editable field plus the
- * destination's NAME.
+ * One row of `admin.transferRoutes.list` — every editable field plus both
+ * places' names (owner decision 2026-11-08, replacing the single
+ * `destinationName`/`destinationIsActive` pair).
  *
- * The name is denormalised onto the row the same way `TourAdminListItem`
- * carries `destination: { id, name }`: the list screen has to show a place
- * name beside every route, and a second lookup per row to get it would be an
- * N+1 against a table the list already joins.
+ * The places are denormalised onto the row the same way `TourAdminListItem`
+ * carries `destination: { id, name }`: the list screen has to show both place
+ * names beside every route, and a second lookup per row to get them would be
+ * an N+1 against a table the list already joins.
  *
  * `isActive` is here even though no input can set it — the admin list is the
  * only place a retired route is visible, and therefore the only place it can
@@ -231,18 +279,18 @@ export type TransferRouteVehiclePriceRow = TransferRouteVehiclePriceInput;
  */
 export interface TransferRouteAdminRow {
   id: number;
-  destinationId: number;
-  destinationName: string;
+  fromPlace: TransferPlaceAdminRow;
+  toPlace: TransferPlaceAdminRow;
   /**
-   * `destinations.is_active` for this route's destination — denormalised
-   * alongside `destinationName` for the same reason: the list screen needs to
-   * flag "this route's destination is retired, so the route is not sellable
-   * even though it shows Active here" without a second lookup per row.
-   * Independent of this row's own `isActive` — a route can be active while
-   * its destination is not, which is exactly the case this field exists to
-   * surface (owner decision 2026-11-06 #1).
+   * Sellability depends on BOTH places being active, not a single
+   * destination (owner decision 2026-11-08, retargeting the 2026-11-06 rule
+   * from `destinations` to `transfer_places`) — denormalised onto each
+   * place row above so the list screen can flag "this route's from/to place
+   * is retired, so the route is not sellable even though it shows Active
+   * here" without a second lookup per row. Independent of this row's own
+   * `isActive`.
    */
-  destinationIsActive: boolean;
+  reverseEnabled: boolean;
   slug: string;
   isActive: boolean;
   sortOrder: number;
@@ -250,6 +298,6 @@ export interface TransferRouteAdminRow {
   freeCancelHours: number;
   inclusionsText: string | null;
   exclusionsText: string | null;
-  /** Keyed by vehicle type, mirroring the input. `null` means no stored row. */
-  prices: Record<VehicleType, TransferRouteVehiclePriceRow | null>;
+  /** Every ACTIVE vehicle type, in sort order. `price: null` means "not offered". */
+  prices: TransferRouteAdminVehiclePrice[];
 }

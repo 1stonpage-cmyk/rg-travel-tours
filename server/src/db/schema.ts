@@ -35,7 +35,7 @@ import {
   DISCOUNT_TYPES,
   PAY_MODES,
   PRODUCT_TYPES,
-  VEHICLE_TYPES,
+  TRANSFER_DIRECTIONS,
   type BookingPriceSnapshot,
 } from '@rg/shared';
 
@@ -210,26 +210,112 @@ export const tourBlockedDates = mysqlTable(
 );
 
 /**
- * A private-transfer route, anchored on an existing destination — the owner's
- * routes ARE destinations (Moalboal, Oslob, etc.), so this table does not
- * duplicate place names. One route per destination (UNIQUE on
- * `destination_id`). Owner decision 2026-10-28/31; transfers-launch plan,
- * Architecture §1.
+ * An admin-managed vehicle type (Van, SUV, MPV, ...) — replaces the
+ * `van`/`suv` enum that used to be hard-coded everywhere a vehicle type was
+ * named (owner decision 2026-11-08, superseding the 2026-10-31 plan's fixed
+ * two-member enum). See
+ * `docs/superpowers/plans/2026-11-08-flexible-routes.md` §1.1.
  *
- * The UNIQUE holds for an INACTIVE route too, deliberately: a retired route
- * is still the record of that destination's transfer product, and a second
- * row for the same place would make "which route is Moalboal" a question with
- * two answers. A route comes back through `setActive(true)`, never through a
+ * `defaultSeats`/`defaultLuggage` are PREFILL ONLY for the admin "add van"
+ * form — a van's own `vans.capacity`/`luggage_capacity` stay authoritative
+ * for every capacity and dispatch decision. Both are nullable because the
+ * two backfilled rows (`van`, `suv` — migration 0023) have no single honest
+ * default to invent; existing vans already carry their own real numbers.
+ */
+export const vehicleTypes = mysqlTable(
+  'vehicle_types',
+  {
+    id: int('id').autoincrement().primaryKey(),
+    name: varchar('name', { length: 80 }).notNull(),
+    slug: varchar('slug', { length: 40 }).notNull().unique(),
+    defaultSeats: int('default_seats'),
+    defaultLuggage: int('default_luggage'),
+    isActive: boolean('is_active').notNull().default(true),
+    sortOrder: int('sort_order').notNull().default(0),
+    createdAt: datetime('created_at', { mode: 'date' })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: datetime('updated_at', { mode: 'date' })
+      .notNull()
+      .$defaultFn(() => new Date())
+      .$onUpdateFn(() => new Date()),
+  },
+  (t) => [index('vehicle_types_active_idx').on(t.isActive, t.sortOrder)],
+);
+
+/**
+ * An admin-managed pickup/drop-off place — airports, ports and destinations a
+ * transfer route can run between (owner decision 2026-11-08, superseding the
+ * 2026-10-31 plan's "a route is anchored on an existing destination" design).
+ * See the design note §1.2.
+ *
+ * **`nameKey` is an explicit, service-written normalized column, not a
+ * reliance on column collation.** `upsertTransferPlace()` (the one writer)
+ * computes `name.trim().toLowerCase()` and the UNIQUE index on THIS column is
+ * what enforces "unique case-insensitively after trimming" — the same
+ * lesson BUG-107/BUG-108 already taught this codebase about `coupons.code`
+ * and `bookings.ref`: normalize explicitly, never lean on a column's default
+ * collation to do it silently.
+ *
+ * **`destinationId` is a nullable, informational-only cross-link.** It is
+ * nullable because "Mactan-Cebu International Airport" and "Hagnaya Port"
+ * have no matching row in `destinations` (that table is tour destinations).
+ * It is never consulted by sellability, pricing, or capacity — a place's own
+ * `isActive` is what gates the routes built on it. Adding a place must never
+ * create a public page; nothing in this schema, the SEO resolver, or the
+ * sitemap reads this table for routing, so there is no page to create.
+ */
+export const transferPlaces = mysqlTable(
+  'transfer_places',
+  {
+    id: int('id').autoincrement().primaryKey(),
+    name: varchar('name', { length: 120 }).notNull(),
+    nameKey: varchar('name_key', { length: 160 }).notNull().unique(),
+    isAirport: boolean('is_airport').notNull().default(false),
+    isActive: boolean('is_active').notNull().default(true),
+    sortOrder: int('sort_order').notNull().default(0),
+    destinationId: int('destination_id').references(() => destinations.id),
+    createdAt: datetime('created_at', { mode: 'date' })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: datetime('updated_at', { mode: 'date' })
+      .notNull()
+      .$defaultFn(() => new Date())
+      .$onUpdateFn(() => new Date()),
+  },
+  (t) => [index('transfer_places_active_idx').on(t.isActive, t.sortOrder)],
+);
+
+/**
+ * A private-transfer route between two admin-managed places (owner decision
+ * 2026-11-08, superseding the 2026-10-31 plan's "one route per destination"
+ * design — see the design note §1.3). `fromPlaceId`/`toPlaceId` replace the
+ * old single `destinationId`; `reverseEnabled` (default ON) is new: the same
+ * route, same prices, same duration, bookable the other way too unless an
+ * admin turns it off.
+ *
+ * **Sellability now depends on BOTH places, not a destination** (the
+ * 2026-11-06 "destination inactive hides the route" rule is retargeted here,
+ * not duplicated — see `services/transfers/pricing.ts`). The UNIQUE on
+ * `(from_place_id, to_place_id)` holds for an INACTIVE route too,
+ * deliberately, mirroring the old `destination_id` UNIQUE's own reasoning: a
+ * retired route is still the record of that pair's transfer product, and a
+ * second row for the same pair would make "which route is this" a question
+ * with two answers. A route comes back through `setActive(true)`, never a
  * second create (CLAUDE.md, "Soft deletes").
  */
 export const transferRoutes = mysqlTable(
   'transfer_routes',
   {
     id: int('id').autoincrement().primaryKey(),
-    destinationId: int('destination_id')
+    fromPlaceId: int('from_place_id')
       .notNull()
-      .unique()
-      .references(() => destinations.id),
+      .references(() => transferPlaces.id),
+    toPlaceId: int('to_place_id')
+      .notNull()
+      .references(() => transferPlaces.id),
+    /** Same route, same prices, same duration, the other way too. Owner decision 2026-11-08. */
+    reverseEnabled: boolean('reverse_enabled').notNull().default(true),
     slug: varchar('slug', { length: 80 }).notNull().unique(),
     isActive: boolean('is_active').notNull().default(true),
     sortOrder: int('sort_order').notNull().default(0),
@@ -257,13 +343,20 @@ export const transferRoutes = mysqlTable(
       .$defaultFn(() => new Date())
       .$onUpdateFn(() => new Date()),
   },
-  (t) => [index('transfer_routes_active_idx').on(t.isActive, t.sortOrder)],
+  (t) => [
+    index('transfer_routes_active_idx').on(t.isActive, t.sortOrder),
+    uniqueIndex('transfer_routes_from_to_unique').on(t.fromPlaceId, t.toPlaceId),
+  ],
 );
 
 /**
- * Per-vehicle-type prices for a route — exactly two rows per route (van,
- * suv), never more, never fewer. Composite PK instead of a surrogate id:
- * there is no legitimate second row for (route, vehicleType).
+ * Per-vehicle-type prices for a route. **At most one row per `(route,
+ * vehicleTypeId)`, zero or more rows total per route — "no row = that type
+ * isn't offered on this route"** (owner decision 2026-11-08, reversing the
+ * 2026-10-31 plan's "exactly two rows, never more, never fewer"; this is a
+ * stated NEW product rule, not a weakened assertion — see the design note
+ * §1.4). Composite PK instead of a surrogate id: there is no legitimate
+ * second row for (route, vehicleTypeId).
  *
  * **This table is money.** Both columns are integer centavos, like every
  * other price in this schema, and `services/transfers/upsert-route.ts` is
@@ -275,11 +368,13 @@ export const transferRouteVehiclePrices = mysqlTable(
     routeId: int('route_id')
       .notNull()
       .references(() => transferRoutes.id),
-    vehicleType: mysqlEnum('vehicle_type', VEHICLE_TYPES).notNull(),
+    vehicleTypeId: int('vehicle_type_id')
+      .notNull()
+      .references(() => vehicleTypes.id),
     oneWayPriceCentavos: int('one_way_price_centavos').notNull(),
     dayUsePriceCentavos: int('day_use_price_centavos').notNull(),
   },
-  (t) => [primaryKey({ columns: [t.routeId, t.vehicleType] })],
+  (t) => [primaryKey({ columns: [t.routeId, t.vehicleTypeId] })],
 );
 
 export const packages = mysqlTable('packages', {
@@ -545,14 +640,20 @@ export const vans = mysqlTable(
      */
     luggageCapacity: int('luggage_capacity'),
     /**
-     * Van or SUV (owner decision 2026-10-28) — every vehicle in the fleet
-     * needs a type now that transfers are typed by vehicle. Defaults to
-     * `'van'` so every existing `.insert(vans).values(...)` call site keeps
-     * compiling without being touched; the admin CRUD form still requires an
-     * explicit choice (`vanInputSchema`'s `vehicleType` carries no Zod
-     * default — see `shared/src/dispatch.ts`).
+     * Every vehicle in the fleet needs a type now that transfers are typed
+     * by vehicle (owner decision 2026-10-28). An admin-managed FK, not an
+     * enum, as of 2026-11-08 (see `vehicleTypes` above and the design note
+     * §1.5) — replacing the old `vehicle_type` enum, which carried a
+     * `.default('van')` precisely so every existing insert call site kept
+     * compiling untouched. **That default is deliberately NOT carried
+     * forward**: there is no admin-meaningful "default vehicle type" for an
+     * id-keyed FK, so every insert — seed, test fixture, or the admin create
+     * form — must now choose one explicitly. `vanInputSchema`'s
+     * `vehicleTypeId` already carried no Zod default either (`shared/src/dispatch.ts`).
      */
-    vehicleType: mysqlEnum('vehicle_type', VEHICLE_TYPES).notNull().default('van'),
+    vehicleTypeId: int('vehicle_type_id')
+      .notNull()
+      .references(() => vehicleTypes.id),
     status: mysqlEnum('status', VAN_STATUSES).notNull().default('available'),
     odometer: int('odometer'),
     /** Civil dates in Asia/Manila — a van's papers expire on a day, not at an instant. */
@@ -1126,9 +1227,12 @@ export const bookings = mysqlTable(
     routeId: int('route_id').references(() => transferRoutes.id),
     /**
      * NULL for a tour. The one real discriminator a transfer booking carries
-     * on the bookings row itself — see the CHECK below.
+     * on the bookings row itself — see the CHECK below. An admin-managed FK
+     * as of 2026-11-08 (replacing the `vehicle_type_requested` enum; design
+     * note §1.6) — renamed to `vehicle_type_id` because it is no longer a
+     * literal request-of-a-fixed-set, it is a real foreign key.
      */
-    vehicleTypeRequested: mysqlEnum('vehicle_type_requested', VEHICLE_TYPES),
+    vehicleTypeId: int('vehicle_type_id').references(() => vehicleTypes.id),
     /**
      * The tour DAY as a civil date in Asia/Manila — `date`, not `datetime`.
      * A trip on the 25th is on the 25th in Cebu regardless of the server's
@@ -1311,20 +1415,23 @@ export const bookings = mysqlTable(
     /**
      * **A booking is a tour or a transfer, never both and never neither**
      * (owner decision 2026-10-28/31; migration 0017, tour branch tightened by
-     * 0018 after review finding I1).
+     * 0018 after review finding I1; column renamed `vehicle_type_requested` →
+     * `vehicle_type_id` by migration 0028, 2026-11-08 — the CHECK was DROPPED
+     * and RE-ADDED with the new column name rather than edited in place,
+     * because MySQL refuses to rename/retype a column a CHECK references).
      *
      * `tour_id` became nullable so a transfer can exist at all, and a
      * nullable column with nothing arbitrating it is how a row arrives that
      * is a tour by `product_type` and a transfer by its data. So one CHECK,
      * both directions:
      *   - `product_type = 'tour'` ⇒ `tour_id` IS NOT NULL, and BOTH transfer
-     *     columns (`vehicle_type_requested`, `route_id`) IS NULL;
-     *   - anything else ⇒ `tour_id` IS NULL and `vehicle_type_requested`
+     *     columns (`vehicle_type_id`, `route_id`) IS NULL;
+     *   - anything else ⇒ `tour_id` IS NULL and `vehicle_type_id`
      *     IS NOT NULL.
      *
      * The second half of each branch is the part a reader is tempted to drop
      * as redundant. It is not: a tour row carrying a
-     * `vehicle_type_requested` or a `route_id` would make "is this a
+     * `vehicle_type_id` or a `route_id` would make "is this a
      * transfer?" a question with two answers, and a transfer row carrying a
      * `tour_id` would be counted by every tour report and every tour
      * capacity query at once.
@@ -1346,15 +1453,15 @@ export const bookings = mysqlTable(
      * So: do not add a `route_id` requirement to the TRANSFER branch — it
      * would make a legitimate custom trip unbookable. And do not remove the
      * `route_id IS NULL` from the TOUR branch as "the same exclusion" — it is
-     * not; it is the mirror of `vehicle_type_requested IS NULL` beside it.
+     * not; it is the mirror of `vehicle_type_id IS NULL` beside it.
      */
     check(
       'bookings_product_type_shape',
       sql`
         (${t.productType} = 'tour' AND ${t.tourId} IS NOT NULL
-          AND ${t.vehicleTypeRequested} IS NULL AND ${t.routeId} IS NULL)
+          AND ${t.vehicleTypeId} IS NULL AND ${t.routeId} IS NULL)
         OR
-        (${t.productType} <> 'tour' AND ${t.tourId} IS NULL AND ${t.vehicleTypeRequested} IS NOT NULL)
+        (${t.productType} <> 'tour' AND ${t.tourId} IS NULL AND ${t.vehicleTypeId} IS NOT NULL)
       `,
     ),
     /**
@@ -1535,6 +1642,19 @@ export const bookingTransferDetails = mysqlTable('booking_transfer_details', {
    * admin edit to the catalog can never reinterpret a booking already taken.
    */
   routeDurationMinutesUsed: int('route_duration_minutes_used'),
+  /**
+   * Which way a route-based transfer was travelled (owner decision
+   * 2026-11-08, design note §1.7) — **one column, not a signed route id and
+   * not a second route row.** `'forward'` is `route.fromPlaceId →
+   * route.toPlaceId` as the route is stored; `'reverse'` is the identical
+   * route, same price, same duration, the other way. Purely a LABEL for
+   * which place is the effective pickup vs. drop-off in guest-facing copy —
+   * it changes no money, no duration, and no capacity window. Defaults to
+   * `'forward'` so every booking taken before this column existed (and every
+   * route that, before this plan, only ever had one sellable direction)
+   * reads correctly under the new model.
+   */
+  direction: mysqlEnum('direction', TRANSFER_DIRECTIONS).notNull().default('forward'),
   createdAt: datetime('created_at', { mode: 'date' })
     .notNull()
     .$defaultFn(() => new Date()),

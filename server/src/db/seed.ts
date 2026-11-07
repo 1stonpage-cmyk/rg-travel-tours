@@ -414,7 +414,27 @@ function seedDate(days: number): Date {
  * `db:seed` can be run twice without doubling the fleet.
  */
 async function upsertFleet(db: Db, tourIdBySlug: Map<string, number>): Promise<void> {
+  /*
+   * Resolved by `vehicle_types.slug`, never a literal id (owner decision
+   * 2026-11-08) — vehicle types are an admin-managed list now, and the two
+   * natural-key rows (`van`, `suv`) are inserted by migration 0023, not by
+   * this seed, so this lookup must tolerate running against a database
+   * where they already exist rather than creating them again.
+   */
+  const vehicleTypeRows = await db
+    .select({ id: schema.vehicleTypes.id, slug: schema.vehicleTypes.slug })
+    .from(schema.vehicleTypes);
+  const vehicleTypeIdBySlug = new Map(vehicleTypeRows.map((row) => [row.slug, row.id]));
+
   for (const van of SEED_VANS) {
+    const vehicleTypeId = vehicleTypeIdBySlug.get(van.vehicleTypeSlug);
+    if (vehicleTypeId === undefined) {
+      throw new Error(
+        `[seed] no vehicle_types row for slug "${van.vehicleTypeSlug}" (van ${van.plate}) — ` +
+          'has migration 0023 been applied to this database?',
+      );
+    }
+
     const [existing] = await db
       .select({ id: schema.vans.id })
       .from(schema.vans)
@@ -424,6 +444,7 @@ async function upsertFleet(db: Db, tourIdBySlug: Map<string, number>): Promise<v
       model: van.model,
       capacity: van.capacity,
       status: van.status,
+      vehicleTypeId,
       odometer: van.odometer,
       nextService: van.nextServiceInDays === null ? null : seedDate(van.nextServiceInDays),
       orcrExpiry: van.orcrExpiryInDays === null ? null : seedDate(van.orcrExpiryInDays),

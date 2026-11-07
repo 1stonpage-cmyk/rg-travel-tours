@@ -12,7 +12,7 @@
  */
 import { z } from 'zod';
 import { couponDiscountSchema } from './coupon';
-import { TRANSFER_PRODUCT_TYPES, VEHICLE_TYPES } from './transfers';
+import { TRANSFER_PRODUCT_TYPES } from './transfers';
 
 /**
  * BUILD_SPEC §5 "Booking statuses", in the spec's own order.
@@ -273,35 +273,78 @@ export type TransferPriceSource = (typeof TRANSFER_PRICE_SOURCES)[number];
  * multiplies a flat rate; keeping the rate named separately is what lets a later
  * reader tell "the van cost ₱3,500" from "the subtotal happened to be ₱3,500".
  */
-export const transferPriceSnapshotSchema = z.object({
-  /** Mirrors `bookings.product_type`. Never `'tour'` — that is the other shape. */
-  productType: z.enum(TRANSFER_PRODUCT_TYPES),
-  /** Mirrors `bookings.vehicle_type_requested`. The guest's own choice of type. */
-  vehicleType: z.enum(VEHICLE_TYPES),
-  /** Mirrors `bookings.route_id`. Null only for a custom, staff-quoted trip. */
-  routeId: z.number().int().positive().nullable(),
-  /**
-   * Mirrors `booking_transfer_details.custom_route_description`. Exactly one of
-   * this and `routeId` is set — the cross-table invariant
-   * `createTransferBooking()` enforces, frozen here so the snapshot alone says
-   * which trip was sold.
-   */
-  customRouteDescription: z.string().min(1).nullable(),
-  priceSource: z.enum(TRANSFER_PRICE_SOURCES),
-  /** The flat per-vehicle rate the quote was built from. */
-  priceCentavos: z.number().int().nonnegative(),
-  /** The coupon applied, or null — the SAME shape a tour snapshot freezes. */
-  coupon: snapshotCouponSchema.nullable(),
-  /** Whole percent, e.g. 30 for a 30% deposit. Never a float. */
-  depositPercent: z.number().int().min(0).max(100),
-  /** The ROUTE's `free_cancel_hours` at booking time. Refund logic reads THIS. */
-  freeCancelHours: z.number().int().nonnegative().nullable(),
-  /** The computed totals, mirroring the booking's own summary columns. */
-  subtotalCentavos: z.number().int().nonnegative(),
-  discountCentavos: z.number().int().nonnegative(),
-  totalCentavos: z.number().int().nonnegative(),
-});
+export const transferPriceSnapshotSchema = z
+  .object({
+    /** Mirrors `bookings.product_type`. Never `'tour'` — that is the other shape. */
+    productType: z.enum(TRANSFER_PRODUCT_TYPES),
+    /**
+     * **Legacy only (owner decision 2026-11-08).** Every snapshot written
+     * before vehicle types became admin-managed carries the literal
+     * `'van'`/`'suv'` string here. **No new write ever produces a value in
+     * this field** — `buildTransferSnapshot()` writes `vehicleTypeId` /
+     * `vehicleTypeName` below instead. Loosened from the old two-literal
+     * enum to a bare optional string because nothing writes it anymore; a
+     * schema still enforcing `'van' | 'suv'` on a dead field is pointless
+     * weight. Confirmed by code search, 2026-11-08: nothing in the
+     * codebase reads this field today — `dispatch/assign.ts` reads the
+     * `bookings.vehicle_type_id` COLUMN, not the snapshot — so this is
+     * read-compatibility for a value nothing currently consumes, kept so a
+     * FUTURE reader (the display-label helper) can still resolve an old
+     * booking correctly.
+     */
+    vehicleType: z.string().optional(),
+    /** The vehicle type's id at booking time (owner decision 2026-11-08). Absent on a legacy snapshot. */
+    vehicleTypeId: z.number().int().positive().optional(),
+    /**
+     * The vehicle type's NAME, frozen at booking time — same discipline as
+     * every other frozen field here: an admin renaming or deactivating the
+     * type later must not change what an old receipt says. Absent on a
+     * legacy snapshot.
+     */
+    vehicleTypeName: z.string().optional(),
+    /** Mirrors `bookings.route_id`. Null only for a custom, staff-quoted trip. */
+    routeId: z.number().int().positive().nullable(),
+    /**
+     * Mirrors `booking_transfer_details.custom_route_description`. Exactly one of
+     * this and `routeId` is set — the cross-table invariant
+     * `createTransferBooking()` enforces, frozen here so the snapshot alone says
+     * which trip was sold.
+     */
+    customRouteDescription: z.string().min(1).nullable(),
+    priceSource: z.enum(TRANSFER_PRICE_SOURCES),
+    /** The flat per-vehicle rate the quote was built from. */
+    priceCentavos: z.number().int().nonnegative(),
+    /** The coupon applied, or null — the SAME shape a tour snapshot freezes. */
+    coupon: snapshotCouponSchema.nullable(),
+    /** Whole percent, e.g. 30 for a 30% deposit. Never a float. */
+    depositPercent: z.number().int().min(0).max(100),
+    /** The ROUTE's `free_cancel_hours` at booking time. Refund logic reads THIS. */
+    freeCancelHours: z.number().int().nonnegative().nullable(),
+    /** The computed totals, mirroring the booking's own summary columns. */
+    subtotalCentavos: z.number().int().nonnegative(),
+    discountCentavos: z.number().int().nonnegative(),
+    totalCentavos: z.number().int().nonnegative(),
+  })
+  .refine((s) => s.vehicleTypeId !== undefined || s.vehicleType !== undefined, {
+    message: 'A transfer snapshot must carry either a legacy vehicleType or a vehicleTypeId.',
+    path: ['vehicleTypeId'],
+  });
 export type TransferPriceSnapshot = z.infer<typeof transferPriceSnapshotSchema>;
+
+/**
+ * The single place every display surface asks "what vehicle type was this
+ * booking" (owner decision 2026-11-08) — resolves either shape
+ * {@link transferPriceSnapshotSchema} can hold. No surface hand-rolls this
+ * fallback a second time, the same discipline `TRANSFER_BOOKING_LABEL`
+ * already established for "what do we call a transfer booking with no tour."
+ */
+export function transferSnapshotVehicleTypeLabel(snapshot: TransferPriceSnapshot): string {
+  if (snapshot.vehicleTypeName) return snapshot.vehicleTypeName;
+  if (snapshot.vehicleType) {
+    return snapshot.vehicleType.charAt(0).toUpperCase() + snapshot.vehicleType.slice(1);
+  }
+  return 'Vehicle';
+}
 
 /**
  * What `bookings.price_snapshot` can hold: a tour snapshot or a transfer one.

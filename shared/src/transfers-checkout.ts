@@ -22,7 +22,7 @@
 import { z } from 'zod';
 import { PAY_MODES } from './booking';
 import { civilDateSchema, leadSchema } from './checkout';
-import { quoteTransferInput } from './transfers';
+import { quoteTransferInput, TRANSFER_DIRECTIONS } from './transfers';
 
 /**
  * A civil `HH:mm` clock label, Asia/Manila — **the exact pattern
@@ -88,6 +88,15 @@ export const createHoldTransferInput = quoteTransferInput
   .extend({
     /** The civil PICKUP date in Asia/Manila. Same schema a tour hold uses. */
     date: civilDateSchema,
+    /**
+     * Which way a reversible route is being travelled (owner decision
+     * 2026-11-08) — a QUOTE names a product; a HOLD describes a journey,
+     * which is why this lives here and not on `quoteTransferInput`. The
+     * server refuses `'reverse'` against a route whose `reverseEnabled` is
+     * off, inside `createTransferBooking()` (it needs the resolved route, so
+     * it cannot be a Zod-level check here).
+     */
+    direction: z.enum(TRANSFER_DIRECTIONS),
     pickupTime: clockTimeField('Enter a pickup time as HH:mm, like 08:30.'),
     /**
      * Day-use only, and the conditional half of that is in the `superRefine`
@@ -145,10 +154,12 @@ export const createHoldTransferInput = quoteTransferInput
     /**
      * One-way only, refused on a day-use hire by the `superRefine` below —
      * `assertBookableShape`'s `flight_details_on_day_use` reason, said
-     * politely. **Nothing in the schema marks a route as an AIRPORT route**, so
-     * "is this an airport trip" is a question no code here can ask; the
-     * one-way/day-use split is the half of the rule that is expressible today
-     * (see that function's own note).
+     * politely. **Optional at this Zod layer even on a one-way trip** — a
+     * route's places (and therefore whether either end is an airport) are
+     * resolved server-side, inside `createTransferBooking()`, after the
+     * catalog read; "flight fields are required when either end of the
+     * route is an airport place" (owner decision 2026-11-08, decision 5) is
+     * enforced there, not here, because it needs the resolved route.
      */
     flightNumber: z.string().max(20, 'Enter a shorter flight number.').optional(),
     airline: z.string().max(80, 'Enter a shorter airline name.').optional(),
