@@ -1,6 +1,10 @@
 /**
  * Week 5 plan, Task 4 — `admin.vans.*` (BUILD_SPEC §9 "Vans" / §5A, server
- * half).
+ * half). Updated 2026-11-08 (owner decision: flexible places/routes/vehicle
+ * types) — `vehicleType` was a hard-coded `van`/`suv` enum; it is now
+ * `vehicleTypeId`, a foreign key onto the admin-managed `vehicle_types`
+ * table. `seedBase` still seeds `van` and `suv` as real rows (migration
+ * 0023), so this file resolves their ids rather than hard-coding one.
  *
  * §9 gives the "Vans, drivers" row to owner and dispatcher only — finance
  * is refused, which is the opposite split from `admin.bookings.list` (view
@@ -14,31 +18,51 @@ import { afterAll, beforeAll, expect, it } from 'vitest';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { appRouter } from '../routers/_app';
 import { getDb, getPool } from '../db/client';
-import { auditLog, users, vans } from '../db/schema';
+import { auditLog, users, vans, vehicleTypes } from '../db/schema';
 import { customerContext, staffContext, testContext } from './helpers/ctx';
 import { describeWithDb } from './helpers/db';
-
-/** Every `vanInputSchema` field present — `.strict()` requires all of them. */
-const VALID_VAN = {
-  plate: 'ABC123',
-  model: 'Toyota Hiace',
-  capacity: 10,
-  /** Pre-task 0C's nullable column. `null` = "not recorded for this vehicle". */
-  luggageCapacity: null,
-  vehicleType: 'van',
-  odometer: 50_000,
-  lastService: '2026-01-01',
-  nextService: '2026-07-01',
-  orcrExpiry: '2027-01-01',
-  franchiseNo: 'FR-2026-001',
-  franchiseExpiry: '2027-01-01',
-  repairNotes: null,
-} as const;
 
 const created = {
   userIds: [] as number[],
   vanIds: [] as number[],
 };
+
+/**
+ * The real, global `vehicle_types.id` for `'van'`/`'suv'` — seeded by
+ * `seedBase` (migration 0023), never a literal id (CLAUDE.md). Resolved
+ * once in `beforeAll`.
+ */
+let VAN_ID = 0;
+let SUV_ID = 0;
+
+async function vehicleTypeIdBySlug(slug: string): Promise<number> {
+  const [row] = await getDb()
+    .select({ id: vehicleTypes.id })
+    .from(vehicleTypes)
+    .where(eq(vehicleTypes.slug, slug))
+    .limit(1);
+  if (!row) throw new Error(`No vehicle_types row for slug "${slug}" — expected from seedBase.`);
+  return row.id;
+}
+
+/** Every `vanInputSchema` field present — `.strict()` requires all of them. */
+function validVan() {
+  return {
+    plate: 'ABC123',
+    model: 'Toyota Hiace',
+    capacity: 10,
+    /** Pre-task 0C's nullable column. `null` = "not recorded for this vehicle". */
+    luggageCapacity: null,
+    vehicleTypeId: VAN_ID,
+    odometer: 50_000,
+    lastService: '2026-01-01',
+    nextService: '2026-07-01',
+    orcrExpiry: '2027-01-01',
+    franchiseNo: 'FR-2026-001',
+    franchiseExpiry: '2027-01-01',
+    repairNotes: null,
+  } as const;
+}
 
 async function makeStaff(role: 'owner' | 'dispatcher' | 'finance') {
   const unique = `${Math.floor(Math.random() * 1e9)}_${Date.now()}`;
@@ -79,6 +103,8 @@ beforeAll(async () => {
   ownerId = await makeStaff('owner');
   dispatcherId = await makeStaff('dispatcher');
   financeId = await makeStaff('finance');
+  VAN_ID = await vehicleTypeIdBySlug('van');
+  SUV_ID = await vehicleTypeIdBySlug('suv');
 }, 60_000);
 
 afterAll(async () => {
@@ -125,7 +151,7 @@ describeWithDb('vans', () => {
   it('REFUSES finance — §9 gives vans to owner and dispatcher only', async () => {
     const api = appRouter.createCaller(staffContext(financeId, 'finance') as never);
     await expect(api.admin.vans.list()).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    await expect(api.admin.vans.create({ ...VALID_VAN, plate: 'XYZ999' })).rejects.toMatchObject({
+    await expect(api.admin.vans.create({ ...validVan(), plate: 'XYZ999' })).rejects.toMatchObject({
       code: 'FORBIDDEN',
     });
   });
@@ -161,9 +187,9 @@ describeWithDb('vans', () => {
 
   it('refuses a duplicate plate with a message a human can act on', async () => {
     const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
-    const { id } = await api.admin.vans.create({ ...VALID_VAN, plate: 'ABC123' });
+    const { id } = await api.admin.vans.create({ ...validVan(), plate: 'ABC123' });
     created.vanIds.push(id);
-    await expect(api.admin.vans.create({ ...VALID_VAN, plate: 'ABC123' })).rejects.toThrow(
+    await expect(api.admin.vans.create({ ...validVan(), plate: 'ABC123' })).rejects.toThrow(
       /already/i,
     );
   });
@@ -172,7 +198,7 @@ describeWithDb('vans', () => {
     const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
     // 'ABC123' already exists from the test above — this is the same suite's
     // transform (`.toUpperCase()`) and the DB's unique index agreeing.
-    await expect(api.admin.vans.create({ ...VALID_VAN, plate: 'abc123' })).rejects.toThrow(
+    await expect(api.admin.vans.create({ ...validVan(), plate: 'abc123' })).rejects.toThrow(
       /already/i,
     );
   });
@@ -180,7 +206,7 @@ describeWithDb('vans', () => {
   it('rejects an unknown field instead of ignoring it', async () => {
     const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
     await expect(
-      api.admin.vans.create({ ...VALID_VAN, plate: 'NEW111', isActive: false } as never),
+      api.admin.vans.create({ ...validVan(), plate: 'NEW111', isActive: false } as never),
     ).rejects.toThrow();
   });
 
@@ -195,7 +221,7 @@ describeWithDb('vans', () => {
    */
   it("rejects an unknown field in update's patch instead of silently stripping it", async () => {
     const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
-    const { id } = await api.admin.vans.create({ ...VALID_VAN, plate: 'STR111' });
+    const { id } = await api.admin.vans.create({ ...validVan(), plate: 'STR111' });
     created.vanIds.push(id);
     await expect(
       api.admin.vans.update({
@@ -207,7 +233,7 @@ describeWithDb('vans', () => {
 
   it('writes an audit row naming the actor on every change', async () => {
     const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
-    const { id } = await api.admin.vans.create({ ...VALID_VAN, plate: 'AUD111' });
+    const { id } = await api.admin.vans.create({ ...validVan(), plate: 'AUD111' });
     created.vanIds.push(id);
     await api.admin.vans.setStatus({ id, status: 'for_repair' });
     const rows = await auditRowsFor('van', id);
@@ -228,7 +254,7 @@ describeWithDb('vans', () => {
    */
   it('rejects an empty patch instead of writing an audit row for nothing', async () => {
     const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
-    const { id } = await api.admin.vans.create({ ...VALID_VAN, plate: 'EMP111' });
+    const { id } = await api.admin.vans.create({ ...validVan(), plate: 'EMP111' });
     created.vanIds.push(id);
 
     await expect(api.admin.vans.update({ id, patch: {} })).rejects.toThrow(/at least one/i);
@@ -255,7 +281,7 @@ describeWithDb('vans', () => {
       orcrExpiry: '2027-03-01',
       franchiseExpiry: '2028-04-20',
     };
-    const { id } = await api.admin.vans.create({ ...VALID_VAN, plate: 'DATE111', ...dates });
+    const { id } = await api.admin.vans.create({ ...validVan(), plate: 'DATE111', ...dates });
     created.vanIds.push(id);
 
     const rows = await api.admin.vans.list();
@@ -265,59 +291,93 @@ describeWithDb('vans', () => {
   });
 
   /**
-   * Task T2 — `vehicleType` is a required Zod field with no default, so a
+   * Task T2 — `vehicleTypeId` is a required Zod field with no default, so a
    * `create` call missing it must be rejected as a validation failure
    * (BAD_REQUEST-shaped), never a 500.
    */
-  it('rejects create with no vehicleType', async () => {
+  it('rejects create with no vehicleTypeId', async () => {
     const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
-    const withoutVehicleType = {
+    const base = validVan();
+    const withoutVehicleTypeId = {
       plate: 'NOVT111',
-      model: VALID_VAN.model,
-      capacity: VALID_VAN.capacity,
-      // Present on purpose: `vehicleType` must stay the ONLY field missing,
+      model: base.model,
+      capacity: base.capacity,
+      // Present on purpose: `vehicleTypeId` must stay the ONLY field missing,
       // or this test stops proving which omission the refusal is about.
-      luggageCapacity: VALID_VAN.luggageCapacity,
-      odometer: VALID_VAN.odometer,
-      lastService: VALID_VAN.lastService,
-      nextService: VALID_VAN.nextService,
-      orcrExpiry: VALID_VAN.orcrExpiry,
-      franchiseNo: VALID_VAN.franchiseNo,
-      franchiseExpiry: VALID_VAN.franchiseExpiry,
-      repairNotes: VALID_VAN.repairNotes,
+      luggageCapacity: base.luggageCapacity,
+      odometer: base.odometer,
+      lastService: base.lastService,
+      nextService: base.nextService,
+      orcrExpiry: base.orcrExpiry,
+      franchiseNo: base.franchiseNo,
+      franchiseExpiry: base.franchiseExpiry,
+      repairNotes: base.repairNotes,
     };
-    await expect(api.admin.vans.create(withoutVehicleType as never)).rejects.toMatchObject({
+    await expect(api.admin.vans.create(withoutVehicleTypeId as never)).rejects.toMatchObject({
       code: 'BAD_REQUEST',
     });
   });
 
-  it('round-trips vehicleType: suv through create and list', async () => {
+  it('round-trips vehicleTypeId: the suv type through create and list', async () => {
     const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
     const { id } = await api.admin.vans.create({
-      ...VALID_VAN,
+      ...validVan(),
       plate: 'SUV111',
-      vehicleType: 'suv',
+      vehicleTypeId: SUV_ID,
     });
     created.vanIds.push(id);
 
     const rows = await api.admin.vans.list();
     const row = rows.find((r) => r.id === id);
     expect(row).toBeDefined();
-    expect(row?.vehicleType).toBe('suv');
+    expect(row?.vehicleTypeId).toBe(SUV_ID);
+    expect(row?.vehicleTypeName).toBe('SUV');
   });
 
-  it("update's patch can change a van's vehicleType from van to suv and back", async () => {
+  /*
+   * Before 2026-11-08, an invalid vehicle type was a Zod BAD_REQUEST
+   * (`z.enum(VEHICLE_TYPES)`) — the enum made every bad value a shape error
+   * before the database was ever asked. Now that `vehicleTypeId` is a bare
+   * FK, an id answering to no row would otherwise reach
+   * `vans_vehicle_type_id_vehicle_types_id_fk` as a raw `ER_NO_REFERENCED_ROW_2`
+   * and rethrow as INTERNAL_SERVER_ERROR — this pins the restored
+   * BAD_REQUEST, and that nothing was written for the refusal.
+   */
+  it('refuses create with a vehicleTypeId that answers to no row', async () => {
     const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
-    const { id } = await api.admin.vans.create({ ...VALID_VAN, plate: 'SWAP111' });
+    await expect(
+      api.admin.vans.create({ ...validVan(), plate: 'NOTYPE1', vehicleTypeId: 999_999 }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+    const rows = await api.admin.vans.list();
+    expect(rows.some((r) => r.plate === 'NOTYPE1')).toBe(false);
+  });
+
+  it('refuses update with a vehicleTypeId that answers to no row', async () => {
+    const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
+    const { id } = await api.admin.vans.create({ ...validVan(), plate: 'NOTYPE2' });
     created.vanIds.push(id);
 
-    await api.admin.vans.update({ id, patch: { vehicleType: 'suv' } });
-    let rows = await api.admin.vans.list();
-    expect(rows.find((r) => r.id === id)?.vehicleType).toBe('suv');
+    await expect(
+      api.admin.vans.update({ id, patch: { vehicleTypeId: 999_999 } }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
 
-    await api.admin.vans.update({ id, patch: { vehicleType: 'van' } });
+    const rows = await api.admin.vans.list();
+    expect(rows.find((r) => r.id === id)?.vehicleTypeId).toBe(VAN_ID);
+  });
+
+  it("update's patch can change a van's vehicleTypeId from van to suv and back", async () => {
+    const api = appRouter.createCaller(staffContext(ownerId, 'owner') as never);
+    const { id } = await api.admin.vans.create({ ...validVan(), plate: 'SWAP111' });
+    created.vanIds.push(id);
+
+    await api.admin.vans.update({ id, patch: { vehicleTypeId: SUV_ID } });
+    let rows = await api.admin.vans.list();
+    expect(rows.find((r) => r.id === id)?.vehicleTypeId).toBe(SUV_ID);
+
+    await api.admin.vans.update({ id, patch: { vehicleTypeId: VAN_ID } });
     rows = await api.admin.vans.list();
-    expect(rows.find((r) => r.id === id)?.vehicleType).toBe('van');
+    expect(rows.find((r) => r.id === id)?.vehicleTypeId).toBe(VAN_ID);
   });
 
   it('has no delete mutation — vans are soft-deleted through is_active', () => {

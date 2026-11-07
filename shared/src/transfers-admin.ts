@@ -264,6 +264,152 @@ export interface TransferPlaceAdminRow {
 }
 
 /**
+ * One row of `admin.transferPlaces.list` — every editable field, unlike
+ * {@link TransferPlaceAdminRow} (which the route list denormalises and has
+ * no use for `sortOrder` or `destinationId`). The places screen is the one
+ * surface that edits a place directly, so it needs the whole row.
+ */
+export interface TransferPlaceAdminListRow extends TransferPlaceAdminRow {
+  sortOrder: number;
+  /** The optional, informational-only cross-link to `destinations.id`. */
+  destinationId: number | null;
+}
+
+/**
+ * `vehicle_types.slug` is varchar(40) — the same normalisation discipline as
+ * {@link normalizeTransferRouteSlug} (trim then lowercase, BEFORE the shape
+ * check — BUG-108's ordering), its own function only because the owning
+ * table and length bound differ.
+ */
+export function normalizeVehicleTypeSlug(slug: string): string {
+  return slug.trim().toLowerCase();
+}
+
+/**
+ * A vehicle type's URL-safe-shaped slug. Vehicle types grow no public URL
+ * today, but the slug is still a natural key other code (seed data, a
+ * future import) may look up by, so it gets the same hygiene
+ * `transferRouteSlugSchema` applies rather than a looser one invented for
+ * "it's only an admin field."
+ */
+const vehicleTypeSlugSchema = z
+  .string()
+  .transform(normalizeVehicleTypeSlug)
+  .pipe(
+    z
+      .string()
+      .min(1)
+      .max(40)
+      .regex(
+        /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+        'Use lowercase letters, numbers and hyphens, like mini-van.',
+      ),
+  );
+
+/**
+ * The fields of one vehicle type, unrefined — the base both `create` and the
+ * `update` patch are built from, mirroring `transferRouteFieldsSchema`'s own
+ * split for the same reason (`.refine()` would turn this into a `ZodEffects`,
+ * which has no `.partial()`).
+ */
+const vehicleTypeFieldsSchema = z
+  .object({
+    name: z.string().trim().min(1).max(80),
+    slug: vehicleTypeSlugSchema,
+    /** Prefill only for the admin "add van" form — never consulted by capacity or dispatch. */
+    defaultSeats: z.number().int().min(1).max(30).nullable(),
+    /** Prefill only — see `defaultSeats`. */
+    defaultLuggage: z.number().int().min(0).max(200).nullable(),
+    sortOrder: z.number().int().min(0).max(9999).optional(),
+  })
+  .strict();
+
+/** `admin.vehicleTypes.create`. */
+export const vehicleTypeCreateInputSchema = vehicleTypeFieldsSchema;
+export type VehicleTypeCreateInput = z.infer<typeof vehicleTypeCreateInputSchema>;
+
+/**
+ * `vehicleTypeFieldsSchema.partial()`, refined to require at least one key —
+ * the same shape and the same message `transferRoutePatchSchema` uses.
+ */
+export const vehicleTypePatchSchema = vehicleTypeFieldsSchema
+  .partial()
+  .refine((patch) => Object.keys(patch).length > 0, {
+    message: 'Provide at least one field to update.',
+  });
+export type VehicleTypePatch = z.infer<typeof vehicleTypePatchSchema>;
+
+/** `admin.vehicleTypes.update` — which type, and what changed about it. */
+export const vehicleTypeUpdateInputSchema = z
+  .object({ id: z.number().int().positive(), patch: vehicleTypePatchSchema })
+  .strict();
+export type VehicleTypeUpdateInput = z.infer<typeof vehicleTypeUpdateInputSchema>;
+
+/** `admin.vehicleTypes.setActive`. The soft delete. */
+export const vehicleTypeActiveInputSchema = z
+  .object({ id: z.number().int().positive(), isActive: z.boolean() })
+  .strict();
+export type VehicleTypeActiveInput = z.infer<typeof vehicleTypeActiveInputSchema>;
+
+/** One row of `admin.vehicleTypes.list` — every editable field. */
+export interface VehicleTypeAdminRow {
+  id: number;
+  name: string;
+  slug: string;
+  defaultSeats: number | null;
+  defaultLuggage: number | null;
+  isActive: boolean;
+  sortOrder: number;
+}
+
+/**
+ * The fields of one transfer place, unrefined — mirrors
+ * `transferRouteFieldsSchema`'s own split.
+ *
+ * `destinationId` is `.nullable()` with no `.optional()`, the same
+ * discipline `driverInputSchema.maxTransferJobsPerDay` uses: a `create` must
+ * say explicitly that there is no cross-link rather than silently omit the
+ * field. The id's existence is checked by the router/service against
+ * `destinations`, not here — a Zod schema cannot see the database.
+ */
+const transferPlaceFieldsSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120),
+    isAirport: z.boolean(),
+    sortOrder: z.number().int().min(0).max(9999).optional(),
+    destinationId: z.number().int().positive().nullable(),
+  })
+  .strict();
+
+/** `admin.transferPlaces.create`. */
+export const transferPlaceCreateInputSchema = transferPlaceFieldsSchema;
+export type TransferPlaceCreateInput = z.infer<typeof transferPlaceCreateInputSchema>;
+
+/**
+ * `transferPlaceFieldsSchema.partial()`, refined to require at least one
+ * key — the same shape and the same message every other patch schema in
+ * this file uses.
+ */
+export const transferPlacePatchSchema = transferPlaceFieldsSchema
+  .partial()
+  .refine((patch) => Object.keys(patch).length > 0, {
+    message: 'Provide at least one field to update.',
+  });
+export type TransferPlacePatch = z.infer<typeof transferPlacePatchSchema>;
+
+/** `admin.transferPlaces.update` — which place, and what changed about it. */
+export const transferPlaceUpdateInputSchema = z
+  .object({ id: z.number().int().positive(), patch: transferPlacePatchSchema })
+  .strict();
+export type TransferPlaceUpdateInput = z.infer<typeof transferPlaceUpdateInputSchema>;
+
+/** `admin.transferPlaces.setActive`. The soft delete. */
+export const transferPlaceActiveInputSchema = z
+  .object({ id: z.number().int().positive(), isActive: z.boolean() })
+  .strict();
+export type TransferPlaceActiveInput = z.infer<typeof transferPlaceActiveInputSchema>;
+
+/**
  * One row of `admin.transferRoutes.list` — every editable field plus both
  * places' names (owner decision 2026-11-08, replacing the single
  * `destinationName`/`destinationIsActive` pair).

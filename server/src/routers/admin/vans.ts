@@ -28,9 +28,9 @@ import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import { civilDateFromDate, vanInputSchema, type VanInput, type VanRow } from '@rg/shared';
 import { asc, eq } from 'drizzle-orm';
-import { getDb } from '../../db/client';
+import { getDb, type Transaction } from '../../db/client';
 import { isDuplicateKeyError } from '../../db/duplicate-key';
-import { VAN_STATUSES, vans } from '../../db/schema';
+import { VAN_STATUSES, vans, vehicleTypes } from '../../db/schema';
 import { writeAudit } from '../../services/audit';
 import { adminProcedure, router } from '../../trpc';
 
@@ -44,14 +44,21 @@ function toDbDate(value: string | null): Date | null {
   return value === null ? null : new Date(`${value}T00:00:00Z`);
 }
 
-function toVanRow(row: VanSelect): VanRow {
+/**
+ * `vehicleTypeName` is read from the `vehicle_types` join `list` performs
+ * (owner decision 2026-11-08: vehicle types are an admin-managed list, not a
+ * `van`/`suv` enum) — this function never queries for it itself, so every
+ * caller must select it alongside the van's own columns.
+ */
+function toVanRow(row: VanSelect, vehicleTypeName: string): VanRow {
   return {
     id: row.id,
     plate: row.plate,
     model: row.model,
     capacity: row.capacity,
     luggageCapacity: row.luggageCapacity,
-    vehicleType: row.vehicleType,
+    vehicleTypeId: row.vehicleTypeId,
+    vehicleTypeName,
     status: row.status,
     odometer: row.odometer,
     lastService: civilDateFromDate(row.lastService),
@@ -71,7 +78,7 @@ function toInsertValues(input: VanInput): VanInsert {
     model: input.model,
     capacity: input.capacity,
     luggageCapacity: input.luggageCapacity,
-    vehicleType: input.vehicleType,
+    vehicleTypeId: input.vehicleTypeId,
     odometer: input.odometer,
     lastService: toDbDate(input.lastService),
     nextService: toDbDate(input.nextService),
@@ -94,7 +101,7 @@ function toUpdateValues(patch: Partial<VanInput>): Partial<VanInsert> {
   if (patch.model !== undefined) out.model = patch.model;
   if (patch.capacity !== undefined) out.capacity = patch.capacity;
   if (patch.luggageCapacity !== undefined) out.luggageCapacity = patch.luggageCapacity;
-  if (patch.vehicleType !== undefined) out.vehicleType = patch.vehicleType;
+  if (patch.vehicleTypeId !== undefined) out.vehicleTypeId = patch.vehicleTypeId;
   if (patch.odometer !== undefined) out.odometer = patch.odometer;
   if (patch.lastService !== undefined) out.lastService = toDbDate(patch.lastService);
   if (patch.nextService !== undefined) out.nextService = toDbDate(patch.nextService);
@@ -107,6 +114,32 @@ function toUpdateValues(patch: Partial<VanInput>): Partial<VanInsert> {
 
 /** The duplicate-plate message both `create` and `update` throw, worded for a human. */
 const DUPLICATE_PLATE_MESSAGE = 'A van with that plate number already exists.';
+
+/** The refusal for a `vehicleTypeId` no `vehicle_types` row answers to. */
+const UNKNOWN_VEHICLE_TYPE_MESSAGE = 'No vehicle type with that id.';
+
+/**
+ * Before 2026-11-08, an invalid vehicle type was a Zod `BAD_REQUEST`
+ * (`z.enum(VEHICLE_TYPES)`) — the enum made every bad value a shape error at
+ * the wire boundary. Now that `vehicleTypeId` is a bare FK, Zod only checks
+ * "is this a positive integer," so an id that answers to no row would
+ * otherwise reach `vans_vehicle_type_id_vehicle_types_id_fk` as a raw
+ * `ER_NO_REFERENCED_ROW_2` — `isDuplicateKeyError` only matches
+ * `ER_DUP_ENTRY`, so that error would rethrow as an `INTERNAL_SERVER_ERROR`
+ * the admin screen could say nothing useful about. This restores the same
+ * guest/admin-safe `BAD_REQUEST` the enum used to give, mirroring
+ * `transfer-places.ts`'s `assertDestinationExists` pattern exactly.
+ */
+async function assertVehicleTypeExists(tx: Transaction, vehicleTypeId: number) {
+  const [row] = await tx
+    .select({ id: vehicleTypes.id })
+    .from(vehicleTypes)
+    .where(eq(vehicleTypes.id, vehicleTypeId))
+    .limit(1);
+  if (!row) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: UNKNOWN_VEHICLE_TYPE_MESSAGE });
+  }
+}
 
 /**
  * `vanInputSchema.partial()`, refined to require at least one key.
@@ -133,9 +166,18 @@ const setStatusInput = z
   .strict();
 
 export const adminVansRouter = router({
+  /**
+   * Every van, each with its vehicle type's CURRENT name (owner decision
+   * 2026-11-08) — joined rather than read per row, the same reasoning every
+   * other admin list in this codebase gives for avoiding an N+1.
+   */
   list: adminProcedure('vansDrivers').query(async () => {
-    const rows = await getDb().select().from(vans).orderBy(asc(vans.plate));
-    return rows.map(toVanRow);
+    const rows = await getDb()
+      .select({ van: vans, vehicleTypeName: vehicleTypes.name })
+      .from(vans)
+      .innerJoin(vehicleTypes, eq(vehicleTypes.id, vans.vehicleTypeId))
+      .orderBy(asc(vans.plate));
+    return rows.map((row) => toVanRow(row.van, row.vehicleTypeName));
   }),
 
   create: adminProcedure('vansDrivers')
@@ -143,6 +185,7 @@ export const adminVansRouter = router({
     .mutation(async ({ input, ctx }) => {
       try {
         return await getDb().transaction(async (tx) => {
+          await assertVehicleTypeExists(tx, input.vehicleTypeId);
           const [result] = await tx.insert(vans).values(toInsertValues(input));
           const id = result.insertId;
           await writeAudit(tx, {
@@ -180,6 +223,9 @@ export const adminVansRouter = router({
            * makes "check existence, then audit" unconditional instead of
            * correct-by-the-current-shape-of-the-schema.
            */
+          if (input.patch.vehicleTypeId !== undefined) {
+            await assertVehicleTypeExists(tx, input.patch.vehicleTypeId);
+          }
           const setValues = toUpdateValues(input.patch);
           const [result] = await tx.update(vans).set(setValues).where(eq(vans.id, input.id));
           if (result.affectedRows === 0) {

@@ -26,7 +26,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 import { type BookingStatus, type PriceSnapshot } from '@rg/shared';
 import { getDb, getPool } from '../db/client';
-import { auditLog, bookings, destinations, tours } from '../db/schema';
+import { auditLog, bookings, destinations, tours, vehicleTypes } from '../db/schema';
 import { sendTripReminders } from '../jobs/trip-reminders';
 import { generateBookingRef } from '../services/booking-ref';
 import { resetTransportForTests, setTransportForTests } from '../services/notify';
@@ -68,6 +68,12 @@ const SNAPSHOT: PriceSnapshot = {
 
 let tourId = 0;
 
+/**
+ * The real, global `vehicle_types.id` for `'van'` — seeded by `seedBase`
+ * (migration 0023), never a literal id (CLAUDE.md). Resolved once below.
+ */
+let VAN_ID = 0;
+
 async function count(statement: Parameters<ReturnType<typeof getDb>['execute']>[0]) {
   const [rows] = (await getDb().execute(statement)) as unknown as [Array<{ n: number }>, unknown];
   return Number(rows[0]?.n ?? -1);
@@ -98,7 +104,7 @@ async function makeBooking(
         ? ({
             tourId: null,
             productType: 'transfer_one_way',
-            vehicleTypeRequested: 'van',
+            vehicleTypeId: VAN_ID,
           } as const)
         : { tourId }),
       tourDate: new Date(`${opts.tourDate ?? TOMORROW}T00:00:00Z`),
@@ -151,6 +157,16 @@ describeWithDb('the day-before trip reminder', () => {
       .values({ slug, title: `Reminder Tour ${slug}`, destinationId: destination.insertId });
     created.tourIds.push(tour.insertId);
     tourId = tour.insertId;
+
+    if (VAN_ID === 0) {
+      const [vt] = await db
+        .select({ id: vehicleTypes.id })
+        .from(vehicleTypes)
+        .where(eq(vehicleTypes.slug, 'van'))
+        .limit(1);
+      if (!vt) throw new Error('No vehicle_types row for slug "van" — expected from seedBase.');
+      VAN_ID = vt.id;
+    }
 
     sent.length = 0;
     setTransportForTests({

@@ -36,6 +36,7 @@ import {
   tourPriceTiers,
   tours,
   vans,
+  vehicleTypes,
 } from '../db/schema';
 import { loadQuoteInputs, priceQuote, quoteDigest } from '../services/pricing';
 import {
@@ -93,6 +94,23 @@ const created = {
 };
 
 const unique = () => `${Math.floor(Math.random() * 1e9)}_${Date.now()}`;
+
+/**
+ * The real, global `vehicle_types.id` for `'van'` — seeded by `seedBase`
+ * (migration 0023), never a literal id (CLAUDE.md). Cached per process.
+ */
+let cachedVanTypeId: number | undefined;
+async function vanVehicleTypeId(): Promise<number> {
+  if (cachedVanTypeId !== undefined) return cachedVanTypeId;
+  const [row] = await getDb()
+    .select({ id: vehicleTypes.id })
+    .from(vehicleTypes)
+    .where(eq(vehicleTypes.slug, 'van'))
+    .limit(1);
+  if (!row) throw new Error('No vehicle_types row for slug "van" — expected from seedBase.');
+  cachedVanTypeId = row.id;
+  return row.id;
+}
 
 async function countBookings(): Promise<number> {
   const [rows] = (await getDb().execute(sql`SELECT COUNT(*) n FROM bookings`)) as unknown as [
@@ -158,6 +176,7 @@ async function makeFleet() {
       plate: `CRT${suffix}`.slice(0, 20),
       model: 'Checkout Router Fixture Van',
       capacity: 12,
+      vehicleTypeId: await vanVehicleTypeId(),
       status: 'available',
       isActive: true,
     });

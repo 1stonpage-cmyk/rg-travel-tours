@@ -553,6 +553,22 @@ const TRANSFER_SHAPE_MESSAGES: Record<TransferBookingShapeProblem, string> = {
   pax_not_positive: 'Enter how many passengers are travelling.',
   luggage_count_negative: 'Enter how many bags you are bringing (0 if none).',
   staff_price_not_whole_centavos: 'We could not price that transfer. Please contact us.',
+  /**
+   * Checked post-catalog-read, inside `createTransferBooking()` itself
+   * (owner decision 2026-11-08) — unreachable through `createHoldTransferInput`
+   * only in the sense that a guest never TYPES a direction the route disallows
+   * (the picker only offers it when `reverseEnabled` is true); a stale tab or a
+   * direct call can still reach it.
+   */
+  reverse_not_enabled_for_route:
+    "That route can't be booked in reverse. Please choose the other direction.",
+  /**
+   * Also post-catalog-read — the route's places (and therefore whether
+   * either end is an airport) are not known until then (owner decision
+   * 2026-11-08, design note §6 item 4b).
+   */
+  flight_details_required_for_airport_route:
+    'Please enter your flight number and airline — this pickup/drop-off is at the airport.',
 };
 
 /**
@@ -888,7 +904,7 @@ export const checkoutRouter = router({
       try {
         const catalog = await vehiclePriceForRouteAndType(
           input.routeId,
-          input.vehicleType,
+          input.vehicleTypeId,
           input.productType,
         );
         /*
@@ -1092,8 +1108,9 @@ export const checkoutRouter = router({
         date: input.date,
         routeId: input.routeId,
         customRouteDescription: null,
-        vehicleType: input.vehicleType,
+        vehicleTypeId: input.vehicleTypeId,
         productType: input.productType,
+        direction: input.direction,
         pickupTime: input.pickupTime,
         // The service's shape is `null`-for-absent throughout; the wire's is
         // optional-for-absent, which is what a form that omits a field

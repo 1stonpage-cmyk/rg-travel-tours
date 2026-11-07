@@ -20,11 +20,11 @@
  * this suite exercises indirectly through `admin.calendar.month`.
  */
 import { afterAll, beforeAll, expect, it } from 'vitest';
-import { inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import type { BookingStatus, PriceSnapshot } from '@rg/shared';
 import { appRouter } from '../routers/_app';
 import { getDb, getPool } from '../db/client';
-import { bookings, destinations, tours, users, vans } from '../db/schema';
+import { bookings, destinations, tours, users, vans, vehicleTypes } from '../db/schema';
 import { generateBookingRef } from '../services/booking-ref';
 import { staffContext, testContext } from './helpers/ctx';
 import { describeWithDb } from './helpers/db';
@@ -67,6 +67,23 @@ async function makeStaff(role: 'owner' | 'dispatcher' | 'finance') {
   return row.insertId;
 }
 
+/**
+ * The real, global `vehicle_types.id` for `'van'` — seeded by `seedBase`
+ * (migration 0023), never a literal id (CLAUDE.md). Cached per process.
+ */
+let cachedVanTypeId: number | undefined;
+async function vanVehicleTypeId(): Promise<number> {
+  if (cachedVanTypeId !== undefined) return cachedVanTypeId;
+  const [row] = await getDb()
+    .select({ id: vehicleTypes.id })
+    .from(vehicleTypes)
+    .where(eq(vehicleTypes.slug, 'van'))
+    .limit(1);
+  if (!row) throw new Error('No vehicle_types row for slug "van" — expected from seedBase.');
+  cachedVanTypeId = row.id;
+  return row.id;
+}
+
 async function makeVan() {
   const suffix = unique();
   const [van] = await getDb()
@@ -75,6 +92,7 @@ async function makeVan() {
       plate: `CAL${suffix}`.slice(0, 20),
       model: 'Calendar Fixture Van',
       capacity: 12,
+      vehicleTypeId: await vanVehicleTypeId(),
       status: 'available',
       isActive: true,
     });

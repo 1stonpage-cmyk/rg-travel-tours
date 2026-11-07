@@ -45,7 +45,6 @@ import {
   manilaCivilDate,
   manilaTimeHHMM,
   type PayMode,
-  type VehicleType,
 } from '@rg/shared';
 import { createApp } from '../app';
 import { readSettingBlock, readTransferOperationsSettings } from '../content/settings';
@@ -55,11 +54,12 @@ import {
   bookings,
   coupons,
   couponRedemptions,
-  destinations,
   drivers,
+  transferPlaces,
   transferRouteVehiclePrices,
   transferRoutes,
   vans,
+  vehicleTypes,
 } from '../db/schema';
 import { MAX_ACTIVE_HOLDS_PER_GUEST } from '../services/create-hold';
 import { CHECKOUT_HOLD_MAX, CHECKOUT_HOLD_PROCEDURES } from '../middleware/rate-limit';
@@ -114,13 +114,31 @@ const DATES = [
 const created = {
   bookingIds: [] as number[],
   routeIds: [] as number[],
-  destinationIds: [] as number[],
+  placeIds: [] as number[],
   couponIds: [] as number[],
   vanIds: [] as number[],
   driverIds: [] as number[],
 };
 
 const unique = () => `${Math.floor(Math.random() * 1e9)}_${Date.now()}`;
+
+/**
+ * The real, global `vehicle_types.id` for `'van'`/`'suv'` — seeded by
+ * `seedBase` (migration 0023), never a literal id (CLAUDE.md). Resolved in
+ * `beforeAll`.
+ */
+let VAN_ID = 0;
+let SUV_ID = 0;
+
+async function vehicleTypeIdBySlug(slug: string): Promise<number> {
+  const [row] = await getDb()
+    .select({ id: vehicleTypes.id })
+    .from(vehicleTypes)
+    .where(eq(vehicleTypes.slug, slug))
+    .limit(1);
+  if (!row) throw new Error(`No vehicle_types row for slug "${slug}" — expected from seedBase.`);
+  return row.id;
+}
 
 async function count(statement: Parameters<ReturnType<typeof getDb>['execute']>[0]) {
   const [rows] = (await getDb().execute(statement)) as unknown as [Array<{ n: number }>, unknown];
@@ -138,24 +156,33 @@ async function writtenRowCounts() {
   };
 }
 
+/** A pickup/drop-off place with nothing else attached — what a route runs between. */
+async function makePlace(opts: { isActive?: boolean } = {}) {
+  const slug = `__t11place__${unique()}`;
+  const [row] = await getDb()
+    .insert(transferPlaces)
+    .values({ name: slug, nameKey: slug.toLowerCase(), isActive: opts.isActive ?? true });
+  created.placeIds.push(row.insertId);
+  return row.insertId;
+}
+
 async function makeRoute(
   opts: {
     isActive?: boolean;
-    destinationActive?: boolean;
-    vehicleTypes?: VehicleType[];
+    /** Owner decision 2026-11-08: sellability moved from `destinations` to the route's TO place. */
+    toPlaceActive?: boolean;
+    vehicleTypeIds?: number[];
     oneWayPriceCentavos?: number;
   } = {},
 ) {
-  const slug = `__t11__${unique()}`;
-  const [destination] = await getDb()
-    .insert(destinations)
-    .values({ name: slug, slug, isActive: opts.destinationActive ?? true });
-  created.destinationIds.push(destination.insertId);
+  const fromPlaceId = await makePlace();
+  const toPlaceId = await makePlace({ isActive: opts.toPlaceActive ?? true });
 
   const [route] = await getDb()
     .insert(transferRoutes)
     .values({
-      destinationId: destination.insertId,
+      fromPlaceId,
+      toPlaceId,
       slug: `t11-${unique()}`,
       estimatedDurationMinutes: DURATION,
       freeCancelHours: ROUTE_FREE_CANCEL_HOURS,
@@ -163,12 +190,12 @@ async function makeRoute(
     });
   created.routeIds.push(route.insertId);
 
-  for (const vehicleType of opts.vehicleTypes ?? (['van', 'suv'] as VehicleType[])) {
+  for (const vehicleTypeId of opts.vehicleTypeIds ?? [VAN_ID, SUV_ID]) {
     await getDb()
       .insert(transferRouteVehiclePrices)
       .values({
         routeId: route.insertId,
-        vehicleType,
+        vehicleTypeId,
         oneWayPriceCentavos: opts.oneWayPriceCentavos ?? ONE_WAY_PRICE,
         dayUsePriceCentavos: DAY_USE_PRICE,
       });
@@ -184,7 +211,7 @@ async function makeVan() {
       plate: `T11${suffix}`.slice(0, 20),
       model: 'T11 Fixture',
       capacity: 12,
-      vehicleType: 'van',
+      vehicleTypeId: VAN_ID,
       status: 'available',
       isActive: true,
     });
@@ -235,7 +262,8 @@ function holdInput(over: Record<string, unknown> & { routeId: number }) {
   return {
     // `routeId` comes from `over`, which is spread last and is typed to
     // require it — there is no sensible default route id.
-    vehicleType: 'van' as const,
+    vehicleTypeId: VAN_ID,
+    direction: 'forward' as const,
     productType: 'transfer_one_way' as const,
     date: DAY,
     pickupTime: '08:00',
@@ -316,6 +344,8 @@ describeWithDb('checkout.createHoldTransfer', () => {
     expect(operations.minNoticeHours, 'the seeded minimum notice changed').toBe(MIN_NOTICE_HOURS);
     const trust = await readSettingBlock('trust');
     expect(trust.depositPercent, 'the seeded deposit percent changed').toBe(DEPOSIT_PERCENT);
+    VAN_ID = await vehicleTypeIdBySlug('van');
+    SUV_ID = await vehicleTypeIdBySlug('suv');
   });
 
   beforeEach(async () => {
@@ -360,7 +390,7 @@ describeWithDb('checkout.createHoldTransfer', () => {
     expect(row.tourId, 'a transfer carries no tour_id').toBeNull();
     expect(row.productType).toBe('transfer_one_way');
     expect(row.routeId).toBe(routeId);
-    expect(row.vehicleTypeRequested).toBe('van');
+    expect(row.vehicleTypeId).toBe(VAN_ID);
     expect(row.pax).toBe(3);
     expect(row.amountPaidCentavos, 'a hold must not be paid').toBe(0);
     // The flat per-vehicle CATALOG rate — this test sent no price at all.
@@ -686,10 +716,10 @@ describeWithDb('checkout.createHoldTransfer', () => {
   it('refuses an unquotable route with one NOT_FOUND sentence for every cause', async () => {
     await makeFleet();
     const retired = await makeRoute({ isActive: false });
-    const vanOnly = await makeRoute({ vehicleTypes: ['van'] });
+    const vanOnly = await makeRoute({ vehicleTypeIds: [VAN_ID] });
 
     expect(await refusal(holdInput({ routeId: retired }))).toMatchObject(UNQUOTABLE_ROUTE_REFUSAL);
-    expect(await refusal(holdInput({ routeId: vanOnly, vehicleType: 'suv' }))).toMatchObject(
+    expect(await refusal(holdInput({ routeId: vanOnly, vehicleTypeId: SUV_ID }))).toMatchObject(
       UNQUOTABLE_ROUTE_REFUSAL,
     );
     expect(await refusal(holdInput({ routeId: 2_000_000_000 }))).toMatchObject(
@@ -698,25 +728,27 @@ describeWithDb('checkout.createHoldTransfer', () => {
   });
 
   /**
-   * Task 0D (owner decision 2026-11-06 #1): a route whose DESTINATION is
-   * retired is not sellable even while the route's own flag is still active —
-   * `vehiclePriceForRouteAndType` joins to `destinations` and checks both
-   * flags, so this hold must be refused with the same sentence the
-   * route-retired case above gets (deliberately non-distinguishing — see this
-   * file's header and the T9 review finding it cites: naming WHY would make a
-   * numeric id an enumeration oracle for which destinations exist).
+   * Task 0D (owner decision 2026-11-06 #1, retargeted 2026-11-08 from
+   * `destinations` to the route's TO place): a route whose TO place is
+   * retired is not sellable even while the route's own flag is still
+   * active — `vehiclePriceForRouteAndType` joins to `transfer_places`
+   * (both ends) and checks both flags, so this hold must be refused with
+   * the same sentence the route-retired case above gets (deliberately
+   * non-distinguishing — see this file's header and the T9 review finding
+   * it cites: naming WHY would make a numeric id an enumeration oracle for
+   * which places exist).
    */
-  it('refuses a route whose destination is retired, even though the route itself is active', async () => {
+  it('refuses a route whose place is retired, even though the route itself is active', async () => {
     await makeFleet();
-    const inactiveDestination = await makeRoute({ destinationActive: false });
+    const inactivePlaceRoute = await makeRoute({ toPlaceActive: false });
     const before = await writtenRowCounts();
 
-    expect(await refusal(holdInput({ routeId: inactiveDestination }))).toMatchObject(
+    expect(await refusal(holdInput({ routeId: inactivePlaceRoute }))).toMatchObject(
       UNQUOTABLE_ROUTE_REFUSAL,
     );
     expect(
       await writtenRowCounts(),
-      'a hold refused for a retired destination must leave no slot, booking or audit row',
+      'a hold refused for a retired place must leave no slot, booking or audit row',
     ).toEqual(before);
   });
 
@@ -831,8 +863,8 @@ async function cleanup() {
     await db.delete(transferRouteVehiclePrices).where(eq(transferRouteVehiclePrices.routeId, id));
     await db.delete(transferRoutes).where(eq(transferRoutes.id, id));
   }
-  for (const id of created.destinationIds) {
-    await db.delete(destinations).where(eq(destinations.id, id));
+  for (const id of created.placeIds) {
+    await db.delete(transferPlaces).where(eq(transferPlaces.id, id));
   }
   for (const id of created.driverIds) await db.delete(drivers).where(eq(drivers.id, id));
   for (const id of created.vanIds) await db.delete(vans).where(eq(vans.id, id));
@@ -842,7 +874,7 @@ async function cleanup() {
   created.bookingIds = [];
   created.couponIds = [];
   created.routeIds = [];
-  created.destinationIds = [];
+  created.placeIds = [];
   created.driverIds = [];
   created.vanIds = [];
 }

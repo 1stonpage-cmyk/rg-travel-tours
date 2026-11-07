@@ -1,7 +1,9 @@
 /**
  * `admin.transferRoutes.*` — the private-transfer route catalog and its
- * per-vehicle-type prices (transfers-launch plan, Task T3; Architecture §1 and
- * §5).
+ * per-vehicle-type prices (transfers-launch plan, Task T3; Architecture §1
+ * and §5). Restructured 2026-11-08 (owner decision: flexible
+ * places/routes/vehicle types — see
+ * `docs/superpowers/plans/2026-11-08-flexible-routes.md`).
  *
  * Every procedure is `adminProcedure('toursPricing')` — §9's "Tours, pricing,
  * coupons" row, which is **owner only**, the same area `admin.tours.*` and
@@ -20,23 +22,35 @@
  * with the route through the upsert's delete-then-reinsert, which only ever
  * touches rows for a route that still exists.
  *
+ * **`prices` is no longer "exactly two rows, never more, never fewer".**
+ * Owner decision 2026-11-08 (design note §1.4) reversed that rule: a route
+ * carries one row per OFFERED active vehicle type, zero or more total, zero
+ * being legitimate — "no row = that type isn't offered." The old
+ * `missingPricesMessage`/`CONFLICT` refusal for a route with a stored price
+ * row missing no longer applies, because there is nothing missing about a
+ * route with fewer than every vehicle type priced any more.
+ *
  * One transaction per mutation, opened here, with `writeAudit` inside it — an
  * audit row that survives a rollback claims a price change that never happened.
  */
 import { TRPCError } from '@trpc/server';
 import {
-  VEHICLE_TYPES,
   transferRouteActiveInputSchema,
   transferRouteCreateInputSchema,
   transferRouteUpdateInputSchema,
   type TransferRouteAdminRow,
+  type TransferRouteAdminVehiclePrice,
   type TransferRoutePricesInput,
-  type TransferRouteVehiclePriceRow,
-  type VehicleType,
 } from '@rg/shared';
 import { asc, eq, inArray } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/mysql-core';
 import { getDb } from '../../db/client';
-import { destinations, transferRouteVehiclePrices, transferRoutes } from '../../db/schema';
+import {
+  transferPlaces,
+  transferRouteVehiclePrices,
+  transferRoutes,
+  vehicleTypes,
+} from '../../db/schema';
 import { writeAudit } from '../../services/audit';
 import {
   UNKNOWN_TRANSFER_ROUTE_MESSAGE,
@@ -46,58 +60,45 @@ import {
 import { adminProcedure, router } from '../../trpc';
 
 /**
- * The refusal for an `update` that would have to GUESS a price.
- *
- * It can only fire for a route whose price rows went missing behind the
- * upsert's back — a hand-written INSERT, a half-applied migration — because
- * every save through this router writes both. The alternative to refusing is
- * merging a fabricated figure (a zero, or the other vehicle type's price) into
- * a money column, which is worse than saying so.
+ * Two aliases onto the SAME `transfer_places` table — mirrors
+ * `services/transfers/pricing.ts`'s own pair (each module that needs both
+ * sides of a route declares its own).
  */
-function missingPricesMessage(vehicleTypes: readonly VehicleType[]): string {
-  return (
-    `This route has no stored price for: ${vehicleTypes.join(', ')}. ` +
-    'Include both vehicle types’ prices in this save.'
-  );
-}
-
-/** An empty price card, filled in from whatever rows the database holds. */
-function emptyPriceCard(): Record<VehicleType, TransferRouteVehiclePriceRow | null> {
-  return { van: null, suv: null };
-}
+const fromPlace = alias(transferPlaces, 'fromPlace');
+const toPlace = alias(transferPlaces, 'toPlace');
 
 export const adminTransferRoutesRouter = router({
   /**
-   * Every route, **inactive ones included**, each with its destination's name
-   * and both price rows.
+   * Every route, **inactive ones included**, each with both places' names
+   * and every ACTIVE vehicle type's price (`price: null` meaning "not
+   * offered").
    *
-   * Two queries, never one per route: the routes joined to `destinations`, then
-   * one `IN (…)` sweep of the price rows for the ids that came back. A price
-   * read per row would be an N+1 against the table whose whole purpose is to be
-   * read beside its parent.
+   * Three queries, never one per route: the routes joined to `transfer_places`
+   * (twice, aliased), the active vehicle types, then one `IN (…)` sweep of the
+   * price rows for the ids that came back. A price read per row would be an
+   * N+1 against the table whose whole purpose is to be read beside its parent.
    *
-   * The join to `destinations` is an `innerJoin` because
-   * `transfer_routes.destination_id` is `NOT NULL` with a RESTRICT foreign key
-   * — a route without a destination cannot exist, so a `LEFT JOIN` would only
-   * invite a nullable column nobody can produce.
+   * The joins to `transfer_places` are `innerJoin`s because
+   * `transfer_routes.from_place_id`/`to_place_id` are both `NOT NULL` with a
+   * RESTRICT foreign key — a route without both places cannot exist.
    *
-   * Ordered by `sort_order` then the destination's name, so two routes sharing
-   * a sort order still come back in the same order on every run.
+   * Ordered by `sort_order` then the to-place's name, so two routes sharing a
+   * sort order still come back in the same order on every run.
    */
   list: adminProcedure('toursPricing').query(async (): Promise<TransferRouteAdminRow[]> => {
     const db = getDb();
     const rows = await db
       .select({
         id: transferRoutes.id,
-        destinationId: transferRoutes.destinationId,
-        destinationName: destinations.name,
-        // Owner decision 2026-11-06 #1: the admin list already shows inactive
-        // ROUTES without filtering on `destinations.is_active`, so it can
-        // already hold a route whose destination is retired. This is what
-        // lets the client tell that case apart from a plain Active route —
-        // forwarded below through the `...row` spread, same as every other
-        // selected column.
-        destinationIsActive: destinations.isActive,
+        fromPlaceId: fromPlace.id,
+        fromPlaceName: fromPlace.name,
+        fromPlaceIsAirport: fromPlace.isAirport,
+        fromPlaceIsActive: fromPlace.isActive,
+        toPlaceId: toPlace.id,
+        toPlaceName: toPlace.name,
+        toPlaceIsAirport: toPlace.isAirport,
+        toPlaceIsActive: toPlace.isActive,
+        reverseEnabled: transferRoutes.reverseEnabled,
         slug: transferRoutes.slug,
         isActive: transferRoutes.isActive,
         sortOrder: transferRoutes.sortOrder,
@@ -107,16 +108,23 @@ export const adminTransferRoutesRouter = router({
         exclusionsText: transferRoutes.exclusionsText,
       })
       .from(transferRoutes)
-      .innerJoin(destinations, eq(destinations.id, transferRoutes.destinationId))
-      .orderBy(asc(transferRoutes.sortOrder), asc(destinations.name));
+      .innerJoin(fromPlace, eq(fromPlace.id, transferRoutes.fromPlaceId))
+      .innerJoin(toPlace, eq(toPlace.id, transferRoutes.toPlaceId))
+      .orderBy(asc(transferRoutes.sortOrder), asc(toPlace.name));
 
     // `inArray` with an empty list is not a query worth issuing.
     if (rows.length === 0) return [];
 
+    const types = await db
+      .select({ id: vehicleTypes.id, name: vehicleTypes.name, slug: vehicleTypes.slug })
+      .from(vehicleTypes)
+      .where(eq(vehicleTypes.isActive, true))
+      .orderBy(asc(vehicleTypes.sortOrder), asc(vehicleTypes.name));
+
     const priceRows = await db
       .select({
         routeId: transferRouteVehiclePrices.routeId,
-        vehicleType: transferRouteVehiclePrices.vehicleType,
+        vehicleTypeId: transferRouteVehiclePrices.vehicleTypeId,
         oneWayPriceCentavos: transferRouteVehiclePrices.oneWayPriceCentavos,
         dayUsePriceCentavos: transferRouteVehiclePrices.dayUsePriceCentavos,
       })
@@ -128,31 +136,59 @@ export const adminTransferRoutesRouter = router({
         ),
       );
 
-    const cards = new Map<number, Record<VehicleType, TransferRouteVehiclePriceRow | null>>();
-    for (const row of rows) cards.set(row.id, emptyPriceCard());
+    const priceMap = new Map<
+      string,
+      { oneWayPriceCentavos: number; dayUsePriceCentavos: number }
+    >();
     for (const price of priceRows) {
-      const card = cards.get(price.routeId);
-      // A price row for a route this query did not select cannot happen (the
-      // sweep is scoped to these ids), but reading it back defensively keeps
-      // the map lookup from being an unchecked index.
-      if (!card) continue;
-      card[price.vehicleType] = {
+      priceMap.set(`${price.routeId}:${price.vehicleTypeId}`, {
         oneWayPriceCentavos: price.oneWayPriceCentavos,
         dayUsePriceCentavos: price.dayUsePriceCentavos,
-      };
+      });
     }
 
-    return rows.map((row) => ({ ...row, prices: cards.get(row.id) ?? emptyPriceCard() }));
+    return rows.map((row) => {
+      const prices: TransferRouteAdminVehiclePrice[] = types.map((type) => ({
+        vehicleTypeId: type.id,
+        vehicleTypeName: type.name,
+        slug: type.slug,
+        price: priceMap.get(`${row.id}:${type.id}`) ?? null,
+      }));
+      return {
+        id: row.id,
+        fromPlace: {
+          id: row.fromPlaceId,
+          name: row.fromPlaceName,
+          isAirport: row.fromPlaceIsAirport,
+          isActive: row.fromPlaceIsActive,
+        },
+        toPlace: {
+          id: row.toPlaceId,
+          name: row.toPlaceName,
+          isAirport: row.toPlaceIsAirport,
+          isActive: row.toPlaceIsActive,
+        },
+        reverseEnabled: row.reverseEnabled,
+        slug: row.slug,
+        isActive: row.isActive,
+        sortOrder: row.sortOrder,
+        estimatedDurationMinutes: row.estimatedDurationMinutes,
+        freeCancelHours: row.freeCancelHours,
+        inclusionsText: row.inclusionsText,
+        exclusionsText: row.exclusionsText,
+        prices,
+      };
+    });
   }),
 
   /**
    * A new route and its whole price card, in one transaction.
    *
-   * The audit payload names the destination, the slug AND the prices. The
-   * prices are the point: the plan's Global Constraints put `audit_log` on
-   * "every money movement, status change, assignment, and price CHANGE", and a
-   * route's creation is the first price it ever had. Nothing here is sensitive
-   * — `transfer_routes` holds no personal data, no hash and no token.
+   * The audit payload names both places, the slug, `reverseEnabled` AND the
+   * prices. The prices are the point: `audit_log` carries "every money
+   * movement, status change, assignment, and price CHANGE", and a route's
+   * creation is the first price it ever had. Nothing here is sensitive —
+   * `transfer_routes` holds no personal data, no hash and no token.
    */
   create: adminProcedure('toursPricing')
     .input(transferRouteCreateInputSchema)
@@ -165,7 +201,13 @@ export const adminTransferRoutesRouter = router({
           action: 'transfer_route_created',
           entity: 'transfer_route',
           entityId: result.id,
-          data: { destinationId: input.destinationId, slug: input.slug, prices: input.prices },
+          data: {
+            fromPlaceId: input.fromPlaceId,
+            toPlaceId: input.toPlaceId,
+            reverseEnabled: input.reverseEnabled,
+            slug: input.slug,
+            prices: input.prices,
+          },
         });
         return result.id;
       });
@@ -183,10 +225,18 @@ export const adminTransferRoutesRouter = router({
    * otherwise each merge over the state they read first, and the loser's price
    * edit would vanish with no error. So the route row is taken `FOR UPDATE`
    * **before** anything else in this transaction reads anything — CLAUDE.md's
-   * "take the lock BEFORE reading" rule, which exists because under REPEATABLE
-   * READ a plain `SELECT` taken first pins a snapshot the lock cannot refresh.
-   * The price rows are locked the same way, for the same reason: they are what
-   * the merge reads and what the upsert is about to replace.
+   * "take the lock BEFORE reading" rule. The price rows are locked the same
+   * way, for the same reason: they are what the merge reads and what the
+   * upsert is about to replace.
+   *
+   * **The stored price card is built directly from whatever rows exist**,
+   * keyed by the stringified `vehicleTypeId` — there is no "every type,
+   * filled with null" base to build any more (owner decision 2026-11-08):
+   * an absent key already means "not offered", so a row that is not there
+   * needs no explicit `null` placeholder. This is also why the old
+   * "refuses an update that would have to invent a missing price" refusal
+   * is gone — there is nothing left to invent; a merge over a card with a
+   * type missing simply keeps that type unpriced.
    *
    * The audit payload is `input.patch` — exactly what changed and nothing else,
    * the shape `admin.vans.update` uses. An update that does not mention prices
@@ -198,7 +248,9 @@ export const adminTransferRoutesRouter = router({
       await getDb().transaction(async (tx) => {
         const [stored] = await tx
           .select({
-            destinationId: transferRoutes.destinationId,
+            fromPlaceId: transferRoutes.fromPlaceId,
+            toPlaceId: transferRoutes.toPlaceId,
+            reverseEnabled: transferRoutes.reverseEnabled,
             slug: transferRoutes.slug,
             sortOrder: transferRoutes.sortOrder,
             estimatedDurationMinutes: transferRoutes.estimatedDurationMinutes,
@@ -215,7 +267,7 @@ export const adminTransferRoutesRouter = router({
 
         const storedPriceRows = await tx
           .select({
-            vehicleType: transferRouteVehiclePrices.vehicleType,
+            vehicleTypeId: transferRouteVehiclePrices.vehicleTypeId,
             oneWayPriceCentavos: transferRouteVehiclePrices.oneWayPriceCentavos,
             dayUsePriceCentavos: transferRouteVehiclePrices.dayUsePriceCentavos,
           })
@@ -223,42 +275,15 @@ export const adminTransferRoutesRouter = router({
           .where(eq(transferRouteVehiclePrices.routeId, input.id))
           .for('update');
 
-        const card = emptyPriceCard();
+        const storedPrices: TransferRoutePricesInput = {};
         for (const price of storedPriceRows) {
-          card[price.vehicleType] = {
+          storedPrices[String(price.vehicleTypeId)] = {
             oneWayPriceCentavos: price.oneWayPriceCentavos,
             dayUsePriceCentavos: price.dayUsePriceCentavos,
           };
         }
 
-        /*
-         * Fail closed rather than merge a price nobody set. Only reachable for
-         * a route written around the upsert; see `missingPricesMessage`.
-         */
-        const missing = VEHICLE_TYPES.filter((vehicleType) => card[vehicleType] === null);
-        if (input.patch.prices === undefined && missing.length > 0) {
-          throw new TRPCError({ code: 'CONFLICT', message: missingPricesMessage(missing) });
-        }
-
-        const merged = mergeTransferRoutePatch(
-          {
-            ...stored,
-            /*
-             * The cast is discharged by the refusal immediately above: when
-             * the patch omits `prices`, every vehicle type has a stored row,
-             * so the card really is complete. When the patch SUPPLIES prices,
-             * `mergeTransferRoutePatch` never reads this field at all.
-             *
-             * The refusal is pinned by `admin-transfer-routes.test.ts`'s
-             * "refuses an update that would have to invent a missing price"
-             * (review finding I1): replacing it with a `?? 0` default turns
-             * that test red with `promise resolved "{ ok: true }"`, which is
-             * exactly the silent ₱0 repricing it exists to stop.
-             */
-            prices: card as TransferRoutePricesInput,
-          },
-          input.patch,
-        );
+        const merged = mergeTransferRoutePatch({ ...stored, prices: storedPrices }, input.patch);
 
         await upsertTransferRoute(tx, { id: input.id, ...merged });
 

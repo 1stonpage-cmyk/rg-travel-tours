@@ -52,6 +52,7 @@ import {
   tourPriceTiers,
   tours,
   vans,
+  vehicleTypes,
 } from '../db/schema';
 import { env } from '../env';
 import { appRouter } from '../routers/_app';
@@ -176,6 +177,23 @@ const unique = () => `${Math.floor(Math.random() * 1e9)}_${Date.now()}`;
 
 let guestSeq = 0;
 
+/**
+ * The real, global `vehicle_types.id` for `'van'` — seeded by `seedBase`
+ * (migration 0023), never a literal id (CLAUDE.md). Cached per process.
+ */
+let cachedVanTypeId: number | undefined;
+async function vanVehicleTypeId(): Promise<number> {
+  if (cachedVanTypeId !== undefined) return cachedVanTypeId;
+  const [row] = await getDb()
+    .select({ id: vehicleTypes.id })
+    .from(vehicleTypes)
+    .where(eq(vehicleTypes.slug, 'van'))
+    .limit(1);
+  if (!row) throw new Error('No vehicle_types row for slug "van" — expected from seedBase.');
+  cachedVanTypeId = row.id;
+  return row.id;
+}
+
 /** A tour, its fleet, and a 1-12 pax tier at a round ₱1,000/person. */
 async function makeTour() {
   const db = getDb();
@@ -203,6 +221,7 @@ async function makeTour() {
     plate: `CPT${suffix}`.slice(0, 20),
     model: 'Task 7 Fixture Van',
     capacity: 12,
+    vehicleTypeId: await vanVehicleTypeId(),
     status: 'available',
     isActive: true,
   });

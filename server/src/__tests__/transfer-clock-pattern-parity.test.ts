@@ -58,7 +58,8 @@ const CLOCK_TIME_SAMPLES = [
 function oneWayPayload(pickupTime: string) {
   return {
     routeId: 1,
-    vehicleType: 'van' as const,
+    vehicleTypeId: 1,
+    direction: 'forward' as const,
     productType: 'transfer_one_way' as const,
     date: '2027-06-15',
     pickupTime,

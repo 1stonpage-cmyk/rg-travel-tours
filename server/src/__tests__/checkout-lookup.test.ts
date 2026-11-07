@@ -24,7 +24,7 @@ import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { manilaCivilDate } from '@rg/shared';
 import { getDb, getPool } from '../db/client';
-import { destinations, drivers, tourPriceTiers, tours, vans } from '../db/schema';
+import { destinations, drivers, tourPriceTiers, tours, vans, vehicleTypes } from '../db/schema';
 import { appRouter } from '../routers/_app';
 import { createPaymongoProvider } from '../services/payments/paymongo';
 import type { PaymentProvider } from '../services/payments/types';
@@ -112,6 +112,23 @@ const created = {
 const unique = () => `${Math.floor(Math.random() * 1e9)}_${Date.now()}`;
 let guestSeq = 0;
 
+/**
+ * The real, global `vehicle_types.id` for `'van'` — seeded by `seedBase`
+ * (migration 0023), never a literal id (CLAUDE.md). Cached per process.
+ */
+let cachedVanTypeId: number | undefined;
+async function vanVehicleTypeId(): Promise<number> {
+  if (cachedVanTypeId !== undefined) return cachedVanTypeId;
+  const [row] = await getDb()
+    .select({ id: vehicleTypes.id })
+    .from(vehicleTypes)
+    .where(eq(vehicleTypes.slug, 'van'))
+    .limit(1);
+  if (!row) throw new Error('No vehicle_types row for slug "van" — expected from seedBase.');
+  cachedVanTypeId = row.id;
+  return row.id;
+}
+
 async function makeTour() {
   const db = getDb();
   const slug = `__checkout_lookup__${unique()}`;
@@ -138,6 +155,7 @@ async function makeTour() {
     plate: `CLT${suffix}`.slice(0, 20),
     model: 'Task 20 Fixture Van',
     capacity: 12,
+    vehicleTypeId: await vanVehicleTypeId(),
     status: 'available',
     isActive: true,
   });

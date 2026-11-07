@@ -100,8 +100,24 @@ describe('vans table', () => {
     expect(columnNames.filter((n) => /price|amount|centavos|cost|fee/i.test(n))).toEqual([]);
   });
 
-  it('references nothing — the fleet is a Wave 1 table with no foreign keys', () => {
-    expect(config.foreignKeys).toHaveLength(0);
+  /**
+   * Updated 2026-11-08 (owner decision: flexible places/routes/vehicle
+   * types). `vans` was a genuinely foreign-key-free Wave 1 table until
+   * migration 0027 replaced the `vehicle_type` enum with a real FK onto the
+   * admin-managed `vehicle_types` list — the one exception, and a deliberate
+   * one.
+   */
+  it('references only vehicle_types — the fleet is otherwise a Wave 1 table with no foreign keys', () => {
+    const foreignKeys = config.foreignKeys.map((fk) => {
+      const reference = fk.reference();
+      return {
+        columns: reference.columns.map((c) => c.name),
+        table: getTableConfig(reference.foreignTable).name,
+      };
+    });
+    expect(foreignKeys.map((fk) => `${fk.columns.join(',')}->${fk.table}`)).toEqual([
+      'vehicle_type_id->vehicle_types',
+    ]);
   });
 });
 

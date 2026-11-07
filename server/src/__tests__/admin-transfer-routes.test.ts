@@ -1,10 +1,15 @@
 /**
  * Transfers-launch plan, Task T3 — `admin.transferRoutes.*` (Architecture §1
- * and §5).
+ * and §5). Restructured 2026-11-08 (owner decision: flexible
+ * places/routes/vehicle types — see
+ * `docs/superpowers/plans/2026-11-08-flexible-routes.md`). A route used to
+ * be anchored on a single `destinations` row; it now runs BETWEEN two
+ * admin-managed `transfer_places`, and its price card is keyed by a runtime
+ * `vehicle_types.id` rather than a fixed `van`/`suv` enum.
  *
  * §9 gives the "Tours, pricing, coupons" row to the OWNER alone, and this
  * router reuses it rather than adding a thirteenth area: these mutations write
- * the price a guest is charged for a van or an SUV, which is the narrowest
+ * the price a guest is charged for a vehicle, which is the narrowest
  * permission in the matrix for a reason. So every procedure is exercised
  * against all three roles here, the way `admin-vans.test.ts` does it — the
  * shared gate plus `procedure-role-metadata.test.ts` cover the role list
@@ -12,26 +17,31 @@
  * procedure accidentally built on the wrong area is exactly the defect that
  * catches.
  *
- * **The load-bearing tests in this file are the two price-preservation ones.**
+ * **The load-bearing tests in this file are the price-preservation ones.**
  * `transfer_route_vehicle_prices` is replaced WHOLESALE on every save
  * (`services/transfers/upsert-route.ts` explains why that is safe), and the
  * failure mode of a wholesale replacement driven by a PATCH is specific and
- * expensive: delete both rows, re-insert only the vehicle type the patch
- * happened to mention, and the other vehicle type's price is gone — a product
- * that silently stops being quotable. Both halves are pinned: a patch that
- * mentions no prices at all, and a patch that reprices one vehicle type.
+ * expensive: delete every row, re-insert only what the patch happened to
+ * mention, and an unmentioned type's price is gone. Owner decision
+ * 2026-11-08 REVERSED the old "exactly two rows, never more, never fewer"
+ * rule to "zero or more rows, one per offered type — no row means not
+ * offered" — so what is pinned here changed shape too: a patch that restates
+ * one type's price while repeating another's unchanged leaves the second
+ * exactly as it was, and a patch whose price card omits a type that used to
+ * be priced genuinely drops it (that is the new contract, not a bug).
  */
 import { afterAll, beforeAll, expect, it } from 'vitest';
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, or } from 'drizzle-orm';
 import type { TransferRouteCreateInput } from '@rg/shared';
 import { appRouter } from '../routers/_app';
 import { getDb, getPool } from '../db/client';
 import {
   auditLog,
-  destinations,
+  transferPlaces,
   transferRouteVehiclePrices,
   transferRoutes,
   users,
+  vehicleTypes,
 } from '../db/schema';
 import { customerContext, staffContext, testContext } from './helpers/ctx';
 import { describeWithDb } from './helpers/db';
@@ -48,22 +58,10 @@ const unique = () => `${Math.floor(Math.random() * 1e9)}_${Date.now()}`;
  */
 const uniqueSlug = () => `adtr-${unique().replace('_', '-')}`;
 
-/**
- * Both vehicle types, both products, all four figures different.
- *
- * Four distinct numbers on purpose: a bug that copied one vehicle type's card
- * over the other's, or one-way over day-use, would pass a fixture built from
- * repeated values.
- */
-const VALID_PRICES = {
-  van: { oneWayPriceCentavos: 250_000, dayUsePriceCentavos: 450_000 },
-  suv: { oneWayPriceCentavos: 320_000, dayUsePriceCentavos: 560_000 },
-} as const;
-
 const created = {
   userIds: [] as number[],
   routeIds: [] as number[],
-  destIds: [] as number[],
+  placeIds: [] as number[],
 };
 
 async function makeStaff(role: 'owner' | 'dispatcher' | 'finance') {
@@ -81,26 +79,73 @@ async function makeStaff(role: 'owner' | 'dispatcher' | 'finance') {
   return row.insertId;
 }
 
-/** A destination with nothing else attached — what a route anchors on. */
-async function makeDestination() {
-  const slug = `__adtrdest__${unique()}`;
-  const [row] = await getDb().insert(destinations).values({ name: slug, slug });
-  created.destIds.push(row.insertId);
+/** A pickup/drop-off place with nothing else attached — what a route runs between. */
+async function makePlace(opts: { isActive?: boolean; isAirport?: boolean } = {}) {
+  const slug = `__adtrplace__${unique()}`;
+  const [row] = await getDb()
+    .insert(transferPlaces)
+    .values({
+      name: slug,
+      nameKey: slug.toLowerCase(),
+      isActive: opts.isActive ?? true,
+      isAirport: opts.isAirport ?? false,
+    });
+  created.placeIds.push(row.insertId);
   return row.insertId;
 }
 
+/**
+ * The real, global `vehicle_types.id` for `'van'`/`'suv'` — seeded by
+ * `seedBase` (migration 0023), never a literal id (CLAUDE.md).
+ */
+let VAN_ID = 0;
+let SUV_ID = 0;
+
+async function vehicleTypeIdBySlug(slug: string): Promise<number> {
+  const [row] = await getDb()
+    .select({ id: vehicleTypes.id })
+    .from(vehicleTypes)
+    .where(eq(vehicleTypes.slug, slug))
+    .limit(1);
+  if (!row) throw new Error(`No vehicle_types row for slug "${slug}" — expected from seedBase.`);
+  return row.id;
+}
+
+/**
+ * Both vehicle types, both products, all four figures different.
+ *
+ * Four distinct numbers on purpose: a bug that copied one vehicle type's card
+ * over the other's, or one-way over day-use, would pass a fixture built from
+ * repeated values.
+ */
+const VALID_PRICES = {
+  van: { oneWayPriceCentavos: 250_000, dayUsePriceCentavos: 450_000 },
+  suv: { oneWayPriceCentavos: 320_000, dayUsePriceCentavos: 560_000 },
+} as const;
+
+/** The whole, legitimate price card: both seeded types, keyed by stringified id. */
+function fullPrices() {
+  return {
+    [String(VAN_ID)]: { ...VALID_PRICES.van },
+    [String(SUV_ID)]: { ...VALID_PRICES.suv },
+  };
+}
+
 function routeInput(
-  destinationId: number,
+  fromPlaceId: number,
+  toPlaceId: number,
   overrides: Partial<TransferRouteCreateInput> = {},
 ): TransferRouteCreateInput {
   return {
-    destinationId,
+    fromPlaceId,
+    toPlaceId,
+    reverseEnabled: true,
     slug: uniqueSlug(),
     estimatedDurationMinutes: 180,
     freeCancelHours: 24,
     inclusionsText: 'Fuel, driver, tolls',
     exclusionsText: 'Meals',
-    prices: { van: { ...VALID_PRICES.van }, suv: { ...VALID_PRICES.suv } },
+    prices: fullPrices(),
     ...overrides,
   };
 }
@@ -118,13 +163,13 @@ async function auditRowsFor(entityId: number) {
 async function priceRowsFor(routeId: number) {
   return getDb()
     .select({
-      vehicleType: transferRouteVehiclePrices.vehicleType,
+      vehicleTypeId: transferRouteVehiclePrices.vehicleTypeId,
       oneWayPriceCentavos: transferRouteVehiclePrices.oneWayPriceCentavos,
       dayUsePriceCentavos: transferRouteVehiclePrices.dayUsePriceCentavos,
     })
     .from(transferRouteVehiclePrices)
     .where(eq(transferRouteVehiclePrices.routeId, routeId))
-    .orderBy(asc(transferRouteVehiclePrices.vehicleType));
+    .orderBy(asc(transferRouteVehiclePrices.vehicleTypeId));
 }
 
 let ownerId = 0;
@@ -134,9 +179,12 @@ let financeId = 0;
 const ownerApi = () => appRouter.createCaller(staffContext(ownerId, 'owner') as never);
 
 /** Creates a route through the real router and tracks it for teardown. */
-async function createRoute(overrides: Partial<TransferRouteCreateInput> = {}) {
-  const destinationId = overrides.destinationId ?? (await makeDestination());
-  const input = routeInput(destinationId, overrides);
+async function createRoute(
+  overrides: Partial<TransferRouteCreateInput> & { fromPlaceId?: number; toPlaceId?: number } = {},
+) {
+  const fromPlaceId = overrides.fromPlaceId ?? (await makePlace());
+  const toPlaceId = overrides.toPlaceId ?? (await makePlace());
+  const input = routeInput(fromPlaceId, toPlaceId, overrides);
   const { id } = await ownerApi().admin.transferRoutes.create(input);
   created.routeIds.push(id);
   return { id, input };
@@ -146,6 +194,8 @@ beforeAll(async () => {
   ownerId = await makeStaff('owner');
   dispatcherId = await makeStaff('dispatcher');
   financeId = await makeStaff('finance');
+  VAN_ID = await vehicleTypeIdBySlug('van');
+  SUV_ID = await vehicleTypeIdBySlug('suv');
 }, 60_000);
 
 afterAll(async () => {
@@ -153,13 +203,11 @@ afterAll(async () => {
   const pool = getPool();
 
   /*
-   * Users FIRST, before the route and destination deletes that can fail on a
+   * Users FIRST, before the route and place deletes that can fail on a
    * foreign key. `users` is one of `global-setup.ts`'s LEAK_TABLES — a stray
    * row there fails the whole run by name — and nothing on `users` depends on
    * anything else this suite created, so taking it out of the blast radius of
-   * a later failing statement costs nothing. (Measured during this file's own
-   * mutation proving: an earlier delete threw, and the three staff rows were
-   * still sitting in `rg_travel_test` afterwards.)
+   * a later failing statement costs nothing.
    */
   for (const id of created.userIds) {
     await pool.query('DELETE FROM sessions WHERE subject_type = ? AND subject_id = ?', [
@@ -170,22 +218,23 @@ afterAll(async () => {
   }
 
   /*
-   * Every route anchored on one of this suite's destinations, not only the ids
-   * `createRoute` pushed. A REFUSAL test that unexpectedly SUCCEEDS leaves a
-   * route nothing tracked — which is precisely what happens while
-   * mutation-proving one of them (dropping the slug regex let
-   * `"Mactan Airport"` through, and the untracked row then blocked the
-   * destination delete on its foreign key and aborted the rest of this
-   * teardown). Asking the database which routes exist makes the cleanup
-   * independent of the tests having behaved.
+   * Every route touching one of this suite's places, not only the ids
+   * `createRoute` pushed — a refusal test that unexpectedly SUCCEEDS leaves a
+   * route nothing tracked. Asking the database which routes exist makes the
+   * cleanup independent of the tests having behaved.
    */
   const strays =
-    created.destIds.length === 0
+    created.placeIds.length === 0
       ? []
       : await db
           .select({ id: transferRoutes.id })
           .from(transferRoutes)
-          .where(inArray(transferRoutes.destinationId, created.destIds));
+          .where(
+            or(
+              inArray(transferRoutes.fromPlaceId, created.placeIds),
+              inArray(transferRoutes.toPlaceId, created.placeIds),
+            ),
+          );
   const routeIds = [...new Set([...created.routeIds, ...strays.map((row) => row.id)])];
 
   if (routeIds.length > 0) {
@@ -200,8 +249,8 @@ afterAll(async () => {
       .where(inArray(transferRouteVehiclePrices.routeId, routeIds));
     await db.delete(transferRoutes).where(inArray(transferRoutes.id, routeIds));
   }
-  if (created.destIds.length > 0) {
-    await db.delete(destinations).where(inArray(destinations.id, created.destIds));
+  if (created.placeIds.length > 0) {
+    await db.delete(transferPlaces).where(inArray(transferPlaces.id, created.placeIds));
   }
 });
 
@@ -232,7 +281,7 @@ describeWithDb('admin.transferRoutes', () => {
         staffContext(role === 'dispatcher' ? dispatcherId : financeId, role) as never,
       ).admin.transferRoutes;
       await expect(api.list()).rejects.toMatchObject({ code: 'FORBIDDEN' });
-      await expect(api.create(routeInput(1))).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      await expect(api.create(routeInput(1, 2))).rejects.toMatchObject({ code: 'FORBIDDEN' });
       await expect(
         api.update({ id: 1, patch: { estimatedDurationMinutes: 90 } }),
       ).rejects.toMatchObject({ code: 'FORBIDDEN' });
@@ -251,57 +300,85 @@ describeWithDb('admin.transferRoutes', () => {
    * ------------------------------------------------------------------ */
 
   it("round-trips both vehicle types' prices through create and list", async () => {
-    const destinationId = await makeDestination();
-    const input = routeInput(destinationId);
+    const fromPlaceId = await makePlace();
+    const toPlaceId = await makePlace();
+    const input = routeInput(fromPlaceId, toPlaceId);
     const { id } = await ownerApi().admin.transferRoutes.create(input);
     created.routeIds.push(id);
 
     const row = (await ownerApi().admin.transferRoutes.list()).find((r) => r.id === id);
     expect(row).toBeDefined();
     expect(row).toMatchObject({
-      destinationId,
       slug: input.slug,
       estimatedDurationMinutes: 180,
       freeCancelHours: 24,
       inclusionsText: 'Fuel, driver, tolls',
       exclusionsText: 'Meals',
       isActive: true,
+      reverseEnabled: true,
     });
     // The whole point of the table: four distinct figures, each in its place.
-    expect(row?.prices.van).toEqual(VALID_PRICES.van);
-    expect(row?.prices.suv).toEqual(VALID_PRICES.suv);
-    // And the destination's name, denormalised so the list needs no second read.
-    expect(row?.destinationName).toMatch(/^__adtrdest__/);
+    expect(row?.prices.find((p) => p.vehicleTypeId === VAN_ID)?.price).toEqual(VALID_PRICES.van);
+    expect(row?.prices.find((p) => p.vehicleTypeId === SUV_ID)?.price).toEqual(VALID_PRICES.suv);
+    // And both places' names, denormalised so the list needs no second read.
+    expect(row?.fromPlace.id).toBe(fromPlaceId);
+    expect(row?.toPlace.id).toBe(toPlaceId);
+    expect(row?.fromPlace.name).toMatch(/^__adtrplace__/);
   });
 
   /**
-   * Task 0D (owner decision 2026-11-06 #1): the admin list already shows an
-   * inactive-destination route (it never filtered on `destinations.is_active`
-   * — only `setActive` touches a route's OWN flag), but until now the query
-   * did not select `destinations.is_active` at all, so the client had no way
-   * to tell that case apart from a plain Active route. This pins both halves:
-   * a normal route reads `true`, and a route whose destination was retired
-   * AFTER the route was created reads `false` — independent of the route's
-   * own `isActive`, which stays `true` throughout.
+   * Owner decision 2026-11-08, decision 4's second half: zero or more price
+   * rows is legitimate — "no row = not offered." This directly reverses the
+   * old "exactly two rows, never more, never fewer" rule the pre-2026-11-08
+   * version of this test pinned.
    */
-  it('surfaces destinationIsActive on each row, false only once the destination is retired', async () => {
-    const stillActiveDestination = await makeDestination();
-    const { id: stillActiveRouteId } = await createRoute({
-      destinationId: stillActiveDestination,
-    });
+  it('accepts a create pricing only one vehicle type, leaving the other unoffered', async () => {
+    const { id } = await createRoute({ prices: { [String(VAN_ID)]: { ...VALID_PRICES.van } } });
 
-    const retiredDestination = await makeDestination();
-    const { id: retiredDestRouteId } = await createRoute({ destinationId: retiredDestination });
+    const row = (await ownerApi().admin.transferRoutes.list()).find((r) => r.id === id);
+    expect(row?.prices.find((p) => p.vehicleTypeId === VAN_ID)?.price).toEqual(VALID_PRICES.van);
+    expect(row?.prices.find((p) => p.vehicleTypeId === SUV_ID)?.price).toBeNull();
+    expect(await priceRowsFor(id)).toEqual([{ vehicleTypeId: VAN_ID, ...VALID_PRICES.van }]);
+  });
+
+  /** And the zero-prices end of the same new rule — a route may be created unpriced at all. */
+  it('accepts a create with no prices at all', async () => {
+    const { id } = await createRoute({ prices: {} });
+    const row = (await ownerApi().admin.transferRoutes.list()).find((r) => r.id === id);
+    expect(row?.prices.every((p) => p.price === null)).toBe(true);
+    expect(await priceRowsFor(id)).toEqual([]);
+  });
+
+  /**
+   * Task 0D (owner decision 2026-11-06 #1, retargeted 2026-11-08 from
+   * `destinations` to `transfer_places`): the admin list already shows a
+   * route touching an inactive place (it never filtered on either place's
+   * `is_active` — only `setActive` touches a route's OWN flag), but until now
+   * the query did not select either place's `is_active` at all, so the
+   * client had no way to tell that case apart from a plain Active route.
+   * This pins both halves: a normal route reads `true` on both places, and a
+   * route whose TO place was retired AFTER the route was created reads
+   * `false` there — independent of the route's own `isActive`, which stays
+   * `true` throughout.
+   */
+  it('surfaces each place’s isActive on the row, false only once that place is retired', async () => {
+    const { id: stillActiveRouteId } = await createRoute();
+
+    const retiredToPlace = await makePlace();
+    const { id: retiredPlaceRouteId } = await createRoute({ toPlaceId: retiredToPlace });
     await getDb()
-      .update(destinations)
+      .update(transferPlaces)
       .set({ isActive: false })
-      .where(eq(destinations.id, retiredDestination));
+      .where(eq(transferPlaces.id, retiredToPlace));
 
     const rows = await ownerApi().admin.transferRoutes.list();
     const stillActiveRow = rows.find((r) => r.id === stillActiveRouteId);
-    const retiredDestRow = rows.find((r) => r.id === retiredDestRouteId);
-    expect(stillActiveRow).toMatchObject({ isActive: true, destinationIsActive: true });
-    expect(retiredDestRow).toMatchObject({ isActive: true, destinationIsActive: false });
+    const retiredPlaceRow = rows.find((r) => r.id === retiredPlaceRouteId);
+    expect(stillActiveRow?.isActive).toBe(true);
+    expect(stillActiveRow?.fromPlace.isActive).toBe(true);
+    expect(stillActiveRow?.toPlace.isActive).toBe(true);
+    expect(retiredPlaceRow?.isActive).toBe(true);
+    expect(retiredPlaceRow?.toPlace.isActive).toBe(false);
   });
 
   /**
@@ -312,13 +389,8 @@ describeWithDb('admin.transferRoutes', () => {
    * route, not just that the number round-trips in isolation.
    */
   it("round-trips sortOrder through list, honouring it against another route's", async () => {
-    const earlierDestination = await makeDestination();
-    const laterDestination = await makeDestination();
-    const { id: laterId } = await createRoute({ destinationId: laterDestination, sortOrder: 50 });
-    const { id: earlierId } = await createRoute({
-      destinationId: earlierDestination,
-      sortOrder: 5,
-    });
+    const { id: laterId } = await createRoute({ sortOrder: 50 });
+    const { id: earlierId } = await createRoute({ sortOrder: 5 });
 
     const rows = await ownerApi().admin.transferRoutes.list();
     const earlierRow = rows.find((r) => r.id === earlierId);
@@ -328,38 +400,52 @@ describeWithDb('admin.transferRoutes', () => {
     expect(rows.indexOf(earlierRow!)).toBeLessThan(rows.indexOf(laterRow!));
   });
 
-  it('refuses a create that prices only one vehicle type', async () => {
-    const destinationId = await makeDestination();
-    const input = routeInput(destinationId);
-    await expect(
-      ownerApi().admin.transferRoutes.create({
-        ...input,
-        prices: { van: VALID_PRICES.van },
-      } as never),
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-  });
-
   it('refuses a price of zero, a negative price and a fractional price', async () => {
     const api = ownerApi().admin.transferRoutes;
-    const base = routeInput(await makeDestination());
+    const fromPlaceId = await makePlace();
+    const toPlaceId = await makePlace();
     const bad: unknown[] = [
-      { van: { oneWayPriceCentavos: 0, dayUsePriceCentavos: 450_000 }, suv: VALID_PRICES.suv },
-      { van: VALID_PRICES.van, suv: { oneWayPriceCentavos: -1, dayUsePriceCentavos: 560_000 } },
       {
-        van: { oneWayPriceCentavos: 1_999.5, dayUsePriceCentavos: 450_000 },
-        suv: VALID_PRICES.suv,
+        [String(VAN_ID)]: { oneWayPriceCentavos: 0, dayUsePriceCentavos: 450_000 },
+        [String(SUV_ID)]: { ...VALID_PRICES.suv },
+      },
+      {
+        [String(VAN_ID)]: { ...VALID_PRICES.van },
+        [String(SUV_ID)]: { oneWayPriceCentavos: -1, dayUsePriceCentavos: 560_000 },
+      },
+      {
+        [String(VAN_ID)]: { oneWayPriceCentavos: 1_999.5, dayUsePriceCentavos: 450_000 },
+        [String(SUV_ID)]: { ...VALID_PRICES.suv },
       },
     ];
     for (const prices of bad) {
-      await expect(api.create({ ...base, prices } as never)).rejects.toMatchObject({
-        code: 'BAD_REQUEST',
-      });
+      await expect(
+        api.create(routeInput(fromPlaceId, toPlaceId, { prices: prices as never })),
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     }
   });
 
-  it('refuses an unknown destination with BAD_REQUEST, not a foreign-key 500', async () => {
+  it('refuses an unknown place id with BAD_REQUEST, not a foreign-key 500', async () => {
+    const toPlaceId = await makePlace();
     await expect(
-      ownerApi().admin.transferRoutes.create(routeInput(999_999_999)),
+      ownerApi().admin.transferRoutes.create(routeInput(999_999_999, toPlaceId)),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  it('refuses an unknown vehicle-type id in the price card with BAD_REQUEST', async () => {
+    const fromPlaceId = await makePlace();
+    const toPlaceId = await makePlace();
+    await expect(
+      ownerApi().admin.transferRoutes.create(
+        routeInput(fromPlaceId, toPlaceId, { prices: { '999999999': { ...VALID_PRICES.van } } }),
+      ),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  it('refuses a route that starts and ends at the same place', async () => {
+    const placeId = await makePlace();
+    await expect(
+      ownerApi().admin.transferRoutes.create(routeInput(placeId, placeId)),
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
 
@@ -371,7 +457,8 @@ describeWithDb('admin.transferRoutes', () => {
    * SPA router 404s on.
    */
   it('refuses a slug that could not go in a URL', async () => {
-    const destinationId = await makeDestination();
+    const fromPlaceId = await makePlace();
+    const toPlaceId = await makePlace();
     const api = ownerApi().admin.transferRoutes;
     const malformed = [
       'Mactan Airport', // a space
@@ -385,7 +472,7 @@ describeWithDb('admin.transferRoutes', () => {
     ];
     for (const slug of malformed) {
       await expect(
-        api.create({ ...routeInput(destinationId), slug }),
+        api.create(routeInput(fromPlaceId, toPlaceId, { slug })),
         `"${slug}" was accepted as a route slug`,
       ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     }
@@ -399,48 +486,39 @@ describeWithDb('admin.transferRoutes', () => {
    * because `.transform()` runs BEFORE `.pipe()`'s shape check** — the
    * `bookingRefSchema` ordering (CLAUDE.md, BUG-108). Move the normalisation
    * after the check, or drop it, and this call becomes a `BAD_REQUEST`.
-   *
-   * What it buys is that `transfer_routes.slug`'s UNIQUE never has to rely on
-   * the `_ci` collation to tell `Moalboal` from `moalboal`: both reach the
-   * column as the same bytes. CLAUDE.md names leaning on the collation twice
-   * as a thing not to repeat (BUG-108 on `bookings.ref`, BUG-107 on
-   * `coupons.code`) — this is the third place it could have happened.
    */
   it('lowercases and trims a slug BEFORE checking its shape, and stores that form', async () => {
-    const destinationId = await makeDestination();
+    const fromPlaceId = await makePlace();
+    const toPlaceId = await makePlace();
     const slug = uniqueSlug();
-    const { id } = await ownerApi().admin.transferRoutes.create({
-      ...routeInput(destinationId),
-      slug: `  ${slug.toUpperCase()}  `,
-    });
+    const { id } = await ownerApi().admin.transferRoutes.create(
+      routeInput(fromPlaceId, toPlaceId, { slug: `  ${slug.toUpperCase()}  ` }),
+    );
     created.routeIds.push(id);
 
     const row = (await ownerApi().admin.transferRoutes.list()).find((r) => r.id === id);
     expect(row?.slug).toBe(slug);
-    // Spelled out rather than left to the equality above: the failure this
-    // guards against is the stored value keeping the case it was typed in.
     expect(row?.slug).not.toBe(slug.toUpperCase());
     expect(row?.slug.trim()).toBe(row?.slug);
   });
 
-  it('refuses a second route for the same destination with CONFLICT', async () => {
-    const destinationId = await makeDestination();
-    const { id } = await ownerApi().admin.transferRoutes.create(routeInput(destinationId));
+  it('refuses a second route for the same from/to pair with CONFLICT', async () => {
+    const fromPlaceId = await makePlace();
+    const toPlaceId = await makePlace();
+    const { id } = await ownerApi().admin.transferRoutes.create(routeInput(fromPlaceId, toPlaceId));
     created.routeIds.push(id);
     await expect(
-      ownerApi().admin.transferRoutes.create(routeInput(destinationId)),
+      ownerApi().admin.transferRoutes.create(routeInput(fromPlaceId, toPlaceId)),
     ).rejects.toMatchObject({ code: 'CONFLICT' });
   });
 
   it('refuses a duplicate slug with CONFLICT, not a raw database error', async () => {
-    const firstDestination = await makeDestination();
-    const input = routeInput(firstDestination);
+    const input = routeInput(await makePlace(), await makePlace());
     const { id } = await ownerApi().admin.transferRoutes.create(input);
     created.routeIds.push(id);
 
-    const secondDestination = await makeDestination();
     const clash = ownerApi().admin.transferRoutes.create(
-      routeInput(secondDestination, { slug: input.slug }),
+      routeInput(await makePlace(), await makePlace(), { slug: input.slug }),
     );
     await expect(clash).rejects.toMatchObject({ code: 'CONFLICT' });
     // The guest/owner-facing sentence, not mysql2's own.
@@ -448,12 +526,9 @@ describeWithDb('admin.transferRoutes', () => {
   });
 
   it('rejects an unknown field instead of ignoring it', async () => {
-    const destinationId = await makeDestination();
+    const input = routeInput(await makePlace(), await makePlace());
     await expect(
-      ownerApi().admin.transferRoutes.create({
-        ...routeInput(destinationId),
-        isActive: false,
-      } as never),
+      ownerApi().admin.transferRoutes.create({ ...input, isActive: false } as never),
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
 
@@ -466,10 +541,10 @@ describeWithDb('admin.transferRoutes', () => {
    *
    * `update`'s patch is shallow, so `prices` is either a complete card or
    * absent — and an absent one still has to survive the wholesale
-   * delete-then-reinsert of both price rows. A naive implementation that
-   * handed the upsert `input.patch.prices` directly would delete both rows and
-   * re-insert nothing (or, worse, invent zeroes), so a route whose DURATION
-   * was edited would come back unpriced.
+   * delete-then-reinsert of every price row. A naive implementation that
+   * handed the upsert `input.patch.prices` directly would delete every row and
+   * re-insert nothing, so a route whose DURATION was edited would come back
+   * unpriced.
    */
   it('leaves BOTH vehicle types’ prices exactly as they were when the patch names no prices', async () => {
     const { id } = await createRoute();
@@ -484,8 +559,8 @@ describeWithDb('admin.transferRoutes', () => {
     expect(row?.estimatedDurationMinutes).toBe(240);
     expect(row?.inclusionsText).toBe('Fuel, driver, tolls, water');
     // Neither vehicle type lost its price, and neither gained an invented one.
-    expect(row?.prices.van).toEqual(VALID_PRICES.van);
-    expect(row?.prices.suv).toEqual(VALID_PRICES.suv);
+    expect(row?.prices.find((p) => p.vehicleTypeId === VAN_ID)?.price).toEqual(VALID_PRICES.van);
+    expect(row?.prices.find((p) => p.vehicleTypeId === SUV_ID)?.price).toEqual(VALID_PRICES.suv);
     // Read straight from the table too: `list` reshapes, and a reshaping bug
     // could hide a missing row behind a card built from the other one.
     expect(await priceRowsFor(id)).toEqual(before);
@@ -494,7 +569,9 @@ describeWithDb('admin.transferRoutes', () => {
   /**
    * The other half of the same rule: a patch that DOES carry a price card
    * carries both halves, and the half that did not change must come back
-   * unchanged rather than re-derived, defaulted or dropped.
+   * unchanged rather than re-derived, defaulted or dropped — "a patch naming
+   * one type's price does not remove any other type's existing row" when
+   * that other type's price is restated, unchanged, in the same card.
    */
   it("reprices the van and leaves the SUV's two prices untouched", async () => {
     const { id } = await createRoute();
@@ -502,70 +579,60 @@ describeWithDb('admin.transferRoutes', () => {
 
     await ownerApi().admin.transferRoutes.update({
       id,
-      patch: { prices: { van: repricedVan, suv: { ...VALID_PRICES.suv } } },
+      patch: {
+        prices: { [String(VAN_ID)]: repricedVan, [String(SUV_ID)]: { ...VALID_PRICES.suv } },
+      },
     });
 
     const row = (await ownerApi().admin.transferRoutes.list()).find((r) => r.id === id);
-    expect(row?.prices.van).toEqual(repricedVan);
-    expect(row?.prices.suv).toEqual(VALID_PRICES.suv);
+    expect(row?.prices.find((p) => p.vehicleTypeId === VAN_ID)?.price).toEqual(repricedVan);
+    expect(row?.prices.find((p) => p.vehicleTypeId === SUV_ID)?.price).toEqual(VALID_PRICES.suv);
   });
 
   /**
-   * **The fail-closed path** (fix round, review finding I1).
-   *
-   * `update`'s `missing.length > 0 → CONFLICT` is the one money-safety control
-   * this task invented, and it is unreachable through the router API — every
-   * save writes both price rows — so nothing exercised it. CLAUDE.md is
-   * explicit that a control which fails closed needs a test FOR the failure
-   * path; without one, a later "simplification" to
-   * `card[vt] ?? { oneWayPriceCentavos: 0, … }` removes the refusal with the
-   * whole suite staying green, and the consequence is a route silently priced
-   * at ₱0 after an edit to its DURATION — which every quote then refuses by
-   * the gateway-minimum rule, with nothing anywhere naming the cause.
-   *
-   * Raw SQL to set it up, because that is the only way the state can arise:
-   * someone repairing a row by hand, or a later `seedDemo` addition that
-   * inserts a route without its prices. The suite already reaches for
-   * `getPool().query(...)` in `afterAll`.
+   * The new rule's other edge, reversed from the pre-2026-11-08 behaviour: a
+   * `prices` card that is PRESENT but omits a type the route used to carry a
+   * price for genuinely drops that type — "no row = not offered" (owner
+   * decision 2026-11-08). This is not a bug; it is why `prices` is
+   * documented as "either omit the whole key, or send the complete card".
    */
-  it('refuses an update that would have to invent a missing price, and writes nothing', async () => {
+  it('a prices card that omits a previously-priced type removes that type’s row', async () => {
     const { id } = await createRoute();
-    await getPool().query(
-      "DELETE FROM transfer_route_vehicle_prices WHERE route_id = ? AND vehicle_type = 'suv'",
-      [id],
-    );
 
-    await expect(
-      ownerApi().admin.transferRoutes.update({ id, patch: { estimatedDurationMinutes: 210 } }),
-    ).rejects.toMatchObject({ code: 'CONFLICT' });
+    await ownerApi().admin.transferRoutes.update({
+      id,
+      patch: { prices: { [String(VAN_ID)]: { ...VALID_PRICES.van } } },
+    });
 
-    // The van row it refused to touch is still exactly as it was — the refusal
-    // is raised before the upsert's delete, so there is no partial write.
-    expect(await priceRowsFor(id)).toEqual([{ vehicleType: 'van', ...VALID_PRICES.van }]);
+    const row = (await ownerApi().admin.transferRoutes.list()).find((r) => r.id === id);
+    expect(row?.prices.find((p) => p.vehicleTypeId === VAN_ID)?.price).toEqual(VALID_PRICES.van);
+    expect(row?.prices.find((p) => p.vehicleTypeId === SUV_ID)?.price).toBeNull();
+    expect(await priceRowsFor(id)).toEqual([{ vehicleTypeId: VAN_ID, ...VALID_PRICES.van }]);
+  });
 
-    const refused = (await ownerApi().admin.transferRoutes.list()).find((r) => r.id === id);
-    // The route's own column did not move either, and the gap is REPORTED
-    // rather than papered over with a zero.
-    expect(refused?.estimatedDurationMinutes).toBe(180);
-    expect(refused?.prices.suv).toBeNull();
-    expect(refused?.prices.van).toEqual(VALID_PRICES.van);
+  /**
+   * And the reverse direction: a route created with only one type priced can
+   * be repriced later to add the second, without disturbing the first.
+   */
+  it('a prices card can ADD a previously-unoffered type without disturbing the existing one', async () => {
+    const { id } = await createRoute({ prices: { [String(VAN_ID)]: { ...VALID_PRICES.van } } });
 
-    // And the refusal is not a dead end: the way out is the one its message
-    // names — state both prices in the save.
     await ownerApi().admin.transferRoutes.update({
       id,
       patch: {
-        estimatedDurationMinutes: 210,
-        prices: { van: { ...VALID_PRICES.van }, suv: { ...VALID_PRICES.suv } },
+        prices: {
+          [String(VAN_ID)]: { ...VALID_PRICES.van },
+          [String(SUV_ID)]: { ...VALID_PRICES.suv },
+        },
       },
     });
-    const repaired = (await ownerApi().admin.transferRoutes.list()).find((r) => r.id === id);
-    expect(repaired?.estimatedDurationMinutes).toBe(210);
-    expect(repaired?.prices.suv).toEqual(VALID_PRICES.suv);
-    expect(await priceRowsFor(id)).toHaveLength(2);
+
+    const row = (await ownerApi().admin.transferRoutes.list()).find((r) => r.id === id);
+    expect(row?.prices.find((p) => p.vehicleTypeId === VAN_ID)?.price).toEqual(VALID_PRICES.van);
+    expect(row?.prices.find((p) => p.vehicleTypeId === SUV_ID)?.price).toEqual(VALID_PRICES.suv);
   });
 
-  it('keeps exactly two price rows per route, however many times it is saved', async () => {
+  it('keeps its price rows exactly as they are across saves that never mention prices', async () => {
     const { id } = await createRoute();
     for (const minutes of [120, 150, 200]) {
       await ownerApi().admin.transferRoutes.update({
@@ -575,10 +642,8 @@ describeWithDb('admin.transferRoutes', () => {
     }
     const rows = await priceRowsFor(id);
     expect(rows).toHaveLength(2);
-    // Sorted here rather than relying on the query's own order: MySQL orders an
-    // ENUM by its DECLARATION order (`van`, `suv`), not alphabetically, and the
-    // claim under test is "one row per vehicle type", not which comes first.
-    expect([...rows.map((r) => r.vehicleType)].sort()).toEqual(['suv', 'van']);
+    // `priceRowsFor` already orders ascending by `vehicle_type_id`.
+    expect(rows.map((r) => r.vehicleTypeId)).toEqual([VAN_ID, SUV_ID].sort((a, b) => a - b));
   });
 
   it('clears a nullable text field when the patch sends null', async () => {
@@ -587,7 +652,7 @@ describeWithDb('admin.transferRoutes', () => {
     const row = (await ownerApi().admin.transferRoutes.list()).find((r) => r.id === id);
     expect(row?.exclusionsText).toBeNull();
     // And the prices are still there — a null-clearing edit is still a save.
-    expect(row?.prices.van).toEqual(VALID_PRICES.van);
+    expect(row?.prices.find((p) => p.vehicleTypeId === VAN_ID)?.price).toEqual(VALID_PRICES.van);
   });
 
   it('refuses an empty patch instead of writing an audit row for nothing', async () => {
@@ -611,6 +676,15 @@ describeWithDb('admin.transferRoutes', () => {
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
 
+  it('refuses an update that would make the route self-referencing', async () => {
+    const placeA = await makePlace();
+    const placeB = await makePlace();
+    const { id } = await createRoute({ fromPlaceId: placeA, toPlaceId: placeB });
+    await expect(
+      ownerApi().admin.transferRoutes.update({ id, patch: { toPlaceId: placeA } }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
   it('answers NOT_FOUND for an id no route holds', async () => {
     await expect(
       ownerApi().admin.transferRoutes.update({
@@ -627,9 +701,10 @@ describeWithDb('admin.transferRoutes', () => {
    * setActive — the soft delete.
    * ------------------------------------------------------------------ */
 
-  it('retires a route without deleting it, and its destination stays taken', async () => {
-    const destinationId = await makeDestination();
-    const { id } = await createRoute({ destinationId });
+  it('retires a route without deleting it, and its from/to pair stays taken', async () => {
+    const fromPlaceId = await makePlace();
+    const toPlaceId = await makePlace();
+    const { id } = await createRoute({ fromPlaceId, toPlaceId });
 
     await ownerApi().admin.transferRoutes.setActive({ id, isActive: false });
 
@@ -640,12 +715,12 @@ describeWithDb('admin.transferRoutes', () => {
     ).toBeDefined();
     expect(row?.isActive).toBe(false);
     // Its prices stand: a retired route is not a repriced one.
-    expect(row?.prices.van).toEqual(VALID_PRICES.van);
+    expect(row?.prices.find((p) => p.vehicleTypeId === VAN_ID)?.price).toEqual(VALID_PRICES.van);
 
-    // The UNIQUE on `destination_id` holds for an inactive route too, so the
-    // way back is `setActive(true)` and never a second create.
+    // The UNIQUE on `(from_place_id, to_place_id)` holds for an inactive
+    // route too, so the way back is `setActive(true)` and never a second create.
     await expect(
-      ownerApi().admin.transferRoutes.create(routeInput(destinationId)),
+      ownerApi().admin.transferRoutes.create(routeInput(fromPlaceId, toPlaceId)),
     ).rejects.toMatchObject({ code: 'CONFLICT' });
 
     await ownerApi().admin.transferRoutes.setActive({ id, isActive: true });
@@ -673,7 +748,7 @@ describeWithDb('admin.transferRoutes', () => {
     expect(new Set(rows.map((r) => r.actorType))).toEqual(new Set(['user']));
   });
 
-  it('records the prices in the create audit row — this table is money', async () => {
+  it('records the places, reverseEnabled and prices in the create audit row — this table is money', async () => {
     const { id, input } = await createRoute();
     const [row] = await getDb()
       .select({ data: auditLog.data })
@@ -686,9 +761,11 @@ describeWithDb('admin.transferRoutes', () => {
         ),
       );
     expect(row?.data).toMatchObject({
-      destinationId: input.destinationId,
+      fromPlaceId: input.fromPlaceId,
+      toPlaceId: input.toPlaceId,
+      reverseEnabled: input.reverseEnabled,
       slug: input.slug,
-      prices: VALID_PRICES,
+      prices: input.prices,
     });
   });
 

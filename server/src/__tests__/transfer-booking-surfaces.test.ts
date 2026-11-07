@@ -43,7 +43,8 @@
 import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
 import { type PriceSnapshot } from '@rg/shared';
 import { getDb, getPool } from '../db/client';
-import { bookings, destinations, drivers, tours, users } from '../db/schema';
+import { eq } from 'drizzle-orm';
+import { bookings, destinations, drivers, tours, users, vehicleTypes } from '../db/schema';
 import { appRouter } from '../routers/_app';
 import { todayDepartures } from '../routers/admin/departures';
 import { driverTripDetail, listDriverTrips } from '../routers/public/driver';
@@ -103,6 +104,12 @@ let driverId = 0;
 let tourId = 0;
 const TOUR_TITLE = 'T6 Audit Fixture Tour';
 
+/**
+ * The real, global `vehicle_types.id` for `'van'` — seeded by `seedBase`
+ * (migration 0023), never a literal id (CLAUDE.md). Resolved once in `beforeAll`.
+ */
+let VAN_ID = 0;
+
 interface Fixture {
   id: number;
   ref: string;
@@ -129,7 +136,7 @@ async function makeBooking(opts: {
         ? ({
             tourId: null,
             productType: 'transfer_one_way',
-            vehicleTypeRequested: 'van',
+            vehicleTypeId: VAN_ID,
           } as const)
         : { tourId }),
       tourDate: asDate(TRIP_DATE),
@@ -186,6 +193,14 @@ describeWithDb('T6: no surface silently drops a transfer booking', () => {
     });
     created.driverIds.push(driver.insertId);
     driverId = driver.insertId;
+
+    const [vt] = await db
+      .select({ id: vehicleTypes.id })
+      .from(vehicleTypes)
+      .where(eq(vehicleTypes.slug, 'van'))
+      .limit(1);
+    if (!vt) throw new Error('No vehicle_types row for slug "van" — expected from seedBase.');
+    VAN_ID = vt.id;
   }, 30_000);
 
   /*

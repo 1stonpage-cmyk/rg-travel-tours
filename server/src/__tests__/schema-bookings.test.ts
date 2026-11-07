@@ -498,6 +498,10 @@ describe('bookings table', () => {
       'route_id->transfer_routes',
       'tour_id->tours',
       'van_id->vans',
+      // Added by migration 0028 (owner decision 2026-11-08: flexible
+      // places/routes/vehicle types), replacing the old `vehicle_type_requested`
+      // enum column with a real FK onto the admin-managed `vehicle_types` list.
+      'vehicle_type_id->vehicle_types',
     ]);
     for (const fk of foreignKeys) {
       expect(fk.foreignColumns, `${fk.columns} must point at a primary key`).toEqual(['id']);

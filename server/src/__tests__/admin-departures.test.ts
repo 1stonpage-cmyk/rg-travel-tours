@@ -38,7 +38,7 @@
  * `tour_date_slots` / `fleet_date_slots` rows to sweep.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { manilaCivilDate, type AdminRole, type PriceSnapshot } from '@rg/shared';
 import { appRouter } from '../routers/_app';
 import { todayDepartures } from '../routers/admin/departures';
@@ -52,6 +52,7 @@ import {
   tripCheckpoints,
   users,
   vans,
+  vehicleTypes,
 } from '../db/schema';
 import { generateBookingRef } from '../services/booking-ref';
 import { staffContext, testContext } from './helpers/ctx';
@@ -71,6 +72,23 @@ const UTC_TODAY = '2026-03-09';
 
 /** Random first, timestamp second — same discipline as capacity.test.ts. */
 const unique = () => `${Math.floor(Math.random() * 1e9)}_${Date.now()}`;
+
+/**
+ * The real, global `vehicle_types.id` for `'van'` — seeded by `seedBase`
+ * (migration 0023), never a literal id (CLAUDE.md). Cached per process.
+ */
+let cachedVanTypeId: number | undefined;
+async function vanVehicleTypeId(): Promise<number> {
+  if (cachedVanTypeId !== undefined) return cachedVanTypeId;
+  const [row] = await getDb()
+    .select({ id: vehicleTypes.id })
+    .from(vehicleTypes)
+    .where(eq(vehicleTypes.slug, 'van'))
+    .limit(1);
+  if (!row) throw new Error('No vehicle_types row for slug "van" — expected from seedBase.');
+  cachedVanTypeId = row.id;
+  return row.id;
+}
 
 /** The minimum snapshot `bookings.price_snapshot` will accept. No test reads it. */
 const SNAPSHOT: PriceSnapshot = {
@@ -241,6 +259,7 @@ describeWithDb('admin.departures.today', () => {
       plate: vanPlate,
       model: 'Departures Fixture Van',
       capacity: 12,
+      vehicleTypeId: await vanVehicleTypeId(),
       status: 'available',
       isActive: true,
     });

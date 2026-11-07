@@ -38,6 +38,7 @@ import {
   transferPlaces,
   transferRouteVehiclePrices,
   transferRoutes,
+  vans,
   vehicleTypes,
 } from '../db/schema';
 import { appRouter } from '../routers/_app';
@@ -189,6 +190,7 @@ const created = {
   placeIds: [] as number[],
   couponIds: [] as number[],
   vehicleTypeIds: [] as number[],
+  vanIds: [] as number[],
 };
 
 /**
@@ -299,9 +301,36 @@ let retiredRoute = { id: 0, destinationName: '' };
 let retiredDestination = { id: 0, destinationName: '' };
 let cheapRoute = { id: 0, destinationName: '' };
 
+/**
+ * One sellable van per seeded type (owner decision 2026-11-08, design note
+ * §4): `transferRoutes.list`'s public visibility rule now ALSO requires at
+ * least one sellable vehicle of a type before offering it, and
+ * `rg_travel_test` keeps an EMPTY fleet by design (CLAUDE.md, "Dispatch") —
+ * without these, every `vehiclePrices` array in this whole describe block
+ * would be empty regardless of what is priced, and the rule would pass
+ * vacuously for the wrong reason. Explicitly called out in the design note
+ * as the mistake 1F's acceptance test must not make.
+ */
+async function makeSellableVan(vehicleTypeId: number) {
+  const suffix = unique();
+  const [row] = await getDb()
+    .insert(vans)
+    .values({
+      plate: `T9${suffix}`.slice(0, 20),
+      model: 'T9 Fixture Van',
+      capacity: 12,
+      vehicleTypeId,
+      status: 'available',
+      isActive: true,
+    });
+  created.vanIds.push(row.insertId);
+}
+
 beforeAll(async () => {
   VAN_ID = await vehicleTypeIdBySlug('van');
   SUV_ID = await vehicleTypeIdBySlug('suv');
+  await makeSellableVan(VAN_ID);
+  await makeSellableVan(SUV_ID);
 
   /*
    * **Inserted in the REVERSE of the order the list must return them in**
@@ -336,6 +365,9 @@ afterAll(async () => {
     await db.delete(transferPlaces).where(inArray(transferPlaces.id, created.placeIds));
   }
   for (const id of created.couponIds) await db.delete(coupons).where(eq(coupons.id, id));
+  if (created.vanIds.length > 0) {
+    await db.delete(vans).where(inArray(vans.id, created.vanIds));
+  }
   // Price rows for a test-owned type were already removed above (its only
   // route id is in `created.routeIds`), so the type row itself is safe to
   // delete last.
@@ -460,23 +492,28 @@ describeWithDb('transferRoutes.list (public)', () => {
     const row = (await caller.transferRoutes.list()).find((r) => r.id === bothVehicles.id);
     expect(row).toBeDefined();
     expect(row).toMatchObject({
-      destinationName: bothVehicles.destinationName,
       estimatedDurationMinutes: 180,
       freeCancelHours: 24,
       inclusionsText: 'Fuel, driver, tolls',
       exclusionsText: 'Meals',
-      prices: { van: PRICES.van, suv: PRICES.suv },
     });
+    expect(row?.toPlace.name).toBe(bothVehicles.destinationName);
+    const vanPrice = row?.vehiclePrices.find((p) => p.vehicleTypeId === VAN_ID);
+    const suvPrice = row?.vehiclePrices.find((p) => p.vehicleTypeId === SUV_ID);
+    expect(vanPrice).toMatchObject(PRICES.van);
+    expect(suvPrice).toMatchObject(PRICES.suv);
     // The admin list carries these three; the public one must not.
     expect(row).not.toHaveProperty('isActive');
     expect(row).not.toHaveProperty('destinationId');
     expect(row).not.toHaveProperty('sortOrder');
   });
 
-  it('reports a vehicle type with no stored price row as null, never as ₱0', async () => {
+  it('OMITS a vehicle type with no stored price row — never a ₱0 placeholder', async () => {
     const row = (await caller.transferRoutes.list()).find((r) => r.id === vanOnly.id);
-    expect(row?.prices.van).toEqual(PRICES.van);
-    expect(row?.prices.suv).toBeNull();
+    const vanPrice = row?.vehiclePrices.find((p) => p.vehicleTypeId === VAN_ID);
+    const suvPrice = row?.vehiclePrices.find((p) => p.vehicleTypeId === SUV_ID);
+    expect(vanPrice).toMatchObject(PRICES.van);
+    expect(suvPrice).toBeUndefined();
   });
 
   it('OMITS a retired route, and a route whose TO place is retired', async () => {

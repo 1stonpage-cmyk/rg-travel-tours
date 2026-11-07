@@ -48,10 +48,19 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { depositCentavos, type AdminRole, type PriceSnapshot } from '@rg/shared';
 import { getDb, getPool } from '../db/client';
-import { bookings, coupons, destinations, tours, tripCheckpoints, users, vans } from '../db/schema';
+import {
+  bookings,
+  coupons,
+  destinations,
+  tours,
+  tripCheckpoints,
+  users,
+  vans,
+  vehicleTypes,
+} from '../db/schema';
 import { ROLE_MATRIX } from '../middleware/require-role';
 import { appRouter } from '../routers/_app';
 import { generateBookingRef } from '../services/booking-ref';
@@ -278,6 +287,23 @@ async function makeStaff(role: AdminRole): Promise<number> {
   return row.insertId;
 }
 
+/**
+ * The real, global `vehicle_types.id` for `'van'` — seeded by `seedBase`
+ * (migration 0023), never a literal id (CLAUDE.md). Cached per process.
+ */
+let cachedVanTypeId: number | undefined;
+async function vanVehicleTypeId(): Promise<number> {
+  if (cachedVanTypeId !== undefined) return cachedVanTypeId;
+  const [row] = await getDb()
+    .select({ id: vehicleTypes.id })
+    .from(vehicleTypes)
+    .where(eq(vehicleTypes.slug, 'van'))
+    .limit(1);
+  if (!row) throw new Error('No vehicle_types row for slug "van" — expected from seedBase.');
+  cachedVanTypeId = row.id;
+  return row.id;
+}
+
 async function makeVan(status: 'available' | 'on_trip'): Promise<number> {
   const suffix = unique();
   const [van] = await getDb()
@@ -286,6 +312,7 @@ async function makeVan(status: 'available' | 'on_trip'): Promise<number> {
       plate: `RF${suffix}`.slice(0, 20),
       model: 'Refund Fixture Van',
       capacity: 12,
+      vehicleTypeId: await vanVehicleTypeId(),
       status,
       isActive: true,
     });
