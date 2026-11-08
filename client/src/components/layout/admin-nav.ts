@@ -53,6 +53,12 @@ export const ADMIN_NAV: readonly AdminNavItem[] = [
   { to: '/admin/vans', label: 'Vans', end: false, roles: ['owner', 'dispatcher'] },
   { to: '/admin/drivers', label: 'Drivers', end: false, roles: ['owner', 'dispatcher'] },
   { to: '/admin/tours', label: 'Tours', end: false, roles: ['owner'] },
+  // Owner-only too (flexible-routes plan, Task 1D): `admin.vehicleTypes.*`
+  // and `admin.transferPlaces.*` are the same `toursPricing` area as
+  // transfer routes, and are what the route form's From/To and vehicle-type
+  // pickers read from — placed immediately before it for that reason.
+  { to: '/admin/vehicle-types', label: 'Vehicle types', end: false, roles: ['owner'] },
+  { to: '/admin/transfer-places', label: 'Places', end: false, roles: ['owner'] },
   { to: '/admin/transfer-routes', label: 'Transfer routes', end: false, roles: ['owner'] },
   { to: '/admin/coupons', label: 'Coupons', end: false, roles: ['owner'] },
   // Owner + dispatcher (Week 7 Task 13): `admin.packages.*` and

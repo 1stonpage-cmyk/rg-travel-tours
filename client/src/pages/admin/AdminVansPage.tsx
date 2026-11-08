@@ -74,12 +74,6 @@ import { trpc } from '@/lib/trpc';
 const SETTABLE_STATUSES = ['available', 'parked', 'for_repair'] as const;
 type SettableStatus = (typeof SETTABLE_STATUSES)[number];
 
-/** Labels for the vehicle-type column/badge — matches the form's own options. */
-const VEHICLE_TYPE_LABELS: Record<string, string> = {
-  van: 'Van',
-  suv: 'SUV',
-};
-
 const STATUS_LABELS: Record<string, string> = {
   available: 'Available',
   on_trip: 'On trip',
@@ -103,50 +97,89 @@ const STATUS_BADGE_CLASS: Record<string, string> = {
   for_repair: 'border-0 bg-brand-gold-100 text-brand-gold-800',
 };
 
-const VAN_FIELDS: readonly EntityFormField[] = [
-  { name: 'plate', label: 'Plate', type: 'text', required: true },
-  { name: 'model', label: 'Model', type: 'text', required: true },
-  { name: 'capacity', label: 'Seats for guests', type: 'number', required: true },
-  {
-    name: 'luggageCapacity',
-    label: 'Luggage capacity (bags)',
-    type: 'number',
-    hint: "Leave blank if it hasn't been measured yet.",
-  },
-  {
-    name: 'vehicleType',
-    label: 'Vehicle type',
-    type: 'select',
-    required: true,
-    options: [
-      { value: 'van', label: 'Van' },
-      { value: 'suv', label: 'SUV' },
-    ],
-  },
-  {
-    name: 'odometer',
-    label: 'Odometer (km)',
-    type: 'number',
-    hint: "Leave blank if you don't know it.",
-  },
-  { name: 'lastService', label: 'Last service', type: 'date' },
-  { name: 'nextService', label: 'Next service due', type: 'date' },
-  { name: 'orcrExpiry', label: 'OR/CR expiry', type: 'date' },
-  { name: 'franchiseNo', label: 'Franchise number', type: 'text' },
-  { name: 'franchiseExpiry', label: 'Franchise expiry', type: 'date' },
-  { name: 'repairNotes', label: 'Repair notes', type: 'textarea', hint: 'Only shown to staff.' },
-];
+/**
+ * `vehicleTypeId` is built per-render from the live `admin.vehicleTypes.list`
+ * (owner decision 2026-11-08: vehicle types are an admin-managed list, not a
+ * `van`/`suv` enum) — every OTHER field is static, so only this one varies.
+ * Inactive types are left out of the options: a retired type is not a valid
+ * choice for a NEW van, the same reasoning `transferRoutes.list` applies to
+ * an inactive vehicle type's price (`AdminTransferRoutesPage.tsx`). An
+ * existing van already pointed at a since-deactivated type still shows that
+ * type's name as a disabled-looking extra option, so editing a van's OTHER
+ * fields is never blocked by a type that is no longer offered.
+ */
+function vanFields(
+  activeTypes: readonly { id: number; name: string }[],
+  currentTypeId: { id: number; name: string } | null,
+): EntityFormField[] {
+  const options = activeTypes.map((type) => ({ value: String(type.id), label: type.name }));
+  const hasCurrent = currentTypeId !== null && activeTypes.some((t) => t.id === currentTypeId.id);
+  const vehicleTypeOptions =
+    currentTypeId !== null && !hasCurrent
+      ? [...options, { value: String(currentTypeId.id), label: `${currentTypeId.name} (inactive)` }]
+      : options;
 
-const EMPTY_VALUES: Record<string, string> = Object.fromEntries(
-  VAN_FIELDS.map((field) => [field.name, '']),
-);
+  return [
+    { name: 'plate', label: 'Plate', type: 'text', required: true },
+    { name: 'model', label: 'Model', type: 'text', required: true },
+    { name: 'capacity', label: 'Seats for guests', type: 'number', required: true },
+    {
+      name: 'luggageCapacity',
+      label: 'Luggage capacity (bags)',
+      type: 'number',
+      hint: "Leave blank if it hasn't been measured yet.",
+    },
+    {
+      name: 'vehicleTypeId',
+      label: 'Vehicle type',
+      type: 'select',
+      required: true,
+      options: vehicleTypeOptions,
+    },
+    {
+      name: 'odometer',
+      label: 'Odometer (km)',
+      type: 'number',
+      hint: "Leave blank if you don't know it.",
+    },
+    { name: 'lastService', label: 'Last service', type: 'date' },
+    { name: 'nextService', label: 'Next service due', type: 'date' },
+    { name: 'orcrExpiry', label: 'OR/CR expiry', type: 'date' },
+    { name: 'franchiseNo', label: 'Franchise number', type: 'text' },
+    { name: 'franchiseExpiry', label: 'Franchise expiry', type: 'date' },
+    { name: 'repairNotes', label: 'Repair notes', type: 'textarea', hint: 'Only shown to staff.' },
+  ];
+}
 
 /**
- * Which field names this screen can actually show a message against (task
- * A4) — derived from `VAN_FIELDS` rather than retyped, so a field added to
- * the form is placeable without anyone remembering a second list.
+ * Static metadata for every `vanFields()` row — everything but
+ * `vehicleTypeId`'s dynamic `options`, which depends on the live vehicle-
+ * types list and so cannot be read from a plain constant. Used for the
+ * empty-values map and for `errorsFromParse`'s "is this field required"
+ * lookup, which needs to know that without re-deriving `vanFields()` (and
+ * therefore the vehicle-types list) just to answer it.
  */
-const VAN_FIELD_NAMES: ReadonlySet<string> = new Set(VAN_FIELDS.map((field) => field.name));
+const VAN_FIELD_META: Record<string, { label: string; required?: boolean }> = {
+  plate: { label: 'Plate', required: true },
+  model: { label: 'Model', required: true },
+  capacity: { label: 'Seats for guests', required: true },
+  luggageCapacity: { label: 'Luggage capacity (bags)' },
+  vehicleTypeId: { label: 'Vehicle type', required: true },
+  odometer: { label: 'Odometer (km)' },
+  lastService: { label: 'Last service' },
+  nextService: { label: 'Next service due' },
+  orcrExpiry: { label: 'OR/CR expiry' },
+  franchiseNo: { label: 'Franchise number' },
+  franchiseExpiry: { label: 'Franchise expiry' },
+  repairNotes: { label: 'Repair notes' },
+};
+
+/** The field names every `vanFields()` call renders, for `splitFieldErrors`. */
+const VAN_FIELD_NAMES: ReadonlySet<string> = new Set(Object.keys(VAN_FIELD_META));
+
+const EMPTY_VALUES: Record<string, string> = Object.fromEntries(
+  Array.from(VAN_FIELD_NAMES, (name) => [name, '']),
+);
 
 /** The typed-but-unparsed shape `vanInputSchema` expects, built from the form's strings. */
 function rawFromValues(values: Record<string, string>) {
@@ -165,7 +198,10 @@ function rawFromValues(values: Record<string, string>) {
      * makes the dispatch soft-check skip its luggage half.
      */
     luggageCapacity: !values.luggageCapacity ? null : Number(values.luggageCapacity),
-    vehicleType: values.vehicleType ?? '',
+    vehicleTypeId:
+      values.vehicleTypeId === '' || values.vehicleTypeId === undefined
+        ? NaN
+        : Number(values.vehicleTypeId),
     odometer: !values.odometer ? null : Number(values.odometer),
     lastService: values.lastService || null,
     nextService: values.nextService || null,
@@ -183,7 +219,7 @@ function valuesFromRow(row: VanRow): Record<string, string> {
     model: row.model,
     capacity: String(row.capacity),
     luggageCapacity: row.luggageCapacity === null ? '' : String(row.luggageCapacity),
-    vehicleType: row.vehicleType,
+    vehicleTypeId: String(row.vehicleTypeId),
     odometer: row.odometer === null ? '' : String(row.odometer),
     lastService: row.lastService ?? '',
     nextService: row.nextService ?? '',
@@ -212,7 +248,7 @@ function errorsFromParse(
   for (const issue of result.error.issues) {
     const key = String(issue.path[0] ?? '');
     if (!key || key in out) continue;
-    const field = VAN_FIELDS.find((candidate) => candidate.name === key);
+    const field = VAN_FIELD_META[key];
     const isEmpty = !values[key] || values[key]!.trim() === '';
     out[key] = field?.required && isEmpty ? `${field.label} is required.` : issue.message;
   }
@@ -227,7 +263,7 @@ function buildPatch(next: VanInput, original: VanRow): Partial<VanInput> {
   if (next.capacity !== original.capacity) patch.capacity = next.capacity;
   if (next.luggageCapacity !== original.luggageCapacity)
     patch.luggageCapacity = next.luggageCapacity;
-  if (next.vehicleType !== original.vehicleType) patch.vehicleType = next.vehicleType;
+  if (next.vehicleTypeId !== original.vehicleTypeId) patch.vehicleTypeId = next.vehicleTypeId;
   if (next.odometer !== original.odometer) patch.odometer = next.odometer;
   if (next.lastService !== original.lastService) patch.lastService = next.lastService;
   if (next.nextService !== original.nextService) patch.nextService = next.nextService;
@@ -310,6 +346,8 @@ function StatusCell({
 export default function AdminVansPage() {
   const utils = trpc.useUtils();
   const list = trpc.admin.vans.list.useQuery(undefined, { retry: false });
+  const vehicleTypesQuery = trpc.admin.vehicleTypes.list.useQuery();
+  const activeVehicleTypes = (vehicleTypesQuery.data ?? []).filter((type) => type.isActive);
 
   const [createValues, setCreateValues] = useState<Record<string, string>>(EMPTY_VALUES);
   const [createErrors, setCreateErrors] = useState<Record<string, string>>({});
@@ -442,7 +480,7 @@ export default function AdminVansPage() {
             </p>
           ) : null}
           <EntityForm
-            fields={VAN_FIELDS}
+            fields={vanFields(activeVehicleTypes, null)}
             values={createValues}
             errors={createErrors}
             pending={create.isPending}
@@ -474,7 +512,12 @@ export default function AdminVansPage() {
               </p>
             ) : null}
             <EntityForm
-              fields={VAN_FIELDS}
+              fields={vanFields(
+                activeVehicleTypes,
+                editingVan
+                  ? { id: editingVan.vehicleTypeId, name: editingVan.vehicleTypeName }
+                  : null,
+              )}
               values={editValues}
               errors={editErrors}
               pending={update.isPending}
@@ -519,8 +562,7 @@ export default function AdminVansPage() {
               <li key={van.id} className={`${CARD} p-4 text-sm`}>
                 <p className="text-brand-ink font-mono font-semibold">{van.plate}</p>
                 <p className="text-brand-error">
-                  {van.model} · {van.capacity} seats ·{' '}
-                  {VEHICLE_TYPE_LABELS[van.vehicleType] ?? van.vehicleType}
+                  {van.model} · {van.capacity} seats · {van.vehicleTypeName}
                 </p>
                 <div className="mt-2">
                   <StatusCell
@@ -582,7 +624,7 @@ export default function AdminVansPage() {
                     <td className="text-brand-ink px-4 py-3 tabular-nums">{van.capacity}</td>
                     <td className="px-4 py-3">
                       <Badge className="bg-brand-blue-50 text-brand-blue-800 border-0">
-                        {VEHICLE_TYPE_LABELS[van.vehicleType] ?? van.vehicleType}
+                        {van.vehicleTypeName}
                       </Badge>
                     </td>
                     <td className="px-4 py-3">

@@ -148,6 +148,10 @@ describe('AdminLayout', () => {
         'Vans',
         'Drivers',
         'Tours',
+        // Owner-only too (flexible-routes plan, Task 1D): same `toursPricing`
+        // area as tours/pricing, placed beside Transfer routes.
+        'Vehicle types',
+        'Places',
         // Owner-only too (transfers-launch plan, Task T4): `admin.transferRoutes.*`
         // is the same `toursPricing` area as tours and pricing.
         'Transfer routes',

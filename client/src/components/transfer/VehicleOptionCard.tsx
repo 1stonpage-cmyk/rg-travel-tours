@@ -1,15 +1,28 @@
-import { Car, CarFront, CheckCircle2 } from 'lucide-react';
-import { formatPeso, type PayMode, type QuoteTransferResult, type VehicleType } from '@rg/shared';
+import { Car, CheckCircle2 } from 'lucide-react';
+import { formatPeso, type PayMode, type QuoteTransferResult } from '@rg/shared';
 import FieldError from '@/components/common/FieldError';
 import { Skeleton } from '@/components/common/Skeleton';
 import { cn } from '@/lib/utils';
 
 /**
- * Task T13 — one vehicle-type price card, third step of the transfer
- * booking flow. **The component that must never compute money**: the
- * parent page (Task T14) fetches one `quoteTransfer` per vehicle type and
- * hands the whole result in — nothing here sums, discounts or derives a
- * figure, it only picks which already-computed field to show where.
+ * Task T13, rebuilt 2026-11-08 for the admin-managed vehicle-types model
+ * (owner decision 2026-11-08; see
+ * `docs/superpowers/plans/2026-11-08-flexible-routes.md` §4). Vehicle types
+ * used to be a hard-coded `van`/`suv` pair with a dedicated icon and label
+ * each; they are now an admin-managed list of arbitrary size, so this card
+ * renders ONE entry straight off a route's own `vehiclePrices` array
+ * (`TransferRoutePublicVehiclePrice`, `@rg/shared`'s `transfers.ts`) — which
+ * already carries the type's id and its display NAME — rather than looking
+ * either up in a fixed table. There is nothing left here to hard-code: one
+ * generic vehicle icon stands for every type, because a type the admin adds
+ * tomorrow (a "Coaster", say) has no icon this component could have known to
+ * draw.
+ *
+ * **The component that must never compute money.** The parent page fetches
+ * one `quoteTransfer` per OFFERED vehicle type (the route's own `vehiclePrices`
+ * array — already filtered server-side to "priced AND sellable", design note
+ * §4) and hands the whole result in; nothing here sums, discounts or derives
+ * a figure.
  *
  * `quote: undefined` covers two different server outcomes on purpose (see
  * `Props.quote`'s own note) and this component does not need to tell them
@@ -18,7 +31,9 @@ import { cn } from '@/lib/utils';
  */
 
 type Props = {
-  vehicleType: VehicleType;
+  vehicleTypeId: number;
+  /** The catalog's own display name (`TransferRoutePublicVehiclePrice.vehicleTypeName`) — never a hard-coded label. */
+  vehicleTypeName: string;
   /**
    * `undefined` while loading, OR when unavailable: a vehicle type below the
    * ₱100 gateway floor, or with no price row at all for this route, makes
@@ -33,28 +48,18 @@ type Props = {
   /**
    * Which of `quote.amountDueNowCentavos.{full,deposit}` the "due now" line
    * shows — driven by the page's own pay-mode state, the same figure
-   * `GuestDetails.tsx`'s pay-mode radios already show
-   * (`{formatPeso(amountDueNowCentavos[mode])} due now`). The total line
-   * above it is unconditional: `quote.totalCentavos` is the one figure that
-   * never changes with pay mode.
+   * `GuestDetails.tsx`'s pay-mode radios already show. The total line above
+   * it is unconditional: `quote.totalCentavos` is the one figure that never
+   * changes with pay mode.
    */
   payMode: PayMode;
-  /** Resolved message — see `TransferTypePicker`'s note on this contract. */
+  /** Resolved message — see `TransferTypePicker`'s own note on this contract. */
   error?: string;
 };
 
-const VEHICLE_ICONS: Record<VehicleType, typeof Car> = {
-  van: Car,
-  suv: CarFront,
-};
-
-const VEHICLE_LABELS: Record<VehicleType, string> = {
-  van: 'Van',
-  suv: 'SUV',
-};
-
 export default function VehicleOptionCard({
-  vehicleType,
+  vehicleTypeId,
+  vehicleTypeName,
   quote,
   isLoading,
   isSelected,
@@ -62,9 +67,8 @@ export default function VehicleOptionCard({
   payMode,
   error,
 }: Props) {
-  const Icon = VEHICLE_ICONS[vehicleType];
   const unavailable = !isLoading && quote === undefined;
-  const errorId = `transfer-vehicle-${vehicleType}-error`;
+  const errorId = `transfer-vehicle-${vehicleTypeId}-error`;
 
   return (
     <div className="space-y-1.5">
@@ -77,8 +81,8 @@ export default function VehicleOptionCard({
       >
         <span className="flex items-center justify-between gap-2">
           <span className="text-brand-blue-900 flex items-center gap-2 text-sm font-semibold">
-            <Icon className="text-brand-blue-700 size-5 shrink-0" aria-hidden="true" />
-            {VEHICLE_LABELS[vehicleType]}
+            <Car className="text-brand-blue-700 size-5 shrink-0" aria-hidden="true" />
+            {vehicleTypeName}
             {isSelected && !unavailable && (
               <CheckCircle2 className="text-brand-blue-700 size-4 shrink-0" aria-hidden="true" />
             )}
@@ -86,7 +90,7 @@ export default function VehicleOptionCard({
           <input
             type="radio"
             name="transferVehicleType"
-            value={vehicleType}
+            value={vehicleTypeId}
             checked={isSelected}
             disabled={isLoading || unavailable}
             onChange={() => onSelect()}
@@ -96,7 +100,7 @@ export default function VehicleOptionCard({
         </span>
 
         {isLoading ? (
-          <div className="space-y-1.5" data-testid={`vehicle-option-${vehicleType}-skeleton`}>
+          <div className="space-y-1.5" data-testid={`vehicle-option-${vehicleTypeId}-skeleton`}>
             <Skeleton className="h-6 w-24" />
             <Skeleton className="h-3.5 w-32" />
           </div>

@@ -14,7 +14,9 @@ import AdminDeparturesPage from '@/pages/admin/AdminDeparturesPage';
 import AdminDriversPage from '@/pages/admin/AdminDriversPage';
 import AdminStaffPage from '@/pages/admin/AdminStaffPage';
 import AdminToursPage from '@/pages/admin/AdminToursPage';
+import AdminTransferPlacesPage from '@/pages/admin/AdminTransferPlacesPage';
 import AdminTransferRoutesPage from '@/pages/admin/AdminTransferRoutesPage';
+import AdminVehicleTypesPage from '@/pages/admin/AdminVehicleTypesPage';
 import AdminChangePasswordPage from '@/pages/admin/AdminChangePasswordPage';
 import AdminForgotPasswordPage from '@/pages/admin/AdminForgotPasswordPage';
 import AdminLoginPage from '@/pages/admin/AdminLoginPage';
@@ -148,6 +150,13 @@ export default function App() {
         <Route path="vans" element={<AdminVansPage />} />
         <Route path="drivers" element={<AdminDriversPage />} />
         <Route path="tours" element={<AdminToursPage />} />
+        {/*
+         * Task 1D (flexible-routes plan, 2026-11-08) — the two catalogs the
+         * route form reads from. Both are owner-only (`toursPricing`),
+         * placed alongside Transfer routes.
+         */}
+        <Route path="vehicle-types" element={<AdminVehicleTypesPage />} />
+        <Route path="transfer-places" element={<AdminTransferPlacesPage />} />
         <Route path="transfer-routes" element={<AdminTransferRoutesPage />} />
         <Route path="coupons" element={<AdminCouponsPage />} />
         <Route path="packages" element={<AdminPackagesPage />} />

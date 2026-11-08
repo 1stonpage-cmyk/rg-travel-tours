@@ -34,13 +34,18 @@ function validationError(opts: {
   });
 }
 
-function show(productType: 'transfer_one_way' | 'transfer_day_use', error?: unknown) {
+function show(
+  productType: 'transfer_one_way' | 'transfer_day_use',
+  error?: unknown,
+  requiresFlightDetails = false,
+) {
   return render(
     <TransferGuestDetailsForm
       productType={productType}
       payMode="deposit"
       onPayModeChange={() => {}}
       amountDueNowCentavos={AMOUNT_DUE_NOW}
+      requiresFlightDetails={requiresFlightDetails}
       error={error}
     />,
   );
@@ -83,6 +88,7 @@ describe('TransferGuestDetailsForm', () => {
         payMode="deposit"
         onPayModeChange={onPayModeChange}
         amountDueNowCentavos={AMOUNT_DUE_NOW}
+        requiresFlightDetails={false}
       />,
     );
     await user.click(screen.getByLabelText(/pay in full/i));
@@ -125,5 +131,39 @@ describe('TransferGuestDetailsForm', () => {
       validationError({ fieldErrors: { consent: ['Consent is required'] } }),
     );
     expect(screen.getByText('Consent is required')).toBeInTheDocument();
+  });
+
+  /**
+   * Owner decision 2026-11-08, decision 5 — flight fields are required
+   * client-side when the SELECTED ROUTE touches an airport at either end.
+   * This is UX polish only (the component's own header note); the server
+   * enforces the real rule post-catalog-read. Both states must render
+   * visibly differently, or a guest on an airport route could submit with
+   * no way to tell the fields were ever optional.
+   */
+  describe('requiresFlightDetails (owner decision 2026-11-08)', () => {
+    it('marks flightNumber/airline as required, with no "(optional)" suffix, when true', () => {
+      show('transfer_one_way', undefined, true);
+      const flightNumber = screen.getByLabelText(/^flight number$/i);
+      const airline = screen.getByLabelText(/^airline$/i);
+      expect(flightNumber).toBeRequired();
+      expect(airline).toBeRequired();
+      expect(screen.getByText(/touches the airport/i)).toBeInTheDocument();
+    });
+
+    it('leaves flightNumber/airline optional, suffixed "(optional)", when false', () => {
+      show('transfer_one_way', undefined, false);
+      const flightNumber = screen.getByLabelText(/flight number \(optional\)/i);
+      const airline = screen.getByLabelText(/airline \(optional\)/i);
+      expect(flightNumber).not.toBeRequired();
+      expect(airline).not.toBeRequired();
+      expect(screen.queryByText(/touches the airport/i)).not.toBeInTheDocument();
+    });
+
+    it('still hides flightNumber/airline entirely on a day-use hire, even when requiresFlightDetails is true', () => {
+      show('transfer_day_use', undefined, true);
+      expect(screen.queryByLabelText(/flight number/i)).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/airline/i)).not.toBeInTheDocument();
+    });
   });
 });

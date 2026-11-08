@@ -28,10 +28,20 @@ import { cn } from '@/lib/utils';
  * the wrong product type, so showing a box the schema will reject is worse
  * than not showing it.
  *
- * **`flightNumber`/`airline` show for every one-way transfer, not only
- * airport ones** (controller ruling for this task, per the brief): nothing in
- * the schema marks a route as an "airport route" specifically, so that
- * narrower rule cannot be expressed today.
+ * **`flightNumber`/`airline` are REQUIRED when the chosen route touches an
+ * airport at either end** (owner decision 2026-11-08, decision 5; see
+ * `docs/superpowers/plans/2026-11-08-flexible-routes.md` §2/§6 item 4b) —
+ * superseding this component's old rule ("show for every one-way transfer,
+ * nothing in the schema marks a route as airport-specific"), now that a
+ * route's `fromPlace`/`toPlace` each carry `isAirport`. The two fields still
+ * render for every one-way transfer (so a guest on a non-airport route can
+ * still volunteer flight details), but only turn `required` — and drop their
+ * "(optional)" suffix — when `requiresFlightDetails` is true. **This is UX
+ * polish, not the control**: `createTransferBooking()` enforces the same
+ * rule authoritatively, server-side, after resolving the route (it needs the
+ * resolved route's two places, which this Zod layer does not have) — see
+ * that function's own note and `createHoldTransferInput`'s doc comment on
+ * why the check cannot live in Zod.
  *
  * **Consent.** `ConsentCheckbox` is reused as-is. Unlike `CheckoutPage.tsx`
  * (which renders it as a SIBLING of `GuestDetails` and keeps its own local
@@ -53,6 +63,18 @@ type Props = {
   onPayModeChange: (mode: PayMode) => void;
   /** From the SELECTED vehicle's quote — same contract as `GuestDetails.tsx`. */
   amountDueNowCentavos: { full: number; deposit: number };
+  /**
+   * Whether the SELECTED route touches an airport at either end
+   * (`route.fromPlace.isAirport || route.toPlace.isAirport`) — owner
+   * decision 2026-11-08, decision 5. Direction does not change which two
+   * places are involved, only which one displays as pickup vs. drop-off, so
+   * the page computes this once from the selected route regardless of which
+   * direction the guest picked, and passes `false` when no route is chosen
+   * yet. Drives whether `flightNumber`/`airline` are marked `required`
+   * client-side — see this file's header note on why the server, not this
+   * prop, is the actual control.
+   */
+  requiresFlightDetails: boolean;
   /** `createHoldTransfer`'s raw rejection, read via `field-errors.ts`. */
   error?: unknown;
 };
@@ -86,6 +108,7 @@ export default function TransferGuestDetailsForm({
   payMode,
   onPayModeChange,
   amountDueNowCentavos,
+  requiresFlightDetails,
   error,
 }: Props) {
   const leadNameError = getNestedFieldError(error, 'lead.name');
@@ -250,30 +273,43 @@ export default function TransferGuestDetailsForm({
 
       {/* One-way only — a day-use request is refused if either field is sent. */}
       {isOneWay && (
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label htmlFor="transfer-flight-number">Flight number (optional)</Label>
-            <Input
-              id="transfer-flight-number"
-              name="flightNumber"
-              maxLength={20}
-              aria-describedby={flightNumberError ? FLIGHT_NUMBER_ERROR_ID : undefined}
-              aria-invalid={flightNumberError ? true : undefined}
-              className="tap-target"
-            />
-            <FieldError id={FLIGHT_NUMBER_ERROR_ID} message={flightNumberError} />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="transfer-airline">Airline (optional)</Label>
-            <Input
-              id="transfer-airline"
-              name="airline"
-              maxLength={80}
-              aria-describedby={airlineError ? AIRLINE_ERROR_ID : undefined}
-              aria-invalid={airlineError ? true : undefined}
-              className="tap-target"
-            />
-            <FieldError id={AIRLINE_ERROR_ID} message={airlineError} />
+        <div className="space-y-2">
+          {requiresFlightDetails && (
+            <p className="text-muted-foreground text-xs">
+              This trip touches the airport, so please share your flight details.
+            </p>
+          )}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="transfer-flight-number">
+                Flight number{!requiresFlightDetails && ' (optional)'}
+              </Label>
+              <Input
+                id="transfer-flight-number"
+                name="flightNumber"
+                maxLength={20}
+                required={requiresFlightDetails}
+                aria-describedby={flightNumberError ? FLIGHT_NUMBER_ERROR_ID : undefined}
+                aria-invalid={flightNumberError ? true : undefined}
+                className="tap-target"
+              />
+              <FieldError id={FLIGHT_NUMBER_ERROR_ID} message={flightNumberError} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="transfer-airline">
+                Airline{!requiresFlightDetails && ' (optional)'}
+              </Label>
+              <Input
+                id="transfer-airline"
+                name="airline"
+                maxLength={80}
+                required={requiresFlightDetails}
+                aria-describedby={airlineError ? AIRLINE_ERROR_ID : undefined}
+                aria-invalid={airlineError ? true : undefined}
+                className="tap-target"
+              />
+              <FieldError id={AIRLINE_ERROR_ID} message={airlineError} />
+            </div>
           </div>
         </div>
       )}

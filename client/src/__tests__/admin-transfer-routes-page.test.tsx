@@ -1,12 +1,15 @@
 /**
- * The transfer-routes admin screen (transfers-launch plan, Task T4).
- * `admin.transferRoutes.*` is `adminProcedure('toursPricing')` server-side —
- * owner only; what is pinned here is what the SCREEN itself promises: both
- * vehicle types' prices rendered in pesos for every route (active and
- * inactive alike), a price typed in pesos reaching the `create` mutation as
- * integer CENTAVOS — the one conversion this screen exists to get right —
- * and the server's own ambiguous duplicate-destination/slug `CONFLICT`
- * sentence shown as a friendly banner rather than raw JSON.
+ * The transfer-routes admin screen, rebuilt 2026-11-08 (owner decision:
+ * flexible places/routes/vehicle types — see
+ * `docs/superpowers/plans/2026-11-08-flexible-routes.md`) to replace the old
+ * "one route per destination, van/SUV" shape. `admin.transferRoutes.*` is
+ * `adminProcedure('toursPricing')` server-side — owner only; what is pinned
+ * here is what the SCREEN itself promises: both places rendered for every
+ * route, a price typed in pesos reaching the mutation as integer CENTAVOS,
+ * and — the single most important behaviour on this screen — that saving a
+ * route ALWAYS posts a COMPLETE price card keyed by every active vehicle
+ * type's id, never a hand-trimmed subset (`shared/src/transfers-admin.ts`'s
+ * own completeness contract).
  */
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -24,90 +27,129 @@ afterEach(() => {
 });
 
 /*
- * Radix's `Select` (the Destination field) needs three DOM APIs jsdom does
- * not implement — see `assign-panel.test.tsx`'s identical shim, copied per
- * that file's own note rather than centralized (also used by
- * `admin-tours-page.test.tsx` and `admin-vans-page.test.tsx` for the same
- * reason).
+ * No Radix component is mounted directly by this page any more — both place
+ * pickers are the plain-HTML `TransferPlaceCombobox`, and the vehicle-type
+ * list is a flat set of rows, not a `Select`. No jsdom shim is needed here.
  */
 beforeAll(() => {
   const proto = window.Element.prototype as unknown as Record<string, unknown>;
-  proto.hasPointerCapture = () => false;
-  proto.setPointerCapture = () => {};
-  proto.releasePointerCapture = () => {};
   proto.scrollIntoView = () => {};
 });
 
-const DESTINATIONS = [
-  { id: 10, name: 'Mactan Airport', slug: 'mactan-airport' },
-  { id: 20, name: 'Oslob', slug: 'oslob' },
-];
-
-const AIRPORT_ROUTE = {
-  id: 1,
-  destinationId: 10,
-  destinationName: 'Mactan Airport',
-  destinationIsActive: true,
-  slug: 'mactan-airport',
+const MACTAN_AIRPORT = {
+  id: 10,
+  name: 'Mactan-Cebu International Airport',
+  isAirport: true,
   isActive: true,
   sortOrder: 0,
-  estimatedDurationMinutes: 45,
+  destinationId: null,
+};
+const OSLOB = {
+  id: 20,
+  name: 'Oslob',
+  isAirport: false,
+  isActive: true,
+  sortOrder: 1,
+  destinationId: 5,
+};
+const CEBU_CITY = {
+  id: 30,
+  name: 'Cebu City',
+  isAirport: false,
+  isActive: false,
+  sortOrder: 2,
+  destinationId: 6,
+};
+
+const PLACES = [MACTAN_AIRPORT, OSLOB, CEBU_CITY];
+
+const VAN_TYPE = {
+  id: 1,
+  name: 'Van',
+  slug: 'van',
+  defaultSeats: null,
+  defaultLuggage: null,
+  isActive: true,
+  sortOrder: 0,
+};
+const SUV_TYPE = {
+  id: 2,
+  name: 'SUV',
+  slug: 'suv',
+  defaultSeats: null,
+  defaultLuggage: null,
+  isActive: true,
+  sortOrder: 1,
+};
+const MPV_TYPE = {
+  id: 3,
+  name: 'MPV',
+  slug: 'mpv',
+  defaultSeats: null,
+  defaultLuggage: null,
+  isActive: false,
+  sortOrder: 2,
+};
+
+const VEHICLE_TYPES = [VAN_TYPE, SUV_TYPE, MPV_TYPE];
+
+const AIRPORT_OSLOB_ROUTE = {
+  id: 1,
+  fromPlace: { id: 10, name: 'Mactan-Cebu International Airport', isAirport: true, isActive: true },
+  toPlace: { id: 20, name: 'Oslob', isAirport: false, isActive: true },
+  reverseEnabled: true,
+  slug: 'mactan-oslob',
+  isActive: true,
+  sortOrder: 0,
+  estimatedDurationMinutes: 150,
   freeCancelHours: 24,
   inclusionsText: 'Fuel, driver, tolls',
   exclusionsText: 'Meals',
-  prices: {
-    van: { oneWayPriceCentavos: 150_000, dayUsePriceCentavos: 350_000 },
-    suv: { oneWayPriceCentavos: 180_000, dayUsePriceCentavos: 400_000 },
-  },
+  prices: [
+    {
+      vehicleTypeId: 1,
+      vehicleTypeName: 'Van',
+      slug: 'van',
+      price: { oneWayPriceCentavos: 250_000, dayUsePriceCentavos: 500_000 },
+    },
+    {
+      vehicleTypeId: 2,
+      vehicleTypeName: 'SUV',
+      slug: 'suv',
+      price: { oneWayPriceCentavos: 300_000, dayUsePriceCentavos: 600_000 },
+    },
+  ],
 };
 
-const OSLOB_ROUTE = {
+const AIRPORT_CEBU_ROUTE = {
   id: 2,
-  destinationId: 20,
-  destinationName: 'Oslob',
-  destinationIsActive: true,
-  slug: 'oslob-whale-sharks',
-  isActive: false,
-  sortOrder: 1,
-  estimatedDurationMinutes: 150,
-  freeCancelHours: 48,
-  inclusionsText: null,
-  exclusionsText: null,
-  prices: {
-    van: { oneWayPriceCentavos: 250_000, dayUsePriceCentavos: 500_000 },
-    suv: { oneWayPriceCentavos: 300_000, dayUsePriceCentavos: 600_000 },
-  },
-};
-
-/**
- * Task 0D (owner decision 2026-11-06 #1): a route whose OWN flag is still
- * Active but whose destination was retired separately — the case the
- * amber "Destination inactive" label exists to surface, since the existing
- * Active/Inactive badge alone would say this route is fine to sell.
- */
-const CEBU_CITY_ROUTE = {
-  id: 3,
-  destinationId: 30,
-  destinationName: 'Cebu City',
-  destinationIsActive: false,
-  slug: 'cebu-city',
+  fromPlace: { id: 10, name: 'Mactan-Cebu International Airport', isAirport: true, isActive: true },
+  toPlace: { id: 30, name: 'Cebu City', isAirport: false, isActive: false },
+  reverseEnabled: false,
+  slug: 'mactan-cebu-city',
   isActive: true,
-  sortOrder: 2,
-  estimatedDurationMinutes: 60,
+  sortOrder: 1,
+  estimatedDurationMinutes: 45,
   freeCancelHours: 24,
   inclusionsText: null,
   exclusionsText: null,
-  prices: {
-    van: { oneWayPriceCentavos: 120_000, dayUsePriceCentavos: 300_000 },
-    suv: { oneWayPriceCentavos: 150_000, dayUsePriceCentavos: 350_000 },
-  },
+  prices: [
+    {
+      vehicleTypeId: 1,
+      vehicleTypeName: 'Van',
+      slug: 'van',
+      price: { oneWayPriceCentavos: 120_000, dayUsePriceCentavos: 300_000 },
+    },
+    { vehicleTypeId: 2, vehicleTypeName: 'SUV', slug: 'suv', price: null },
+  ],
 };
 
 function renderPage(extra: Record<string, unknown> = {}) {
   mockTrpc({
     'staffAuth.me': { userId: 1, role: 'owner', mustChangePassword: false },
-    'destinations.list': DESTINATIONS,
-    'admin.transferRoutes.list': [AIRPORT_ROUTE, OSLOB_ROUTE],
+    'admin.transferPlaces.list': PLACES,
+    'admin.vehicleTypes.list': VEHICLE_TYPES,
+    'admin.transferRoutes.list': [AIRPORT_OSLOB_ROUTE, AIRPORT_CEBU_ROUTE],
     ...extra,
   });
   return render(
@@ -119,35 +161,73 @@ function renderPage(extra: Record<string, unknown> = {}) {
   );
 }
 
+/** Opens the "Add a transfer route" form and waits for it to be on screen. */
+async function openAddForm() {
+  await user.click(await screen.findByRole('button', { name: /add a transfer route/i }));
+  await screen.findByRole('button', { name: /^add route$/i });
+}
+
+/** Fills in a From/To combobox by typing a query and clicking the matching option. */
+async function pickPlace(label: string, query: string, optionName: string) {
+  const input = screen.getByLabelText(label);
+  await user.click(input);
+  await user.type(input, query);
+  await user.click(await screen.findByRole('option', { name: optionName }));
+}
+
 describe('AdminTransferRoutesPage', () => {
-  it('renders every route, active and inactive, with both vehicle types’ prices formatted in pesos', async () => {
+  it('renders every route, active and inactive, with both place names and a price summary', async () => {
     renderPage();
-    await screen.findAllByText('Mactan Airport');
-    expect(screen.getAllByText('Oslob').length).toBeGreaterThan(0);
+    await screen.findAllByText(/Mactan-Cebu International Airport → Oslob/);
+    expect(
+      screen.getAllByText(/Mactan-Cebu International Airport → Cebu City/).length,
+    ).toBeGreaterThan(0);
 
-    const states = screen.getAllByText(/^(Active|Inactive)$/).map((node) => node.textContent);
-    expect(states).toContain('Active');
-    expect(states).toContain('Inactive');
+    // Oslob route: both active types priced.
+    expect(screen.getAllByText('2 of 2 vehicle types priced').length).toBeGreaterThan(0);
+    // Cebu City route: only Van priced (SUV price is null).
+    expect(screen.getAllByText('1 of 2 vehicle types priced').length).toBeGreaterThan(0);
 
-    // Formatted in pesos via `formatPeso` — never the raw centavos figures
-    // (`150000`, `350000`, ...) the server actually stores.
-    expect(screen.getAllByText('Van: ₱1,500 one-way · ₱3,500 day-use').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('SUV: ₱1,800 one-way · ₱4,000 day-use').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Van: ₱2,500 one-way · ₱5,000 day-use').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('SUV: ₱3,000 one-way · ₱6,000 day-use').length).toBeGreaterThan(0);
+    expect(screen.queryByText('250000')).toBeNull();
+  });
 
-    expect(screen.queryByText('150000')).toBeNull();
-    expect(screen.queryByText('350000')).toBeNull();
+  it('shows the amber inactive-place label only for the route whose place is retired', async () => {
+    renderPage();
+    await screen.findAllByText(/Mactan-Cebu International Airport → Oslob/);
+
+    const labels = screen.getAllByTestId('inactive-place-label');
+    // One per surface (phone card + table row) for the Cebu City route only.
+    expect(labels).toHaveLength(2);
+    for (const label of labels) {
+      expect(label).toHaveTextContent(/Cebu City is inactive — hidden from guests/);
+    }
+
+    // The Oslob route's own containers must carry no such label.
+    const oslobContainers = screen
+      .getAllByText(/Mactan-Cebu International Airport → Oslob/)
+      .map((node) => node.closest('li') ?? node.closest('tr'));
+    for (const container of oslobContainers) {
+      expect(container).not.toBeNull();
+      expect(within(container as HTMLElement).queryByTestId('inactive-place-label')).toBeNull();
+    }
   });
 
   /**
-   * **The most important test in this file.** A peso-to-centavos conversion
-   * bug here is a real money bug — a route could silently charge 100x (or
-   * 1/100th) what the owner typed. This asserts on the actual object handed
-   * to `admin.transferRoutes.create`, not on anything the screen merely
-   * displays back.
+   * **The most important test in this file.** The design note's own
+   * completeness contract: a present `prices` object is read as the COMPLETE
+   * replacement card. A trimmed card would silently un-offer a vehicle type
+   * the admin never intended to touch. This proves the OUTER `prices` key
+   * always carries one entry per ACTIVE vehicle type — SUV's blank boxes
+   * must still produce an explicit `null`, not an absent key — on a plain
+   * CREATE where only Van is priced.
+   *
+   * Provably able to fail: deleting the `for (const type of
+   * activeVehicleTypes)` loop's `prices[key] = null` branch in
+   * `AdminTransferRoutesPage.tsx` (so an untouched type's key is simply
+   * omitted instead) makes this test red, because `prices` would then be
+   * `{ "1": {...} }` with no `"2"` key at all rather than `"2": null`.
    */
-  it('submits all four prices typed in pesos as integer centavos, not pesos', async () => {
+  it('always posts a complete price card — every active vehicle type gets a key, blank ones get null', async () => {
     const sent: unknown[] = [];
     renderPage({
       'admin.transferRoutes.create': (input: unknown) => {
@@ -155,124 +235,137 @@ describe('AdminTransferRoutesPage', () => {
         return { id: 99 };
       },
     });
-    await screen.findAllByText('Mactan Airport');
+    await screen.findAllByText(/Mactan-Cebu International Airport → Oslob/);
+    await openAddForm();
 
-    await user.click(screen.getByRole('button', { name: /add a transfer route/i }));
+    await pickPlace('From place', 'Mactan', 'Mactan-Cebu International Airport');
+    await pickPlace('To place', 'Oslob', 'Oslob');
+    await user.type(screen.getByLabelText('Slug'), 'mactan-oslob-2');
+    await user.clear(screen.getByLabelText('Duration — minutes'));
+    await user.type(screen.getByLabelText('Duration — hours'), '2');
+    await user.clear(screen.getByLabelText('Free cancellation window (hours)'));
+    await user.type(screen.getByLabelText('Free cancellation window (hours)'), '24');
+    // Only Van is priced — SUV's two boxes are left blank on purpose.
+    await user.type(
+      screen.getByLabelText('One-way (pesos)', { selector: '#route-price-1-oneway' }),
+      '1500.00',
+    );
+    await user.type(
+      screen.getByLabelText('Day-use (pesos)', { selector: '#route-price-1-dayuse' }),
+      '3500.00',
+    );
 
-    await user.click(screen.getByLabelText('Destination'));
-    await user.click(await screen.findByRole('option', { name: 'Oslob' }));
-    await user.type(screen.getByLabelText('Slug'), 'oslob-pier');
-    await user.type(screen.getByLabelText('Estimated duration (minutes)'), '150');
-    await user.type(screen.getByLabelText('Free cancellation window (hours)'), '48');
-    await user.type(screen.getByLabelText('Van — one-way price (pesos)'), '1,500.00');
-    await user.type(screen.getByLabelText('Van — day-use price (pesos)'), '3,500.00');
-    await user.type(screen.getByLabelText('SUV — one-way price (pesos)'), '1,800.50');
-    await user.type(screen.getByLabelText('SUV — day-use price (pesos)'), '4,000.00');
+    await user.click(screen.getByRole('button', { name: /^add route$/i }));
+
+    await waitFor(() => expect(sent).toHaveLength(1));
+    const payload = sent[0] as { prices: Record<string, unknown> };
+
+    // Every ACTIVE type (Van id 1, SUV id 2) has a key. MPV (id 3, inactive)
+    // never appears — it is not offered as a row on this screen at all.
+    expect(Object.keys(payload.prices).sort()).toEqual(['1', '2']);
+    expect(payload.prices['1']).toEqual({
+      oneWayPriceCentavos: 150_000,
+      dayUsePriceCentavos: 350_000,
+    });
+    expect(payload.prices['2']).toBeNull();
+  });
+
+  /**
+   * The inverse of the test above, on an EDIT: a type that already has a
+   * stored price and is left untouched must still be restated in full, not
+   * dropped. This is what makes "every active type always has a key" safe —
+   * it never means "forget what was already offered."
+   */
+  it('restates an untouched type’s stored price in full on an edit', async () => {
+    const sent: unknown[] = [];
+    renderPage({
+      'admin.transferRoutes.update': (input: unknown) => {
+        sent.push(input);
+        return { ok: true };
+      },
+    });
+    await screen.findAllByText(/Mactan-Cebu International Airport → Oslob/);
+
+    const editButtons = await screen.findAllByRole('button', { name: /^edit$/i });
+    await user.click(editButtons[0]!);
+    await screen.findByRole('button', { name: /save changes/i });
+
+    // Change only the slug — never touch either price box.
+    const slugInput = screen.getByLabelText('Slug');
+    await user.clear(slugInput);
+    await user.type(slugInput, 'mactan-oslob-renamed');
+
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => expect(sent).toHaveLength(1));
+    const payload = sent[0] as { patch: { prices: Record<string, unknown> } };
+    expect(payload.patch.prices['1']).toEqual({
+      oneWayPriceCentavos: 250_000,
+      dayUsePriceCentavos: 500_000,
+    });
+    expect(payload.patch.prices['2']).toEqual({
+      oneWayPriceCentavos: 300_000,
+      dayUsePriceCentavos: 600_000,
+    });
+  });
+
+  it('converts duration hours + minutes into total minutes, and prices in pesos into centavos', async () => {
+    const sent: unknown[] = [];
+    renderPage({
+      'admin.transferRoutes.create': (input: unknown) => {
+        sent.push(input);
+        return { id: 99 };
+      },
+    });
+    await screen.findAllByText(/Mactan-Cebu International Airport → Oslob/);
+    await openAddForm();
+
+    await pickPlace('From place', 'Mactan', 'Mactan-Cebu International Airport');
+    await pickPlace('To place', 'Oslob', 'Oslob');
+    await user.type(screen.getByLabelText('Slug'), 'mactan-oslob-3');
+    await user.clear(screen.getByLabelText('Duration — minutes'));
+    await user.type(screen.getByLabelText('Duration — hours'), '2');
+    await user.type(screen.getByLabelText('Duration — minutes'), '30');
+    await user.clear(screen.getByLabelText('Free cancellation window (hours)'));
+    await user.type(screen.getByLabelText('Free cancellation window (hours)'), '24');
+    await user.type(document.getElementById('route-price-1-oneway')!, '1,800.50');
+    await user.type(document.getElementById('route-price-1-dayuse')!, '4,000.00');
 
     await user.click(screen.getByRole('button', { name: /^add route$/i }));
 
     await waitFor(() => expect(sent).toHaveLength(1));
     const payload = sent[0] as {
-      destinationId: number;
-      slug: string;
-      prices: {
-        van: { oneWayPriceCentavos: number; dayUsePriceCentavos: number };
-        suv: { oneWayPriceCentavos: number; dayUsePriceCentavos: number };
-      };
+      estimatedDurationMinutes: number;
+      prices: Record<string, { oneWayPriceCentavos: number; dayUsePriceCentavos: number } | null>;
     };
-
-    expect(payload.destinationId).toBe(20);
-    expect(payload.slug).toBe('oslob-pier');
-    expect(payload.prices.van.oneWayPriceCentavos).toBe(pesosToCentavos('1,500.00'));
-    expect(payload.prices.van.oneWayPriceCentavos).toBe(150_000);
-    expect(payload.prices.van.dayUsePriceCentavos).toBe(350_000);
-    expect(payload.prices.suv.oneWayPriceCentavos).toBe(180_050);
-    expect(payload.prices.suv.dayUsePriceCentavos).toBe(400_000);
-
-    // The bug this test exists to catch: sending the typed PESO number
-    // (1500) rather than the converted CENTAVOS number (150000).
-    expect(payload.prices.van.oneWayPriceCentavos).not.toBe(1_500);
-    for (const value of Object.values(payload.prices.van).concat(
-      Object.values(payload.prices.suv),
-    )) {
-      expect(Number.isInteger(value)).toBe(true);
-    }
+    expect(payload.estimatedDurationMinutes).toBe(150);
+    expect(payload.prices['1']!.oneWayPriceCentavos).toBe(pesosToCentavos('1,800.50'));
+    expect(payload.prices['1']!.oneWayPriceCentavos).toBe(180_050);
+    expect(Number.isInteger(payload.prices['1']!.oneWayPriceCentavos)).toBe(true);
   });
 
-  it('shows the server’s own ambiguous duplicate-destination/slug CONFLICT as a friendly banner, not raw JSON', async () => {
+  it('shows the server’s own ambiguous duplicate CONFLICT as a friendly banner, not raw JSON', async () => {
     renderPage();
-    await screen.findAllByText('Mactan Airport');
+    await screen.findAllByText(/Mactan-Cebu International Airport → Oslob/);
 
     const duplicateMessage =
-      'A transfer route already exists for that destination, or that slug is already taken. ' +
+      'A transfer route already exists for that from/to pair, or that slug is already taken. ' +
       'A retired route still holds both — reactivate it instead of creating a second one.';
     mockTrpcError('admin.transferRoutes.create', 'CONFLICT', duplicateMessage);
 
-    await user.click(screen.getByRole('button', { name: /add a transfer route/i }));
-    await user.click(screen.getByLabelText('Destination'));
-    await user.click(await screen.findByRole('option', { name: 'Oslob' }));
-    await user.type(screen.getByLabelText('Slug'), 'oslob-pier');
-    await user.type(screen.getByLabelText('Estimated duration (minutes)'), '150');
-    await user.type(screen.getByLabelText('Free cancellation window (hours)'), '48');
-    await user.type(screen.getByLabelText('Van — one-way price (pesos)'), '1,500.00');
-    await user.type(screen.getByLabelText('Van — day-use price (pesos)'), '3,500.00');
-    await user.type(screen.getByLabelText('SUV — one-way price (pesos)'), '1,800.00');
-    await user.type(screen.getByLabelText('SUV — day-use price (pesos)'), '4,000.00');
+    await openAddForm();
+    await pickPlace('From place', 'Mactan', 'Mactan-Cebu International Airport');
+    await pickPlace('To place', 'Oslob', 'Oslob');
+    await user.type(screen.getByLabelText('Slug'), 'mactan-oslob-4');
+    await user.clear(screen.getByLabelText('Duration — minutes'));
+    await user.type(screen.getByLabelText('Duration — hours'), '2');
+    await user.clear(screen.getByLabelText('Free cancellation window (hours)'));
+    await user.type(screen.getByLabelText('Free cancellation window (hours)'), '24');
 
     await user.click(screen.getByRole('button', { name: /^add route$/i }));
 
     expect(await screen.findByText(duplicateMessage)).toBeInTheDocument();
-    // The bug this guards against: tRPC's own default `ZodError` rendering
-    // is `JSON.stringify(issues, null, 2)`, which reads like `[{"code":`.
     expect(screen.queryByText(/"code":/)).toBeNull();
-  });
-
-  /**
-   * Task 0D (owner decision 2026-11-06 #1). The label is additional to the
-   * existing Active/Inactive badge, not a replacement for it: Cebu City's
-   * own row still says "Active" (its route flag is true) AND carries the
-   * amber warning, because its DESTINATION is what was retired. Neither of
-   * the other two routes — whose destinations are both still active — shows
-   * it, including Oslob, whose own route is Inactive for an unrelated
-   * reason.
-   *
-   * The "still says Active" half is asserted with `within()`, scoped to
-   * Cebu City's own card/row on each surface — review finding (Important),
-   * fixed here. `screen.getAllByText(/^(Active|Inactive)$/)` is unscoped and
-   * collects every status badge across all three fixture routes and both
-   * surfaces, so `.toContain('Active')` would still pass even if Cebu
-   * City's OWN badge were deleted and replaced by the amber label, because
-   * Mactan Airport's badge also reads "Active" — exactly the regression
-   * this test exists to catch. Scoping to Cebu City's own container is what
-   * makes the assertion about Cebu City rather than about the page.
-   */
-  it('shows an amber "Destination inactive" label only for a route whose destination is retired', async () => {
-    renderPage({ 'admin.transferRoutes.list': [AIRPORT_ROUTE, OSLOB_ROUTE, CEBU_CITY_ROUTE] });
-    await screen.findAllByText('Mactan Airport');
-    await screen.findAllByText('Cebu City');
-
-    const labels = screen.getAllByTestId('destination-inactive-label');
-    // One per surface (the phone card and the table), never zero and never
-    // duplicated across the other two routes.
-    expect(labels).toHaveLength(2);
-    for (const label of labels) {
-      expect(label).toHaveTextContent('Destination inactive — hidden from guests');
-    }
-
-    // Cebu City's own card (phone) and row (table) — found by walking up
-    // from its destination-name text node, one per surface.
-    const cebuCityContainers = screen
-      .getAllByText('Cebu City')
-      .map((node) => node.closest('li') ?? node.closest('tr'));
-    expect(cebuCityContainers).toHaveLength(2);
-    for (const container of cebuCityContainers) {
-      expect(container).not.toBeNull();
-      const scoped = within(container as HTMLElement);
-      // The existing Active badge is STILL there...
-      expect(scoped.getByText('Active')).toBeInTheDocument();
-      // ...alongside the new amber label, not instead of it.
-      expect(scoped.getByTestId('destination-inactive-label')).toBeInTheDocument();
-    }
   });
 
   it('shows the denied state, not a blank screen, when the role is refused', async () => {
@@ -280,6 +373,6 @@ describe('AdminTransferRoutesPage', () => {
     expect(
       await screen.findByText(/only the owner can manage transfer routes/i),
     ).toBeInTheDocument();
-    expect(screen.queryByText('Mactan Airport')).toBeNull();
+    expect(screen.queryByText(/Mactan-Cebu International Airport/)).toBeNull();
   });
 });

@@ -49,16 +49,34 @@ function renderTrustBar() {
 
 const MACTAN: TransferRoutePublicRow = {
   id: 1,
-  destinationName: 'Mactan-Cebu International Airport',
-  slug: 'mactan-airport',
+  fromPlace: { id: 10, name: 'Mactan-Cebu International Airport', isAirport: true },
+  toPlace: { id: 11, name: 'Moalboal', isAirport: false },
+  // Single-direction here on purpose — these tests exercise the HERO
+  // TEASER's route dropdown, not direction picking (that is RoutePicker's
+  // own test file's job), and a reversible route would put two options
+  // with "mactan" in their accessible name on screen at once.
+  reverseEnabled: false,
+  slug: 'mactan-airport-moalboal',
   estimatedDurationMinutes: 45,
   freeCancelHours: 24,
   inclusionsText: null,
   exclusionsText: null,
-  prices: {
-    van: { oneWayPriceCentavos: 150_000, dayUsePriceCentavos: 400_000 },
-    suv: { oneWayPriceCentavos: 200_000, dayUsePriceCentavos: 500_000 },
-  },
+  vehiclePrices: [
+    {
+      vehicleTypeId: 1,
+      vehicleTypeName: 'Van',
+      slug: 'van',
+      oneWayPriceCentavos: 150_000,
+      dayUsePriceCentavos: 400_000,
+    },
+    {
+      vehicleTypeId: 2,
+      vehicleTypeName: 'SUV',
+      slug: 'suv',
+      oneWayPriceCentavos: 200_000,
+      dayUsePriceCentavos: 500_000,
+    },
+  ],
 };
 
 /** Echoes the current location so a test can assert what a submit actually navigated to. */

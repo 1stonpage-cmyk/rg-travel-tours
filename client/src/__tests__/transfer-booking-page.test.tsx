@@ -1,9 +1,13 @@
 /**
- * Task T14 — `TransferBookingPage.tsx`. Covers the happy path (type → route
- * → vehicle → guest details → submit → `<PaymentOptions>`) and the "vehicle
- * unavailable for this route" rendering when one of the two `quoteTransfer`
- * queries throws (BAD_REQUEST/NOT_FOUND both render the same state — this
- * exercises NOT_FOUND, mirroring `VehicleOptionCard`'s own test).
+ * Task T14, rebuilt 2026-11-08 for the flexible places/routes/vehicle-types
+ * model (owner decision 2026-11-08). Covers the happy path (type → route →
+ * vehicle → guest details → submit → `<PaymentOptions>`), the "vehicle
+ * unavailable for this route" rendering when one offered vehicle's
+ * `quoteTransfer` throws, the bad-coupon recovery (Critical 1, generalized),
+ * the stale-placeholder guard (Critical 2), AND the new direction behaviour
+ * — picking the reverse leg of a reversible route sends
+ * `direction: 'reverse'` on hold, the single most important correctness
+ * point of this rebuild.
  */
 import { render, screen, within, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -17,16 +21,39 @@ import { mockTrpc, trpcError } from './helpers/mock-trpc';
 
 const MACTAN: TransferRoutePublicRow = {
   id: 1,
-  destinationName: 'Mactan-Cebu International Airport',
-  slug: 'mactan-airport',
+  fromPlace: { id: 10, name: 'Mactan-Cebu International Airport', isAirport: true },
+  toPlace: { id: 11, name: 'Moalboal', isAirport: false },
+  reverseEnabled: false,
+  slug: 'mactan-airport-moalboal',
   estimatedDurationMinutes: 45,
   freeCancelHours: 24,
   inclusionsText: null,
   exclusionsText: null,
-  prices: {
-    van: { oneWayPriceCentavos: 150_000, dayUsePriceCentavos: 400_000 },
-    suv: { oneWayPriceCentavos: 200_000, dayUsePriceCentavos: 500_000 },
-  },
+  vehiclePrices: [
+    {
+      vehicleTypeId: 1,
+      vehicleTypeName: 'Van',
+      slug: 'van',
+      oneWayPriceCentavos: 150_000,
+      dayUsePriceCentavos: 400_000,
+    },
+    {
+      vehicleTypeId: 2,
+      vehicleTypeName: 'SUV',
+      slug: 'suv',
+      oneWayPriceCentavos: 200_000,
+      dayUsePriceCentavos: 500_000,
+    },
+  ],
+};
+
+/** A reversible route, used only by the direction test below. */
+const REVERSIBLE: TransferRoutePublicRow = {
+  ...MACTAN,
+  id: 5,
+  toPlace: { id: 13, name: 'Cebu City', isAirport: false },
+  reverseEnabled: true,
+  slug: 'mactan-cebu-city',
 };
 
 const VAN_QUOTE = {
@@ -64,22 +91,30 @@ function renderPage(entry = '/transfer') {
   );
 }
 
-async function selectTypeAndRoute(user: ReturnType<typeof userEvent.setup>) {
+async function selectTypeAndRoute(
+  user: ReturnType<typeof userEvent.setup>,
+  routeName: RegExp = /^mactan-cebu international airport/i,
+) {
   await user.click(await screen.findByRole('radio', { name: /airport transfer/i }));
-  await user.click(
-    await screen.findByRole('radio', { name: /mactan-cebu international airport/i }),
-  );
+  await user.click(await screen.findByRole('radio', { name: routeName }));
+}
+
+/** `quoteTransfer` handler keyed on `vehicleTypeId` (1 = van, 2 = suv), matching the fixtures above. */
+function quoteByVehicleTypeId(input: unknown) {
+  const { vehicleTypeId } = input as { vehicleTypeId: number };
+  return vehicleTypeId === 1 ? VAN_QUOTE : SUV_QUOTE;
 }
 
 describe('TransferBookingPage — happy path', () => {
-  it('walks type → route → vehicle → guest details → submit → shows PaymentOptions', async () => {
+  it('walks type → route → vehicle → guest details → submit → shows PaymentOptions, sending vehicleTypeId and direction: forward', async () => {
+    let capturedHoldInput: Record<string, unknown> | undefined;
     mockTrpc({
       'transferRoutes.list': [MACTAN],
-      'checkout.quoteTransfer': (input: unknown) => {
-        const { vehicleType } = input as { vehicleType: 'van' | 'suv' };
-        return vehicleType === 'van' ? VAN_QUOTE : SUV_QUOTE;
+      'checkout.quoteTransfer': quoteByVehicleTypeId,
+      'checkout.createHoldTransfer': (input: unknown) => {
+        capturedHoldInput = input as Record<string, unknown>;
+        return HOLD_RESULT;
       },
-      'checkout.createHoldTransfer': () => HOLD_RESULT,
       'settings.get': SETTINGS_FIXTURE,
     });
     const user = userEvent.setup();
@@ -106,6 +141,11 @@ describe('TransferBookingPage — happy path', () => {
     await user.clear(within(form).getByLabelText(/^bags$/i));
     await user.type(within(form).getByLabelText(/^bags$/i), '1');
     await user.type(within(form).getByLabelText(/drop-off address/i), 'SM Seaside, Cebu City');
+    // MACTAN's fromPlace is an airport, so flightNumber/airline are now
+    // REQUIRED client-side (owner decision 2026-11-08, decision 5) — filled
+    // in so the native `required` attribute does not block this submit.
+    await user.type(within(form).getByLabelText(/^flight number$/i), 'PR123');
+    await user.type(within(form).getByLabelText(/^airline$/i), 'Philippine Airlines');
     await user.type(within(form).getByLabelText(/full name/i), 'Juan Dela Cruz');
     await user.type(within(form).getByLabelText(/^email$/i), 'juan@example.com');
     await user.type(within(form).getByLabelText(/mobile number/i), '0917 123 4567');
@@ -120,6 +160,111 @@ describe('TransferBookingPage — happy path', () => {
     // own text, reachable only through PaymentOptions (SETTINGS_FIXTURE
     // ships onlinePaymentEnabled: true).
     expect(await screen.findByRole('button', { name: /^pay now$/i })).toBeInTheDocument();
+
+    // The most important correctness point of this rebuild: the HOLD
+    // carries vehicleTypeId (never a `van`/`suv` string) and direction —
+    // 'forward' here, since the route has no reverse leg to pick.
+    expect(capturedHoldInput?.routeId).toBe(1);
+    expect(capturedHoldInput?.vehicleTypeId).toBe(1);
+    expect(capturedHoldInput?.direction).toBe('forward');
+  });
+});
+
+describe('TransferBookingPage — reversible route (owner decision 2026-11-08)', () => {
+  it('sends direction: "reverse" and the SAME routeId when the guest picks the reverse leg', async () => {
+    let capturedHoldInput: Record<string, unknown> | undefined;
+    mockTrpc({
+      'transferRoutes.list': [REVERSIBLE],
+      'checkout.quoteTransfer': quoteByVehicleTypeId,
+      'checkout.createHoldTransfer': (input: unknown) => {
+        capturedHoldInput = input as Record<string, unknown>;
+        return HOLD_RESULT;
+      },
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('radio', { name: /airport transfer/i }));
+    // The REVERSE leg's label starts with the to-place name ("Cebu City"),
+    // not the from-place name — picking it is what proves the picker can
+    // offer the trip the other way round, same route id.
+    await user.click(await screen.findByRole('radio', { name: /^cebu city/i }));
+
+    const vanRadio = await screen.findByRole('radio', { name: /^van/i });
+    await waitFor(() => expect(vanRadio).not.toBeDisabled());
+    await user.click(vanRadio);
+
+    const form = await screen.findByRole('form', { name: /transfer booking form/i });
+    fireEvent.change(within(form).getByLabelText(/pickup date/i), {
+      target: { value: '2026-12-15' },
+    });
+    fireEvent.change(within(form).getByLabelText(/pickup time/i), {
+      target: { value: '08:30' },
+    });
+    await user.clear(within(form).getByLabelText(/^passengers$/i));
+    await user.type(within(form).getByLabelText(/^passengers$/i), '2');
+    await user.clear(within(form).getByLabelText(/^bags$/i));
+    await user.type(within(form).getByLabelText(/^bags$/i), '1');
+    await user.type(within(form).getByLabelText(/drop-off address/i), 'Mactan Airport');
+    // The reverse leg also touches an airport (same two places), so flight
+    // details are required client-side — see the dedicated describe block
+    // below for the show/hide half; here they are just filled in so the
+    // native `required` attributes do not block this submit.
+    await user.type(within(form).getByLabelText(/flight number/i), 'PR123');
+    await user.type(within(form).getByLabelText(/airline/i), 'Philippine Airlines');
+    await user.type(within(form).getByLabelText(/full name/i), 'Juan Dela Cruz');
+    await user.type(within(form).getByLabelText(/^email$/i), 'juan@example.com');
+    await user.type(within(form).getByLabelText(/mobile number/i), '0917 123 4567');
+    await user.click(within(form).getByLabelText(/i agree/i));
+
+    await user.click(within(form).getByRole('button', { name: /book now/i }));
+
+    await screen.findByText(/RG-TRF001/);
+    expect(capturedHoldInput?.routeId).toBe(5);
+    expect(capturedHoldInput?.direction).toBe('reverse');
+  });
+
+  it('keeps the vehicle selection when only direction changes (same route, same vehiclePrices)', async () => {
+    mockTrpc({
+      'transferRoutes.list': [REVERSIBLE],
+      'checkout.quoteTransfer': quoteByVehicleTypeId,
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('radio', { name: /airport transfer/i }));
+    await user.click(
+      await screen.findByRole('radio', { name: /^mactan-cebu international airport/i }),
+    );
+    const vanRadio = await screen.findByRole('radio', { name: /^van/i });
+    await waitFor(() => expect(vanRadio).not.toBeDisabled());
+    await user.click(vanRadio);
+    expect(vanRadio).toBeChecked();
+
+    // Flip direction only — the route id is unchanged.
+    await user.click(await screen.findByRole('radio', { name: /^cebu city/i }));
+
+    expect(await screen.findByRole('radio', { name: /^van/i })).toBeChecked();
+  });
+});
+
+describe('TransferBookingPage — flight details required on an airport route', () => {
+  it('marks flightNumber/airline as required once a vehicle is selected on an airport-touching route', async () => {
+    mockTrpc({
+      'transferRoutes.list': [MACTAN],
+      'checkout.quoteTransfer': quoteByVehicleTypeId,
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await selectTypeAndRoute(user);
+    const vanRadio = await screen.findByRole('radio', { name: /^van/i });
+    await waitFor(() => expect(vanRadio).not.toBeDisabled());
+    await user.click(vanRadio);
+
+    const form = await screen.findByRole('form', { name: /transfer booking form/i });
+    expect(within(form).getByLabelText(/^flight number$/i)).toBeRequired();
+    expect(within(form).getByLabelText(/^airline$/i)).toBeRequired();
   });
 });
 
@@ -128,8 +273,8 @@ describe('TransferBookingPage — vehicle unavailable for this route', () => {
     mockTrpc({
       'transferRoutes.list': [MACTAN],
       'checkout.quoteTransfer': (input: unknown) => {
-        const { vehicleType } = input as { vehicleType: 'van' | 'suv' };
-        if (vehicleType === 'suv') {
+        const { vehicleTypeId } = input as { vehicleTypeId: number };
+        if (vehicleTypeId === 2) {
           throw trpcError('No price is available for that route and vehicle.', 'NOT_FOUND');
         }
         return VAN_QUOTE;
@@ -150,8 +295,8 @@ describe('TransferBookingPage — vehicle unavailable for this route', () => {
 });
 
 /**
- * Review fix, Critical 1 — a bad coupon code refuses BOTH the van and the
- * SUV `quoteTransfer` query at once (the same validation runs before either
+ * Review fix, Critical 1 — a bad coupon code refuses EVERY offered vehicle's
+ * `quoteTransfer` query at once (the same validation runs before any
  * vehicle is priced), which must never be mistaken for the "vehicle
  * unavailable" case above (that refusal only ever hits one query).
  */
@@ -160,14 +305,14 @@ describe('TransferBookingPage — bad coupon recovery (review fix, Critical 1)',
     mockTrpc({
       'transferRoutes.list': [MACTAN],
       'checkout.quoteTransfer': (input: unknown) => {
-        const { vehicleType, couponCode } = input as {
-          vehicleType: 'van' | 'suv';
+        const { vehicleTypeId, couponCode } = input as {
+          vehicleTypeId: number;
           couponCode?: string;
         };
         if (couponCode === 'BADCODE') {
           throw trpcError('This coupon has expired.', 'BAD_REQUEST');
         }
-        return vehicleType === 'van' ? VAN_QUOTE : SUV_QUOTE;
+        return vehicleTypeId === 1 ? VAN_QUOTE : SUV_QUOTE;
       },
     });
     const user = userEvent.setup();
@@ -214,11 +359,11 @@ describe('TransferBookingPage — a valid coupon paired with a permanently-unava
     mockTrpc({
       'transferRoutes.list': [MACTAN],
       'checkout.quoteTransfer': (input: unknown) => {
-        const { vehicleType, couponCode } = input as {
-          vehicleType: 'van' | 'suv';
+        const { vehicleTypeId, couponCode } = input as {
+          vehicleTypeId: number;
           couponCode?: string;
         };
-        if (vehicleType === 'suv') {
+        if (vehicleTypeId === 2) {
           throw trpcError('No price is available for that route and vehicle.', 'NOT_FOUND');
         }
         return couponCode === 'SAVE10'
@@ -263,22 +408,22 @@ describe('TransferBookingPage — a stale placeholder price must show as loading
     mockTrpc({
       'transferRoutes.list': [MACTAN],
       'checkout.quoteTransfer': (input: unknown) => {
-        const { vehicleType, productType } = input as {
-          vehicleType: 'van' | 'suv';
+        const { vehicleTypeId, productType } = input as {
+          vehicleTypeId: number;
           productType: 'transfer_one_way' | 'transfer_day_use';
         };
         if (productType === 'transfer_day_use') {
           // Van's day-use quote is deliberately held open so the test can
           // observe the state WHILE it is still in flight. SUV's resolves
           // immediately — only Van's transition is under test here.
-          if (vehicleType === 'van') return dayUseVanPromise;
+          if (vehicleTypeId === 1) return dayUseVanPromise;
           return {
             ...SUV_QUOTE,
             totalCentavos: 500_000,
             amountDueNowCentavos: { full: 500_000, deposit: 150_000 },
           };
         }
-        return vehicleType === 'van' ? VAN_QUOTE : SUV_QUOTE;
+        return vehicleTypeId === 1 ? VAN_QUOTE : SUV_QUOTE;
       },
     });
     const user = userEvent.setup();
@@ -293,7 +438,7 @@ describe('TransferBookingPage — a stale placeholder price must show as loading
 
     // While the day-use quote is still in flight: loading, never the stale
     // one-way total, and never selectable.
-    expect(await screen.findByTestId('vehicle-option-van-skeleton')).toBeInTheDocument();
+    expect(await screen.findByTestId('vehicle-option-1-skeleton')).toBeInTheDocument();
     expect(screen.queryByText('₱1,500')).not.toBeInTheDocument();
     expect(screen.getByRole('radio', { name: /^van/i })).toBeDisabled();
 

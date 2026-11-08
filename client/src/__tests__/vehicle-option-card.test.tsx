@@ -1,8 +1,12 @@
 /**
- * `VehicleOptionCard` (Task T13) — presentational, no tRPC, and the
- * component that must never compute money. Covers: the three distinct
- * states (loading / unavailable / normal), the callback fires on select,
- * the `payMode`-keyed "due now" figure, and a resolved field error.
+ * `VehicleOptionCard` (Task T13, rebuilt 2026-11-08 for the admin-managed
+ * vehicle-types model) — presentational, no tRPC, and the component that
+ * must never compute money. Covers: the three distinct states (loading /
+ * unavailable / normal), the callback fires on select, the `payMode`-keyed
+ * "due now" figure, a resolved field error, and that the card renders
+ * whatever `vehicleTypeId`/`vehicleTypeName` it is given rather than a
+ * hard-coded van/suv pair (a THIRD, arbitrary type renders correctly with
+ * no code change needed).
  */
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -24,7 +28,8 @@ describe('VehicleOptionCard', () => {
   it('renders the normal state with the total and the deposit-mode due-now figure, no crash', () => {
     render(
       <VehicleOptionCard
-        vehicleType="van"
+        vehicleTypeId={1}
+        vehicleTypeName="Van"
         quote={QUOTE}
         isLoading={false}
         isSelected={false}
@@ -40,7 +45,8 @@ describe('VehicleOptionCard', () => {
   it('shows the FULL amountDueNowCentavos figure when payMode is full', () => {
     render(
       <VehicleOptionCard
-        vehicleType="suv"
+        vehicleTypeId={2}
+        vehicleTypeName="SUV"
         quote={QUOTE}
         isLoading={false}
         isSelected={false}
@@ -56,7 +62,8 @@ describe('VehicleOptionCard', () => {
     const user = userEvent.setup();
     render(
       <VehicleOptionCard
-        vehicleType="van"
+        vehicleTypeId={1}
+        vehicleTypeName="Van"
         quote={QUOTE}
         isLoading={false}
         isSelected={false}
@@ -71,7 +78,8 @@ describe('VehicleOptionCard', () => {
   it('renders a loading state (skeleton), with no price and no crash', () => {
     render(
       <VehicleOptionCard
-        vehicleType="van"
+        vehicleTypeId={1}
+        vehicleTypeName="Van"
         quote={undefined}
         isLoading={true}
         isSelected={false}
@@ -79,7 +87,7 @@ describe('VehicleOptionCard', () => {
         payMode="deposit"
       />,
     );
-    expect(screen.getByTestId('vehicle-option-van-skeleton')).toBeInTheDocument();
+    expect(screen.getByTestId('vehicle-option-1-skeleton')).toBeInTheDocument();
     expect(screen.queryByText(/₱/)).not.toBeInTheDocument();
     expect(screen.getByRole('radio')).toBeDisabled();
   });
@@ -87,7 +95,8 @@ describe('VehicleOptionCard', () => {
   it('renders a distinct "not available" state when quote is undefined and NOT loading', () => {
     render(
       <VehicleOptionCard
-        vehicleType="suv"
+        vehicleTypeId={2}
+        vehicleTypeName="SUV"
         quote={undefined}
         isLoading={false}
         isSelected={false}
@@ -96,14 +105,15 @@ describe('VehicleOptionCard', () => {
       />,
     );
     expect(screen.getByText(/not available for this route/i)).toBeInTheDocument();
-    expect(screen.queryByTestId('vehicle-option-suv-skeleton')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('vehicle-option-2-skeleton')).not.toBeInTheDocument();
     expect(screen.getByRole('radio')).toBeDisabled();
   });
 
   it('renders a resolved error message describing the radio', () => {
     render(
       <VehicleOptionCard
-        vehicleType="van"
+        vehicleTypeId={1}
+        vehicleTypeName="Van"
         quote={QUOTE}
         isLoading={false}
         isSelected={false}
@@ -115,5 +125,20 @@ describe('VehicleOptionCard', () => {
     const message = screen.getByText('Choose a vehicle.');
     expect(message).toHaveAttribute('role', 'alert');
     expect(screen.getByRole('radio')).toHaveAttribute('aria-describedby', message.id);
+  });
+
+  it('renders a THIRD, arbitrary vehicle type with no code change — never a hard-coded van/suv pair', () => {
+    render(
+      <VehicleOptionCard
+        vehicleTypeId={7}
+        vehicleTypeName="Coaster"
+        quote={QUOTE}
+        isLoading={false}
+        isSelected={false}
+        onSelect={() => {}}
+        payMode="deposit"
+      />,
+    );
+    expect(screen.getByText('Coaster')).toBeInTheDocument();
   });
 });

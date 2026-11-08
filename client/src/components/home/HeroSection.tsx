@@ -288,7 +288,7 @@ export default function HeroSection() {
                   )}
                   {transferRoutesQuery.data?.map((route) => (
                     <SelectItem key={route.id} value={String(route.id)}>
-                      {route.destinationName}
+                      {route.fromPlace.name} → {route.toPlace.name}
                     </SelectItem>
                   ))}
                 </SelectContent>

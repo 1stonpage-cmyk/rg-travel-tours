@@ -1,79 +1,68 @@
 /**
- * The private-transfer route screen — the routes guests can book a van or SUV
- * for, and the per-vehicle-type prices each one carries (transfers-launch
- * plan, Task T4; Architecture §1 and §5).
+ * The private-transfer route screen — the routes guests can book a vehicle
+ * for, and the per-vehicle-type prices each one carries. Rebuilt 2026-11-08
+ * (owner decision: flexible places/routes/vehicle types — see
+ * `docs/superpowers/plans/2026-11-08-flexible-routes.md`) to replace the old
+ * "one route per destination, van/SUV" shape with admin-managed places on
+ * both ends and an admin-managed, open-ended list of vehicle types.
  *
  * `admin.transferRoutes.*` is `adminProcedure('toursPricing')` server-side —
  * owner only, the same area tours and coupons use — so this screen offers no
  * control a dispatcher or finance role could use. It does not re-check the
  * role itself for enforcement (CLAUDE.md: hiding a button is not access
- * control) but, the same shape `AdminToursPage.tsx` and `AdminCouponsPage.tsx`
- * use, it shows a plain "owner only" denied state rather than a blank page or
- * raw data, from either of the two places a non-owner could reach it: the
- * role this session already knows (`staffAuth.me`), and a refused
- * `admin.transferRoutes.list` call (a stale session, or a role that changed
- * mid-visit).
+ * control) but shows the same plain "owner only" denied state every sibling
+ * `toursPricing` screen in this tree uses.
  *
- * ## Form layout: `EntityForm`, flattened — not a bespoke section
+ * ## The price card: THE rule to get right on this screen
  *
- * `prices` is the one genuinely nested piece of this input (`{ van: { ... },
- * suv: { ... } }`), and `EntityForm` has no concept of a nested object field.
- * Rather than inventing a bespoke price-card section the way
- * `AdminToursPage.tsx` did for its REPEATING arrays (price tiers, images,
- * itinerary, add-ons), this screen flattens the price card to four scalar
- * fields at the form layer — `vanOneWayPesos`, `vanDayUsePesos`,
- * `suvOneWayPesos`, `suvDayUsePesos` — and reassembles the nested `prices`
- * object when the mutation is called. That is the same move
- * `AdminCouponsPage.tsx` already makes for its own single money field
- * (`discountValue`, converted to `percentBp`/`amountCentavos` at the submit
- * boundary): a bespoke section earns its keep only when there is a REPEATING
- * structure to add/remove rows from, and a fixed two-by-two price card is not
- * that — it is four named numbers, which `EntityForm`'s flat field list
- * already renders and labels for free.
+ * `shared/src/transfers-admin.ts`'s own header spells out the contract: a
+ * `prices` object the form posts is read as the COMPLETE price card for the
+ * route — every active vehicle type the admin wants offered, keyed by its
+ * id, with a key simply ABSENT meaning "not offered" (design note §1.4). A
+ * hand-trimmed subset would silently un-offer every type left out of it. So
+ * `submit()` below always builds `prices` from EVERY ACTIVE vehicle type
+ * (`activeVehicleTypes`, from `admin.vehicleTypes.list`) — a type whose two
+ * boxes are both left blank gets an explicit `null` entry (not offered),
+ * never an omitted key, and a type the admin never touched on an EDIT still
+ * gets its stored price restated in full, because `priceValuesFor()` falls
+ * back to the stored card for any type the local state has not overridden.
  *
- * ## Money
+ * ## Duration: hours + minutes is a UI nicety only
  *
- * Every price is typed in pesos and converted to integer centavos at the
- * form boundary (`lib/money-input.ts`, `pesosToCentavos`) — the server never
- * sees a float or a peso string (CLAUDE.md, "Money"). The four price fields
- * stay in the flat, always-visible part of the form (not behind "More
- * details") because a route with the wrong price is the one mistake this
- * screen exists to prevent.
+ * `transfer_routes.estimated_duration_minutes` is still stored and sent as a
+ * single integer. Splitting it into two number inputs is this screen's own
+ * convenience — `totalMinutesFrom()`/`hoursAndMinutesFrom()` are the only two
+ * places the conversion happens, both ways.
+ *
+ * ## Both places come from one reusable combobox
+ *
+ * `TransferPlaceCombobox` (`components/admin/TransferPlaceCombobox.tsx`) is
+ * mounted twice — "From place" and "To place" — and owns its own "+ Add new
+ * place" inline create, so this form never has to know how a place is made.
  *
  * ## There is no delete
  *
  * A route is retired with Deactivate, behind the same confirm-then-commit
- * `AdminCouponsPage.tsx` uses for its own soft delete, and the word "Delete"
- * appears nowhere — the server has no delete mutation either
- * (`server/src/routers/admin/transfer-routes.ts`). Deactivating keeps the
+ * `AdminCouponsPage.tsx` uses for its own soft delete. Deactivating keeps the
  * route on this list, which is the only place to switch it back on.
- *
- * ## The duplicate-destination/slug `CONFLICT`
- *
- * The server's own `DUPLICATE_TRANSFER_ROUTE_MESSAGE` deliberately names BOTH
- * possibilities in one sentence ("that destination, or that slug") rather
- * than trying to tell them apart — it cannot, without parsing mysql2's own
- * error text (see `services/transfers/upsert-route.ts`). So, exactly as
- * `AdminCouponsPage.tsx` shows its own ambiguous duplicate-code `CONFLICT` as
- * a banner rather than guessing which single field to blame, this screen does
- * the same: the server's sentence renders in the alert banner above the form,
- * not pinned to one of the two fields it cannot itself distinguish between.
  */
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { TRPCClientError } from '@trpc/client';
 import {
-  formatPeso,
   transferRouteCreateInputSchema,
   transferRouteUpdateInputSchema,
   type TransferRouteAdminRow,
-  type VehicleType,
+  type VehicleTypeAdminRow,
 } from '@rg/shared';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import EntityForm, { type EntityFormField } from '@/components/admin/EntityForm';
+import TransferPlaceCombobox from '@/components/admin/TransferPlaceCombobox';
 import { centavosToPesosInput, pesosToCentavos } from '@/lib/money-input';
 import { firstValidationMessage, splitFieldErrors } from '@/lib/field-errors';
 import { trpc } from '@/lib/trpc';
@@ -87,6 +76,9 @@ const PRIMARY_BUTTON =
   'tap-target bg-brand-blue-700 hover:bg-brand-blue-800 rounded-[10px] font-semibold text-white transition-colors';
 const OUTLINE_BUTTON =
   'tap-target border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 hover:text-brand-blue-800 rounded-[10px] font-semibold transition-colors';
+const FIELD = 'tap-target border-brand-blue-200 rounded-[10px] bg-white';
+const ROW_ERROR = 'text-brand-gold-800 text-xs font-medium';
+const SECTION = 'border-brand-blue-100 rounded-xl border p-4';
 
 const STATUS_BADGE_CLASS: Record<'Active' | 'Inactive', string> = {
   Active: 'border-0 bg-brand-blue-50 text-brand-blue-800',
@@ -94,29 +86,21 @@ const STATUS_BADGE_CLASS: Record<'Active' | 'Inactive', string> = {
 };
 
 /**
- * Owner decision 2026-11-06 #1: a route whose destination is retired is not
- * sellable — hidden from the public list, refused at quote and at hold — even
- * while the route's OWN Active/Inactive badge above still says Active. Amber,
- * never red (CLAUDE.md), matching `AssignPanel.tsx`'s existing warning styling.
+ * Owner decision 2026-11-08: sellability depends on BOTH places being
+ * active, not one destination — retargeted from the 2026-11-06 rule this
+ * label used to describe. Amber, never red (CLAUDE.md), matching
+ * `AssignPanel.tsx`'s existing warning styling.
  *
  * A plain `<p>` rather than `<Badge>`: `Badge`'s base class is
  * `whitespace-nowrap` and `w-fit`, which is fine for a one-word status but
  * would force this sentence onto one unbroken line and overflow a 360px
  * phone card — this needs to wrap instead.
  */
-const DESTINATION_INACTIVE_CLASS =
+const INACTIVE_PLACE_CLASS =
   'mt-2 rounded-[8px] border border-amber-300 bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900';
-const DESTINATION_INACTIVE_LABEL = 'Destination inactive — hidden from guests';
 
 /** The server's own sentence for any refusal under 500; a calm fallback otherwise. */
 function describeTransferRouteError(error: unknown, fallback: string): string {
-  /*
-   * Task A4's rule, same as every other admin screen: an input-validation
-   * failure's `message` is tRPC's own default for a `ZodError` — a raw JSON
-   * blob — so returning it here would put that blob in the banner. The
-   * schema's own sentence is the thing a human can act on; the per-field
-   * messages go to the form's `errors` map in `onError` besides.
-   */
   const validation = firstValidationMessage(error);
   if (validation !== null) return validation;
   if (
@@ -143,98 +127,58 @@ function statusLabel(isActive: boolean): 'Active' | 'Inactive' {
   return isActive ? 'Active' : 'Inactive';
 }
 
-/** "₱1,500.00 one-way · ₱2,800.00 day-use", or a flag for a missing price row. */
-function priceWords(row: TransferRouteAdminRow, vehicleType: VehicleType): string {
-  const price = row.prices[vehicleType];
-  if (!price) return 'Price missing';
-  return `${formatPeso(price.oneWayPriceCentavos)} one-way · ${formatPeso(price.dayUsePriceCentavos)} day-use`;
+function durationWords(minutes: number): string {
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  if (hours === 0) return `${mins} min`;
+  if (mins === 0) return `${hours} hr`;
+  return `${hours} hr ${mins} min`;
 }
 
-function durationWords(minutes: number): string {
-  return `${minutes} min`;
+/** "2 of 3 vehicle types priced" — the list screen's stand-in for a fixed price table. */
+function priceSummaryWords(route: TransferRouteAdminRow): string {
+  const total = route.prices.length;
+  if (total === 0) return 'No active vehicle types yet';
+  const priced = route.prices.filter((p) => p.price !== null).length;
+  return `${priced} of ${total} vehicle types priced`;
+}
+
+/** Which of the route's two places are inactive, in words — or `null` when both are active. */
+function inactivePlaceWarning(route: TransferRouteAdminRow): string | null {
+  const names = [route.fromPlace, route.toPlace].filter((p) => !p.isActive).map((p) => p.name);
+  if (names.length === 0) return null;
+  const verb = names.length > 1 ? 'are' : 'is';
+  return `${names.join(' and ')} ${verb} inactive — hidden from guests`;
 }
 
 /* ------------------------------------------------------------------- The form */
 
-interface DestinationOption {
-  id: number;
-  name: string;
+/** `hours*60 + minutes`, from the two UI-only inputs. */
+function totalMinutesFrom(hours: string, minutes: string): number | null {
+  const h = Number(hours.trim() === '' ? '0' : hours.trim());
+  const m = Number(minutes.trim() === '' ? '0' : minutes.trim());
+  if (!Number.isInteger(h) || h < 0 || !Number.isInteger(m) || m < 0 || m > 59) return null;
+  return h * 60 + m;
 }
 
-/** The field names `EntityForm` renders here, for `splitFieldErrors` (task A4). */
+/** The inverse, for pre-filling an edit form from the stored total. */
+function hoursAndMinutesFrom(totalMinutes: number): { hours: string; minutes: string } {
+  return { hours: String(Math.floor(totalMinutes / 60)), minutes: String(totalMinutes % 60) };
+}
+
+/** The field names `EntityForm` renders here, for `splitFieldErrors`. */
 const TRANSFER_ROUTE_FIELD_NAMES: ReadonlySet<string> = new Set([
-  'destinationId',
+  'fromPlaceId',
+  'toPlaceId',
   'slug',
   'sortOrder',
-  'estimatedDurationMinutes',
-  'freeCancelHours',
-  'inclusionsText',
-  'exclusionsText',
-  'vanOneWayPesos',
-  'vanDayUsePesos',
-  'suvOneWayPesos',
-  'suvDayUsePesos',
-]);
-
-/** Scalar field names recognised at depth 1 — everything but the price card. */
-const SCALAR_FIELD_NAMES: ReadonlySet<string> = new Set([
-  'destinationId',
-  'slug',
-  'sortOrder',
-  'estimatedDurationMinutes',
   'freeCancelHours',
   'inclusionsText',
   'exclusionsText',
 ]);
 
-/** `prices.<vehicleType>.<column>` (as a dot path) -> this form's flat field name. */
-const PRICE_FIELD_BY_PATH: Record<string, string> = {
-  'van.oneWayPriceCentavos': 'vanOneWayPesos',
-  'van.dayUsePriceCentavos': 'vanDayUsePesos',
-  'suv.oneWayPriceCentavos': 'suvOneWayPesos',
-  'suv.dayUsePriceCentavos': 'suvDayUsePesos',
-};
-
-/**
- * One zod issue's path -> this form's own field name, or `null` when the
- * issue has no single-input home (a whole-object `.strict()`/`.refine()`
- * failure, say) — those are left for the caller to put in a banner instead.
- *
- * `update`'s payload is `{ id, patch: {...} }`, so a patch issue's path
- * starts with `'patch'`; that prefix is stripped before the same mapping
- * `create`'s flat payload uses is applied.
- */
-function formFieldFor(path: readonly PropertyKey[]): string | null {
-  const stripped = path[0] === 'patch' ? path.slice(1) : path;
-  const [first, ...rest] = stripped;
-  if (first === 'prices') {
-    return PRICE_FIELD_BY_PATH[rest.join('.')] ?? null;
-  }
-  return typeof first === 'string' && SCALAR_FIELD_NAMES.has(first) ? first : null;
-}
-
-/** First zod issue per field, keyed by this form's own field name. */
-function fieldErrorsFromIssues(
-  issues: readonly { path: PropertyKey[]; message: string }[],
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const issue of issues) {
-    const field = formFieldFor(issue.path);
-    if (!field || field in out) continue;
-    out[field] = issue.message;
-  }
-  return out;
-}
-
-function scalarFields(destinations: readonly DestinationOption[]): EntityFormField[] {
+function scalarFields(): EntityFormField[] {
   return [
-    {
-      name: 'destinationId',
-      label: 'Destination',
-      type: 'select',
-      required: true,
-      options: destinations.map((d) => ({ value: String(d.id), label: d.name })),
-    },
     {
       name: 'slug',
       label: 'Slug',
@@ -243,44 +187,10 @@ function scalarFields(destinations: readonly DestinationOption[]): EntityFormFie
       hint: 'Lowercase letters, numbers and hyphens, e.g. mactan-airport.',
     },
     {
-      name: 'estimatedDurationMinutes',
-      label: 'Estimated duration (minutes)',
-      type: 'number',
-      required: true,
-    },
-    {
       name: 'freeCancelHours',
       label: 'Free cancellation window (hours)',
       type: 'number',
       required: true,
-    },
-    {
-      name: 'vanOneWayPesos',
-      label: 'Van — one-way price (pesos)',
-      type: 'text',
-      required: true,
-      hint: 'e.g. 1500.00',
-    },
-    {
-      name: 'vanDayUsePesos',
-      label: 'Van — day-use price (pesos)',
-      type: 'text',
-      required: true,
-      hint: 'e.g. 3500.00',
-    },
-    {
-      name: 'suvOneWayPesos',
-      label: 'SUV — one-way price (pesos)',
-      type: 'text',
-      required: true,
-      hint: 'e.g. 1800.00',
-    },
-    {
-      name: 'suvDayUsePesos',
-      label: 'SUV — day-use price (pesos)',
-      type: 'text',
-      required: true,
-      hint: 'e.g. 4000.00',
     },
     {
       name: 'sortOrder',
@@ -306,52 +216,90 @@ function scalarFields(destinations: readonly DestinationOption[]): EntityFormFie
 function scalarValuesFromRoute(route: TransferRouteAdminRow | null): Record<string, string> {
   if (!route) {
     return {
-      destinationId: '',
       slug: '',
-      estimatedDurationMinutes: '',
-      freeCancelHours: '',
-      vanOneWayPesos: '',
-      vanDayUsePesos: '',
-      suvOneWayPesos: '',
-      suvDayUsePesos: '',
+      freeCancelHours: '24',
       sortOrder: '0',
       inclusionsText: '',
       exclusionsText: '',
     };
   }
   return {
-    destinationId: String(route.destinationId),
     slug: route.slug,
-    estimatedDurationMinutes: String(route.estimatedDurationMinutes),
     freeCancelHours: String(route.freeCancelHours),
-    vanOneWayPesos: route.prices.van
-      ? centavosToPesosInput(route.prices.van.oneWayPriceCentavos)
-      : '',
-    vanDayUsePesos: route.prices.van
-      ? centavosToPesosInput(route.prices.van.dayUsePriceCentavos)
-      : '',
-    suvOneWayPesos: route.prices.suv
-      ? centavosToPesosInput(route.prices.suv.oneWayPriceCentavos)
-      : '',
-    suvDayUsePesos: route.prices.suv
-      ? centavosToPesosInput(route.prices.suv.dayUsePriceCentavos)
-      : '',
     sortOrder: String(route.sortOrder),
     inclusionsText: route.inclusionsText ?? '',
     exclusionsText: route.exclusionsText ?? '',
   };
 }
 
+/** One vehicle type's stored price, in the pesos strings the two boxes show. */
+function storedPriceStrings(
+  type: VehicleTypeAdminRow,
+  route: TransferRouteAdminRow | null,
+): { oneWay: string; dayUse: string } {
+  const stored = route?.prices.find((p) => p.vehicleTypeId === type.id)?.price ?? null;
+  if (!stored) return { oneWay: '', dayUse: '' };
+  return {
+    oneWay: centavosToPesosInput(stored.oneWayPriceCentavos),
+    dayUse: centavosToPesosInput(stored.dayUsePriceCentavos),
+  };
+}
+
+/**
+ * One zod issue's path -> this form's own field/error key, or `null` when
+ * the issue has no single-input home (a whole-object `.strict()`/`.refine()`
+ * failure) — those are left for the caller to put in a banner instead.
+ *
+ * `update`'s payload is `{ id, patch: {...} }`, so a patch issue's path
+ * starts with `'patch'`; that prefix is stripped before the mapping below.
+ */
+function formFieldFor(path: readonly PropertyKey[]): string | null {
+  const stripped = path[0] === 'patch' ? path.slice(1) : path;
+  const [first, second] = stripped;
+  if (first === 'prices') {
+    return typeof second === 'string' || typeof second === 'number' ? `price_${second}` : null;
+  }
+  if (first === 'estimatedDurationMinutes') return 'duration';
+  const SCALAR = new Set([
+    'fromPlaceId',
+    'toPlaceId',
+    'reverseEnabled',
+    'slug',
+    'sortOrder',
+    'freeCancelHours',
+    'inclusionsText',
+    'exclusionsText',
+  ]);
+  return typeof first === 'string' && SCALAR.has(first) ? first : null;
+}
+
+/** First zod issue per field, keyed by this form's own field name. */
+function fieldErrorsFromIssues(
+  issues: readonly { path: PropertyKey[]; message: string }[],
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const issue of issues) {
+    const field = formFieldFor(issue.path);
+    if (!field || field in out) continue;
+    out[field] = issue.message;
+  }
+  return out;
+}
+
 function TransferRouteForm({
   mode,
   initial,
-  destinations,
+  places,
+  activeVehicleTypes,
+  vehicleTypesLoading,
   onClose,
   onSaved,
 }: {
   mode: 'create' | 'edit';
   initial: TransferRouteAdminRow | null;
-  destinations: readonly DestinationOption[];
+  places: Parameters<typeof TransferPlaceCombobox>[0]['places'];
+  activeVehicleTypes: readonly VehicleTypeAdminRow[];
+  vehicleTypesLoading: boolean;
   onClose: () => void;
   onSaved: (message: string) => void;
 }) {
@@ -360,15 +308,26 @@ function TransferRouteForm({
   const [values, setValues] = useState<Record<string, string>>(() =>
     scalarValuesFromRoute(initial),
   );
+  const [fromPlaceId, setFromPlaceId] = useState<number | null>(initial?.fromPlace.id ?? null);
+  const [toPlaceId, setToPlaceId] = useState<number | null>(initial?.toPlace.id ?? null);
+  const [reverseEnabled, setReverseEnabled] = useState<boolean>(initial?.reverseEnabled ?? true);
+  const initialDuration = initial ? hoursAndMinutesFrom(initial.estimatedDurationMinutes) : null;
+  const [durationHours, setDurationHours] = useState<string>(initialDuration?.hours ?? '');
+  const [durationMinutes, setDurationMinutes] = useState<string>(initialDuration?.minutes ?? '0');
+  // Keyed by stringified vehicle-type id. A type with NO entry here falls
+  // back to its stored price (`storedPriceStrings`) when read — see this
+  // file's header. That is what keeps a type correct even if
+  // `admin.vehicleTypes.list` resolves after this form has already mounted.
+  const [priceOverrides, setPriceOverrides] = useState<
+    Record<string, { oneWay: string; dayUse: string }>
+  >({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [banner, setBanner] = useState<string | null>(null);
 
-  /*
-   * Task A4. A validation refusal's messages go to the inputs they name;
-   * the ambiguous duplicate-destination/slug `CONFLICT` (no `zodError` at
-   * all) falls through `splitFieldErrors` to the banner — see this file's
-   * header for why that is the right place for it, not a guess at one field.
-   */
+  function priceValuesFor(type: VehicleTypeAdminRow): { oneWay: string; dayUse: string } {
+    return priceOverrides[String(type.id)] ?? storedPriceStrings(type, initial);
+  }
+
   function reportSaveError(error: unknown, fallback: string) {
     const validation = splitFieldErrors(error, TRANSFER_ROUTE_FIELD_NAMES);
     if (validation) {
@@ -398,48 +357,68 @@ function TransferRouteForm({
   function submit() {
     setBanner(null);
     const value = (name: string) => (values[name] ?? '').trim();
+    const conversionErrors: Record<string, string> = {};
+
+    if (fromPlaceId === null) conversionErrors.fromPlaceId = 'Select a place.';
+    if (toPlaceId === null) conversionErrors.toPlaceId = 'Select a place.';
+
+    const totalMinutes = totalMinutesFrom(durationHours, durationMinutes);
+    if (totalMinutes === null || totalMinutes < 1) {
+      conversionErrors.duration = 'Enter a valid duration — hours 0 or more, minutes 0 to 59.';
+    }
 
     /*
-     * The money line (CLAUDE.md, "Money"; constraints, "entered in pesos,
-     * converted to centavos ... never the reverse"). Every peso string goes
-     * through the same `pesosToCentavos` helper `AdminCouponsPage.tsx` and
-     * `AdminToursPage.tsx` already use, so a bad or blank price is a field
-     * error here rather than a silently wrong number reaching the mutation.
+     * THE completeness contract (this file's header). Every ACTIVE vehicle
+     * type gets a key, never a hand-trimmed subset — a type whose boxes are
+     * both blank gets an explicit `null`, and a type the admin never
+     * touched still restates whatever `priceValuesFor` resolves it to
+     * (its stored price on an edit, blank on a create).
      */
-    const vanOneWay = pesosToCentavos(value('vanOneWayPesos'));
-    const vanDayUse = pesosToCentavos(value('vanDayUsePesos'));
-    const suvOneWay = pesosToCentavos(value('suvOneWayPesos'));
-    const suvDayUse = pesosToCentavos(value('suvDayUsePesos'));
+    const prices: Record<
+      string,
+      { oneWayPriceCentavos: number; dayUsePriceCentavos: number } | null
+    > = {};
+    for (const type of activeVehicleTypes) {
+      const key = String(type.id);
+      const { oneWay, dayUse } = priceValuesFor(type);
+      const oneWayRaw = oneWay.trim();
+      const dayUseRaw = dayUse.trim();
+      if (oneWayRaw === '' && dayUseRaw === '') {
+        prices[key] = null;
+        continue;
+      }
+      if (oneWayRaw === '' || dayUseRaw === '') {
+        conversionErrors[`price_${key}`] = 'Enter both prices, or leave both blank.';
+        continue;
+      }
+      const oneWayCentavos = pesosToCentavos(oneWayRaw);
+      const dayUseCentavos = pesosToCentavos(dayUseRaw);
+      if (oneWayCentavos === null || dayUseCentavos === null) {
+        conversionErrors[`price_${key}`] = 'Enter a price in pesos, e.g. 1500.00.';
+        continue;
+      }
+      prices[key] = { oneWayPriceCentavos: oneWayCentavos, dayUsePriceCentavos: dayUseCentavos };
+    }
 
-    const conversionErrors: Record<string, string> = {};
-    if (vanOneWay === null)
-      conversionErrors.vanOneWayPesos = 'Enter a price in pesos, e.g. 1500.00.';
-    if (vanDayUse === null)
-      conversionErrors.vanDayUsePesos = 'Enter a price in pesos, e.g. 3500.00.';
-    if (suvOneWay === null)
-      conversionErrors.suvOneWayPesos = 'Enter a price in pesos, e.g. 1800.00.';
-    if (suvDayUse === null)
-      conversionErrors.suvDayUsePesos = 'Enter a price in pesos, e.g. 4000.00.';
     if (Object.keys(conversionErrors).length > 0) {
       setErrors(conversionErrors);
       return;
     }
 
-    const patch = {
-      destinationId: Number(value('destinationId')),
+    const payload = {
+      fromPlaceId: fromPlaceId!,
+      toPlaceId: toPlaceId!,
+      reverseEnabled,
       slug: value('slug'),
-      sortOrder: Number(value('sortOrder') || '0'),
-      estimatedDurationMinutes: Number(value('estimatedDurationMinutes')),
+      sortOrder: value('sortOrder') === '' ? undefined : Number(value('sortOrder')),
+      estimatedDurationMinutes: totalMinutes!,
       freeCancelHours: Number(value('freeCancelHours')),
       inclusionsText: value('inclusionsText') === '' ? null : value('inclusionsText'),
       exclusionsText: value('exclusionsText') === '' ? null : value('exclusionsText'),
-      prices: {
-        van: { oneWayPriceCentavos: vanOneWay!, dayUsePriceCentavos: vanDayUse! },
-        suv: { oneWayPriceCentavos: suvOneWay!, dayUsePriceCentavos: suvDayUse! },
-      },
+      prices,
     };
 
-    const toValidate = mode === 'edit' ? { id: initial!.id, patch } : patch;
+    const toValidate = mode === 'edit' ? { id: initial!.id, patch: payload } : payload;
     const schema =
       mode === 'edit' ? transferRouteUpdateInputSchema : transferRouteCreateInputSchema;
     const parsed = schema.safeParse(toValidate);
@@ -464,8 +443,66 @@ function TransferRouteForm({
         </p>
       ) : null}
 
+      <div className="grid gap-4 sm:grid-cols-2">
+        <TransferPlaceCombobox
+          label="From place"
+          places={places}
+          value={fromPlaceId}
+          onChange={setFromPlaceId}
+          error={errors.fromPlaceId}
+        />
+        <TransferPlaceCombobox
+          label="To place"
+          places={places}
+          value={toPlaceId}
+          onChange={setToPlaceId}
+          error={errors.toPlaceId}
+        />
+      </div>
+
+      <label className="tap-target flex items-center gap-2 text-sm" htmlFor="route-reverse-enabled">
+        <input
+          id="route-reverse-enabled"
+          type="checkbox"
+          checked={reverseEnabled}
+          onChange={(event) => setReverseEnabled(event.target.checked)}
+        />
+        Also bookable in reverse (same price and duration, the other way)
+      </label>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <Label htmlFor="route-duration-hours">Duration — hours</Label>
+          <Input
+            id="route-duration-hours"
+            type="number"
+            min={0}
+            className={FIELD}
+            value={durationHours}
+            onChange={(event) => setDurationHours(event.target.value)}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="route-duration-minutes">Duration — minutes</Label>
+          <Input
+            id="route-duration-minutes"
+            type="number"
+            min={0}
+            max={59}
+            className={FIELD}
+            value={durationMinutes}
+            onChange={(event) => setDurationMinutes(event.target.value)}
+          />
+        </div>
+      </div>
+      {errors.duration ? (
+        <p role="alert" className={ROW_ERROR}>
+          {errors.duration}
+        </p>
+      ) : null}
+
       <EntityForm
-        fields={scalarFields(destinations)}
+        fields={scalarFields()}
         values={values}
         errors={errors}
         pending={pending}
@@ -473,6 +510,76 @@ function TransferRouteForm({
         onChange={(name, next) => setValues((current) => ({ ...current, [name]: next }))}
         onSubmit={submit}
       />
+
+      <div className={SECTION}>
+        <h3 className="text-brand-ink text-sm font-bold">Prices per vehicle type</h3>
+        <p className="text-brand-error mt-1 text-xs">
+          Leave both boxes blank for a vehicle type not offered on this route.
+        </p>
+        {vehicleTypesLoading ? (
+          <p className="text-brand-error mt-3 flex items-center gap-2 text-sm">
+            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+            Loading vehicle types…
+          </p>
+        ) : activeVehicleTypes.length === 0 ? (
+          <p className="text-brand-error mt-3 text-sm">
+            No active vehicle types yet — add one on the Vehicle types screen first.
+          </p>
+        ) : (
+          <div className="mt-3 space-y-4">
+            {activeVehicleTypes.map((type) => {
+              const key = String(type.id);
+              const current = priceValuesFor(type);
+              return (
+                <div key={key} className="border-brand-blue-100 rounded-[10px] border p-3">
+                  <p className="text-brand-ink text-sm font-semibold">{type.name}</p>
+                  <div className="mt-2 flex flex-wrap gap-3">
+                    <div className="min-w-0 flex-[1_1_160px] space-y-1">
+                      <Label htmlFor={`route-price-${key}-oneway`}>One-way (pesos)</Label>
+                      <Input
+                        id={`route-price-${key}-oneway`}
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="1500.00"
+                        className={`${FIELD} w-full`}
+                        value={current.oneWay}
+                        onChange={(event) =>
+                          setPriceOverrides((prev) => ({
+                            ...prev,
+                            [key]: { ...current, oneWay: event.target.value },
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="min-w-0 flex-[1_1_160px] space-y-1">
+                      <Label htmlFor={`route-price-${key}-dayuse`}>Day-use (pesos)</Label>
+                      <Input
+                        id={`route-price-${key}-dayuse`}
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="3500.00"
+                        className={`${FIELD} w-full`}
+                        value={current.dayUse}
+                        onChange={(event) =>
+                          setPriceOverrides((prev) => ({
+                            ...prev,
+                            [key]: { ...current, dayUse: event.target.value },
+                          }))
+                        }
+                      />
+                    </div>
+                  </div>
+                  {errors[`price_${key}`] ? (
+                    <p role="alert" className={`${ROW_ERROR} mt-2`}>
+                      {errors[`price_${key}`]}
+                    </p>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       <Button
         type="button"
@@ -492,10 +599,6 @@ function TransferRouteForm({
 /**
  * Edit, and the soft delete behind a two-step confirm — the same shape
  * `AdminCouponsPage.tsx`'s `CouponActions` uses for its own Deactivate.
- *
- * The confirm names the route's slug, because a list of destinations is easy
- * to misread, and it says "Deactivate" rather than "Delete" because that is
- * what the server does — nothing is removed, and the route's prices stand.
  */
 function RouteActions({ route, onEdit }: { route: TransferRouteAdminRow; onEdit: () => void }) {
   const utils = trpc.useUtils();
@@ -609,7 +712,8 @@ function DeniedState() {
 
 function TransferRoutesAdmin() {
   const list = trpc.admin.transferRoutes.list.useQuery(undefined, { retry: false });
-  const destinationsQuery = trpc.destinations.list.useQuery();
+  const placesQuery = trpc.admin.transferPlaces.list.useQuery();
+  const vehicleTypesQuery = trpc.admin.vehicleTypes.list.useQuery();
   const [editingId, setEditingId] = useState<number | 'new' | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -622,10 +726,8 @@ function TransferRoutesAdmin() {
     return <DeniedState />;
   }
 
-  const destinations: DestinationOption[] = (destinationsQuery.data ?? []).map((d) => ({
-    id: d.id,
-    name: d.name,
-  }));
+  const places = placesQuery.data ?? [];
+  const activeVehicleTypes = (vehicleTypesQuery.data ?? []).filter((type) => type.isActive);
   const routes = list.data ?? [];
   const editing = typeof editingId === 'number' ? routes.find((r) => r.id === editingId) : null;
 
@@ -642,9 +744,9 @@ function TransferRoutesAdmin() {
         </p>
         <h1 className="text-brand-ink text-2xl font-bold sm:text-3xl">Transfer routes</h1>
         <p className="text-brand-error text-sm">
-          Private van/SUV transfer routes and the one-way and day-use prices a guest is charged for
-          each. Deactivating a route stops it being bookable and changes nothing about a booking
-          that already took one of its prices.
+          Private transfer routes between two places, and the one-way and day-use prices a guest is
+          charged for each vehicle type. Deactivating a route stops it being bookable and changes
+          nothing about a booking that already took one of its prices.
         </p>
       </header>
 
@@ -677,7 +779,9 @@ function TransferRoutesAdmin() {
               key={editingId}
               mode={editingId === 'new' ? 'create' : 'edit'}
               initial={editing ?? null}
-              destinations={destinations}
+              places={places}
+              activeVehicleTypes={activeVehicleTypes}
+              vehicleTypesLoading={vehicleTypesQuery.isPending}
               onClose={() => setEditingId(null)}
               onSaved={closeEditor}
             />
@@ -708,8 +812,8 @@ function TransferRoutesAdmin() {
               <li key={route.id} className={`${CARD} p-4 text-sm`}>
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0 max-w-full">
-                    <p className="text-brand-ink max-w-full break-all font-semibold">
-                      {route.destinationName}
+                    <p className="text-brand-ink max-w-full break-words font-semibold">
+                      {route.fromPlace.name} → {route.toPlace.name}
                     </p>
                     <p className="text-brand-error break-all text-xs">{route.slug}</p>
                   </div>
@@ -717,19 +821,16 @@ function TransferRoutesAdmin() {
                     {statusLabel(route.isActive)}
                   </Badge>
                 </div>
-                {route.destinationIsActive === false ? (
-                  <p
-                    data-testid="destination-inactive-label"
-                    className={DESTINATION_INACTIVE_CLASS}
-                  >
-                    {DESTINATION_INACTIVE_LABEL}
+                {inactivePlaceWarning(route) ? (
+                  <p data-testid="inactive-place-label" className={INACTIVE_PLACE_CLASS}>
+                    {inactivePlaceWarning(route)}
                   </p>
                 ) : null}
                 <p className="text-brand-error mt-2 text-xs">
-                  {durationWords(route.estimatedDurationMinutes)}
+                  {durationWords(route.estimatedDurationMinutes)} ·{' '}
+                  {route.reverseEnabled ? 'Reverse bookable' : 'One direction only'}
                 </p>
-                <p className="text-brand-ink mt-1">Van: {priceWords(route, 'van')}</p>
-                <p className="text-brand-ink">SUV: {priceWords(route, 'suv')}</p>
+                <p className="text-brand-ink mt-1">{priceSummaryWords(route)}</p>
                 <div className="mt-3">
                   <RouteActions route={route} onEdit={() => setEditingId(route.id)} />
                 </div>
@@ -746,16 +847,16 @@ function TransferRoutesAdmin() {
               <thead className="bg-brand-blue-50 text-brand-error border-brand-blue-100 border-b text-xs uppercase tracking-[0.06em]">
                 <tr>
                   <th scope="col" className="px-4 py-3 font-semibold">
-                    Destination
+                    Route
                   </th>
                   <th scope="col" className="px-4 py-3 font-semibold">
                     Duration
                   </th>
                   <th scope="col" className="px-4 py-3 font-semibold">
-                    Van
+                    Reverse
                   </th>
                   <th scope="col" className="px-4 py-3 font-semibold">
-                    SUV
+                    Prices
                   </th>
                   <th scope="col" className="px-4 py-3 font-semibold">
                     Status
@@ -772,24 +873,25 @@ function TransferRoutesAdmin() {
                     className="border-brand-blue-100 hover:bg-brand-blue-50/50 border-b transition-colors last:border-0"
                   >
                     <td className="text-brand-ink px-4 py-3 font-semibold">
-                      <span className="block">{route.destinationName}</span>
+                      <span className="block">
+                        {route.fromPlace.name} → {route.toPlace.name}
+                      </span>
                       <span className="text-brand-error block text-xs">{route.slug}</span>
                     </td>
                     <td className="text-brand-ink px-4 py-3">
                       {durationWords(route.estimatedDurationMinutes)}
                     </td>
-                    <td className="text-brand-ink px-4 py-3">{priceWords(route, 'van')}</td>
-                    <td className="text-brand-ink px-4 py-3">{priceWords(route, 'suv')}</td>
+                    <td className="text-brand-ink px-4 py-3">
+                      {route.reverseEnabled ? 'Yes' : 'No'}
+                    </td>
+                    <td className="text-brand-ink px-4 py-3">{priceSummaryWords(route)}</td>
                     <td className="px-4 py-3">
                       <Badge className={STATUS_BADGE_CLASS[statusLabel(route.isActive)]}>
                         {statusLabel(route.isActive)}
                       </Badge>
-                      {route.destinationIsActive === false ? (
-                        <p
-                          data-testid="destination-inactive-label"
-                          className={DESTINATION_INACTIVE_CLASS}
-                        >
-                          {DESTINATION_INACTIVE_LABEL}
+                      {inactivePlaceWarning(route) ? (
+                        <p data-testid="inactive-place-label" className={INACTIVE_PLACE_CLASS}>
+                          {inactivePlaceWarning(route)}
                         </p>
                       ) : null}
                     </td>

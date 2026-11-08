@@ -3,17 +3,16 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   TRANSFER_PRODUCT_TYPES,
-  VEHICLE_TYPES,
   type PayMode,
   type QuoteTransferResult,
+  type TransferDirection,
   type TransferProductType,
   type TransferRoutePublicRow,
-  type VehicleType,
 } from '@rg/shared';
 import CouponField from '@/components/checkout/CouponField';
 import PaymentOptions from '@/components/checkout/PaymentOptions';
 import HoldCountdown from '@/components/checkout/HoldCountdown';
-import RoutePicker from '@/components/transfer/RoutePicker';
+import RoutePicker, { type TransferRouteSelection } from '@/components/transfer/RoutePicker';
 import TransferGuestDetailsForm from '@/components/transfer/TransferGuestDetailsForm';
 import TransferTypePicker from '@/components/transfer/TransferTypePicker';
 import VehicleOptionCard from '@/components/transfer/VehicleOptionCard';
@@ -28,66 +27,83 @@ import { describeCheckoutError } from '@/lib/mutation-errors';
 import { trpc } from '@/lib/trpc';
 
 /**
- * Task T14 — the guest-facing transfer booking flow, modelled directly on
- * `CheckoutPage.tsx`'s own shape (local selection state, one query per price
- * surface, a coupon/consent/pay-mode dance, and a success swap to
- * `<PaymentOptions>`). This page owns every tRPC call the four T13
- * presentational components (`TransferTypePicker`, `RoutePicker`,
- * `VehicleOptionCard`, `TransferGuestDetailsForm`) do not make themselves.
+ * Task T14, rebuilt 2026-11-08 for the flexible places/routes/vehicle-types
+ * model (owner decision 2026-11-08; see
+ * `docs/superpowers/plans/2026-11-08-flexible-routes.md`). The guest-facing
+ * transfer booking flow, modelled directly on `CheckoutPage.tsx`'s own shape
+ * (local selection state, one price query per vehicle option, a
+ * coupon/consent/pay-mode dance, and a success swap to `<PaymentOptions>`).
+ * This page owns every tRPC call the presentational components
+ * (`TransferTypePicker`, `RoutePicker`, `VehicleOptionCard`,
+ * `TransferGuestDetailsForm`) do not make themselves.
  *
- * **Step order:** type + route (both always on screen, independent of
- * selection — a guest can change either at any time and the vehicle prices
- * below re-key automatically) → one `quoteTransfer` query per vehicle type,
- * rendered as two `VehicleOptionCard`s once a route is chosen → the guest
- * details form, once a vehicle is chosen and still priced. There is no
- * separate "select a transfer first" gate the way `CheckoutPage` has for a
- * missing `tourSlug`: every step is reachable from this one page, with no
- * URL param required to start.
+ * **What changed from the old `van`/`suv` build, and why it had to.**
+ * Vehicle types are now an admin-managed list of arbitrary size, and a route
+ * is FROM one admin-managed place TO another rather than "airport ↔ one
+ * fixed destination" — so this page can no longer hard-code "exactly two
+ * vehicle queries" or "one destination name per route":
  *
- * **The day-use "from ₱X" decision (brief, flow step 1).** `RoutePicker`
- * has no `productType` prop and always shows the cheaper ONE-WAY rate
- * (T13's own fixed contract). On a day-use selection that figure would be
- * the wrong number for the product actually being priced, and this
- * codebase's rule is that a wrong price is worse than an unavailable one.
- * Rather than touching `RoutePicker` (out of scope) or suppressing the
- * figure, `displayRoutes` below swaps each vehicle's `dayUsePriceCentavos`
- * into the `oneWayPriceCentavos` slot of a per-render COPY of the route list
- * whenever `productType === 'transfer_day_use'` — `RoutePicker`'s own
- * "from " label names no unit, so the swapped figure reads correctly with
- * no component change. Ledgered in the task report.
+ *  - **Route selection is a `(routeId, direction)` pair**
+ *    (`RoutePicker`'s `TransferRouteSelection`), never a bare `routeId`. When
+ *    a route's `reverseEnabled` is true, `RoutePicker` offers the SAME route
+ *    id travelled the other way as a second selectable row — this page does
+ *    not fabricate a second route, it only carries whichever `direction` the
+ *    guest picked straight through to `createHoldTransferInput.direction`.
+ *    **This is the one field on the hold input that decides correctness,
+ *    not cosmetics**: the quote input (`quoteTransferInput`) has no
+ *    `direction` field at all (price and duration do not change by
+ *    direction), so only the HOLD payload carries it.
+ *  - **Vehicle pricing is a dynamic-length query set**, one `quoteTransfer`
+ *    per vehicle type the SELECTED ROUTE actually offers
+ *    (`route.vehiclePrices`, already filtered server-side to "priced AND
+ *    sellable" — design note §4, this page renders exactly what it is given
+ *    and never re-filters). `trpc.useQueries` is used instead of a fixed
+ *    pair of named `useQuery` calls, because the count of offered types is
+ *    not known until the route is chosen and the Rules of Hooks forbid
+ *    calling a variable number of `useQuery` hooks directly.
+ *  - **Flight fields are required when the chosen route touches an
+ *    airport** (`requiresFlightDetails` below, owner decision 2026-11-08,
+ *    decision 5) — computed once from the selected route's two places,
+ *    direction-independent (direction only swaps which place displays as
+ *    pickup vs. drop-off, never which two places are involved).
  *
- * **Query-param prefill gap (brief, "optional prefill").** `productType`
- * and `routeId` are read from the URL once, at mount, because this page
- * owns that state. `date` and `pax` are NOT prefillable: both live as
- * plain uncontrolled inputs inside `TransferGuestDetailsForm`, whose fixed
- * T13 Props carry no `defaultValue` channel, and this task may not touch
- * that component's internals. A guest arriving with `?date=...&pax=...`
- * reaches a working flow and simply re-types those two fields at step 3 —
- * ledgered in the report rather than worked around with a DOM query.
+ * **The day-use "from ₱X" decision (brief, flow step 1), generalized.**
+ * `RoutePicker` has no `productType` prop and always shows the cheapest
+ * OFFERED vehicle type's one-way rate (its own fixed contract). On a
+ * day-use selection that figure would be the wrong number for the product
+ * actually being priced, so `displayRoutes` below swaps every offered
+ * type's `dayUsePriceCentavos` into the `oneWayPriceCentavos` slot of a
+ * per-render COPY of the route list whenever `productType ===
+ * 'transfer_day_use'` — `RoutePicker`'s own "from " label names no unit, so
+ * the swapped figure reads correctly with no component change.
  *
- * **A bad coupon must not be mistaken for an unavailable vehicle (T14 review
- * fix, Critical 1).** `quoteTransfer` validates the coupon BEFORE pricing, so
- * a bad/expired code throws the SAME refusal on both the van and the suv
- * query at once — distinct from a route/vehicle-shape refusal (no price row
- * for one vehicle type), which can only ever hit ONE of the two queries. The
- * `useEffect` below uses exactly that discriminator: only when `couponCode`
- * is set AND both queries are erroring simultaneously does it treat the
- * failure as the coupon's, surface the server's own sentence beside
- * `CouponField` (mirroring `CheckoutPage.tsx`'s own coupon-recovery effect),
- * and revert to a coupon-free quote. A single query erroring alone is left
- * exactly as before — that one vehicle is unavailable, and the coupon is
- * untouched.
+ * **A bad coupon must not be mistaken for an unavailable vehicle** (carried
+ * over from the original T14 review, Critical 1, generalized to N vehicle
+ * types). `quoteTransfer` validates the coupon BEFORE pricing, so a
+ * bad/expired code throws the SAME refusal on every offered vehicle's query
+ * at once — distinct from a route/vehicle-shape refusal (no price row for
+ * one vehicle type), which can only ever hit ONE query. `allQuotesErroring`
+ * below is exactly that discriminator: only when `couponCode` is set AND
+ * every offered vehicle's query is erroring simultaneously does the effect
+ * treat the failure as the coupon's, surface the server's own sentence
+ * beside `CouponField`, and revert to a coupon-free quote.
  *
  * **A placeholder (stale) quote must render as loading, never as a
- * selectable but outdated price (T14 review fix, Critical 2).**
+ * selectable but outdated price** (carried over, Critical 2).
  * `keepPreviousData` is scoped to the WHOLE query key, which includes
  * `productType` — so switching one-way → day-use without this would keep
- * showing the van card's one-way total, still clickable, until the day-use
- * quote resolves. Each card's `isLoading` therefore reads
- * `isPending || isPlaceholderData`, not `isPending` alone: a placeholder
- * result is "stale", and this codebase treats a stale price as strictly
- * worse than an unavailable one. `keepPreviousData` itself stays — dropping
- * it would reintroduce the coupon-recovery blanking it was added to prevent.
+ * showing a card's one-way total, still clickable, until the day-use quote
+ * resolves. Each card's `isLoading` therefore reads `isPending ||
+ * isPlaceholderData`, not `isPending` alone.
+ *
+ * **Judgment call, flagged for the task report:** this page does NOT call
+ * the public `vehicleTypes.list` procedure. Every vehicle type a guest can
+ * see is already resolved onto `route.vehiclePrices` (id, display name,
+ * both prices) by `transferRoutes.list` itself, so a second request would
+ * duplicate data this page already has and invite the two lists to
+ * disagree about what "offered" means. `vehicleTypes.list` exists for a
+ * caller that needs every active type independent of any one route (an
+ * admin form); this page is never that caller.
  */
 
 function readInitialProductType(raw: string | null): TransferProductType | null {
@@ -118,19 +134,20 @@ function optionalField(data: FormData, name: string): string | undefined {
 
 /**
  * Every top-level field name `createHoldTransferInput` can name, mirroring
- * `CheckoutPage.tsx`'s `PLACED_HOLD_FIELDS`. Unlike that page, every single
- * field here genuinely has a box on screen (the three pickers take
- * `productType`/`routeId`/`vehicleType`, `CouponField` takes `couponCode`,
- * and `TransferGuestDetailsForm` takes the rest) — so `unplacedFieldMessages`
- * below is expected to stay empty in practice. It is kept anyway as the same
- * defensive leftover-catcher `CheckoutPage` uses, so a field added to the
- * schema later without a matching box still surfaces somewhere rather than
- * vanishing silently.
+ * `CheckoutPage.tsx`'s `PLACED_HOLD_FIELDS`. Every field here genuinely has
+ * a box on screen (the pickers take `productType`/`routeId`/`direction`/
+ * `vehicleTypeId`, `CouponField` takes `couponCode`, and
+ * `TransferGuestDetailsForm` takes the rest) — so `unplacedFieldMessages`
+ * below is expected to stay empty in practice. It is kept anyway as the
+ * same defensive leftover-catcher `CheckoutPage` uses, so a field added to
+ * the schema later without a matching box still surfaces somewhere rather
+ * than vanishing silently.
  */
 const PLACED_HOLD_FIELDS: ReadonlySet<string> = new Set([
   'productType',
   'routeId',
-  'vehicleType',
+  'direction',
+  'vehicleTypeId',
   'couponCode',
   'date',
   'pickupTime',
@@ -161,7 +178,8 @@ export default function TransferBookingPage() {
   const [routeId, setRouteId] = useState<number | null>(() =>
     readInitialRouteId(searchParams.get('routeId')),
   );
-  const [vehicleType, setVehicleType] = useState<VehicleType | null>(null);
+  const [direction, setDirection] = useState<TransferDirection>('forward');
+  const [vehicleTypeId, setVehicleTypeId] = useState<number | null>(null);
   const [payMode, setPayMode] = useState<PayMode>('deposit');
 
   const [couponCode, setCouponCode] = useState<string | undefined>(undefined);
@@ -173,132 +191,178 @@ export default function TransferBookingPage() {
 
   /*
    * See this file's own header note. A per-render copy, never a mutation of
-   * `routesQuery.data` — `prices[type]` may be `null` (no stored row), and
-   * that absence is preserved rather than guessed at.
+   * `routesQuery.data` — a type absent from `vehiclePrices` stays absent in
+   * the copy, exactly mirroring the server's own "not offered" absence
+   * (never guessed at, never backfilled with a null placeholder).
    */
   const displayRoutes = useMemo<TransferRoutePublicRow[]>(() => {
     const routes = routesQuery.data ?? [];
     if (productType !== 'transfer_day_use') return routes;
     return routes.map((route) => ({
       ...route,
-      prices: {
-        van: route.prices.van
-          ? { ...route.prices.van, oneWayPriceCentavos: route.prices.van.dayUsePriceCentavos }
-          : null,
-        suv: route.prices.suv
-          ? { ...route.prices.suv, oneWayPriceCentavos: route.prices.suv.dayUsePriceCentavos }
-          : null,
-      },
+      vehiclePrices: route.vehiclePrices.map((price) => ({
+        ...price,
+        oneWayPriceCentavos: price.dayUsePriceCentavos,
+      })),
     }));
   }, [routesQuery.data, productType]);
 
+  const selectedRoute = useMemo(
+    () => displayRoutes.find((route) => route.id === routeId) ?? null,
+    [displayRoutes, routeId],
+  );
+
+  /**
+   * Owner decision 2026-11-08, decision 5. Direction-independent: a route's
+   * two places are the same regardless of which way it is travelled, only
+   * their pickup/drop-off LABELS swap — see `RoutePicker`'s own note.
+   */
+  const requiresFlightDetails = selectedRoute
+    ? selectedRoute.fromPlace.isAirport || selectedRoute.toPlace.isAirport
+    : false;
+
+  const vehicleOptions = selectedRoute?.vehiclePrices ?? [];
   const vehiclePricingEnabled = productType !== null && routeId !== null;
 
-  const vanQuote = trpc.checkout.quoteTransfer.useQuery(
-    {
-      routeId: routeId ?? 0,
-      vehicleType: 'van',
-      productType: productType ?? 'transfer_one_way',
-      couponCode,
-    },
-    { enabled: vehiclePricingEnabled, retry: false, placeholderData: keepPreviousData },
+  /*
+   * One `quoteTransfer` per OFFERED vehicle type on the selected route —
+   * see this file's header note on why `useQueries` replaces the old fixed
+   * `vanQuote`/`suvQuote` pair. Results come back in the SAME order as
+   * `vehicleOptions`, so `quoteResults[i]` always answers for
+   * `vehicleOptions[i]`.
+   */
+  const quoteResults = trpc.useQueries((t) =>
+    vehicleOptions.map((option) =>
+      t.checkout.quoteTransfer(
+        {
+          routeId: routeId ?? 0,
+          vehicleTypeId: option.vehicleTypeId,
+          productType: productType ?? 'transfer_one_way',
+          couponCode,
+        },
+        { enabled: vehiclePricingEnabled, retry: false, placeholderData: keepPreviousData },
+      ),
+    ),
   );
-  const suvQuote = trpc.checkout.quoteTransfer.useQuery(
-    {
-      routeId: routeId ?? 0,
-      vehicleType: 'suv',
-      productType: productType ?? 'transfer_one_way',
-      couponCode,
-    },
-    { enabled: vehiclePricingEnabled, retry: false, placeholderData: keepPreviousData },
-  );
-  const quotesByType: Record<VehicleType, typeof vanQuote> = { van: vanQuote, suv: suvQuote };
 
   /*
    * The last CONFIRMED (non-placeholder) successful quote per vehicle type,
    * for the CURRENT `routeId`/`productType` only — reset the instant either
    * changes, so a value from a different route or product can never be
-   * offered as anyone's fallback. This exists for one reason: when a bad
-   * coupon makes both queries settle to `isError`, React Query's own `data`
-   * for each becomes `undefined` (placeholderData only covers the PENDING
-   * phase, not a settled error) — without something to fall back to,
-   * `selectedQuote` below would go `undefined` for one render, unmounting
+   * offered as anyone's fallback. See this file's header note (Critical 1):
+   * when a bad coupon makes every offered vehicle's query settle to
+   * `isError`, each `data` becomes `undefined` for one render before the
+   * coupon-recovery effect below clears `couponCode` — without a fallback,
+   * `selectedQuote` would go `undefined` for that render, unmounting
    * `<TransferGuestDetailsForm>` and destroying every uncontrolled field the
-   * guest had already typed, before the effect two lines down even gets a
-   * chance to clear the coupon (Critical 1).
+   * guest had already typed.
    */
-  const [lastGoodQuotes, setLastGoodQuotes] = useState<
-    Partial<Record<VehicleType, QuoteTransferResult>>
-  >({});
+  const [lastGoodQuotes, setLastGoodQuotes] = useState<Record<number, QuoteTransferResult>>({});
 
   useEffect(() => {
     setLastGoodQuotes({});
   }, [routeId, productType]);
 
   useEffect(() => {
-    if (vanQuote.isSuccess && !vanQuote.isPlaceholderData) {
-      setLastGoodQuotes((prev) =>
-        prev.van === vanQuote.data ? prev : { ...prev, van: vanQuote.data },
-      );
-    }
-  }, [vanQuote.data, vanQuote.isSuccess, vanQuote.isPlaceholderData]);
+    setLastGoodQuotes((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      vehicleOptions.forEach((option, index) => {
+        const result = quoteResults[index];
+        if (
+          result &&
+          result.isSuccess &&
+          !result.isPlaceholderData &&
+          next[option.vehicleTypeId] !== result.data
+        ) {
+          next[option.vehicleTypeId] = result.data;
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [vehicleOptions, quoteResults]);
 
-  useEffect(() => {
-    if (suvQuote.isSuccess && !suvQuote.isPlaceholderData) {
-      setLastGoodQuotes((prev) =>
-        prev.suv === suvQuote.data ? prev : { ...prev, suv: suvQuote.data },
-      );
-    }
-  }, [suvQuote.data, suvQuote.isSuccess, suvQuote.isPlaceholderData]);
+  /** Every offered vehicle's query is erroring at once — the coupon signature, not a per-vehicle shape refusal. */
+  const allQuotesErroring =
+    quoteResults.length > 0 && quoteResults.every((result) => result.isError);
 
   /*
-   * Critical 1 fix — see this file's own header note. Fires only when a
-   * coupon is applied AND both queries are erroring at the SAME time, which
-   * is what a bad/expired coupon looks like (it fails validation identically
-   * for both vehicle types) and a route/vehicle-shape refusal (no price row
-   * for one vehicle) never does. `vanQuote.error` is read as the
-   * representative message — a coupon refusal is deterministic across both
-   * queries, so the two never actually disagree.
+   * Critical 1 fix, generalized — see this file's header note. Fires only
+   * when a coupon is applied AND every offered vehicle's query is erroring
+   * at the SAME time, which is what a bad/expired coupon looks like (it
+   * fails validation identically for every vehicle type) and a
+   * route/vehicle-shape refusal (no price row for one vehicle) never does.
+   * The first query's error is read as the representative message — a
+   * coupon refusal is deterministic across every vehicle, so they never
+   * actually disagree.
    */
   useEffect(() => {
-    if (couponCode && vanQuote.isError && suvQuote.isError) {
+    if (couponCode && allQuotesErroring) {
+      const representative = quoteResults[0];
       setCouponError(
-        firstValidationMessage(vanQuote.error) ?? describeCheckoutError(vanQuote.error),
+        firstValidationMessage(representative?.error) ??
+          describeCheckoutError(representative?.error),
       );
       setCouponCode(undefined);
     }
-  }, [couponCode, vanQuote.isError, suvQuote.isError, vanQuote.error]);
+  }, [couponCode, allQuotesErroring, quoteResults]);
 
   /*
    * `undefined` on either an in-flight load OR a settled error that is NOT a
-   * transient coupon self-heal — the one card state T13's `VehicleOptionCard`
-   * renders for both (see its own note). The card's own `isLoading` prop
-   * (below, where this is called) reads `isPending || isPlaceholderData`,
-   * not `isPending` alone — see the Critical 2 fix in this file's header
-   * note: `isPlaceholderData` is what catches a STALE quote left over from a
-   * different query key (a product-type switch) so it renders as loading
-   * rather than as a selectable, outdated price. A coupon-only refetch still
-   * keeps `isPending` false and shows its previous figure without flashing
-   * to a skeleton — `isPlaceholderData` only lasts for the brief window
-   * until the new key's real data lands, same as it would for any key
-   * change.
+   * transient coupon self-heal — the one card state `VehicleOptionCard`
+   * renders for both (see its own note). While a coupon is applied and THIS
+   * query is anything other than settled-successful, this falls back to
+   * `lastGoodQuotes` instead of `undefined` — see Critical 1.
    *
-   * While BOTH queries are erroring with a coupon applied, this falls back
-   * to `lastGoodQuotes` (above) instead of `undefined` — see Critical 1.
-   * The fallback is scoped to exactly that condition: a vehicle that is
-   * genuinely unavailable for the current route (no coupon involved, or
-   * only one query erroring) still returns `undefined` here, unchanged.
+   * **Keyed on "not successful", not "errored" (fix found during this
+   * rebuild's own testing).** Measured directly, not assumed: re-keying a
+   * `trpc.useQueries` entry's query (changing `couponCode` here) can settle
+   * through a genuine `isPending: true` render for that entry — NOT an
+   * `isPlaceholderData` one — before it reaches `isError`, even though
+   * `placeholderData: keepPreviousData` is set on every entry. Gating the
+   * fallback on `result.isError` alone left that intermediate `isPending`
+   * render with `selectedQuote: undefined` for one frame, unmounting
+   * `<TransferGuestDetailsForm>` and wiping every uncontrolled field the
+   * guest had typed — the exact failure Critical 1 exists to prevent,
+   * reachable again through a gap `isError` alone didn't cover. Checking
+   * `!result.isSuccess` closes it regardless of which non-final state the
+   * query is passing through.
+   *
+   * **Still correctly scoped to "a coupon is applied".** A vehicle with no
+   * price row at all (genuinely unavailable, coupon or not) is unaffected:
+   * it has no entry in `lastGoodQuotes` to fall back to, coupon applied or
+   * not, so it still renders "not available" — see the "permanently
+   * unavailable vehicle" test. And with NO coupon applied, this still
+   * returns `undefined` exactly as before, so `VehicleOptionCard`'s own
+   * loading/unavailable states are unchanged for the common case.
    */
-  function quoteFor(type: VehicleType): QuoteTransferResult | undefined {
-    const q = quotesByType[type];
-    if (!q.isError) return q.data;
-    if (couponCode && vanQuote.isError && suvQuote.isError) {
-      return lastGoodQuotes[type];
+  function quoteFor(typeId: number): QuoteTransferResult | undefined {
+    const index = vehicleOptions.findIndex((option) => option.vehicleTypeId === typeId);
+    if (index === -1) return undefined;
+    const result = quoteResults[index];
+    if (!result) return undefined;
+    if (result.isSuccess) return result.data;
+    if (couponCode) {
+      return lastGoodQuotes[typeId];
     }
     return undefined;
   }
 
-  const selectedQuote = vehicleType ? quoteFor(vehicleType) : undefined;
+  const selectedQuote = vehicleTypeId !== null ? quoteFor(vehicleTypeId) : undefined;
+
+  /*
+   * A selected vehicle type that the newly chosen route/product no longer
+   * offers is cleared rather than left pointing at nothing — `vehicleOptions`
+   * is a dynamic set now (never a fixed `{van, suv}` pair that both always
+   * existed), so a route swap can genuinely drop the previously selected
+   * type. Direction is deliberately NOT in this dependency list: flipping
+   * direction keeps the same `routeId` and therefore the same
+   * `vehicleOptions`, so the guest's vehicle choice should survive it.
+   */
+  useEffect(() => {
+    setVehicleTypeId(null);
+  }, [routeId, productType]);
 
   const createHoldTransfer = trpc.checkout.createHoldTransfer.useMutation();
 
@@ -323,7 +387,7 @@ export default function TransferBookingPage() {
 
   function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!productType || !routeId || !vehicleType) return;
+    if (!productType || !routeId || !vehicleTypeId) return;
 
     const form = e.currentTarget;
     const data = new FormData(form);
@@ -340,7 +404,8 @@ export default function TransferBookingPage() {
     createHoldTransfer.mutate({
       productType,
       routeId,
-      vehicleType,
+      vehicleTypeId,
+      direction,
       couponCode,
       date: String(data.get('date') ?? ''),
       pickupTime: String(data.get('pickupTime') ?? ''),
@@ -365,6 +430,9 @@ export default function TransferBookingPage() {
       consent: true,
     });
   }
+
+  const routeSelection: TransferRouteSelection | null =
+    routeId !== null ? { routeId, direction } : null;
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8">
@@ -405,8 +473,11 @@ export default function TransferBookingPage() {
 
           <RoutePicker
             routes={displayRoutes}
-            value={routeId}
-            onChange={setRouteId}
+            value={routeSelection}
+            onChange={(selection) => {
+              setRouteId(selection.routeId);
+              setDirection(selection.direction);
+            }}
             isLoading={routesQuery.isPending}
             error={holdFieldErrors?.routeId}
           />
@@ -427,33 +498,45 @@ export default function TransferBookingPage() {
                   setCouponError(null);
                 }}
                 error={couponError ?? holdFieldErrors?.couponCode ?? null}
-                isChecking={Boolean(couponCode) && (vanQuote.isFetching || suvQuote.isFetching)}
+                isChecking={Boolean(couponCode) && quoteResults.some((result) => result.isFetching)}
               />
 
-              <div className="grid gap-3 sm:grid-cols-2">
-                {VEHICLE_TYPES.map((type) => (
-                  <VehicleOptionCard
-                    key={type}
-                    vehicleType={type}
-                    quote={quoteFor(type)}
-                    isLoading={quotesByType[type].isPending || quotesByType[type].isPlaceholderData}
-                    isSelected={vehicleType === type}
-                    onSelect={() => setVehicleType(type)}
-                    payMode={payMode}
-                    error={holdFieldErrors?.vehicleType}
-                  />
-                ))}
-              </div>
+              {vehicleOptions.length === 0 ? (
+                <p className="text-muted-foreground text-sm" role="status">
+                  No vehicles are available for this route right now. Please check back later or
+                  contact us directly.
+                </p>
+              ) : (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {vehicleOptions.map((option, index) => {
+                    const result = quoteResults[index];
+                    return (
+                      <VehicleOptionCard
+                        key={option.vehicleTypeId}
+                        vehicleTypeId={option.vehicleTypeId}
+                        vehicleTypeName={option.vehicleTypeName}
+                        quote={quoteFor(option.vehicleTypeId)}
+                        isLoading={Boolean(result?.isPending || result?.isPlaceholderData)}
+                        isSelected={vehicleTypeId === option.vehicleTypeId}
+                        onSelect={() => setVehicleTypeId(option.vehicleTypeId)}
+                        payMode={payMode}
+                        error={holdFieldErrors?.vehicleTypeId}
+                      />
+                    );
+                  })}
+                </div>
+              )}
             </>
           )}
 
-          {vehicleType !== null && productType !== null && selectedQuote && (
+          {vehicleTypeId !== null && productType !== null && selectedQuote && (
             <>
               <TransferGuestDetailsForm
                 productType={productType}
                 payMode={payMode}
                 onPayModeChange={setPayMode}
                 amountDueNowCentavos={selectedQuote.amountDueNowCentavos}
+                requiresFlightDetails={requiresFlightDetails}
                 error={createHoldTransfer.isError ? createHoldTransfer.error : null}
               />
 
