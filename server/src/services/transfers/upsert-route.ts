@@ -64,10 +64,44 @@
  * type's price silently vanishes. `admin-transfer-routes.test.ts` pins it —
  * now as "a patch naming one type's price does not remove any other type's
  * existing row" rather than the old "both rows always restated" assertion.
+ *
+ * **"Complete" is scoped to ACTIVE vehicle types, not every id that ever
+ * existed — the one qualifier the paragraph above needs, found in the 1D/1E
+ * review round.** `admin.transferRoutes`'s route form builds its `prices`
+ * card from `admin.vehicleTypes.list` filtered to `isActive`, because that
+ * is the only list it can show an admin — a type retired last month is not
+ * a row the form can render a checkbox for, so it can never appear as a key
+ * in anything the form posts. If the delete below still wiped every row for
+ * the route, saving ANY unrelated field on a route that still carried a
+ * price for a since-deactivated type would silently destroy that price,
+ * with no error and no way to notice from the screen that did it. So the
+ * delete is scoped to **the union of (a) every currently-active vehicle
+ * type id and (b) every id the caller actually named as a key in `prices`,
+ * active or not.** (a) is what makes the completeness contract above still
+ * true for the only card an admin can ever author — every active type is
+ * restated or dropped, exactly as documented. (b) is what lets a caller who
+ * DOES know about an inactive type's id (there is no UI for this today, but
+ * the existence check two call sites up already allows it — see
+ * {@link UNKNOWN_VEHICLE_TYPE_MESSAGE}'s own comment) explicitly remove or
+ * reprice it by naming it, same as always. An inactive type's id that is
+ * NEITHER currently active NOR named in the card is the one case that used
+ * to get silently swept into the old unconditional delete, and now survives
+ * — "survives" meaning its value is preserved, not that the row is
+ * necessarily left physically alone: an `update` whose patch omits `prices`
+ * entirely restates the FULL stored card (inactive types included, via
+ * `storedPriceRows` in the router), so that type's id becomes a posted key
+ * again on this path and the row is deleted and reinserted with the same
+ * values. Only the UI-shaped path — a posted card naming active types only
+ * — leaves it genuinely untouched in the database. Both paths land on the
+ * same end state, which is what the table's own header ("nothing
+ * references it, so delete-then-reinsert is safe") already promises.
+ * `admin-transfer-routes.test.ts`'s "a since-deactivated vehicle type's
+ * stray price survives a save that never mentions it" test pins the
+ * UI-shaped path, which is the one this fix exists for.
  */
 import { TRPCError } from '@trpc/server';
 import type { TransferRouteCreateInput, TransferRoutePatch } from '@rg/shared';
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import type { Transaction } from '../../db/client';
 import { isDuplicateKeyError } from '../../db/duplicate-key';
 import {
@@ -325,13 +359,34 @@ export async function upsertTransferRoute(
   }
 
   /*
-   * The price card, replaced wholesale — safe because nothing references this
-   * table and because `params.prices` is always complete (see this file's
-   * header). The delete is a no-op on a create.
+   * The price card, replaced wholesale OVER ACTIVE TYPES ONLY — safe because
+   * nothing references this table and because `params.prices` is always
+   * complete over every active type (see this file's header, "Complete is
+   * scoped to ACTIVE vehicle types"). The delete is a no-op on a create.
+   *
+   * Scoped to the union of every active vehicle-type id and every id named
+   * as a key in `params.prices` — NOT a blanket `routeId` match. A price row
+   * for a vehicle type that is neither active nor named in this card belongs
+   * to a type the caller's form could not have shown, and is left standing.
    */
-  await tx
-    .delete(transferRouteVehiclePrices)
-    .where(eq(transferRouteVehiclePrices.routeId, routeId));
+  const activeVehicleTypes = await tx
+    .select({ id: vehicleTypes.id })
+    .from(vehicleTypes)
+    .where(eq(vehicleTypes.isActive, true));
+  const deleteScope = new Set(activeVehicleTypes.map((vt) => vt.id));
+  for (const key of Object.keys(params.prices)) {
+    deleteScope.add(Number(key));
+  }
+  if (deleteScope.size > 0) {
+    await tx
+      .delete(transferRouteVehiclePrices)
+      .where(
+        and(
+          eq(transferRouteVehiclePrices.routeId, routeId),
+          inArray(transferRouteVehiclePrices.vehicleTypeId, [...deleteScope]),
+        ),
+      );
+  }
 
   /*
    * Driven by `Object.entries(params.prices)` rather than a fixed

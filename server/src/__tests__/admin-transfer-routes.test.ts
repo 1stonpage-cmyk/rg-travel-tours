@@ -62,6 +62,7 @@ const created = {
   userIds: [] as number[],
   routeIds: [] as number[],
   placeIds: [] as number[],
+  vehicleTypeIds: [] as number[],
 };
 
 async function makeStaff(role: 'owner' | 'dispatcher' | 'finance') {
@@ -251,6 +252,11 @@ afterAll(async () => {
   }
   if (created.placeIds.length > 0) {
     await db.delete(transferPlaces).where(inArray(transferPlaces.id, created.placeIds));
+  }
+  // Not a LEAK_TABLES table (global-setup.ts), but cleaned up anyway — every
+  // price row referencing one was already removed above, by routeId.
+  if (created.vehicleTypeIds.length > 0) {
+    await db.delete(vehicleTypes).where(inArray(vehicleTypes.id, created.vehicleTypeIds));
   }
 });
 
@@ -608,6 +614,50 @@ describeWithDb('admin.transferRoutes', () => {
     expect(row?.prices.find((p) => p.vehicleTypeId === VAN_ID)?.price).toEqual(VALID_PRICES.van);
     expect(row?.prices.find((p) => p.vehicleTypeId === SUV_ID)?.price).toBeNull();
     expect(await priceRowsFor(id)).toEqual([{ vehicleTypeId: VAN_ID, ...VALID_PRICES.van }]);
+  });
+
+  /**
+   * The gap the 1D/1E review round found: the admin route-price screen can
+   * only ever show ACTIVE vehicle types (it builds its `prices` card from
+   * `admin.vehicleTypes.list` filtered to `isActive`), so it can never send
+   * a key for a type that has since been retired — not even an explicit
+   * `null`. Before the fix, the wholesale delete matched on `routeId` alone,
+   * so ANY save made through that screen (even one only touching duration)
+   * would silently wipe a price row for a since-deactivated type, with no
+   * error and no way for the screen that did it to notice. Fixed in
+   * `upsertTransferRoute`: the delete only touches rows for a vehicle type
+   * that is either currently active or explicitly named as a key in the
+   * posted card — the retired type's row is in neither set here, so it
+   * survives.
+   */
+  it('a since-deactivated vehicle type’s stray price survives a save that never mentions it', async () => {
+    const thirdTypeSlug = `vt_${unique()}`;
+    const [typeRow] = await getDb()
+      .insert(vehicleTypes)
+      .values({ name: thirdTypeSlug, slug: thirdTypeSlug, isActive: true, sortOrder: 999 });
+    const thirdTypeId = typeRow.insertId;
+    created.vehicleTypeIds.push(thirdTypeId);
+    const thirdTypePrice = { oneWayPriceCentavos: 111_100, dayUsePriceCentavos: 222_200 };
+
+    const { id } = await createRoute({
+      prices: { ...fullPrices(), [String(thirdTypeId)]: thirdTypePrice },
+    });
+
+    // Retire the type — exactly what makes it invisible to the route form.
+    await ownerApi().admin.vehicleTypes.setActive({ id: thirdTypeId, isActive: false });
+
+    // The screen can only ever see active types, so it posts a card naming
+    // VAN_ID/SUV_ID only — never the now-invisible third type.
+    await ownerApi().admin.transferRoutes.update({ id, patch: { prices: fullPrices() } });
+
+    const rows = await priceRowsFor(id);
+    expect(rows.map((r) => r.vehicleTypeId).sort((a, b) => a - b)).toEqual(
+      [VAN_ID, SUV_ID, thirdTypeId].sort((a, b) => a - b),
+    );
+    expect(rows.find((r) => r.vehicleTypeId === thirdTypeId)).toEqual({
+      vehicleTypeId: thirdTypeId,
+      ...thirdTypePrice,
+    });
   });
 
   /**
