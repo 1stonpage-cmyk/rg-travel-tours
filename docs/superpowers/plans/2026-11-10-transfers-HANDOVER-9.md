@@ -67,6 +67,49 @@ separate hand-run needed for the test database, on the server either.
    either way under either a strict or non-strict object). Found via an Opus-advisor review
    pass, not fixed — out of scope.
 
+## T18 — outstandingBookings LEFT JOIN + revenueByRoute + CSV — DONE
+
+Commits `fb364ea` (implementation) and `f4a7f5f` (dedicated-review follow-up).
+
+Fixes the Must-fix #1 named in the plan: `outstandingBookings()`'s `INNER JOIN tours` was
+silently dropping every transfer booking from the outstanding-balances report regardless of
+whether it had a route. Now a `LEFT JOIN`, with the title falling back to the transfer's route
+("Mactan Airport → Oslob", swapped for `direction: 'reverse'`) or to a staff-typed
+`customRouteDescription` (or the literal "Custom transfer") for a routeless staff-quoted trip.
+
+Adds `revenueByRoute()` — `revenueByTour`'s transfer-side counterpart, grouped by
+(route, direction, vehicle type), not by product type (a route's row deliberately mixes
+one-way and day-use revenue — the plan's own granularity). Wired through `admin.reports.byRoute`
+(now a 5th procedure in that router), its CSV export, and a new "Revenue by route" table on
+`AdminReportsPage.tsx`. Renamed the outstanding report's **displayed** "Tour" column to "Trip"
+(CSV header and `<th>` only — the `tourTitle` field name stays, to avoid an unrelated rename
+cascade across its only two consumers).
+
+**Dedicated Opus review (required for T18 per the merged-run rules) ran and approved, no
+blockers** — but surfaced two should-fix items worth recording since they are LATENT until
+T19/T20 starts creating non-tour bookings through `admin.transferQuotes.convert`:
+
+1. `revenueByRoute()` had used `INNER JOIN booking_transfer_details`, trusting a cross-table
+   invariant ("every non-tour booking has exactly one details row") that no DB CHECK can
+   express — the same reasoning `services/transfers/capacity.ts` and
+   `services/dispatch/availability.ts` already reject for this exact join. Fixed: `LEFT JOIN`
+   plus a throwing `requireDirection()`, so a future writer bug that skips the details row
+   drops that booking's money LOUDLY (an error) rather than silently.
+2. A routeless custom transfer's `direction` column is never validated by
+   `createTransferBooking()` (its `reverseEnabled` check only runs when a route exists), so two
+   custom bookings could in principle land in different grouped buckets with byte-identical
+   "Custom transfer (Van)" labels — indistinguishable on screen from a duplicate. Fixed: direction
+   is normalised to `'forward'` whenever `routeId` is null.
+
+Both are already fixed in `f4a7f5f`, with fixtures/tests added for the behaviors they protect
+(see that commit). **No action owed to T19/T20 beyond business as usual** — just noting why
+`revenueByRoute()`'s joins look the way they do, so nobody "simplifies" them back to INNER JOIN.
+
+Full suite after T18: shared 8/99, client 84/1035, server 129/2644, both standalone guards — all
+green. `pnpm lint` / `typecheck` / `format:check` / `ALLOW_PLACEHOLDER_BUILD=1 pnpm build` all clean.
+No schema change this task (T18 is schema-free per the plan).
+
 ## Next
 
-T18 (outstandingBookings LEFT JOIN + revenue by route + CSV).
+T19 — new `transferQuoting` role area + `admin.transferQuotes.convert`. Dedicated Opus review
+required (money AND a new role boundary — the plan's own dual-trigger for maximum scrutiny).
