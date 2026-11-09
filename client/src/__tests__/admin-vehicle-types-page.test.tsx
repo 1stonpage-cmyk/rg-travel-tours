@@ -165,13 +165,46 @@ describe('AdminVehicleTypesPage', () => {
     expect(screen.getByRole('button', { name: /yes, deactivate van/i })).toBeInTheDocument();
   });
 
+  /**
+   * B2 (DEMO POLISH batch, 2026-11-09): owner decision 1 — "Deactivate =
+   * amber outline pill, never red [or blue]." Before this batch both the
+   * trigger and the confirm button were blue (the generic `PRIMARY_BUTTON`/
+   * `OUTLINE_BUTTON` constants every button on this page shared), so a
+   * destructive action read identically to a safe one. Pinned here rather
+   * than assumed from the component's own name.
+   */
+  it('Deactivate is amber, never blue — both the trigger and the confirm', async () => {
+    renderPage();
+    await screen.findAllByText('Van');
+
+    const trigger = (await screen.findAllByRole('button', { name: /^deactivate van$/i }))[0]!;
+    expect(trigger.className).toContain('border-brand-warning');
+    expect(trigger.className).not.toContain('border-brand-blue-600');
+
+    await user.click(trigger);
+    const confirm = screen.getByRole('button', { name: /yes, deactivate van/i });
+    expect(confirm.className).toContain('border-brand-warning');
+    expect(confirm.className).not.toContain('bg-brand-blue-600');
+  });
+
   it('shows the denied state, not a blank screen, when the role is refused', async () => {
     renderPage({ 'staffAuth.me': { userId: 2, role: 'dispatcher', mustChangePassword: false } });
     expect(await screen.findByText(/only the owner can manage vehicle types/i)).toBeInTheDocument();
     expect(screen.queryByText('Van')).toBeNull();
   });
 
-  it('gives every control the tap-target utility', async () => {
+  /**
+   * B2 (DEMO POLISH batch, 2026-11-09): widened from a bare `tap-target`
+   * match for the same reason `admin-vans-page.test.tsx` was — this screen
+   * now uses the admin "Clean Pill" button system, whose
+   * primary/secondary/admin-ghost/amber-pill variants size themselves with
+   * a direct `h-11` rather than the `tap-target` utility, and whose
+   * `row`/`row-amber` table-action variants stay a visually compact `h-8`
+   * with a 44px hit area supplied by an invisible `::before` extension
+   * (`before:-inset-y-1.5`) — bare `h-8` alone is a real 32px target and
+   * must NOT pass this check on its own.
+   */
+  it('gives every control a real 44px tap target', async () => {
     renderPage();
     await screen.findAllByText('Van');
     const controls = Array.from(
@@ -179,10 +212,15 @@ describe('AdminVehicleTypesPage', () => {
     ).filter((control) => control.getAttribute('aria-hidden') !== 'true');
     expect(controls.length).toBeGreaterThan(0);
     for (const control of controls) {
+      const className = control.className;
+      const hasTapTarget = /\btap-target\b/.test(className);
+      const hasFixed44 = /\bh-11\b/.test(className);
+      const hasCompactWithHitArea =
+        /\bh-8\b/.test(className) && /before:-inset-y-1\.5/.test(className);
       expect(
-        control.className,
-        `${control.tagName}[${control.getAttribute('type') ?? 'n/a'}]`,
-      ).toMatch(/tap-target/);
+        hasTapTarget || hasFixed44 || hasCompactWithHitArea,
+        `${control.tagName}[${control.getAttribute('type') ?? 'n/a'}] class="${className}"`,
+      ).toBe(true);
     }
   });
 });

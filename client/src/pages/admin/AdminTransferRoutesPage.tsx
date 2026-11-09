@@ -61,7 +61,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import AdminPageHeader from '@/components/admin/AdminPageHeader';
 import EntityForm, { type EntityFormField } from '@/components/admin/EntityForm';
+import FormActions from '@/components/admin/FormActions';
 import TransferPlaceCombobox from '@/components/admin/TransferPlaceCombobox';
 import { centavosToPesosInput, pesosToCentavos } from '@/lib/money-input';
 import { firstValidationMessage, splitFieldErrors } from '@/lib/field-errors';
@@ -72,10 +74,6 @@ const NOTICE =
   'border-brand-blue-200 bg-brand-blue-50 text-brand-blue-900 rounded-xl border p-3 text-sm font-medium';
 const ALERT =
   'border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-xl border p-3 text-sm font-medium';
-const PRIMARY_BUTTON =
-  'tap-target bg-brand-blue-700 hover:bg-brand-blue-800 rounded-[10px] font-semibold text-white transition-colors';
-const OUTLINE_BUTTON =
-  'tap-target border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 hover:text-brand-blue-800 rounded-[10px] font-semibold transition-colors';
 const FIELD = 'tap-target border-brand-blue-200 rounded-[10px] bg-white';
 const ROW_ERROR = 'text-brand-gold-800 text-xs font-medium';
 const SECTION = 'border-brand-blue-100 rounded-xl border p-4';
@@ -509,6 +507,7 @@ function TransferRouteForm({
         submitLabel={mode === 'edit' ? 'Save changes' : 'Add route'}
         onChange={(name, next) => setValues((current) => ({ ...current, [name]: next }))}
         onSubmit={submit}
+        hideSubmit
       />
 
       <div className={SECTION}>
@@ -581,15 +580,13 @@ function TransferRouteForm({
         )}
       </div>
 
-      <Button
-        type="button"
-        variant="outline"
-        disabled={pending}
-        className={`${OUTLINE_BUTTON} w-full sm:w-auto`}
-        onClick={onClose}
-      >
-        Cancel
-      </Button>
+      <FormActions
+        onCancel={onClose}
+        saveLabel={mode === 'edit' ? 'Save changes' : 'Add route'}
+        pending={pending}
+        submitType="button"
+        onSave={submit}
+      />
     </div>
   );
 }
@@ -621,7 +618,7 @@ function RouteActions({ route, onEdit }: { route: TransferRouteAdminRow; onEdit:
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <Button type="button" variant="outline" size="sm" className={OUTLINE_BUTTON} onClick={onEdit}>
+      <Button type="button" variant="row" onClick={onEdit}>
         Edit
       </Button>
 
@@ -634,8 +631,8 @@ function RouteActions({ route, onEdit }: { route: TransferRouteAdminRow; onEdit:
           >
             <Button
               type="button"
-              size="sm"
-              className={`${PRIMARY_BUTTON} whitespace-normal`}
+              variant="row-amber"
+              className="whitespace-normal"
               disabled={setActive.isPending}
               onClick={() => setActive.mutate({ id: route.id, isActive: false })}
             >
@@ -643,9 +640,7 @@ function RouteActions({ route, onEdit }: { route: TransferRouteAdminRow; onEdit:
             </Button>
             <Button
               type="button"
-              variant="outline"
-              size="sm"
-              className={OUTLINE_BUTTON}
+              variant="row"
               disabled={setActive.isPending}
               onClick={() => setConfirming(false)}
             >
@@ -655,9 +650,7 @@ function RouteActions({ route, onEdit }: { route: TransferRouteAdminRow; onEdit:
         ) : (
           <Button
             type="button"
-            variant="outline"
-            size="sm"
-            className={OUTLINE_BUTTON}
+            variant="row-amber"
             aria-label={`Deactivate ${route.slug}`}
             onClick={() => setConfirming(true)}
           >
@@ -667,9 +660,7 @@ function RouteActions({ route, onEdit }: { route: TransferRouteAdminRow; onEdit:
       ) : (
         <Button
           type="button"
-          variant="outline"
-          size="sm"
-          className={OUTLINE_BUTTON}
+          variant="row"
           disabled={setActive.isPending}
           aria-label={`Reactivate ${route.slug}`}
           onClick={() => setActive.mutate({ id: route.id, isActive: true })}
@@ -738,17 +729,25 @@ function TransferRoutesAdmin() {
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.08em]">
-          Operations
-        </p>
-        <h1 className="text-brand-ink text-2xl font-bold sm:text-3xl">Transfer routes</h1>
-        <p className="text-brand-error text-sm">
-          Private transfer routes between two places, and the one-way and day-use prices a guest is
-          charged for each vehicle type. Deactivating a route stops it being bookable and changes
-          nothing about a booking that already took one of its prices.
-        </p>
-      </header>
+      <AdminPageHeader
+        eyebrow="Operations"
+        title="Transfer routes"
+        description="Private transfer routes between two places, and the one-way and day-use prices a guest is charged for each vehicle type. Deactivating a route stops it being bookable and changes nothing about a booking that already took one of its prices."
+        action={
+          editingId === null ? (
+            <Button
+              type="button"
+              variant="primary-pill"
+              onClick={() => {
+                setNotice(null);
+                setEditingId('new');
+              }}
+            >
+              Add a transfer route
+            </Button>
+          ) : undefined
+        }
+      />
 
       {notice ? (
         <p role="status" className={NOTICE}>
@@ -756,18 +755,7 @@ function TransferRoutesAdmin() {
         </p>
       ) : null}
 
-      {editingId === null ? (
-        <Button
-          type="button"
-          className={`${PRIMARY_BUTTON} w-full sm:w-auto`}
-          onClick={() => {
-            setNotice(null);
-            setEditingId('new');
-          }}
-        >
-          Add a transfer route
-        </Button>
-      ) : (
+      {editingId === null ? null : (
         <Card className={CARD}>
           <CardHeader>
             <CardTitle className="text-brand-ink text-lg font-bold">

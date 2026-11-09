@@ -311,16 +311,20 @@ describe('AdminTransferRoutesPage', () => {
 
   /**
    * 0B (DEMO POLISH batch, 2026-11-09): proves a CHANGED price reaches the
-   * mutation, not only an untouched one restated. The "Save changes" button
-   * (`EntityForm`'s own submit button) renders ABOVE the "Prices per vehicle
-   * type" section in the DOM — a real layout concern flagged during read-only
-   * admin QA — but `submit()` reads price input state directly rather than
-   * serializing a DOM `<form>`, so the button's visual position should not
-   * matter. This test exercises that claim instead of assuming it: it edits
-   * the price fields, clicks the button sitting above them, and checks the
-   * actual outgoing payload.
+   * mutation, not only an untouched one restated. 0B found the "Save
+   * changes" button (`EntityForm`'s own submit button) rendering ABOVE the
+   * "Prices per vehicle type" section — a real layout concern flagged
+   * during read-only admin QA, the "no duplicate saves above content"
+   * CLAUDE.md names for this exact screen — though `submit()` reads price
+   * input state directly rather than serializing a DOM `<form>`, so the
+   * button's visual position never affected correctness. B2 (same batch)
+   * fixed the layout itself: `EntityForm`'s `hideSubmit` plus a
+   * `FormActions` footer now place the one Save button AFTER the price
+   * table, in a proper form footer (owner decision 1). This test still
+   * exercises the same claim — a changed price reaches the payload — now
+   * from the button's correct, post-table position.
    */
-  it('a changed price typed into the edit form reaches the save payload, from the button above the price table', async () => {
+  it('a changed price typed into the edit form reaches the save payload, from the footer button below the price table', async () => {
     const sent: unknown[] = [];
     renderPage({
       'admin.transferRoutes.update': (input: unknown) => {
@@ -354,6 +358,27 @@ describe('AdminTransferRoutesPage', () => {
       oneWayPriceCentavos: 300_000,
       dayUsePriceCentavos: 600_000,
     });
+  });
+
+  /**
+   * B2's actual layout fix, asserted directly: the Save button must sit
+   * AFTER the price table in document order, not above it — the DOM
+   * position is what "no duplicate saves above content" (CLAUDE.md) is
+   * about, and the previous test proves only the payload, not the layout.
+   */
+  it('places the Save changes button AFTER the price table, not above it', async () => {
+    renderPage();
+    await screen.findAllByText(/Mactan-Cebu International Airport → Oslob/);
+
+    const editButtons = await screen.findAllByRole('button', { name: /^edit$/i });
+    await user.click(editButtons[0]!);
+
+    const priceHeading = await screen.findByText('Prices per vehicle type');
+    const saveButton = screen.getByRole('button', { name: /save changes/i });
+    // DOCUMENT_POSITION_FOLLOWING means saveButton comes AFTER priceHeading.
+    expect(
+      priceHeading.compareDocumentPosition(saveButton) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it('converts duration hours + minutes into total minutes, and prices in pesos into centavos', async () => {

@@ -48,7 +48,9 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import AdminPageHeader from '@/components/admin/AdminPageHeader';
 import EntityForm, { type EntityFormField } from '@/components/admin/EntityForm';
+import FormActions from '@/components/admin/FormActions';
 import { firstValidationMessage, splitFieldErrors } from '@/lib/field-errors';
 import { trpc } from '@/lib/trpc';
 
@@ -57,10 +59,6 @@ const NOTICE =
   'border-brand-blue-200 bg-brand-blue-50 text-brand-blue-900 rounded-xl border p-3 text-sm font-medium';
 const ALERT =
   'border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-xl border p-3 text-sm font-medium';
-const PRIMARY_BUTTON =
-  'tap-target bg-brand-blue-700 hover:bg-brand-blue-800 rounded-[10px] font-semibold text-white transition-colors';
-const OUTLINE_BUTTON =
-  'tap-target border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 hover:text-brand-blue-800 rounded-[10px] font-semibold transition-colors';
 
 const STATUS_BADGE_CLASS: Record<'Active' | 'Inactive', string> = {
   Active: 'border-0 bg-brand-blue-50 text-brand-blue-800',
@@ -254,17 +252,16 @@ function VehicleTypeForm({
         submitLabel={mode === 'edit' ? 'Save changes' : 'Add vehicle type'}
         onChange={(name, next) => setValues((current) => ({ ...current, [name]: next }))}
         onSubmit={submit}
+        hideSubmit
       />
 
-      <Button
-        type="button"
-        variant="outline"
-        disabled={pending}
-        className={`${OUTLINE_BUTTON} w-full sm:w-auto`}
-        onClick={onClose}
-      >
-        Cancel
-      </Button>
+      <FormActions
+        onCancel={onClose}
+        saveLabel={mode === 'edit' ? 'Save changes' : 'Add vehicle type'}
+        pending={pending}
+        submitType="button"
+        onSave={submit}
+      />
     </div>
   );
 }
@@ -292,7 +289,7 @@ function TypeActions({ type, onEdit }: { type: VehicleTypeAdminRow; onEdit: () =
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <Button type="button" variant="outline" size="sm" className={OUTLINE_BUTTON} onClick={onEdit}>
+      <Button type="button" variant="row" onClick={onEdit}>
         Edit
       </Button>
 
@@ -305,8 +302,8 @@ function TypeActions({ type, onEdit }: { type: VehicleTypeAdminRow; onEdit: () =
           >
             <Button
               type="button"
-              size="sm"
-              className={`${PRIMARY_BUTTON} whitespace-normal`}
+              variant="row-amber"
+              className="whitespace-normal"
               disabled={setActive.isPending}
               onClick={() => setActive.mutate({ id: type.id, isActive: false })}
             >
@@ -314,9 +311,7 @@ function TypeActions({ type, onEdit }: { type: VehicleTypeAdminRow; onEdit: () =
             </Button>
             <Button
               type="button"
-              variant="outline"
-              size="sm"
-              className={OUTLINE_BUTTON}
+              variant="row"
               disabled={setActive.isPending}
               onClick={() => setConfirming(false)}
             >
@@ -326,9 +321,7 @@ function TypeActions({ type, onEdit }: { type: VehicleTypeAdminRow; onEdit: () =
         ) : (
           <Button
             type="button"
-            variant="outline"
-            size="sm"
-            className={OUTLINE_BUTTON}
+            variant="row-amber"
             aria-label={`Deactivate ${type.name}`}
             onClick={() => setConfirming(true)}
           >
@@ -338,9 +331,7 @@ function TypeActions({ type, onEdit }: { type: VehicleTypeAdminRow; onEdit: () =
       ) : (
         <Button
           type="button"
-          variant="outline"
-          size="sm"
-          className={OUTLINE_BUTTON}
+          variant="row"
           disabled={setActive.isPending}
           aria-label={`Reactivate ${type.name}`}
           onClick={() => setActive.mutate({ id: type.id, isActive: true })}
@@ -400,17 +391,25 @@ function VehicleTypesAdmin() {
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.08em]">
-          Operations
-        </p>
-        <h1 className="text-brand-ink text-2xl font-bold sm:text-3xl">Vehicle types</h1>
-        <p className="text-brand-error text-sm">
-          The kinds of vehicle a van can be, and a transfer route can be priced for. Deactivating a
-          type stops it being offered to new vans or new route prices, and changes nothing a van or
-          a booking already has.
-        </p>
-      </header>
+      <AdminPageHeader
+        eyebrow="Operations"
+        title="Vehicle types"
+        description="The kinds of vehicle a van can be, and a transfer route can be priced for. Deactivating a type stops it being offered to new vans or new route prices, and changes nothing a van or a booking already has."
+        action={
+          editingId === null ? (
+            <Button
+              type="button"
+              variant="primary-pill"
+              onClick={() => {
+                setNotice(null);
+                setEditingId('new');
+              }}
+            >
+              Add a vehicle type
+            </Button>
+          ) : undefined
+        }
+      />
 
       {notice ? (
         <p role="status" className={NOTICE}>
@@ -418,18 +417,7 @@ function VehicleTypesAdmin() {
         </p>
       ) : null}
 
-      {editingId === null ? (
-        <Button
-          type="button"
-          className={`${PRIMARY_BUTTON} w-full sm:w-auto`}
-          onClick={() => {
-            setNotice(null);
-            setEditingId('new');
-          }}
-        >
-          Add a vehicle type
-        </Button>
-      ) : (
+      {editingId === null ? null : (
         <Card className={CARD}>
           <CardHeader>
             <CardTitle className="text-brand-ink text-lg font-bold">
