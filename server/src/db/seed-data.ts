@@ -547,8 +547,9 @@ export const SEED_SETTINGS: SettingsBlocks = {
   // From HeroSection.tsx — today's real hero copy and photo (not a placeholder image).
   hero: {
     eyebrow: 'Cebu, Philippines',
-    headline: 'Private Cebu day tours, booked direct with the people who run them.',
-    subtitle: `Whale sharks, canyoneering and island hopping in your own van with a licensed driver. Reserve with a ${DEPOSIT_PERCENT}% deposit.`,
+    headline:
+      'Private airport and island transfers across Cebu, booked direct with the people who drive them.',
+    subtitle: `Airport pickups, drops and point-to-point transfers across Cebu in your own van with a licensed driver. Reserve with a ${DEPOSIT_PERCENT}% deposit.`,
     ctaLabel: 'Search tours',
     imagePath: '/hero/hero-cebu-1920.jpg',
     imageAlt:
@@ -605,7 +606,7 @@ export const SEED_SETTINGS: SettingsBlocks = {
   how_it_works: [
     {
       step: 1,
-      title: 'Pick a tour and date',
+      title: 'Pick your transfer and date',
       body: 'Choose your destination, date and group size. Live availability, no waiting for a reply.',
     },
     {
@@ -635,7 +636,7 @@ export const SEED_SETTINGS: SettingsBlocks = {
     {
       icon: 'wallet',
       title: 'Pay 30% to reserve',
-      body: 'Hold your date with a deposit and settle the balance on tour day.',
+      body: 'Hold your date with a deposit and settle the balance on the day.',
     },
     {
       icon: 'shield',
@@ -650,7 +651,7 @@ export const SEED_SETTINGS: SettingsBlocks = {
     {
       icon: 'calendar',
       title: 'Flexible changes',
-      body: 'Free cancellation on most tours within the window shown on each tour page.',
+      body: 'Free cancellation on most bookings — see our refund policy for the exact window.',
     },
     {
       icon: 'map',
@@ -687,11 +688,11 @@ export const SEED_SETTINGS: SettingsBlocks = {
       a: 'Swimwear, a towel, reef-safe sunscreen, a dry bag and a valid ID. Canyoneering tours provide helmets and life vests.',
     },
     {
-      q: 'Do you run private or joiner tours?',
-      a: 'All tours are private by default — your group gets its own van and driver. Group pricing drops as your party grows.',
+      q: 'Is my transfer private or shared?',
+      a: 'All transfers are private by default — your group gets its own van and driver. Group pricing drops as your party grows.',
     },
     {
-      q: 'How do I reach you on tour day?',
+      q: 'How do I reach you on transfer day?',
       a: 'Your confirmation includes your driver’s mobile number and the office hotline. The WhatsApp button on this site reaches us any time.',
     },
   ],
