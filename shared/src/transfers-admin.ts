@@ -489,12 +489,15 @@ const clockTimeField = (message: string) => z.string().regex(CLOCK_TIME_PATTERN,
  *  - notes — `inquiries.message` becomes `bookings.requests`, the same reuse
  *    `CreateTransferBookingInput.requests` documents for a guest hold.
  *
- * Both of those inquiry columns are nullable at the database (Task T17's own
- * decision not to add a CHECK), so the service re-validates each is actually
- * present before calling `createTransferBooking()` and refuses with a named
- * reason if not — the same "throw rather than silently coerce" discipline
+ * `routeDescription` is nullable at the database (Task T17's own decision
+ * not to add a CHECK), so the service re-validates it is actually present
+ * before calling `createTransferBooking()` and refuses with a named reason
+ * if not — the same "throw rather than silently coerce" discipline
  * `requireVehicleTypeId()`/`requireDirection()` (`reports/money.ts`, Task
- * T18) already use for this exact class of nullable-column gap.
+ * T18) already use for this exact class of nullable-column gap. `message`
+ * needs no such guard: it is `NOT NULL` on `inquiries`, unlike
+ * `routeDescription` (dedicated-review nitpick #6 — a previous version of
+ * this comment claimed otherwise).
  *
  * **`pax` and `leadPhone` are two fields the §6 step 2 list does NOT name,
  * added anyway, and both required here.** That list is prefaced "the full
@@ -612,13 +615,27 @@ export const transferQuoteConvertInput = z
     leadPhone: phPhoneSchema,
     /**
      * Pesos, converted to centavos by the client, re-validated as whole,
-     * positive centavos here — the same bound `admin.refunds.refundPayment`'s
-     * `amountCentavos` uses. `createTransferBooking()` still applies the
+     * positive centavos here. `createTransferBooking()` still applies the
      * ₱100 gateway floor itself, under its own lock, exactly as it would for
-     * a catalog price; this boundary only refuses a figure that cannot be a
-     * price at all.
+     * a catalog price; this boundary refuses a figure that cannot be a price
+     * at all, in both directions.
+     *
+     * **Capped at `MAX_CENTAVOS`, unlike `admin.refunds.refundPayment`'s bare
+     * `.positive()` `amountCentavos`** (dedicated-review should-fix #1) —
+     * that field's own comment explains why it needs no cap here:
+     * `recordPayment()` caps it under the booking row lock before it ever
+     * reaches a column. This field has no such downstream cap; it is the
+     * figure `createTransferBooking()` freezes onto `bookings.total_centavos`
+     * (an `INT` column — see `transferPriceCentavosSchema` above, which this
+     * mirrors) essentially unchanged. Without this, a staff typo overflowing
+     * `INT` would roll back as a bare MySQL error-1264 rather than the named,
+     * screen-showable refusal this project's other money fields all give.
      */
-    priceCentavos: z.number().int().positive('Enter a quoted price in pesos.'),
+    priceCentavos: z
+      .number()
+      .int()
+      .positive('Enter a quoted price in pesos.')
+      .max(MAX_CENTAVOS, 'That price is too large — please double-check it.'),
   })
   .strict()
   .superRefine((value, ctx) => {

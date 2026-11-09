@@ -31,6 +31,7 @@ import {
   TransferQuoteConvertRaceError,
   TransferQuoteInquiryNotConvertibleError,
   TransferQuoteInquiryNotFoundError,
+  TransferQuoteLinkUnconfirmedError,
 } from '../../services/transfers/convert-quote';
 import { adminProcedure, router } from '../../trpc';
 
@@ -76,6 +77,22 @@ function asTrpcError(error: unknown): TRPCError {
         `This request was already converted to booking ${error.existingBookingId} by someone ` +
         `else while this one was being created. A SECOND booking (${error.newBookingRef}) was ` +
         'created and is not linked to this request — please cancel it.',
+      cause: error,
+    });
+  }
+  /*
+   * Dedicated-review should-fix #5: a deadlock survived every retry, or the
+   * inquiry's own link changed again while this call was reporting the
+   * first race — either way, {@link error.bookingRef} is a real, live
+   * booking this call created, which the message names rather than losing.
+   */
+  if (error instanceof TransferQuoteLinkUnconfirmedError) {
+    return new TRPCError({
+      code: 'CONFLICT',
+      message:
+        `Booking ${error.bookingRef} was created, but linking it back to this request could ` +
+        'not be confirmed. Check the inquiry and the booking, and cancel the booking if it is ' +
+        'a duplicate.',
       cause: error,
     });
   }

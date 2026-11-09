@@ -37,6 +37,7 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import type { TransferProductType } from '@rg/shared';
 import { getDb } from '../../db/client';
+import { withDeadlockRetry } from '../../db/deadlock';
 import { inquiries } from '../../db/schema';
 import { writeAudit } from '../audit';
 import type { HeldBooking } from '../create-hold';
@@ -65,6 +66,15 @@ export interface ConvertTransferQuoteInput {
    * Pre-filled from `inquiries.phone` by the client when present (Task T20),
    * typed by staff otherwise — see `transferQuoteConvertInput`'s own header
    * note on why this is required here when it is nullable on the inquiry.
+   *
+   * **T20's form must not offer a shared office/placeholder number as a
+   * default for "no phone given"** (dedicated-review nitpick #9):
+   * `createTransferBooking()`'s existing `assertUnderHoldCaps` counts
+   * `pending_payment` bookings by `leadPhone` and refuses a THIRD one for
+   * the same number — real for a repeat guest, but a staff-typed placeholder
+   * reused across several conversions would trip the cap on the THIRD such
+   * conversion and blame "this guest's phone" for a number that is not a
+   * guest's at all.
    */
   leadPhone: string;
   priceCentavos: number;
@@ -139,6 +149,36 @@ export class TransferQuoteConvertRaceError extends Error {
   }
 }
 
+/**
+ * Step 2 created a real booking and step 3 could not confirm the link — a
+ * deadlock survived every retry (`db/deadlock.ts`'s `MAX_DEADLOCK_ATTEMPTS`),
+ * or the inquiry's
+ * `converted_booking_id` changed AGAIN in the instant between the failed
+ * compare-and-swap and the follow-up read that tries to name who won
+ * (dedicated-review should-fix #5 / nitpick #8). Both are the same shape of
+ * problem as {@link TransferQuoteConvertRaceError} — a live, unlinked booking
+ * exists — so this ALSO always carries {@link bookingRef}/{@link bookingId}
+ * rather than discarding them into a bare `Error`: a staff member reading
+ * this message can still find and cancel the booking by hand even when the
+ * cause is ambiguous.
+ */
+export class TransferQuoteLinkUnconfirmedError extends Error {
+  readonly inquiryId: number;
+  readonly bookingRef: string;
+  readonly bookingId: number;
+  constructor(inquiryId: number, bookingRef: string, bookingId: number, reason: string) {
+    super(
+      `Booking ${bookingRef} (id ${bookingId}) was created for inquiry ${inquiryId}, but ` +
+        `linking it back to the inquiry could not be confirmed (${reason}). Check whether the ` +
+        'inquiry now points at this booking; if not, cancel the booking by hand.',
+    );
+    this.name = 'TransferQuoteLinkUnconfirmedError';
+    this.inquiryId = inquiryId;
+    this.bookingRef = bookingRef;
+    this.bookingId = bookingId;
+  }
+}
+
 export async function convertTransferQuote(
   input: ConvertTransferQuoteInput,
   staffUserId: number,
@@ -205,55 +245,78 @@ export async function convertTransferQuote(
   );
 
   // 3. The link and the dedicated audit row — see the module note on why
-  //    this is its own transaction rather than wrapping step 2.
-  await db.transaction(async (tx) => {
-    const [claimed] = await tx
-      .update(inquiries)
-      .set({ convertedBookingId: held.bookingId })
-      .where(and(eq(inquiries.id, input.inquiryId), isNull(inquiries.convertedBookingId)));
-    // The race, decided here and nowhere else. A loser matches no row.
-    if (claimed.affectedRows !== 1) {
-      const [current] = await tx
-        .select({ convertedBookingId: inquiries.convertedBookingId })
-        .from(inquiries)
-        .where(eq(inquiries.id, input.inquiryId))
-        .limit(1);
-      /*
-       * No hard deletes anywhere in this project (CLAUDE.md), so the WHERE
-       * above matched this inquiry's id but not its `IS NULL` half — the row
-       * exists with a real `convertedBookingId`. `current` being absent, or
-       * carrying `null`, would mean the row vanished or raced a second time
-       * in the few milliseconds since; loud rather than a silent wrong
-       * booking id in the error a staff member is about to act on.
-       */
-      if (current?.convertedBookingId == null) {
-        throw new Error(
-          `Inquiry ${input.inquiryId}'s converted_booking_id changed again while ` +
-            'reporting the first race — cannot name the booking it now points to',
-        );
-      }
-      throw new TransferQuoteConvertRaceError(
-        input.inquiryId,
-        held.ref,
-        held.bookingId,
-        current.convertedBookingId,
-      );
-    }
+  //    this is its own transaction rather than wrapping step 2. Wrapped in
+  //    the same deadlock retry `createTransferBooking()` uses (dedicated-
+  //    review should-fix #5): this is a single-row PK UPDATE plus one
+  //    INSERT, so a deadlock here is unlikely but not impossible, and
+  //    without a retry a transient one would roll back the link while
+  //    leaving `held`'s booking live — the same orphan the race produces,
+  //    reached a different way.
+  await withDeadlockRetry(
+    () =>
+      db.transaction(async (tx) => {
+        const [claimed] = await tx
+          .update(inquiries)
+          .set({ convertedBookingId: held.bookingId })
+          .where(and(eq(inquiries.id, input.inquiryId), isNull(inquiries.convertedBookingId)));
+        // The race, decided here and nowhere else. A loser matches no row.
+        if (claimed.affectedRows !== 1) {
+          const [current] = await tx
+            .select({ convertedBookingId: inquiries.convertedBookingId })
+            .from(inquiries)
+            .where(eq(inquiries.id, input.inquiryId))
+            .limit(1);
+          /*
+           * No hard deletes anywhere in this project (CLAUDE.md), so the
+           * WHERE above matched this inquiry's id but not its `IS NULL`
+           * half — the row exists with a real `convertedBookingId`.
+           * `current` being absent, or carrying `null`, would mean the row
+           * vanished or raced a second time in the few milliseconds since;
+           * still named via {@link TransferQuoteLinkUnconfirmedError} rather
+           * than a bare `Error` that drops the very booking ref a staff
+           * member needs to go find it (dedicated-review nitpick #8).
+           */
+          if (current?.convertedBookingId == null) {
+            throw new TransferQuoteLinkUnconfirmedError(
+              input.inquiryId,
+              held.ref,
+              held.bookingId,
+              'its converted_booking_id changed again while reporting the first race',
+            );
+          }
+          throw new TransferQuoteConvertRaceError(
+            input.inquiryId,
+            held.ref,
+            held.bookingId,
+            current.convertedBookingId,
+          );
+        }
 
-    await writeAudit(tx, {
-      actorType: 'user',
-      actorId: staffUserId,
-      action: 'transfer.custom_quote_converted',
-      entity: 'bookings',
-      entityId: held.bookingId,
-      // Identifiers and the amount only — no name, email or phone (audit
-      // rows are read by every admin and exported in reports).
-      data: {
-        inquiryId: input.inquiryId,
-        priceCentavos: input.priceCentavos,
+        await writeAudit(tx, {
+          actorType: 'user',
+          actorId: staffUserId,
+          action: 'transfer.custom_quote_converted',
+          entity: 'bookings',
+          entityId: held.bookingId,
+          // Identifiers and the amount only — no name, email or phone
+          // (audit rows are read by every admin and exported in reports).
+          data: {
+            inquiryId: input.inquiryId,
+            priceCentavos: input.priceCentavos,
+          },
+        });
+      }),
+    {
+      onExhausted: (tries) => {
+        throw new TransferQuoteLinkUnconfirmedError(
+          input.inquiryId,
+          held.ref,
+          held.bookingId,
+          `${tries} deadlock retries exhausted while linking it`,
+        );
       },
-    });
-  });
+    },
+  );
 
   return held;
 }

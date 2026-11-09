@@ -1,8 +1,9 @@
 /**
- * Behavioral parity across the three independent `HH:mm` clock-time regexes
- * in this codebase (transfers-launch plan, Task T12).
+ * Behavioral parity across the FOUR independent `HH:mm` clock-time regexes
+ * in this codebase (transfers-launch plan, Task T12; fourth copy added by
+ * Task T19, dedicated-review should-fix #2).
  *
- * The three copies are NOT byte-identical:
+ * The four copies are NOT byte-identical:
  *
  *  1. `shared/src/transfers-checkout.ts`, `CLOCK_TIME_PATTERN` (module-private):
  *     `/^([01]\d|2[0-3]):([0-5]\d)$/`
@@ -10,24 +11,27 @@
  *     `clockTimeToMinutes()`: `/^([01]\d|2[0-3]):([0-5]\d)$/`
  *  3. `server/src/content/settings-schema.ts`, `clockTime` (module-private):
  *     `/^([01]\d|2[0-3]):[0-5]\d$/` — no capturing group around the minutes.
+ *  4. `shared/src/transfers-admin.ts`, `CLOCK_TIME_PATTERN` (module-private,
+ *     backing `transferQuoteConvertInput`): `/^([01]\d|2[0-3]):([0-5]\d)$/`.
  *
- * Pattern 3's missing group makes it NOT byte-identical to the other two, but
- * it accepts and rejects exactly the same strings — a `.source`-string
- * equality assertion would fail on day one for no real reason, so this file
- * drives all three through their own real PUBLIC surface instead and checks
- * that every surface agrees with the same shared sample table. If a future
- * edit changes one pattern's accept/reject behaviour without changing the
- * other two, this test goes red.
+ * Pattern 3's missing group makes it NOT byte-identical to the others, but it
+ * accepts and rejects exactly the same strings — a `.source`-string equality
+ * assertion would fail on day one for no real reason, so this file drives
+ * all four through their own real PUBLIC surface instead and checks that
+ * every surface agrees with the same shared sample table. If a future edit
+ * changes one pattern's accept/reject behaviour without changing the others,
+ * this test goes red.
  *
- * Deliberately NOT exporting either private `const`, and NOT consolidating
- * the three into one shared constant (T12 brief, controller ruling): pattern
- * 3 also backs `businessHourEntrySchema`'s nullable `opensAt`/`closesAt`
- * fields, so pulling it from `@rg/shared` would be a settings-validation
- * behaviour change for zero gain, reaching code this task has no reason to
- * touch. This test is the whole deliverable for the drift risk.
+ * Deliberately NOT exporting any of the private `const`s, and NOT
+ * consolidating them into one shared constant (T12 brief, controller
+ * ruling; T19 followed the same ruling for its own copy): pattern 3 also
+ * backs `businessHourEntrySchema`'s nullable `opensAt`/`closesAt` fields, so
+ * pulling it from `@rg/shared` would be a settings-validation behaviour
+ * change for zero gain, reaching code this task has no reason to touch.
+ * This test is the whole deliverable for the drift risk.
  */
 import { describe, expect, it } from 'vitest';
-import { createHoldTransferInput } from '@rg/shared';
+import { createHoldTransferInput, transferQuoteConvertInput } from '@rg/shared';
 import { clockTimeToMinutes } from '../services/transfers/overlap';
 import { SETTING_SCHEMAS } from '../content/settings-schema';
 
@@ -76,7 +80,28 @@ function oneWayPayload(pickupTime: string) {
   };
 }
 
-describe('clock-time regex parity across the three independent copies', () => {
+/**
+ * A minimal, otherwise-valid `transferQuoteConvertInput` one-way payload —
+ * every field but `pickupTime` filled with a value that passes on its own,
+ * mirroring `oneWayPayload()` above for the guest-facing schema.
+ */
+function convertPayload(pickupTime: string) {
+  return {
+    inquiryId: 1,
+    vehicleTypeId: 1,
+    productType: 'transfer_one_way' as const,
+    date: '2027-06-15',
+    pickupTime,
+    customRouteDurationMinutes: 90,
+    pax: 2,
+    luggageCount: 1,
+    dropoffAddress: 'Mactan-Cebu International Airport',
+    leadPhone: '09171234567',
+    priceCentavos: 450_000,
+  };
+}
+
+describe('clock-time regex parity across the four independent copies', () => {
   it.each(CLOCK_TIME_SAMPLES)(
     'createHoldTransferInput.pickupTime: %s -> accept=%s',
     (value, shouldAccept) => {
@@ -113,6 +138,20 @@ describe('clock-time regex parity across the three independent copies', () => {
       if (!result.success) {
         const paths = result.error.issues.map((issue) => issue.path.join('.'));
         expect(paths).toContain('nextDayCutoffTime');
+      }
+    },
+  );
+
+  it.each(CLOCK_TIME_SAMPLES)(
+    'transferQuoteConvertInput.pickupTime: %s -> accept=%s',
+    (value, shouldAccept) => {
+      const result = transferQuoteConvertInput.safeParse(convertPayload(value));
+      expect(result.success).toBe(shouldAccept);
+      if (!result.success) {
+        // A rejection must come from pickupTime itself, not some other field
+        // failing instead — which would prove nothing about this pattern.
+        const paths = result.error.issues.map((issue) => issue.path.join('.'));
+        expect(paths).toContain('pickupTime');
       }
     },
   );

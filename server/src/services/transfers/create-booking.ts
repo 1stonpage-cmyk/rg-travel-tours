@@ -202,8 +202,12 @@ export interface CreateTransferBookingInput {
    * supply (Task T19; see `./overlap.ts`'s `computeTransferWindow` doc
    * comment, which names this task as the one that must close the gap
    * rather than default it). Required exactly when `routeId` is null AND
-   * `productType` is `'transfer_one_way'` — refused otherwise by
-   * {@link assertBookableShape}'s `custom_one_way_needs_duration` reason — a
+   * `productType` is `'transfer_one_way'` — a MISSING one in exactly that
+   * combination is refused by {@link assertBookableShape}'s
+   * `custom_one_way_needs_duration` reason (dedicated-review nitpick #7: a
+   * STRAY one given on a day-use or catalog-route request is not refused
+   * there — it is simply ignored, at line ~758 below, where day-use always
+   * freezes `null` and a catalog route's own duration always wins). A
    * day-use hire needs no duration at all (its window ends at
    * `dayUseEndTime`) and a catalog route already has one.
    */

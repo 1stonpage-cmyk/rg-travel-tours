@@ -498,6 +498,14 @@ describeWithDb('admin.transferQuotes.convert', () => {
     );
     created.bookingIds.push(result.bookingId);
     expect((await bookingRow(result.bookingId)).productType).toBe('transfer_day_use');
+
+    // Dedicated-review should-fix #4: the title's own "freezes none" half,
+    // actually asserted rather than merely claimed.
+    const [details] = await getDb()
+      .select({ routeDurationMinutesUsed: bookingTransferDetails.routeDurationMinutesUsed })
+      .from(bookingTransferDetails)
+      .where(eq(bookingTransferDetails.bookingId, result.bookingId));
+    expect(details?.routeDurationMinutesUsed).toBeNull();
   });
 
   /* ---------------------------------------------------------------- *
