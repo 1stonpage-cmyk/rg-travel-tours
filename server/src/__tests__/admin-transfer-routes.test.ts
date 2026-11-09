@@ -804,7 +804,10 @@ describeWithDb('admin.transferRoutes', () => {
         dayUsePriceCentavos: 999_000,
       });
     } finally {
-      await getDb().delete(bookings).where(eq(bookings.id, bookingId));
+      // Raw SQL, not drizzle's `.delete()` — schema-conventions.test.ts bans
+      // the drizzle form on bookings/payments project-wide, tests included;
+      // this fixture cleanup follows record-payment.test.ts's own pattern.
+      await getPool().query('DELETE FROM bookings WHERE id = ?', [bookingId]);
     }
   });
 
