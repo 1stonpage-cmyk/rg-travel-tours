@@ -23,13 +23,14 @@
  * Never logs DATABASE_URL, TEST_DATABASE_URL, or any password.
  */
 import { fileURLToPath } from 'node:url';
-import { sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import {
   bookings,
   couponRedemptions,
   coupons,
   drivers,
   fleetDateSlots,
+  passwordResetTokens,
   payments,
   reviewHelpfulVotes,
   reviews,
@@ -177,8 +178,56 @@ async function countRows(): Promise<Record<string, number>> {
  * that collision. The exemption also always logs when it actually fires —
  * silent is how a real leak hides behind this escape hatch.
  *
- * Every other row still throws, OWNER_EMAIL-set or not.
+ * Every other row still throws, OWNER_EMAIL-set or not — **except one named,
+ * narrow exception added 2026-11-09 (second recurrence)**, directly below.
  */
+
+/**
+ * `password-reset.test.ts`'s own fixture emails: `reset_active_<suffix>@` /
+ * `reset_gone_<suffix>@example.test`, where `<suffix>` is
+ * `Math.floor(Math.random() * 1e9)` — digits only, generated fresh per run.
+ */
+const PASSWORD_RESET_FIXTURE_EMAIL = /^reset_(active|gone)_\d+@example\.test$/i;
+
+/**
+ * Recognizes `password-reset.test.ts`'s two fixture rows — and ONLY those,
+ * on every field the fixture itself sets (`beforeAll` in that file), not
+ * email alone. This is a narrower, four-field match than the OWNER_EMAIL
+ * exemption above, which is a comparatively meaningful ask (env var + 3
+ * fields); the row can appear ONLY because that one file's `afterAll` did
+ * not run, so treating an exact hit as safe-to-delete debris is strictly
+ * safer than today's status quo of leaving a human to find and delete it by
+ * hand (or, worse, a weaker match that could paper over something else).
+ */
+function isPasswordResetTestDebris(row: { name: string; email: string; role: string }): boolean {
+  return (
+    (row.name === 'Reset Fixture' || row.name === 'Reset Inactive Fixture') &&
+    PASSWORD_RESET_FIXTURE_EMAIL.test(row.email) &&
+    (row.role === 'owner' || row.role === 'finance')
+  );
+}
+
+/**
+ * Deletes one self-healed debris row and everything that would otherwise
+ * block the delete under this project's plain-RESTRICT FK style (house
+ * style — see `password_reset_tokens.user_id`'s own comment). `sessions` has
+ * no FK to `users` (polymorphic `subject_id`, shared across driver/user/
+ * customer) and the run-end teardown empties the whole table unconditionally
+ * anyway, but it is cleared here too — filtered on BOTH `subjectType = 'user'`
+ * and `subjectId = id`, never `subjectId` alone, since a bare id match could
+ * delete an unrelated driver's or customer's session that happens to share
+ * this numeric id — so a self-heal leaves nothing behind for the current run
+ * to trip over either.
+ */
+async function deletePasswordResetTestDebris(id: number): Promise<void> {
+  const db = getDb();
+  await db.delete(passwordResetTokens).where(eq(passwordResetTokens.userId, id));
+  await db
+    .delete(sessions)
+    .where(and(eq(sessions.subjectType, 'user'), eq(sessions.subjectId, id)));
+  await db.delete(users).where(eq(users.id, id));
+}
+
 export async function assertNoPreExistingUsers(): Promise<void> {
   const db = getDb();
   const rows = await db
@@ -198,13 +247,32 @@ export async function assertNoPreExistingUsers(): Promise<void> {
     row.role === 'owner' &&
     row.isActive === true;
 
-  const unexpected = rows.filter((row) => !isAllowedOwnerRow(row));
+  const allowedOwnerRows = rows.filter((row) => isAllowedOwnerRow(row));
+  const debris = rows.filter((row) => !isAllowedOwnerRow(row) && isPasswordResetTestDebris(row));
+  const unexpected = rows.filter(
+    (row) => !isAllowedOwnerRow(row) && !isPasswordResetTestDebris(row),
+  );
+
+  if (debris.length > 0) {
+    // Deliberate console.warn, same discipline as the OWNER_EMAIL branch:
+    // a silent self-heal is how a real leak hides behind this escape hatch.
+    console.warn(
+      `[global-setup] rg_travel_test.users: deleting ${debris.length} row(s) recognized as ` +
+        `password-reset.test.ts fixture debris from an interrupted previous run (` +
+        debris.map((row) => `#${row.id} "${row.name}" <${row.email}>`).join(', ') +
+        `). This self-heal only matches that file's exact fixture shape; see ` +
+        'isPasswordResetTestDebris in global-setup.ts.',
+    );
+    for (const row of debris) {
+      await deletePasswordResetTestDebris(row.id);
+    }
+  }
+
   if (unexpected.length === 0) {
-    if (rows.length > 0) {
-      // Deliberate console.warn: a silent exemption is how a real leak hides behind this escape hatch.
+    if (allowedOwnerRows.length > 0) {
       console.warn(
-        `[global-setup] rg_travel_test.users: allowing ${rows.length} pre-existing OWNER_EMAIL-matched owner row(s) through assertNoPreExistingUsers (` +
-          rows.map((row) => `#${row.id} <${row.email}>`).join(', ') +
+        `[global-setup] rg_travel_test.users: allowing ${allowedOwnerRows.length} pre-existing OWNER_EMAIL-matched owner row(s) through assertNoPreExistingUsers (` +
+          allowedOwnerRows.map((row) => `#${row.id} <${row.email}>`).join(', ') +
           ').',
       );
     }

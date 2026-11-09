@@ -18,17 +18,19 @@
  * is specifically about what a stray row does, and must not itself become a
  * new instance of the problem it is testing.
  */
-import { afterAll, expect, it } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { and, eq } from 'drizzle-orm';
 import { assertNoPreExistingUsers } from './global-setup';
 import { getDb } from '../db/client';
 import { env } from '../env';
-import { users } from '../db/schema';
+import { passwordResetTokens, sessions, users } from '../db/schema';
 import { hashPassword } from '../services/password';
 import { describeWithDb } from './helpers/db';
 
 const MARKER_EMAIL = `global-setup-guard-fixture-${Date.now()}@example.test`;
 const OWNER_EXCEPTION_EMAIL = `global-setup-guard-owner-exception-${Date.now()}@example.test`;
+/** Mimics password-reset.test.ts's own `suffix` — digits only. */
+const DEBRIS_SUFFIX = `${Date.now()}`;
 
 describeWithDb('assertNoPreExistingUsers', () => {
   // Belt-and-suspenders: if a concurrent process leaves this row behind
@@ -129,5 +131,161 @@ describeWithDb('assertNoPreExistingUsers', () => {
       env.OWNER_EMAIL = originalOwnerEmail;
       await getDb().delete(users).where(eq(users.id, insertedId));
     }
+  });
+
+  /**
+   * 0A (2026-11-09, second recurrence of the "Reset Fixture"/"Reset
+   * Inactive Fixture" leak — see HANDOVER-7). `password-reset.test.ts`'s own
+   * `afterAll` is the only thing that ever cleans these two rows up; if that
+   * file's worker is killed before its `afterAll` runs (the observed
+   * failure shape — every OTHER suite's cleanup ran fine in both
+   * incidents), the rows sit in `rg_travel_test.users` and fail every
+   * subsequent run at this exact check, requiring a human to find and
+   * delete them by hand. These tests prove the self-heal added for that
+   * shape — and only that shape.
+   */
+  describe('password-reset.test.ts fixture debris self-heal', () => {
+    let warnSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      warnSpy.mockRestore();
+    });
+
+    it('deletes an exact "Reset Fixture" row (and its dependent reset token), logs a warning, and does not throw', async () => {
+      const email = `reset_active_${DEBRIS_SUFFIX}@example.test`;
+      const hash = await hashPassword('throwaway-fixture-password-123456');
+      const [inserted] = await getDb().insert(users).values({
+        name: 'Reset Fixture',
+        email,
+        passwordHash: hash,
+        role: 'owner',
+      });
+      const insertedId = inserted.insertId;
+      // A dependent row, same as a real interrupted run would leave behind —
+      // proves the delete order is FK-safe (password_reset_tokens.user_id
+      // is a real, RESTRICT foreign key; deleting the user first would fail).
+      await getDb()
+        .insert(passwordResetTokens)
+        .values({
+          userId: insertedId,
+          tokenHash: `a${DEBRIS_SUFFIX}${'a'.repeat(64 - 1 - DEBRIS_SUFFIX.length)}`,
+          expiresAt: new Date(Date.now() + 60_000),
+        });
+
+      try {
+        // The function under test IS the cleanup here — that's what is being
+        // proven. The `finally` below is a safety net only, so a regression
+        // in the self-heal fails this assertion without also leaking the
+        // fixture row into the shared test database for the leak detector
+        // to catch on a DIFFERENT file's run.
+        await expect(assertNoPreExistingUsers()).resolves.toBeUndefined();
+
+        const remainingUser = await getDb()
+          .select({ id: users.id })
+          .from(users)
+          .where(eq(users.id, insertedId));
+        expect(remainingUser).toHaveLength(0);
+
+        const remainingToken = await getDb()
+          .select({ id: passwordResetTokens.id })
+          .from(passwordResetTokens)
+          .where(eq(passwordResetTokens.userId, insertedId));
+        expect(remainingToken).toHaveLength(0);
+
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('deleting 1 row(s)'));
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining(email));
+      } finally {
+        await getDb().delete(passwordResetTokens).where(eq(passwordResetTokens.userId, insertedId));
+        await getDb().delete(users).where(eq(users.id, insertedId));
+      }
+    });
+
+    it('self-heals the "Reset Inactive Fixture" / finance-role row too, without deleting an unrelated session of the same subject id', async () => {
+      const email = `reset_gone_${DEBRIS_SUFFIX}@example.test`;
+      const hash = await hashPassword('throwaway-fixture-password-123456');
+      const [inserted] = await getDb().insert(users).values({
+        name: 'Reset Inactive Fixture',
+        email,
+        passwordHash: hash,
+        role: 'finance',
+        isActive: false,
+      });
+      const insertedId = inserted.insertId;
+      // A session for a DIFFERENT subject type that happens to share this
+      // numeric id — proves the delete filters on subjectType, not id alone.
+      await getDb()
+        .insert(sessions)
+        .values({
+          subjectType: 'driver',
+          subjectId: insertedId,
+          tokenHash: `b${DEBRIS_SUFFIX}${'b'.repeat(64 - 1 - DEBRIS_SUFFIX.length)}`,
+          expiresAt: new Date(Date.now() + 60_000),
+        });
+
+      try {
+        await expect(assertNoPreExistingUsers()).resolves.toBeUndefined();
+
+        const remainingUser = await getDb()
+          .select({ id: users.id })
+          .from(users)
+          .where(eq(users.id, insertedId));
+        expect(remainingUser).toHaveLength(0);
+
+        const driverSessionSurvived = await getDb()
+          .select({ id: sessions.id })
+          .from(sessions)
+          .where(and(eq(sessions.subjectType, 'driver'), eq(sessions.subjectId, insertedId)));
+        expect(driverSessionSurvived).toHaveLength(1);
+      } finally {
+        await getDb()
+          .delete(sessions)
+          .where(and(eq(sessions.subjectType, 'driver'), eq(sessions.subjectId, insertedId)));
+        await getDb().delete(users).where(eq(users.id, insertedId));
+      }
+    });
+
+    it('does NOT self-heal a near-miss — right name and role, email does not match the fixture pattern', async () => {
+      const email = `not-a-reset-fixture-email-${DEBRIS_SUFFIX}@example.test`;
+      const hash = await hashPassword('throwaway-fixture-password-123456');
+      const [inserted] = await getDb().insert(users).values({
+        name: 'Reset Fixture',
+        email,
+        passwordHash: hash,
+        role: 'owner',
+      });
+      const insertedId = inserted.insertId;
+
+      try {
+        await expect(assertNoPreExistingUsers()).rejects.toThrow(
+          /users has \d+ row\(s\) before this run/,
+        );
+      } finally {
+        await getDb().delete(users).where(eq(users.id, insertedId));
+      }
+    });
+
+    it('does NOT self-heal a near-miss — right name and email pattern, role is not owner or finance', async () => {
+      const email = `reset_active_${DEBRIS_SUFFIX}9@example.test`;
+      const hash = await hashPassword('throwaway-fixture-password-123456');
+      const [inserted] = await getDb().insert(users).values({
+        name: 'Reset Fixture',
+        email,
+        passwordHash: hash,
+        role: 'dispatcher',
+      });
+      const insertedId = inserted.insertId;
+
+      try {
+        await expect(assertNoPreExistingUsers()).rejects.toThrow(
+          /users has \d+ row\(s\) before this run/,
+        );
+      } finally {
+        await getDb().delete(users).where(eq(users.id, insertedId));
+      }
+    });
   });
 });
