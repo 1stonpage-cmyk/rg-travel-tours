@@ -122,6 +122,21 @@ const BY_TOUR = [
   },
 ];
 
+/** T18: `revenueByTour`'s transfer-side counterpart. */
+const BY_ROUTE = [
+  {
+    routeId: 1,
+    direction: 'forward' as const,
+    vehicleTypeId: 1,
+    routeLabel: 'Mactan Airport → Oslob (Van)',
+    receivedCentavos: 240_000,
+    refundedCentavos: 0,
+    netReceivedCentavos: 240_000,
+    stillToCollectCentavos: 0,
+    bookingCount: 1,
+  },
+];
+
 const OUTSTANDING = [
   {
     bookingId: 11,
@@ -164,6 +179,7 @@ function setupMocks(extra: Record<string, unknown> = {}) {
     'staffAuth.me': { userId: 1, role: 'finance', mustChangePassword: false },
     'admin.reports.summary': record('summary', SUMMARY),
     'admin.reports.byTour': record('byTour', BY_TOUR),
+    'admin.reports.byRoute': record('byRoute', BY_ROUTE),
     'admin.reports.outstanding': record('outstanding', OUTSTANDING),
     'admin.reports.csv': record('csv', {
       filename: 'travelsugbo-by-tour-2026-10-01-to-2026-10-31.csv',
@@ -276,6 +292,7 @@ describe('the figures', () => {
     renderPage({
       'admin.reports.summary': EMPTY_SUMMARY,
       'admin.reports.byTour': [],
+      'admin.reports.byRoute': [],
       'admin.reports.outstanding': [],
     });
     expect(await screen.findAllByText('₱0')).toHaveLength(4);
@@ -319,10 +336,19 @@ describe('the tables', () => {
     );
   });
 
+  it('lists each route with its own figures (T18)', async () => {
+    renderPage();
+    const wrapper = await screen.findByTestId('by-route-wrapper');
+    const row = within(wrapper).getByText('Mactan Airport → Oslob (Van)').closest('tr');
+    // Received AND net both read ₱2,400 here (no refund), so both cells.
+    expect(within(row as HTMLElement).getAllByText('₱2,400')).toHaveLength(2);
+  });
+
   // Wide tables scroll inside their own container; the page body must not.
-  it('keeps both tables inside their own horizontal scroll container', async () => {
+  it('keeps all three revenue tables inside their own horizontal scroll container', async () => {
     renderPage();
     expect((await screen.findByTestId('by-tour-wrapper')).className).toContain('overflow-x-auto');
+    expect(screen.getByTestId('by-route-wrapper').className).toContain('overflow-x-auto');
     expect(screen.getByTestId('outstanding-wrapper').className).toContain('overflow-x-auto');
   });
 });
@@ -371,7 +397,7 @@ describe('the CSV download', () => {
   it('offers one button per report', async () => {
     renderPage();
     await screen.findByText('₱3,700');
-    expect(screen.getAllByRole('button', { name: /\(CSV\)/i })).toHaveLength(3);
+    expect(screen.getAllByRole('button', { name: /\(CSV\)/i })).toHaveLength(4);
   });
 });
 

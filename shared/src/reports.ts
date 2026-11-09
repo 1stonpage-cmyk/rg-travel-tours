@@ -45,6 +45,7 @@
 import { z } from 'zod';
 import { civilDateSchema } from './checkout';
 import { type BookingStatus } from './booking';
+import { type TransferDirection } from './transfers';
 
 /**
  * The booking statuses that owe nothing, ever.
@@ -97,7 +98,7 @@ export const dateRangeInput = z
 export type DateRangeInput = z.infer<typeof dateRangeInput>;
 
 /** Which report a CSV export is of. One name per shape below. */
-export const REPORT_NAMES = ['summary', 'byTour', 'outstanding'] as const;
+export const REPORT_NAMES = ['summary', 'byTour', 'byRoute', 'outstanding'] as const;
 export type ReportName = (typeof REPORT_NAMES)[number];
 export const reportNameSchema = z.enum(REPORT_NAMES);
 
@@ -171,6 +172,14 @@ export interface TourRevenueRow {
 export interface OutstandingRow {
   bookingId: number;
   ref: string;
+  /**
+   * Since T18: a transfer booking's route ("Mactan Airport → Oslob") or
+   * "Custom transfer" for a staff-quoted one with no catalog route — never a
+   * tour title for a transfer. The FIELD NAME stays `tourTitle` (not worth
+   * the churn across the CSV/table it also feeds); the DISPLAYED header for
+   * this column is "Trip", not "Tour", exactly because it is no longer
+   * always one.
+   */
   tourTitle: string;
   /** Civil date, `YYYY-MM-DD`. */
   tourDate: string;
@@ -191,6 +200,33 @@ export interface OutstandingRow {
   paidCentavos: number;
   /** `totalCentavos − paidCentavos`. Negative means overpaid. */
   outstandingCentavos: number;
+}
+
+/**
+ * The same five figures per (route, direction, vehicle type) — the
+ * transfer-side counterpart to `TourRevenueRow` (Task T18). Closes the
+ * reporting-completeness gap `revenueByTour`'s own doc comment names:
+ * `reportSummary`'s top-line figures include transfer money the moment
+ * transfers exist, and this table is what lets the per-tour and per-route
+ * tables sum back to it.
+ *
+ * **Grouped by route + direction + vehicle type — not by product type.** A
+ * route's row mixes one-way and day-use revenue together; the plan's own
+ * granularity is route/direction/vehicle, and a fourth axis was deliberately
+ * not added.
+ */
+export interface RouteRevenueRow {
+  /** Null for a staff-quoted custom trip with no catalog route (T17/T19/T20). */
+  routeId: number | null;
+  direction: TransferDirection;
+  vehicleTypeId: number;
+  /** "Mactan Airport → Oslob (Van)", or "Custom transfer (Van)". */
+  routeLabel: string;
+  receivedCentavos: number;
+  refundedCentavos: number;
+  netReceivedCentavos: number;
+  stillToCollectCentavos: number;
+  bookingCount: number;
 }
 
 /** What `admin.reports.csv` hands the browser to turn into a download. */

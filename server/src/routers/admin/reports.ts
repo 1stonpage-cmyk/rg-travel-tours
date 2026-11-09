@@ -8,20 +8,22 @@
  * `ROLE_MATRIX.reports` is already `['owner', 'finance']` — §9's own row,
  * transcribed exactly once in this codebase. **A dispatcher is refused**, the
  * CSV included: an export is the same money in a different container, and a
- * surface that gated the three queries but not the file would be a gate in name
- * only. `admin-reports.test.ts` refuses a dispatcher on all four.
+ * surface that gated the four queries but not the file would be a gate in name
+ * only. `admin-reports.test.ts` refuses a dispatcher on all five.
  *
  * ## This router decides nothing about money
  *
- * The four predicates live in `services/reports/money.ts` and the file format
- * in `services/reports/csv.ts`; this file is wiring. In particular there is no
- * `WHERE` clause here and no arithmetic on a centavo — "what counts as money
- * received" must have one answer, and a procedure that re-derived a figure for
- * its CSV is how an export comes to disagree with the screen above it.
+ * The five predicates live in `services/reports/money.ts` (Task T18 adds
+ * `revenueByRoute`, the transfer-side counterpart to `revenueByTour`) and the
+ * file format in `services/reports/csv.ts`; this file is wiring. In
+ * particular there is no `WHERE` clause here and no arithmetic on a centavo —
+ * "what counts as money received" must have one answer, and a procedure that
+ * re-derived a figure for its CSV is how an export comes to disagree with the
+ * screen above it.
  *
  * ## It writes nothing
  *
- * Four queries, no mutation, and no `writeAudit` call anywhere in the module
+ * Five queries, no mutation, and no `writeAudit` call anywhere in the module
  * (CLAUDE.md Global Constraints: "Reports and read-only screens write no audit
  * rows"). Reading a revenue figure is not an event in the life of a booking.
  *
@@ -33,8 +35,19 @@
  * the role gate, and that second copy is the one that gets forgotten.
  */
 import { dateRangeInput, reportCsvInput, type ReportCsv, type ReportName } from '@rg/shared';
-import { byTourCsv, csvFilename, outstandingCsv, summaryCsv } from '../../services/reports/csv';
-import { outstandingBookings, reportSummary, revenueByTour } from '../../services/reports/money';
+import {
+  byRouteCsv,
+  byTourCsv,
+  csvFilename,
+  outstandingCsv,
+  summaryCsv,
+} from '../../services/reports/csv';
+import {
+  outstandingBookings,
+  reportSummary,
+  revenueByRoute,
+  revenueByTour,
+} from '../../services/reports/money';
 import { adminProcedure, router } from '../../trpc';
 
 /** The one place a report name maps to the file it renders. */
@@ -44,6 +57,8 @@ async function renderCsv(report: ReportName, range: { from: string; to: string }
       return summaryCsv(await reportSummary(range));
     case 'byTour':
       return byTourCsv(await revenueByTour(range));
+    case 'byRoute':
+      return byRouteCsv(await revenueByRoute(range));
     case 'outstanding':
       return outstandingCsv(await outstandingBookings(range));
   }
@@ -59,6 +74,11 @@ export const adminReportsRouter = router({
   byTour: adminProcedure('reports')
     .input(dateRangeInput)
     .query(async ({ input }) => await revenueByTour(input)),
+
+  /** The transfer-side counterpart: the same five figures per route/direction/vehicle type. */
+  byRoute: adminProcedure('reports')
+    .input(dateRangeInput)
+    .query(async ({ input }) => await revenueByRoute(input)),
 
   /** Bookings in the window whose total and paid amount do not agree. */
   outstanding: adminProcedure('reports')

@@ -62,6 +62,7 @@ import type {
   OutstandingRow,
   ReportName,
   ReportSummary,
+  RouteRevenueRow,
   TourRevenueRow,
 } from '@rg/shared';
 
@@ -183,12 +184,42 @@ export function byTourCsv(rows: readonly TourRevenueRow[]): string {
   );
 }
 
+/**
+ * `revenueByTour`'s transfer-side counterpart (Task T18). `routeLabel` is
+ * the one text cell — it is built server-side from place/vehicle names, not
+ * typed by anyone — but it goes through `csvText()` anyway, the same
+ * "every text cell is treated the same way so none can be forgotten" reason
+ * `byTourCsv`'s own comment gives for `tourTitle`.
+ */
+export function byRouteCsv(rows: readonly RouteRevenueRow[]): string {
+  return toCsv(
+    [
+      'Route',
+      'Bookings',
+      'Received (PHP)',
+      'Refunds (PHP)',
+      'Net received (PHP)',
+      'Still to collect (PHP)',
+    ],
+    rows.map((row) => [
+      csvText(row.routeLabel),
+      String(row.bookingCount),
+      pesosFromCentavos(row.receivedCentavos),
+      pesosFromCentavos(row.refundedCentavos),
+      pesosFromCentavos(row.netReceivedCentavos),
+      pesosFromCentavos(row.stillToCollectCentavos),
+    ]),
+  );
+}
+
 export function outstandingCsv(rows: readonly OutstandingRow[]): string {
   return toCsv(
     [
       'Booking',
       'Tour date',
-      'Tour',
+      // Since T18: a transfer booking has a route here, not a tour — see
+      // `OutstandingRow.tourTitle`'s own doc comment in @rg/shared.
+      'Trip',
       'Guest',
       'Status',
       'Total (PHP)',
@@ -224,6 +255,7 @@ export function outstandingCsv(rows: readonly OutstandingRow[]): string {
 const FILE_STEM: Record<ReportName, string> = {
   summary: 'summary',
   byTour: 'by-tour',
+  byRoute: 'by-route',
   outstanding: 'outstanding',
 };
 

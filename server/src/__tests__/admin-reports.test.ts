@@ -3,8 +3,9 @@
  * (BUILD_SPEC §9 "Reports", §9's `reports` role row).
  *
  * **This suite READS money and writes none.** So what it pins is not a write
- * path but four definitions, every one of which is a sentence someone could
- * plausibly "correct" into a bug:
+ * path but four definitions (a fifth, T18's route/direction/vehicle-type
+ * partition, is pinned separately near its own fixtures), every one of which
+ * is a sentence someone could plausibly "correct" into a bug:
  *
  *  1. **Money received** is `type='payment' AND status='paid'` — so a
  *     `pending` cash claim and a `rejected` one count toward NOTHING. Both are
@@ -53,6 +54,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import {
   dateRangeInput,
@@ -62,11 +64,22 @@ import {
   type PriceSnapshot,
 } from '@rg/shared';
 import { getDb, getPool } from '../db/client';
-import { bookings, destinations, payments, tours, users } from '../db/schema';
+import {
+  bookingTransferDetails,
+  bookings,
+  destinations,
+  payments,
+  tours,
+  transferPlaces,
+  transferRoutes,
+  users,
+  vehicleTypes,
+} from '../db/schema';
 import { ROLE_MATRIX } from '../middleware/require-role';
 import { appRouter } from '../routers/_app';
 import { generateBookingRef } from '../services/booking-ref';
 import {
+  byRouteCsv,
   byTourCsv,
   csvField,
   csvText,
@@ -85,11 +98,12 @@ import { describeWithDb } from './helpers/db';
 const MOUNTED_PATHS = [
   'admin.reports.summary',
   'admin.reports.byTour',
+  'admin.reports.byRoute',
   'admin.reports.outstanding',
   'admin.reports.csv',
 ] as const;
 
-it('declares §9’s reports gate on all four mounted procedures', () => {
+it('declares §9’s reports gate on all five mounted procedures', () => {
   const mounted = (
     appRouter as unknown as {
       _def: { procedures: Record<string, { _def?: { meta?: unknown } }> };
@@ -269,6 +283,26 @@ it('prefixes a hostile tour title and guest name but never a negative amount', (
   expect(outstanding.split('\r\n')[1]).toBe(
     "RG-7KQ4M9,2098-09-04,'@SUM(A1:A9),'-2+3+cmd|calc,confirmed,1000.00,1200.00,-200.00",
   );
+
+  // T18: `routeLabel` is server-built from place/vehicle names, but it is
+  // still a text cell and gets the same treatment — nothing is exempt just
+  // because a human never typed it directly.
+  const byRoute = byRouteCsv([
+    {
+      routeId: null,
+      direction: 'forward',
+      vehicleTypeId: 1,
+      routeLabel: '=HYPERLINK("http://evil.test",A2) (Van)',
+      receivedCentavos: 0,
+      refundedCentavos: 0,
+      netReceivedCentavos: 0,
+      stillToCollectCentavos: -20_000,
+      bookingCount: 1,
+    },
+  ]);
+  expect(byRoute.split('\r\n')[1]).toBe(
+    '"\'=HYPERLINK(""http://evil.test"",A2) (Van)",1,0.00,0.00,0.00,-200.00',
+  );
 });
 
 /**
@@ -313,6 +347,9 @@ const EMPTY_MONTH = { from: '2098-07-01', to: '2098-07-31' } as const;
  */
 const HOSTILE_MONTH = { from: '2098-09-01', to: '2098-09-30' } as const;
 
+/** T18: the transfer fixtures' own month, so March's hand-checked tour-only figures stay untouched. */
+const TRANSFER_MONTH = { from: '2098-08-01', to: '2098-08-31' } as const;
+
 /** A tour title with a comma in it — the CSV escaping test's material. */
 const TITLE_WITH_COMMA = 'Kawasan Falls, Badian Day Tour';
 
@@ -345,6 +382,8 @@ const created = {
   tourIds: [] as number[],
   destIds: [] as number[],
   userIds: [] as number[],
+  placeIds: [] as number[],
+  routeIds: [] as number[],
 };
 
 const tourIds: Record<'a' | 'b' | 'c' | 'hostile', number> = { a: 0, b: 0, c: 0, hostile: 0 };
@@ -352,6 +391,17 @@ const bookingIds: Record<string, number> = {};
 let owner = 0;
 let dispatcher = 0;
 let finance = 0;
+
+/** T18 fixtures: one real route (forward AND reverse legs sold) and one custom, routeless trip. */
+let VAN_ID = 0;
+let routeAB = 0;
+const placeNames = { a: '', b: '' };
+const transferIds: Record<'forward' | 'reverse' | 'custom' | 'customUnpaid', number> = {
+  forward: 0,
+  reverse: 0,
+  custom: 0,
+  customUnpaid: 0,
+};
 
 const apiFor = (userId: number, role: AdminRole) =>
   appRouter.createCaller(staffContext(userId, role) as never);
@@ -443,6 +493,101 @@ async function makePayment(spec: {
   });
   created.paymentIds.push(row.insertId);
   return row.insertId;
+}
+
+/** A pickup/drop-off place with nothing else attached — what a route runs between. */
+async function makePlace(): Promise<{ id: number; name: string }> {
+  const name = `__adminreports_place__${unique()}`;
+  const [row] = await getDb()
+    .insert(transferPlaces)
+    .values({ name, nameKey: name.toLowerCase(), isActive: true, isAirport: false });
+  created.placeIds.push(row.insertId);
+  return { id: row.insertId, name };
+}
+
+/** A route between two fresh places. `reverseEnabled` is irrelevant to this suite. */
+async function makeRoute(fromPlaceId: number, toPlaceId: number): Promise<number> {
+  const slug = `__adminreports_route__${unique()}`;
+  const [row] = await getDb().insert(transferRoutes).values({
+    fromPlaceId,
+    toPlaceId,
+    reverseEnabled: true,
+    slug,
+    estimatedDurationMinutes: 60,
+    freeCancelHours: 24,
+  });
+  created.routeIds.push(row.insertId);
+  return row.insertId;
+}
+
+/**
+ * The real, global `vehicle_types.id` for a seeded slug (migration 0023),
+ * never a literal id (CLAUDE.md) — same helper as `admin-transfer-routes.test.ts`.
+ */
+async function vehicleTypeIdBySlug(slug: string): Promise<number> {
+  const [row] = await getDb()
+    .select({ id: vehicleTypes.id })
+    .from(vehicleTypes)
+    .where(eq(vehicleTypes.slug, slug))
+    .limit(1);
+  if (!row) throw new Error(`No vehicle_types row for slug "${slug}" — expected from seedBase.`);
+  return row.id;
+}
+
+/**
+ * A transfer booking, written directly (same reason `makeBooking` is: the
+ * two buckets under test are independent by design, so each is stated
+ * outright rather than derived through `createTransferBooking()`).
+ *
+ * `routeId: null` makes a staff-quoted custom trip — the ONE shape the
+ * pre-T18 `INNER JOIN tours` dropped regardless of which route (or none) it
+ * carried, so at least one fixture here must have no route at all.
+ */
+async function makeTransferBooking(spec: {
+  routeId: number | null;
+  direction: 'forward' | 'reverse';
+  vehicleTypeId: number;
+  tourDate: string;
+  totalCentavos: number;
+  paidCentavos: number;
+  status: BookingStatus;
+  customRouteDescription?: string;
+}): Promise<number> {
+  const id = await getDb().transaction(async (tx) => {
+    const [booking] = await tx.insert(bookings).values({
+      ref: generateBookingRef(),
+      tourId: null,
+      productType: 'transfer_one_way',
+      routeId: spec.routeId,
+      vehicleTypeId: spec.vehicleTypeId,
+      tourDate: new Date(`${spec.tourDate}T00:00:00Z`),
+      pax: 2,
+      leadName: 'Reports Fixture Transfer Guest',
+      leadEmail: 'admin-reports-transfer@example.test',
+      leadPhone: '09171234567',
+      status: spec.status,
+      payMode: 'deposit',
+      priceSnapshot: SNAPSHOT,
+      subtotalCentavos: spec.totalCentavos,
+      totalCentavos: spec.totalCentavos,
+      amountPaidCentavos: spec.paidCentavos,
+      paymentReviewRequired: false,
+      holdExpiresAt: null,
+    });
+    await tx.insert(bookingTransferDetails).values({
+      bookingId: booking.insertId,
+      pickupTime: '09:00',
+      dropoffAddress: 'Fixture drop-off',
+      direction: spec.direction,
+      bufferMinutesUsed: 30,
+      ...(spec.routeId === null
+        ? { customRouteDescription: spec.customRouteDescription ?? 'Fixture custom route' }
+        : {}),
+    });
+    return booking.insertId;
+  });
+  created.bookingIds.push(id);
+  return id;
 }
 
 async function auditRowCount(): Promise<number> {
@@ -602,13 +747,109 @@ describeWithDb('admin.reports', () => {
       amountCentavos: 22_000,
       createdAt: '2098-05-15T15:30:00Z',
     });
+
+    /*
+     * T18 fixtures: March transfer bookings, so `revenueByRoute` and the
+     * LEFT JOIN fix on `outstandingBookings` have real non-tour rows to
+     * read. Three shapes, each proving something the tour fixtures above
+     * cannot:
+     *  - `forward` and `reverse` share the SAME route id but must land in
+     *    DIFFERENT grouped rows — the whole point of grouping by direction.
+     *  - `custom` has `routeId: null` — the one shape the pre-T18
+     *    `INNER JOIN tours` dropped from `outstandingBookings` regardless of
+     *    which route (or none) it carried, and cancelled besides, so it also
+     *    proves `bookingCount` still counts it while `stillToCollect` does not.
+     *
+     * **In AUGUST, their own month** — not March. Every March figure above is
+     * a hand-checked number asserted exactly (370,000 received, bookingCount
+     * 5, …); adding transfer money to that same window would silently need
+     * every one of those numbers re-derived for no reason connected to what
+     * this fixture is actually proving. The reconciliation test below reads
+     * August instead, the same reason the Manila-boundary booking above gets
+     * its own month.
+     */
+    VAN_ID = await vehicleTypeIdBySlug('van');
+    const placeA = await makePlace();
+    const placeB = await makePlace();
+    placeNames.a = placeA.name;
+    placeNames.b = placeB.name;
+    routeAB = await makeRoute(placeA.id, placeB.id);
+
+    transferIds.forward = await makeTransferBooking({
+      routeId: routeAB,
+      direction: 'forward',
+      vehicleTypeId: VAN_ID,
+      tourDate: '2098-08-10',
+      totalCentavos: 240_000,
+      paidCentavos: 240_000,
+      status: 'confirmed',
+    });
+    transferIds.reverse = await makeTransferBooking({
+      routeId: routeAB,
+      direction: 'reverse',
+      vehicleTypeId: VAN_ID,
+      tourDate: '2098-08-11',
+      totalCentavos: 180_000,
+      paidCentavos: 80_000,
+      status: 'confirmed',
+    });
+    transferIds.custom = await makeTransferBooking({
+      routeId: null,
+      direction: 'forward',
+      vehicleTypeId: VAN_ID,
+      tourDate: '2098-08-12',
+      totalCentavos: 150_000,
+      paidCentavos: 0,
+      status: 'cancelled',
+      customRouteDescription: 'Fixture custom route, no catalog match',
+    });
+    /*
+     * The `outstandingBookings` proof proper: LIVE (not cancelled) and
+     * routeless. Before T18's `LEFT JOIN`, this exact shape — a transfer
+     * with no `route_id` AND no `tour_id` — was dropped by the `INNER JOIN
+     * tours`, same as every other transfer, and is the row that test reads.
+     */
+    transferIds.customUnpaid = await makeTransferBooking({
+      routeId: null,
+      direction: 'forward',
+      vehicleTypeId: VAN_ID,
+      tourDate: '2098-08-13',
+      totalCentavos: 220_000,
+      paidCentavos: 60_000,
+      status: 'confirmed',
+      customRouteDescription: 'Fixture unpaid custom route',
+    });
+
+    await makePayment({
+      bookingId: transferIds.forward,
+      type: 'payment',
+      status: 'paid',
+      amountCentavos: 240_000,
+      createdAt: '2098-08-10T02:00:00Z',
+    });
+    await makePayment({
+      bookingId: transferIds.reverse,
+      type: 'payment',
+      status: 'paid',
+      amountCentavos: 80_000,
+      createdAt: '2098-08-11T02:00:00Z',
+    });
   }, 30_000);
 
   afterAll(async () => {
     const pool = getPool();
     for (const id of created.bookingIds) {
       await pool.query('DELETE FROM payments WHERE booking_id = ?', [id]);
+      // T18: every transfer fixture has one of these; a tour booking has
+      // none, and the DELETE is a no-op for it either way.
+      await pool.query('DELETE FROM booking_transfer_details WHERE booking_id = ?', [id]);
       await pool.query('DELETE FROM bookings WHERE id = ?', [id]);
+    }
+    for (const id of created.routeIds) {
+      await pool.query('DELETE FROM transfer_routes WHERE id = ?', [id]);
+    }
+    for (const id of created.placeIds) {
+      await pool.query('DELETE FROM transfer_places WHERE id = ?', [id]);
     }
     for (const id of created.tourIds) await pool.query('DELETE FROM tours WHERE id = ?', [id]);
     for (const id of created.destIds) {
@@ -625,7 +866,7 @@ describeWithDb('admin.reports', () => {
 
   /* ------------------------------------------------------------- The roles */
 
-  it('refuses a dispatcher on all four procedures with FORBIDDEN', async () => {
+  it('refuses a dispatcher on all five procedures with FORBIDDEN', async () => {
     const api = apiFor(dispatcher, 'dispatcher');
     /*
      * Asserted on `code`, never on the message — the pattern every other
@@ -635,10 +876,11 @@ describeWithDb('admin.reports', () => {
     const refusals = await Promise.all([
       api.admin.reports.summary(MARCH).catch((e: unknown) => e),
       api.admin.reports.byTour(MARCH).catch((e: unknown) => e),
+      api.admin.reports.byRoute(MARCH).catch((e: unknown) => e),
       api.admin.reports.outstanding(MARCH).catch((e: unknown) => e),
       api.admin.reports.csv({ ...MARCH, report: 'summary' }).catch((e: unknown) => e),
     ]);
-    expect(refusals).toHaveLength(4);
+    expect(refusals).toHaveLength(5);
     for (const refusal of refusals) {
       expect(refusal).toMatchObject({ code: 'FORBIDDEN' });
     }
@@ -787,7 +1029,126 @@ describeWithDb('admin.reports', () => {
     expect(rows.reduce((sum, row) => sum + row.bookingCount, 0)).toBe(summary.bookingCount);
   });
 
+  /* ----------------------------------------------------- By route (T18) */
+
+  it('groups a shared route by DIRECTION, and a routeless custom trip separately', async () => {
+    const rows = await ownerApi().admin.reports.byRoute(TRANSFER_MONTH);
+    const [vanType] = await getDb()
+      .select({ name: vehicleTypes.name })
+      .from(vehicleTypes)
+      .where(eq(vehicleTypes.id, VAN_ID));
+    const vanName = vanType!.name;
+
+    const forward = rows.find((row) => row.routeId === routeAB && row.direction === 'forward');
+    const reverse = rows.find((row) => row.routeId === routeAB && row.direction === 'reverse');
+    const custom = rows.find((row) => row.routeId === null);
+
+    // Same route id, opposite directions — and therefore two different rows,
+    // not one row double-counted or one direction silently dropped.
+    expect(forward).toEqual({
+      routeId: routeAB,
+      direction: 'forward',
+      vehicleTypeId: VAN_ID,
+      routeLabel: `${placeNames.a} → ${placeNames.b} (${vanName})`,
+      receivedCentavos: 240_000,
+      refundedCentavos: 0,
+      netReceivedCentavos: 240_000,
+      stillToCollectCentavos: 0,
+      bookingCount: 1,
+    });
+    expect(reverse).toEqual({
+      routeId: routeAB,
+      direction: 'reverse',
+      vehicleTypeId: VAN_ID,
+      // Reverse swaps the two places for display — the same convention
+      // `RoutePicker.tsx`'s `legsFor()` uses for the booking flow.
+      routeLabel: `${placeNames.b} → ${placeNames.a} (${vanName})`,
+      receivedCentavos: 80_000,
+      refundedCentavos: 0,
+      netReceivedCentavos: 80_000,
+      stillToCollectCentavos: 100_000,
+      bookingCount: 1,
+    });
+    // `custom` (cancelled, no balance owed) and `customUnpaid` (confirmed,
+    // ₱1,600 owed) share this one bucket — same routeId (null), direction
+    // and vehicle type, which is the plan's own granularity: there is no
+    // per-trip description axis to split them further on.
+    expect(custom).toEqual({
+      routeId: null,
+      direction: 'forward',
+      vehicleTypeId: VAN_ID,
+      routeLabel: `Custom transfer (${vanName})`,
+      receivedCentavos: 0,
+      refundedCentavos: 0,
+      netReceivedCentavos: 0,
+      stillToCollectCentavos: 160_000,
+      bookingCount: 2,
+    });
+  });
+
+  it('reconciles with revenueByTour against the summary (Task T18’s own acceptance test)', async () => {
+    const api = ownerApi();
+    const [summary, byTour, byRoute] = await Promise.all([
+      api.admin.reports.summary(TRANSFER_MONTH),
+      api.admin.reports.byTour(TRANSFER_MONTH),
+      api.admin.reports.byRoute(TRANSFER_MONTH),
+    ]);
+    // No tour ran in August at all — every figure here belongs to transfers.
+    expect(byTour).toEqual([]);
+
+    const sumOf = (key: 'receivedCentavos' | 'refundedCentavos' | 'stillToCollectCentavos') =>
+      byTour.reduce((sum, row) => sum + row[key], 0) +
+      byRoute.reduce((sum, row) => sum + row[key], 0);
+    expect(sumOf('receivedCentavos')).toBe(summary.receivedCentavos);
+    expect(sumOf('refundedCentavos')).toBe(summary.refundedCentavos);
+    expect(sumOf('stillToCollectCentavos')).toBe(summary.stillToCollectCentavos);
+    expect(
+      byTour.reduce((sum, row) => sum + row.bookingCount, 0) +
+        byRoute.reduce((sum, row) => sum + row.bookingCount, 0),
+    ).toBe(summary.bookingCount);
+  });
+
+  it('exports the by-route report with a header row and a quoted route label', async () => {
+    const { filename, csv } = await ownerApi().admin.reports.csv({
+      ...TRANSFER_MONTH,
+      report: 'byRoute',
+    });
+    expect(filename).toBe('travelsugbo-by-route-2098-08-01-to-2098-08-31.csv');
+    const lines = csv.split('\r\n');
+    expect(lines[0]).toBe(
+      'Route,Bookings,Received (PHP),Refunds (PHP),Net received (PHP),Still to collect (PHP)',
+    );
+    // No raw centavos integer leaks through — every money cell has two decimals.
+    expect(csv).not.toMatch(/\b240000\b/);
+    expect(csv).toContain('2400.00');
+  });
+
   /* --------------------------------------------------------- Outstanding */
+
+  it('lists a transfer with no route at all — the exact shape the pre-T18 INNER JOIN dropped', async () => {
+    const rows = await ownerApi().admin.reports.outstanding(TRANSFER_MONTH);
+    const byId = new Map(rows.map((row) => [row.bookingId, row]));
+
+    // `forward` is paid in full (excluded) and `custom` is cancelled (excluded,
+    // same as a cancelled TOUR booking already is) — only these two remain.
+    expect([...byId.keys()].sort((a, b) => a - b)).toEqual(
+      [transferIds.reverse, transferIds.customUnpaid].sort((a, b) => a - b),
+    );
+
+    expect(byId.get(transferIds.reverse)).toMatchObject({
+      tourTitle: `${placeNames.b} → ${placeNames.a}`,
+      tourDate: '2098-08-11',
+      outstandingCentavos: 100_000,
+    });
+    // The routeless one: no catalog route to name, so its own
+    // `customRouteDescription` is the title — never a bare "Custom transfer"
+    // when a real one was typed, and never a tour title it does not have.
+    expect(byId.get(transferIds.customUnpaid)).toMatchObject({
+      tourTitle: 'Fixture unpaid custom route',
+      tourDate: '2098-08-13',
+      outstandingCentavos: 160_000,
+    });
+  });
 
   it('lists every booking that does not add up, and nothing that does', async () => {
     const rows = await ownerApi().admin.reports.outstanding(MARCH);
@@ -852,7 +1213,7 @@ describeWithDb('admin.reports', () => {
     const outstanding = await api.admin.reports.csv({ ...MARCH, report: 'outstanding' });
     expect(outstanding.filename).toBe('travelsugbo-outstanding-2098-03-01-to-2098-03-31.csv');
     expect(outstanding.csv.split('\r\n')[0]).toBe(
-      'Booking,Tour date,Tour,Guest,Status,Total (PHP),Paid (PHP),Outstanding (PHP)',
+      'Booking,Tour date,Trip,Guest,Status,Total (PHP),Paid (PHP),Outstanding (PHP)',
     );
     expect(outstanding.csv).toContain(`"${TITLE_WITH_COMMA}"`);
     expect(outstanding.csv).toContain('3000.00,1000.00,2000.00');
@@ -914,11 +1275,12 @@ describeWithDb('admin.reports', () => {
 
   /* ------------------------------------------------------- Writes nothing */
 
-  it('writes no audit row for any of the four reads', async () => {
+  it('writes no audit row for any of the five reads', async () => {
     const before = await auditRowCount();
     const api = ownerApi();
     await api.admin.reports.summary(MARCH);
     await api.admin.reports.byTour(MARCH);
+    await api.admin.reports.byRoute(MARCH);
     await api.admin.reports.outstanding(MARCH);
     await api.admin.reports.csv({ ...MARCH, report: 'outstanding' });
     expect(await auditRowCount()).toBe(before);

@@ -52,6 +52,7 @@ import {
   type OutstandingRow,
   type ReportName,
   type ReportSummary,
+  type RouteRevenueRow,
   type TourRevenueRow,
 } from '@rg/shared';
 import AdminPageHeader from '@/components/admin/AdminPageHeader';
@@ -147,6 +148,7 @@ function downloadCsv(filename: string, csv: string): void {
 const REPORT_LABEL: Record<ReportName, string> = {
   summary: 'Download the summary (CSV)',
   byTour: 'Download revenue by tour (CSV)',
+  byRoute: 'Download revenue by route (CSV)',
   outstanding: 'Download outstanding balances (CSV)',
 };
 
@@ -302,6 +304,64 @@ function ByTourTable({ rows }: { rows: readonly TourRevenueRow[] }) {
   );
 }
 
+/** `ByTourTable`'s transfer-side counterpart (Task T18): grouped by route, direction and vehicle type. */
+function ByRouteTable({ rows }: { rows: readonly RouteRevenueRow[] }) {
+  if (rows.length === 0) {
+    return (
+      <p className={`${CARD} text-brand-error p-5 text-sm`}>
+        No transfer money moved and no transfer trips ran in these dates.
+      </p>
+    );
+  }
+  return (
+    <div data-testid="by-route-wrapper" className={`${CARD} overflow-x-auto`}>
+      <table className="w-full text-left text-sm">
+        <thead className="bg-brand-blue-50 text-brand-error border-brand-blue-100 border-b text-xs uppercase tracking-[0.06em]">
+          <tr>
+            <th scope="col" className="px-4 py-3 font-semibold">
+              Route
+            </th>
+            <th scope="col" className="px-4 py-3 font-semibold">
+              Bookings
+            </th>
+            <th scope="col" className="px-4 py-3 font-semibold">
+              Received
+            </th>
+            <th scope="col" className="px-4 py-3 font-semibold">
+              Refunds
+            </th>
+            <th scope="col" className="px-4 py-3 font-semibold">
+              Net
+            </th>
+            <th scope="col" className="px-4 py-3 font-semibold">
+              Still to collect
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr
+              key={`${row.routeId ?? 'custom'}-${row.direction}-${row.vehicleTypeId}`}
+              className="border-brand-blue-100 border-b last:border-0"
+            >
+              <th scope="row" className="text-brand-ink px-4 py-3 text-left font-semibold">
+                {row.routeLabel}
+              </th>
+              <td className="text-brand-ink px-4 py-3">{row.bookingCount}</td>
+              <td className="text-brand-ink px-4 py-3">{formatPeso(row.receivedCentavos)}</td>
+              <td className="text-brand-ink px-4 py-3">{formatPeso(row.refundedCentavos)}</td>
+              <td className="text-brand-ink px-4 py-3 font-semibold">
+                {formatPeso(row.netReceivedCentavos)}
+              </td>
+              <td className="text-brand-ink px-4 py-3">{formatPeso(row.stillToCollectCentavos)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function OutstandingTable({ rows }: { rows: readonly OutstandingRow[] }) {
   if (rows.length === 0) {
     return (
@@ -325,8 +385,9 @@ function OutstandingTable({ rows }: { rows: readonly OutstandingRow[] }) {
             <th scope="col" className="px-4 py-3 font-semibold">
               Tour date
             </th>
+            {/* Since T18: a transfer booking has a route here, not a tour. */}
             <th scope="col" className="px-4 py-3 font-semibold">
-              Tour
+              Trip
             </th>
             <th scope="col" className="px-4 py-3 font-semibold">
               Guest
@@ -407,6 +468,7 @@ function ReportsAdmin() {
 
   const summary = trpc.admin.reports.summary.useQuery(range, { retry: false });
   const byTour = trpc.admin.reports.byTour.useQuery(range, { retry: false });
+  const byRoute = trpc.admin.reports.byRoute.useQuery(range, { retry: false });
   const outstanding = trpc.admin.reports.outstanding.useQuery(range, { retry: false });
 
   // The second denial layer: a session this client believes may read reports
@@ -507,6 +569,22 @@ function ReportsAdmin() {
       </div>
 
       <div className="flex flex-col gap-3">
+        <h2 className="text-brand-ink text-lg font-bold">Revenue by route</h2>
+        {byRoute.isPending ? (
+          <p className="text-brand-error flex items-center gap-2 text-sm">
+            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+            Loading routes…
+          </p>
+        ) : byRoute.isError ? (
+          <p role="alert" className={ALERT}>
+            We could not load the per-route figures. Try again in a moment.
+          </p>
+        ) : (
+          <ByRouteTable rows={byRoute.data} />
+        )}
+      </div>
+
+      <div className="flex flex-col gap-3">
         <h2 className="text-brand-ink text-lg font-bold">Outstanding balances</h2>
         {outstanding.isPending ? (
           <p className="text-brand-error flex items-center gap-2 text-sm">
@@ -533,6 +611,7 @@ function ReportsAdmin() {
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
             <CsvButton report="summary" range={range} />
             <CsvButton report="byTour" range={range} />
+            <CsvButton report="byRoute" range={range} />
             <CsvButton report="outstanding" range={range} />
           </div>
         </CardContent>

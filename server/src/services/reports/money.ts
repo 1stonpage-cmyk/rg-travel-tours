@@ -36,7 +36,8 @@
  * therefore pushed through `Number()` at the boundary — without it the sums
  * would CONCATENATE and the API would answer `"100000200000"`.
  */
-import { and, asc, eq, inArray, notInArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, ne, notInArray, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/mysql-core';
 import {
   REPORT_NON_COLLECTABLE_STATUSES,
   addCivilDays,
@@ -45,10 +46,35 @@ import {
   type DateRangeInput,
   type OutstandingRow,
   type ReportSummary,
+  type RouteRevenueRow,
   type TourRevenueRow,
+  type TransferDirection,
 } from '@rg/shared';
 import { getDb } from '../../db/client';
-import { bookings, payments, tours } from '../../db/schema';
+import {
+  bookingTransferDetails,
+  bookings,
+  payments,
+  tours,
+  transferPlaces,
+  transferRoutes,
+  vehicleTypes,
+} from '../../db/schema';
+
+/** Two aliases onto the same `transfer_places` table — one per report function below. */
+const outstandingFromPlace = alias(transferPlaces, 'outstandingFromPlace');
+const outstandingToPlace = alias(transferPlaces, 'outstandingToPlace');
+const routeRevenueFromPlace = alias(transferPlaces, 'routeRevenueFromPlace');
+const routeRevenueToPlace = alias(transferPlaces, 'routeRevenueToPlace');
+
+/**
+ * A route's two places, in guest-facing order for the direction travelled —
+ * the same forward/reverse swap `RoutePicker.tsx`'s `legsFor()` does for the
+ * booking flow, read backwards here for reporting.
+ */
+function routeDisplayName(fromName: string, toName: string, direction: TransferDirection): string {
+  return direction === 'reverse' ? `${toName} → ${fromName}` : `${fromName} → ${toName}`;
+}
 
 /* ------------------------------------------------------------- Date windows */
 
@@ -306,6 +332,172 @@ export async function revenueByTour(range: DateRangeInput): Promise<TourRevenueR
 }
 
 /**
+ * The same five figures, grouped by (route, direction, vehicle type) instead
+ * of by tour — `revenueByTour`'s transfer-side counterpart (Task T18), and
+ * the fix for the reporting-completeness gap that function's own comment
+ * names: `reportSummary` already includes transfer money; this is what lets
+ * the per-route table (and the per-tour one) sum back to it.
+ *
+ * **`INNER JOIN booking_transfer_details`, not `LEFT`:** every row with
+ * `product_type <> 'tour'` has exactly one, written together with the
+ * booking in `createTransferBooking()` — unlike `tours`, there is no
+ * nullable case to guard against here.
+ *
+ * **Grouped by route + direction + vehicle type, not by product type.** A
+ * route's row therefore mixes one-way and day-use revenue — the plan's own
+ * granularity, not a bug; a fourth axis was deliberately not added.
+ *
+ * **No status filter beyond `product_type <> 'tour'`**, on either query —
+ * copying `outstandingBookings`'s `notInArray(status, …)` in here would
+ * silently drop cancelled transfers from `bookingCount` and break the sum
+ * against `reportSummary`, which counts every status. `STILL_TO_COLLECT_CENTAVOS`
+ * already excludes the non-collectable statuses from the BALANCE, same as
+ * `revenueByTour`.
+ */
+export async function revenueByRoute(range: DateRangeInput): Promise<RouteRevenueRow[]> {
+  const db = getDb();
+  const notTour = ne(bookings.productType, 'tour');
+
+  const moneyRows = await db
+    .select({
+      routeId: bookings.routeId,
+      direction: bookingTransferDetails.direction,
+      vehicleTypeId: bookings.vehicleTypeId,
+      received: RECEIVED_CENTAVOS,
+      refunded: REFUNDED_CENTAVOS,
+    })
+    .from(payments)
+    .innerJoin(bookings, eq(bookings.id, payments.bookingId))
+    .innerJoin(bookingTransferDetails, eq(bookingTransferDetails.bookingId, bookings.id))
+    .where(and(createdInWindow(range), notTour))
+    .groupBy(bookings.routeId, bookingTransferDetails.direction, bookings.vehicleTypeId);
+
+  const bookingRows = await db
+    .select({
+      routeId: bookings.routeId,
+      direction: bookingTransferDetails.direction,
+      vehicleTypeId: bookings.vehicleTypeId,
+      still: STILL_TO_COLLECT_CENTAVOS,
+      count: BOOKING_COUNT,
+    })
+    .from(bookings)
+    .innerJoin(bookingTransferDetails, eq(bookingTransferDetails.bookingId, bookings.id))
+    .where(and(tourDateInWindow(range), notTour))
+    .groupBy(bookings.routeId, bookingTransferDetails.direction, bookings.vehicleTypeId);
+
+  /**
+   * `bookings.vehicle_type_id` reads back `number | null` from Drizzle
+   * (the column itself is nullable, for a tour), but `bookings_product_type_shape`
+   * guarantees it is NOT NULL for every row these two queries select — both are
+   * filtered to `product_type <> 'tour'`. Throwing rather than coercing: a null
+   * here would mean the CHECK itself failed, which is loud-bug territory, not a
+   * `?? 0` to paper over.
+   */
+  function requireVehicleTypeId(id: number | null): number {
+    if (id === null) {
+      throw new Error('revenueByRoute: a non-tour booking has a null vehicle_type_id.');
+    }
+    return id;
+  }
+
+  type Entry = Omit<RouteRevenueRow, 'routeLabel'>;
+  const keyOf = (routeId: number | null, direction: TransferDirection, vehicleTypeId: number) =>
+    `${routeId ?? 'custom'}|${direction}|${vehicleTypeId}`;
+  const blank = (
+    routeId: number | null,
+    direction: TransferDirection,
+    vehicleTypeId: number,
+  ): Entry => ({
+    routeId,
+    direction,
+    vehicleTypeId,
+    receivedCentavos: 0,
+    refundedCentavos: 0,
+    netReceivedCentavos: 0,
+    stillToCollectCentavos: 0,
+    bookingCount: 0,
+  });
+
+  const merged = new Map<string, Entry>();
+  for (const row of moneyRows) {
+    const vehicleTypeId = requireVehicleTypeId(row.vehicleTypeId);
+    const key = keyOf(row.routeId, row.direction, vehicleTypeId);
+    const entry = merged.get(key) ?? blank(row.routeId, row.direction, vehicleTypeId);
+    entry.receivedCentavos = Number(row.received);
+    entry.refundedCentavos = Number(row.refunded);
+    entry.netReceivedCentavos = entry.receivedCentavos - entry.refundedCentavos;
+    merged.set(key, entry);
+  }
+  for (const row of bookingRows) {
+    const vehicleTypeId = requireVehicleTypeId(row.vehicleTypeId);
+    const key = keyOf(row.routeId, row.direction, vehicleTypeId);
+    const entry = merged.get(key) ?? blank(row.routeId, row.direction, vehicleTypeId);
+    entry.stillToCollectCentavos = Number(row.still);
+    entry.bookingCount = Number(row.count);
+    merged.set(key, entry);
+  }
+
+  if (merged.size === 0) return [];
+
+  const entries = [...merged.values()];
+  const routeIds = [
+    ...new Set(entries.map((e) => e.routeId).filter((id): id is number => id !== null)),
+  ];
+  const vehicleTypeIds = [...new Set(entries.map((e) => e.vehicleTypeId))];
+
+  const routeRows =
+    routeIds.length === 0
+      ? []
+      : await db
+          .select({
+            id: transferRoutes.id,
+            fromName: routeRevenueFromPlace.name,
+            toName: routeRevenueToPlace.name,
+          })
+          .from(transferRoutes)
+          .innerJoin(
+            routeRevenueFromPlace,
+            eq(routeRevenueFromPlace.id, transferRoutes.fromPlaceId),
+          )
+          .innerJoin(routeRevenueToPlace, eq(routeRevenueToPlace.id, transferRoutes.toPlaceId))
+          .where(inArray(transferRoutes.id, routeIds));
+  const routeNames = new Map(
+    routeRows.map((r) => [r.id, { fromName: r.fromName, toName: r.toName }]),
+  );
+
+  const vehicleRows = await db
+    .select({ id: vehicleTypes.id, name: vehicleTypes.name })
+    .from(vehicleTypes)
+    .where(inArray(vehicleTypes.id, vehicleTypeIds));
+  const vehicleNames = new Map(vehicleRows.map((r) => [r.id, r.name]));
+
+  return entries
+    .map((entry) => {
+      const vehicleName =
+        vehicleNames.get(entry.vehicleTypeId) ?? `Vehicle type #${entry.vehicleTypeId}`;
+      const names = entry.routeId === null ? null : routeNames.get(entry.routeId);
+      // `names` can only be missing for a route id that no longer exists, which
+      // a RESTRICT foreign key does not allow — same reasoning as `revenueByTour`'s
+      // `Tour #${id}` fallback just above, kept here for the same broken-FK case.
+      const routeTitle =
+        entry.routeId === null
+          ? 'Custom transfer'
+          : names
+            ? routeDisplayName(names.fromName, names.toName, entry.direction)
+            : `Route #${entry.routeId}`;
+      return { ...entry, routeLabel: `${routeTitle} (${vehicleName})` };
+    })
+    .sort(
+      (a, b) =>
+        b.netReceivedCentavos - a.netReceivedCentavos ||
+        a.routeLabel.localeCompare(b.routeLabel) ||
+        keyOf(a.routeId, a.direction, a.vehicleTypeId).localeCompare(
+          keyOf(b.routeId, b.direction, b.vehicleTypeId),
+        ),
+    );
+}
+
+/**
  * Every booking in the window whose total and paid amount disagree, by tour
  * date.
  *
@@ -314,6 +506,14 @@ export async function revenueByTour(range: DateRangeInput): Promise<TourRevenueR
  * claimed — exactly the row finance wants in front of them — and keeping it
  * also means this list always sums to the summary's `stillToCollectCentavos`,
  * which is a property a test can check and a `> 0` filter would quietly break.
+ *
+ * **`LEFT JOIN tours`, not `INNER JOIN` (Task T18, Must-fix #1).** `bookings.tour_id`
+ * is nullable since migration 0017, so an inner join silently dropped every
+ * transfer booking from this list — the exact hazard `bookings.tour_id`'s own
+ * doc comment in `schema.ts` names. `tourTitle` is `tours.title` for a tour,
+ * or the transfer's route ("Mactan Airport → Oslob") / "Custom transfer" for
+ * a staff-quoted one with no catalog route — the same fallback
+ * `revenueByRoute()` below uses, computed in `transferTitle()`.
  */
 export async function outstandingBookings(range: DateRangeInput): Promise<OutstandingRow[]> {
   const rows = await getDb()
@@ -321,6 +521,10 @@ export async function outstandingBookings(range: DateRangeInput): Promise<Outsta
       bookingId: bookings.id,
       ref: bookings.ref,
       tourTitle: tours.title,
+      fromPlaceName: outstandingFromPlace.name,
+      toPlaceName: outstandingToPlace.name,
+      direction: bookingTransferDetails.direction,
+      customRouteDescription: bookingTransferDetails.customRouteDescription,
       tourDate: bookings.tourDate,
       status: bookings.status,
       leadName: bookings.leadName,
@@ -337,7 +541,11 @@ export async function outstandingBookings(range: DateRangeInput): Promise<Outsta
       paidCentavos: bookings.amountPaidCentavos,
     })
     .from(bookings)
-    .innerJoin(tours, eq(tours.id, bookings.tourId))
+    .leftJoin(tours, eq(tours.id, bookings.tourId))
+    .leftJoin(bookingTransferDetails, eq(bookingTransferDetails.bookingId, bookings.id))
+    .leftJoin(transferRoutes, eq(transferRoutes.id, bookings.routeId))
+    .leftJoin(outstandingFromPlace, eq(outstandingFromPlace.id, transferRoutes.fromPlaceId))
+    .leftJoin(outstandingToPlace, eq(outstandingToPlace.id, transferRoutes.toPlaceId))
     .where(
       and(
         tourDateInWindow(range),
@@ -348,10 +556,43 @@ export async function outstandingBookings(range: DateRangeInput): Promise<Outsta
     .orderBy(asc(bookings.tourDate), asc(bookings.id));
 
   return rows.map((row) => ({
-    ...row,
+    bookingId: row.bookingId,
+    ref: row.ref,
+    tourTitle:
+      row.tourTitle ??
+      transferTitle({
+        fromName: row.fromPlaceName,
+        toName: row.toPlaceName,
+        direction: row.direction,
+        customRouteDescription: row.customRouteDescription,
+      }),
     tourDate: civilTourDateOrThrow(row),
+    status: row.status,
+    leadName: row.leadName,
+    totalCentavos: row.totalCentavos,
+    paidCentavos: row.paidCentavos,
     outstandingCentavos: row.totalCentavos - row.paidCentavos,
   }));
+}
+
+/**
+ * `tourTitle`'s transfer-side fallback (Task T18): a route's two places in
+ * travelled order, or "Custom transfer" for a staff-quoted booking with no
+ * catalog route. Shared by `outstandingBookings` above (one row, a real
+ * `customRouteDescription`) and `revenueByRoute` below (grouped, so there is
+ * no single description to show for the custom bucket — see that function's
+ * own note).
+ */
+function transferTitle(opts: {
+  fromName: string | null;
+  toName: string | null;
+  direction: TransferDirection | null;
+  customRouteDescription: string | null;
+}): string {
+  if (opts.fromName !== null && opts.toName !== null) {
+    return routeDisplayName(opts.fromName, opts.toName, opts.direction ?? 'forward');
+  }
+  return opts.customRouteDescription ?? 'Custom transfer';
 }
 
 /**
