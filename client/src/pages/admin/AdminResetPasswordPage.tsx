@@ -152,7 +152,7 @@ export default function AdminResetPasswordPage() {
               Some mail apps shorten long links. Ask for a new reset link and open it directly from
               the email.
             </p>
-            <Button asChild variant="primary-pill">
+            <Button asChild variant="primary-pill" className="w-full sm:w-auto">
               <Link to="/admin/forgot-password">Send me a new link</Link>
             </Button>
           </div>
@@ -191,7 +191,12 @@ export default function AdminResetPasswordPage() {
               disabled={reset.isPending}
             />
 
-            <Button type="submit" variant="primary-pill" disabled={reset.isPending}>
+            <Button
+              type="submit"
+              variant="primary-pill"
+              className="w-full sm:w-auto"
+              disabled={reset.isPending}
+            >
               {reset.isPending ? (
                 <>
                   <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />

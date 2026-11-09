@@ -179,7 +179,12 @@ export default function AdminChangePasswordPage() {
           error={errors.confirmPassword}
         />
 
-        <Button type="submit" variant="primary-pill" disabled={change.isPending}>
+        <Button
+          type="submit"
+          variant="primary-pill"
+          className="w-full sm:w-auto"
+          disabled={change.isPending}
+        >
           {change.isPending ? (
             <>
               <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />

@@ -194,7 +194,12 @@ export default function AdminForgotPasswordPage() {
               ) : null}
             </div>
 
-            <Button type="submit" variant="primary-pill" disabled={request.isPending}>
+            <Button
+              type="submit"
+              variant="primary-pill"
+              className="w-full sm:w-auto"
+              disabled={request.isPending}
+            >
               {request.isPending ? (
                 <>
                   <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />

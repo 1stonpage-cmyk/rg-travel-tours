@@ -200,7 +200,12 @@ export default function AdminLoginPage() {
             </div>
           </div>
 
-          <Button type="submit" variant="primary-pill" disabled={login.isPending}>
+          <Button
+            type="submit"
+            variant="primary-pill"
+            className="w-full sm:w-auto"
+            disabled={login.isPending}
+          >
             {login.isPending ? (
               <>
                 <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />
