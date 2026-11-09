@@ -43,6 +43,7 @@
  * having to remember it exists.
  */
 import { and, asc, eq } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/mysql-core';
 import { TRPCError } from '@trpc/server';
 import {
   driverStopCheckInSchema,
@@ -58,8 +59,18 @@ import {
   type TripDetail,
 } from '@rg/shared';
 import { getDb } from '../../db/client';
-import { bookingNotes, bookings, payments, tours, vans } from '../../db/schema';
+import {
+  bookingNotes,
+  bookingTransferDetails,
+  bookings,
+  payments,
+  tours,
+  transferPlaces,
+  transferRoutes,
+  vans,
+} from '../../db/schema';
 import { recordPendingCash } from '../../services/payments/record-payment';
+import { transferTitle } from '../../services/reports/money';
 import {
   checkInStop,
   completeTrip,
@@ -69,6 +80,10 @@ import {
 } from '../../services/trips/checkins';
 import { tripProgress } from '../../services/trips/progress';
 import { driverProcedure, router } from '../../trpc';
+
+/** Two aliases onto `transfer_places`, the same pattern `services/reports/money.ts` uses. */
+const driverFromPlace = alias(transferPlaces, 'driverFromPlace');
+const driverToPlace = alias(transferPlaces, 'driverToPlace');
 
 /**
  * Every trip assigned to ONE driver, oldest first, each carrying the bucket
@@ -96,11 +111,19 @@ export async function listDriverTrips(driverId: number, now: Date): Promise<Driv
     .select({
       bookingId: bookings.id,
       ref: bookings.ref,
+      tourId: bookings.tourId,
       tourTitle: tours.title,
       tourDate: bookings.tourDate,
       pax: bookings.pax,
       status: bookings.status,
       vanPlate: vans.plate,
+      // Task T22 — the same fields and the same cardinality argument
+      // `loadDriverTrip` below carries in full; kept short here.
+      pickupTime: bookingTransferDetails.pickupTime,
+      customRouteDescription: bookingTransferDetails.customRouteDescription,
+      direction: bookingTransferDetails.direction,
+      fromPlaceName: driverFromPlace.name,
+      toPlaceName: driverToPlace.name,
     })
     .from(bookings)
     /*
@@ -108,11 +131,15 @@ export async function listDriverTrips(driverId: number, now: Date): Promise<Driv
      * migration 0017, and an inner join would have dropped a driver's own
      * transfer trip out of their trip list — no error, no empty state, just a
      * trip they were assigned that their phone does not show them.
-     * `DriverTripRow.tourTitle` is nullable for it; what the screen should
-     * show instead (the route, the pickup time, the vehicle) is T22's.
+     * `DriverTripRow.tourTitle` is nullable for it; `transferRouteLabel` and
+     * `pickupTime` are what the row shows instead (Task T22).
      */
     .leftJoin(tours, eq(tours.id, bookings.tourId))
     .leftJoin(vans, eq(vans.id, bookings.vanId))
+    .leftJoin(bookingTransferDetails, eq(bookingTransferDetails.bookingId, bookings.id))
+    .leftJoin(transferRoutes, eq(transferRoutes.id, bookings.routeId))
+    .leftJoin(driverFromPlace, eq(driverFromPlace.id, transferRoutes.fromPlaceId))
+    .leftJoin(driverToPlace, eq(driverToPlace.id, transferRoutes.toPlaceId))
     .where(eq(bookings.driverId, driverId))
     .orderBy(asc(bookings.tourDate), asc(bookings.id));
 
@@ -125,7 +152,28 @@ export async function listDriverTrips(driverId: number, now: Date): Promise<Driv
      * day, which is the one bug this whole feature is shaped around.
      */
     const tourDate = manilaCivilDate(row.tourDate);
-    return { ...row, tourDate, bucket: driverTripBucket(tourDate, todayManila) };
+    return {
+      bookingId: row.bookingId,
+      ref: row.ref,
+      tourTitle: row.tourTitle,
+      tourDate,
+      pax: row.pax,
+      status: row.status,
+      vanPlate: row.vanPlate,
+      bucket: driverTripBucket(tourDate, todayManila),
+      // See `driverTripDetail`'s identical guard and its own comment on
+      // why `transferTitle()` cannot be called for a tour.
+      transferRouteLabel:
+        row.tourId === null
+          ? transferTitle({
+              fromName: row.fromPlaceName,
+              toName: row.toPlaceName,
+              direction: row.direction,
+              customRouteDescription: row.customRouteDescription,
+            })
+          : null,
+      pickupTime: row.pickupTime,
+    };
   });
 }
 
@@ -219,6 +267,18 @@ function paymentBox(input: {
  * `tourDate` is read straight out of the row and `paymentBox` compares two
  * integers. Callers that DO need the clock (the cash claim's today-only
  * rule) take their own explicit `now`, so this stays a pure read.
+ *
+ * ## The four new LEFT JOINs (Task T22) cannot fan out this row out
+ *
+ * `booking_transfer_details.booking_id` is this table's PRIMARY KEY, so at
+ * most one row per booking. `transfer_routes` is reached by
+ * `bookings.route_id`, a plain FK — at most one row. Each `transfer_places`
+ * alias is reached by that route's `from_place_id` / `to_place_id`, both
+ * `NOT NULL` FKs on `transfer_routes` — at most one row each, same as the
+ * existing `tours`/`vans` joins this function already LEFT JOINs. Every new
+ * join is therefore 1:1-or-absent, same as the two it already had, so
+ * `recordDriverCash` — which also calls this function — sees no row
+ * duplicated and no money figure double-counted.
  */
 async function loadDriverTrip(driverId: number, bookingId: number) {
   const db = getDb();
@@ -227,6 +287,7 @@ async function loadDriverTrip(driverId: number, bookingId: number) {
     .select({
       bookingId: bookings.id,
       ref: bookings.ref,
+      tourId: bookings.tourId,
       tourTitle: tours.title,
       tourDate: bookings.tourDate,
       pax: bookings.pax,
@@ -248,6 +309,15 @@ async function loadDriverTrip(driverId: number, bookingId: number) {
       totalCentavos: bookings.totalCentavos,
       paidCentavos: bookings.amountPaidCentavos,
       reviewRequired: bookings.paymentReviewRequired,
+      // Task T22 — all five NULL for a tour, see the module note above.
+      pickupTime: bookingTransferDetails.pickupTime,
+      dayUseEndTime: bookingTransferDetails.dayUseEndTime,
+      dropoffAddress: bookingTransferDetails.dropoffAddress,
+      dropoffMapsUrl: bookingTransferDetails.dropoffMapUrl,
+      customRouteDescription: bookingTransferDetails.customRouteDescription,
+      direction: bookingTransferDetails.direction,
+      fromPlaceName: driverFromPlace.name,
+      toPlaceName: driverToPlace.name,
     })
     .from(bookings)
     /*
@@ -259,6 +329,11 @@ async function loadDriverTrip(driverId: number, bookingId: number) {
      */
     .leftJoin(tours, eq(tours.id, bookings.tourId))
     .leftJoin(vans, eq(vans.id, bookings.vanId))
+    // Task T22 — see this function's own cardinality note above.
+    .leftJoin(bookingTransferDetails, eq(bookingTransferDetails.bookingId, bookings.id))
+    .leftJoin(transferRoutes, eq(transferRoutes.id, bookings.routeId))
+    .leftJoin(driverFromPlace, eq(driverFromPlace.id, transferRoutes.fromPlaceId))
+    .leftJoin(driverToPlace, eq(driverToPlace.id, transferRoutes.toPlaceId))
     .where(and(eq(bookings.id, bookingId), eq(bookings.driverId, driverId)))
     .limit(1);
 
@@ -356,6 +431,27 @@ export async function driverTripDetail(driverId: number, bookingId: number): Pro
     pickup: trip.pickup,
     pickupMapsUrl: trip.pickupMapsUrl,
     vanPlate: trip.vanPlate,
+    /*
+     * `transferTitle()` cannot tell a tour from a routeless, description-
+     * less transfer apart on its own (its own doc comment says so) — every
+     * input is `null` for a tour, which would answer "Custom transfer" for
+     * one. `trip.tourId === null` is the same discriminator the rest of
+     * this codebase uses (`bookings.tour_id`'s own doc comment), checked
+     * here before calling it at all.
+     */
+    transferRouteLabel:
+      trip.tourId === null
+        ? transferTitle({
+            fromName: trip.fromPlaceName,
+            toName: trip.toPlaceName,
+            direction: trip.direction,
+            customRouteDescription: trip.customRouteDescription,
+          })
+        : null,
+    pickupTime: trip.pickupTime,
+    dayUseEndTime: trip.dayUseEndTime,
+    dropoffAddress: trip.dropoffAddress,
+    dropoffMapsUrl: trip.dropoffMapsUrl,
     officeNotes: notes.map((row) => row.note),
     payment,
     /** Task 3's answer, unchanged — `total` counts the trip-start stop. */

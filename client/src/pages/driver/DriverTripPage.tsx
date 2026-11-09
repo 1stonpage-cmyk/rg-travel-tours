@@ -81,10 +81,12 @@ function TripScreen({
     <div className="space-y-5">
       <header>
         <BackLink />
-        {/* Null on a transfer booking (T6); T22 puts the route and the
-            pickup time here instead. Never an empty <h1>. */}
+        {/* `tourTitle` is null on a transfer (T6); `transferRouteLabel` is
+            the route or the custom description (T22). The final fallback
+            is unreachable for a real booking — every transfer has one or
+            the other — and exists only so this heading is never empty. */}
         <h1 className="text-brand-blue-900 mt-2 text-2xl font-bold">
-          {trip.tourTitle ?? TRANSFER_BOOKING_LABEL}
+          {trip.tourTitle ?? trip.transferRouteLabel ?? TRANSFER_BOOKING_LABEL}
         </h1>
         <p className="text-brand-blue-900 mt-1 text-base font-medium">
           {dateFormatter.format(new Date(`${trip.tourDate}T00:00:00Z`))}
@@ -141,11 +143,45 @@ function TripScreen({
           </p>
         ) : (
           <div>
-            <p className="text-brand-blue-900 text-base font-semibold">Pickup</p>
+            <p className="text-brand-blue-900 text-base font-semibold">
+              Pickup
+              {/* "HH:mm", Asia/Manila, already a civil time — rendered as
+                  stored, not reformatted (T22). Null for a tour. Its own
+                  <span>, not a bare text node, so the time is independently
+                  findable in the DOM the way every other value here is. */}
+              {trip.pickupTime === null ? null : (
+                <>
+                  <span aria-hidden="true"> · </span>
+                  <span>{trip.pickupTime}</span>
+                </>
+              )}
+            </p>
             <p className="text-brand-blue-900 text-base">{trip.pickup}</p>
             {trip.pickupMapsUrl === null ? null : (
               <a
                 href={trip.pickupMapsUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`${CONTACT_CLASS} mt-2`}
+              >
+                <Navigation className="size-5" aria-hidden="true" />
+                Open in Maps
+              </a>
+            )}
+          </div>
+        )}
+        {/* Day-use only (T22) — the trip's own end time, not a pickup. */}
+        {trip.dayUseEndTime === null ? null : (
+          <p className="text-brand-blue-900 text-base">Day use until {trip.dayUseEndTime}</p>
+        )}
+        {/* Null for a tour; every transfer carries one (T22). */}
+        {trip.dropoffAddress === null ? null : (
+          <div>
+            <p className="text-brand-blue-900 text-base font-semibold">Drop-off</p>
+            <p className="text-brand-blue-900 text-base">{trip.dropoffAddress}</p>
+            {trip.dropoffMapsUrl === null ? null : (
+              <a
+                href={trip.dropoffMapsUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className={`${CONTACT_CLASS} mt-2`}

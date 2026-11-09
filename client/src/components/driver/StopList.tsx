@@ -181,11 +181,28 @@ export default function StopList({ bookingId, status, progress, onChanged }: Sto
         <h2 id="itinerary-heading" className="text-brand-blue-900 text-xl font-bold">
           Itinerary
         </h2>
-        {/* Progress in words. Never a bar on its own. */}
-        <p className="text-brand-blue-900 mt-1 text-lg font-semibold">
-          {progress.done} of {progress.total} stops
+        {/*
+         * `total` counts the trip-start pseudo-stop, so a trip with no
+         * itinerary stops at all — every transfer, structurally confirmed
+         * in T22 — reads `total === 1`. "1 of 1 stops" right after Start
+         * would read as FINISHED when the trip has barely begun, so that
+         * case gets its own copy rather than the generic count. Progress
+         * in words either way — never a bar on its own.
+         */}
+        {progress.total === 1 ? (
+          <p className="text-brand-blue-900 mt-1 text-lg font-semibold">
+            {progress.done === 1 ? 'Trip started' : 'Not started yet'}
+          </p>
+        ) : (
+          <p className="text-brand-blue-900 mt-1 text-lg font-semibold">
+            {progress.done} of {progress.total} stops
+          </p>
+        )}
+        <p className="text-brand-blue-900 text-sm">
+          {progress.total === 1
+            ? 'No itinerary stops on this trip. Tap Complete trip when it is over.'
+            : 'Leaving for the pickup counts as the first.'}
         </p>
-        <p className="text-brand-blue-900 text-sm">Leaving for the pickup counts as the first.</p>
       </div>
 
       {notice ? (

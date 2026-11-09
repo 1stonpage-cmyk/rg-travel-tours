@@ -74,15 +74,24 @@ function TripCard({ trip }: { trip: DriverTripRow }) {
         className="tap-target press border-brand-blue-200 bg-background focus-visible:ring-brand-blue-600 flex items-center gap-3 rounded-xl border p-4 transition-colors focus-visible:outline-none focus-visible:ring-2"
       >
         <span className="min-w-0 flex-1">
-          {/* Null on a transfer booking (T6) — the row must still read as a trip. */}
+          {/* `tourTitle` is null on a transfer (T6); `transferRouteLabel` is
+              the route or the custom description (T22) — a driver with
+              several transfers in one day needs the rows to read apart. */}
           <span className="text-brand-blue-900 block text-base font-bold">
-            {trip.tourTitle ?? TRANSFER_BOOKING_LABEL}
+            {trip.tourTitle ?? trip.transferRouteLabel ?? TRANSFER_BOOKING_LABEL}
           </span>
           <span className="text-brand-blue-900 mt-1 block text-base">
             {readableDate(trip.tourDate)}
             <span aria-hidden="true"> · </span>
             <Users className="inline size-4 align-[-2px]" aria-hidden="true" />{' '}
             {trip.pax === 1 ? '1 guest' : `${trip.pax} guests`}
+            {/* "HH:mm", Asia/Manila, already a civil time (T22). Null for a tour. */}
+            {trip.pickupTime === null ? null : (
+              <>
+                <span aria-hidden="true"> · </span>
+                {trip.pickupTime}
+              </>
+            )}
             {trip.vanPlate === null ? null : (
               <>
                 <span aria-hidden="true"> · </span>

@@ -145,6 +145,15 @@ export interface DriverTripRow {
   status: BookingStatus;
   vanPlate: string | null;
   bucket: DriverTripBucket;
+  /**
+   * The route or the custom description, or "Custom transfer" — NULL for a
+   * tour (Task T22, same field `TripDetail` carries, same reason: a driver
+   * with several transfers in one day must be able to tell the rows apart
+   * without opening each one).
+   */
+  transferRouteLabel: string | null;
+  /** "HH:mm", Asia/Manila. NULL for a tour. */
+  pickupTime: string | null;
 }
 
 /* ------------------------------------------------------------------ *
@@ -303,6 +312,18 @@ export type PaymentBoxState =
  * the driver's itinerary and the dispatcher's progress bar from disagreeing.
  * Note `total` counts the trip-start pseudo-stop, so a three-stop tour
  * reads 0 / 4.
+ *
+ * ## The five fields below (Task T22)
+ *
+ * All five are NULL for a tour (no `booking_transfer_details` row) and, with
+ * the exception of `transferRouteLabel`, read straight off that table for a
+ * transfer. Admitted under the same bar the header above sets — the driver
+ * drives there, or is released there — and nothing wider: no flight number,
+ * no airline, no vehicle-type name (the van's own plate already identifies
+ * it). `transferRouteLabel` holds the server's existing route-or-custom-
+ * description fallback (`services/reports/money.ts`'s `transferTitle()`,
+ * Task T18) computed for THIS booking, since `tourTitle` is always `null`
+ * here and the screen must show the driver where they are going.
  */
 export interface TripDetail {
   bookingId: number;
@@ -319,6 +340,14 @@ export interface TripDetail {
   pickup: string | null;
   pickupMapsUrl: string | null;
   vanPlate: string | null;
+  /** The route's two places in travelled order, or the custom description, or "Custom transfer" — NULL for a tour. */
+  transferRouteLabel: string | null;
+  /** "HH:mm", Asia/Manila. NULL for a tour. */
+  pickupTime: string | null;
+  /** NULL for a tour or a one-way transfer. */
+  dayUseEndTime: string | null;
+  dropoffAddress: string | null;
+  dropoffMapsUrl: string | null;
   /** `booking_notes.note`, oldest first. Text only. */
   officeNotes: string[];
   payment: PaymentBoxState;

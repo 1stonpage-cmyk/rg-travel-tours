@@ -58,7 +58,13 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { BookingStatus, PaymentBoxState, TripProgressStop } from '@rg/shared';
+import type {
+  BookingStatus,
+  DriverTripRow,
+  PaymentBoxState,
+  TripDetail,
+  TripProgressStop,
+} from '@rg/shared';
 import DriverTripPage from '@/pages/driver/DriverTripPage';
 import { TrpcProviders } from '@/lib/trpc';
 import { mockTrpc, mockTrpcError, resetTrpcMock } from './helpers/mock-trpc';
@@ -92,14 +98,41 @@ function trip(
     status?: BookingStatus;
     payment?: PaymentBoxState;
     stops?: TripProgressStop[];
+    // Task T22's five new fields — explicit here (rather than left to fall
+    // through to `undefined`) so this fixture cannot silently drift out of
+    // sync with `TripDetail` the way an untyped literal would. Defaulted to
+    // the TOUR shape (all null); the transfer-specific tests below override
+    // them.
+    tourTitle?: string | null;
+    transferRouteLabel?: string | null;
+    pickupTime?: string | null;
+    dayUseEndTime?: string | null;
+    dropoffAddress?: string | null;
+    dropoffMapsUrl?: string | null;
   } = {},
-) {
+): TripDetail {
   const status = overrides.status ?? 'in_progress';
   const stops = overrides.stops ?? STOPS;
+  /*
+   * A merged-defaults OBJECT, not individual `?? default` fallbacks: an
+   * override explicitly set to `null` (a transfer trip's `tourTitle`, say)
+   * is nullish, so `??` would have silently discarded it back to the
+   * default. Spreading the override OVER the defaults respects an explicit
+   * `null` the way `??` cannot.
+   */
+  const fields = {
+    tourTitle: 'Oslob Whale Shark Watching' as string | null,
+    transferRouteLabel: null as string | null,
+    pickupTime: null as string | null,
+    dayUseEndTime: null as string | null,
+    dropoffAddress: null as string | null,
+    dropoffMapsUrl: null as string | null,
+    ...overrides,
+  };
   return {
     bookingId: 7,
     ref: 'RG-7KQ4M9',
-    tourTitle: 'Oslob Whale Shark Watching',
+    tourTitle: fields.tourTitle,
     tourDate: '2026-10-16',
     pax: 4,
     status,
@@ -108,6 +141,11 @@ function trip(
     pickup: 'Radisson Blu lobby, Cebu City',
     pickupMapsUrl: 'https://maps.example.test/radisson',
     vanPlate: 'ABC 123',
+    transferRouteLabel: fields.transferRouteLabel,
+    pickupTime: fields.pickupTime,
+    dayUseEndTime: fields.dayUseEndTime,
+    dropoffAddress: fields.dropoffAddress,
+    dropoffMapsUrl: fields.dropoffMapsUrl,
     officeNotes: ['Guest is waiting at the second gate.'],
     payment: overrides.payment ?? ({ kind: 'collect_cash', amountCentavos: 150_000 } as const),
     progress: {
@@ -121,7 +159,7 @@ function trip(
 }
 
 /** The `bucket` the SERVER resolved. `today` unless a test says otherwise. */
-function tripsRow(bucket: 'today' | 'upcoming' | 'history' = 'today') {
+function tripsRow(bucket: 'today' | 'upcoming' | 'history' = 'today'): DriverTripRow[] {
   return [
     {
       bookingId: 7,
@@ -132,6 +170,8 @@ function tripsRow(bucket: 'today' | 'upcoming' | 'history' = 'today') {
       status: 'in_progress',
       vanPlate: 'ABC 123',
       bucket,
+      transferRouteLabel: null,
+      pickupTime: null,
     },
   ];
 }
@@ -171,6 +211,56 @@ describe('DriverTripPage — the manifest', () => {
     expect(screen.getByText('Guest is waiting at the second gate.')).toBeInTheDocument();
     // §8 gives the driver a phone and no address. There is no e-mail here.
     expect(document.body.textContent).not.toMatch(/@example/);
+  });
+
+  /**
+   * Task T22. `tourTitle` is null for every transfer (T6); the heading must
+   * show the real route rather than fall all the way to the generic
+   * `TRANSFER_BOOKING_LABEL` the way it did before this task.
+   */
+  it('shows the route, pickup time, and drop-off for a transfer trip', async () => {
+    mockTrpc({
+      'driver.trip': trip({
+        tourTitle: null,
+        transferRouteLabel: 'Mactan-Cebu International Airport → Oslob',
+        pickupTime: '08:00',
+        dropoffAddress: 'A private resort in Oslob',
+        dropoffMapsUrl: 'https://maps.example.test/oslob-resort',
+        stops: [STOPS[0]!],
+      }),
+      'driver.trips': tripsRow(),
+    });
+    renderTrip();
+
+    expect(
+      await screen.findByRole('heading', {
+        level: 1,
+        name: 'Mactan-Cebu International Airport → Oslob',
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('08:00')).toBeInTheDocument();
+    expect(screen.getByText('A private resort in Oslob')).toBeInTheDocument();
+    const mapsLinks = screen.getAllByRole('link', { name: /open in maps/i });
+    expect(mapsLinks).toHaveLength(2); // pickup AND drop-off
+    expect(mapsLinks[1]).toHaveAttribute('href', 'https://maps.example.test/oslob-resort');
+  });
+
+  /** Day-use only (T22) — the trip's own release time, not a pickup. */
+  it('shows a day-use trip’s end time', async () => {
+    mockTrpc({
+      'driver.trip': trip({
+        tourTitle: null,
+        transferRouteLabel: 'Custom transfer',
+        pickupTime: '09:00',
+        dayUseEndTime: '17:00',
+        dropoffAddress: 'Back at the hotel',
+        stops: [STOPS[0]!],
+      }),
+      'driver.trips': tripsRow(),
+    });
+    renderTrip();
+
+    expect(await screen.findByText('Day use until 17:00')).toBeInTheDocument();
   });
 });
 
@@ -504,6 +594,49 @@ describe('StopList — a checklist, not a form', () => {
     renderTrip();
 
     expect(await screen.findByText('2 of 4 stops')).toBeInTheDocument();
+  });
+
+  /**
+   * Task T22's own clause: a trip with no itinerary stops at all — every
+   * transfer, structurally — has `total === 1` (the trip-start pseudo-stop
+   * alone). "1 of 1 stops" right after Start would read as the trip being
+   * OVER, which it is not; this is the dedicated copy for that case.
+   */
+  it('does not say "1 of 1 stops" for a trip with no itinerary at all', async () => {
+    const notStarted: TripProgressStop[] = [
+      { stopId: null, name: 'Start trip', sortOrder: 0, checkedAt: null, undone: false },
+    ];
+    mockTrpc({
+      'driver.trip': trip({ status: 'confirmed', stops: notStarted }),
+      'driver.trips': tripsRow(),
+    });
+    renderTrip();
+
+    expect(await screen.findByText('Not started yet')).toBeInTheDocument();
+    expect(
+      screen.getByText('No itinerary stops on this trip. Tap Complete trip when it is over.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/of 1 stops/)).not.toBeInTheDocument();
+  });
+
+  it('says "Trip started" rather than "1 of 1 stops" once the only stop is checked in', async () => {
+    const started: TripProgressStop[] = [
+      {
+        stopId: null,
+        name: 'Start trip',
+        sortOrder: 0,
+        checkedAt: '2026-10-16T01:15:00.000Z',
+        undone: false,
+      },
+    ];
+    mockTrpc({
+      'driver.trip': trip({ status: 'in_progress', stops: started }),
+      'driver.trips': tripsRow(),
+    });
+    renderTrip();
+
+    expect(await screen.findByText('Trip started')).toBeInTheDocument();
+    expect(screen.queryByText(/of 1 stops/)).not.toBeInTheDocument();
   });
 
   it('keeps a retracted check-in visible and its stop tappable again', async () => {

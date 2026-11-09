@@ -30,6 +30,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
+import type { DriverTripRow } from '@rg/shared';
 import DriverTripsPage from '@/pages/driver/DriverTripsPage';
 import { TrpcProviders } from '@/lib/trpc';
 import { mockTrpc, mockTrpcError, resetTrpcMock } from './helpers/mock-trpc';
@@ -38,7 +39,11 @@ afterEach(() => {
   resetTrpcMock();
 });
 
-const TRIPS = [
+// Typed as `DriverTripRow[]`, not left to infer: Task T22 added two fields
+// to the real contract, and an untyped literal would have let this fixture
+// silently drift out of sync with it the way `driver-trip-page.test.tsx`'s
+// own `trip()` helper once did.
+const TRIPS: DriverTripRow[] = [
   {
     bookingId: 31,
     ref: 'RG-HIST01',
@@ -49,6 +54,8 @@ const TRIPS = [
     vanPlate: 'XYZ 789',
     // Deliberately disagrees with any clock: the SERVER said history.
     bucket: 'history',
+    transferRouteLabel: null,
+    pickupTime: null,
   },
   {
     bookingId: 7,
@@ -59,6 +66,8 @@ const TRIPS = [
     status: 'in_progress',
     vanPlate: 'ABC 123',
     bucket: 'today',
+    transferRouteLabel: null,
+    pickupTime: null,
   },
   {
     bookingId: 12,
@@ -69,8 +78,24 @@ const TRIPS = [
     status: 'assigned',
     vanPlate: null,
     bucket: 'upcoming',
+    transferRouteLabel: null,
+    pickupTime: null,
   },
 ];
+
+/** Task T22 — a transfer row: `tourTitle` null, the route and pickup time present. */
+const TRANSFER_TRIP: DriverTripRow = {
+  bookingId: 44,
+  ref: 'RG-XFER44',
+  tourTitle: null,
+  tourDate: '2026-10-16',
+  pax: 2,
+  status: 'assigned',
+  vanPlate: 'DEF 456',
+  bucket: 'today',
+  transferRouteLabel: 'Mactan-Cebu International Airport → Moalboal',
+  pickupTime: '06:30',
+};
 
 function renderTrips() {
   return render(
@@ -141,6 +166,22 @@ describe('DriverTripsPage — three tabs from one payload', () => {
     // The status is WORDS, never a raw enum value.
     expect(within(row).getByText(/Under way/)).toBeInTheDocument();
     expect(row).toHaveAttribute('href', '/driver/trip/7');
+  });
+
+  /**
+   * Task T22. `tourTitle` is null for every transfer (T6); before this
+   * task the row fell all the way to the generic `TRANSFER_BOOKING_LABEL`,
+   * which read identically for every transfer a driver had that day.
+   */
+  it('shows the route and pickup time for a transfer row, instead of the generic label', async () => {
+    mockTrpc({ 'driver.trips': [TRANSFER_TRIP] });
+    renderTrips();
+
+    const row = (await screen.findByText('Mactan-Cebu International Airport → Moalboal')).closest(
+      'a',
+    )!;
+    expect(within(row).getByText(/06:30/)).toBeInTheDocument();
+    expect(within(row).queryByText(/transfer booking/i)).not.toBeInTheDocument();
   });
 
   it('opens one trip when its row is tapped', async () => {
