@@ -213,6 +213,16 @@ export default function FloatingWhatsApp() {
    */
   const { data: settings } = trpc.settings.get.useQuery();
   const openState = settings?.openState ?? null;
+  /*
+   * `show_tours` gate (DEMO POLISH task 1B, owner decision 1): every
+   * guest-facing CTA that would otherwise send a guest to the tour catalog
+   * follows the same switch the nav does — hidden-until-proven-true,
+   * matching `SiteHeader`/`SiteFooter`/`CatalogPreview`/`MostVisited`, not
+   * `HeroSection`'s own pre-existing "show unless proven false" exception.
+   * Reuses this same `settings.get` query (already on this component for
+   * `openState` above), so this costs no extra request.
+   */
+  const showTours = settings?.showTours ?? false;
 
   // Computed once at mount (not re-read on every render) so a mid-session
   // sessionStorage write from this same component doesn't retroactively
@@ -306,7 +316,11 @@ export default function FloatingWhatsApp() {
         style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
       >
         <Button asChild size="lg" className="tap-target flex-1">
-          <Link to="/tours">Book a tour</Link>
+          {showTours ? (
+            <Link to="/tours">Book a tour</Link>
+          ) : (
+            <Link to="/transfer">Book a transfer</Link>
+          )}
         </Button>
 
         <div className="group relative flex items-center">

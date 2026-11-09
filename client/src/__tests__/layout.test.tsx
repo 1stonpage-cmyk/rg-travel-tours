@@ -1,4 +1,4 @@
-import { act, render, screen, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -219,6 +219,61 @@ describe('nav hides "Tours" while show_tours is off, in all three places', () =>
     const footerNav = screen.getByRole('navigation', { name: /^footer$/i });
     expect(within(footerNav).getByRole('link', { name: /^transfers$/i })).toBeInTheDocument();
     expect(within(footerNav).queryByRole('link', { name: /^tours$/i })).toBeNull();
+  });
+});
+
+/**
+ * DEMO POLISH task 1B (owner decision 1): FloatingWhatsApp's mobile sticky
+ * bottom bar carries a CTA beside the WhatsApp control — "Book a tour" while
+ * tours are visible — which must drop to "Book a transfer" → /transfer while
+ * `show_tours` is off, exactly like the nav above. Note `SiteHeader`'s own
+ * header CTA is a DIFFERENT, already-unconditional "Book a transfer" button
+ * (Task T14, deliberately independent of `show_tours` — see that file's own
+ * comment); these assertions count both links by name so a regression in
+ * either one is caught rather than the two being confused for each other.
+ *
+ * Decided consent is seeded first (same as the "reserves mobile-only bottom
+ * padding" test above) so the bottom bar is actually visible rather than
+ * `aria-hidden` behind the still-undecided cookie banner.
+ */
+describe('FloatingWhatsApp mobile bottom bar CTA follows show_tours (DEMO POLISH task 1B)', () => {
+  beforeEach(() => {
+    localStorage.setItem(
+      CONSENT_STORAGE_KEY,
+      JSON.stringify({ v: 1, analytics: false, marketing: false, at: new Date().toISOString() }),
+    );
+  });
+
+  afterEach(() => {
+    localStorage.clear();
+  });
+
+  it('shows "Book a tour" → /tours when show_tours is on, and does not also label it "Book a transfer"', async () => {
+    mockTrpc({ 'settings.get': SETTINGS_FIXTURE }); // SETTINGS_FIXTURE.showTours is true.
+    renderLayout();
+
+    const tourLinks = await screen.findAllByRole('link', { name: /^book a tour$/i });
+    expect(tourLinks).toHaveLength(1);
+    expect(tourLinks[0]).toHaveAttribute('href', '/tours');
+
+    // Only the header's own, unrelated "Book a transfer" CTA — the bottom
+    // bar must not also carry that label while tours are visible.
+    expect(screen.getAllByRole('link', { name: /^book a transfer$/i })).toHaveLength(1);
+  });
+
+  it('shows "Book a transfer" → /transfer when show_tours is off, alongside (not instead of) the header\'s own unconditional one', async () => {
+    mockTrpc({ 'settings.get': { ...SETTINGS_FIXTURE, showTours: false } });
+    renderLayout();
+
+    // Wait for the resolved (false) state rather than asserting on the
+    // transient pre-resolution render, which also defaults to "off".
+    await waitFor(() => {
+      expect(screen.getAllByRole('link', { name: /^book a transfer$/i })).toHaveLength(2);
+    });
+    const transferLinks = screen.getAllByRole('link', { name: /^book a transfer$/i });
+    for (const link of transferLinks) expect(link).toHaveAttribute('href', '/transfer');
+
+    expect(screen.queryByRole('link', { name: /^book a tour$/i })).not.toBeInTheDocument();
   });
 });
 

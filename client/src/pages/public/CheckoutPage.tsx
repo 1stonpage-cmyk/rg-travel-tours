@@ -211,14 +211,20 @@ export default function CheckoutPage() {
   );
   const createHold = trpc.checkout.createHold.useMutation();
   /*
-   * No `settings.get` here any more (task A5). This page used to read it
-   * for ONE boolean, `manualTransferEnabled`; the question has grown a
-   * second half — whether online payment works at all — and both are now
-   * asked by `<PaymentOptions>` below, which is the only thing that acts on
-   * either and is shared with `BookingStatusPage`. The query is the same
-   * cache entry the layout already holds, so moving the read costs no
-   * request.
+   * `settings.get` moved OUT of this page for the payment-method question
+   * (task A5) — see the removed comment this one replaces: that read is
+   * `<PaymentOptions>`'s job now, shared with `BookingStatusPage`.
+   *
+   * It comes back here for a different, unrelated question (DEMO POLISH
+   * task 1B, owner decision 1): the "no selection yet" empty state below
+   * has a CTA back to the catalog, and that CTA must follow `show_tours`
+   * like every other guest-facing one does — "Browse tours"/`/tours` while
+   * tours are on, "Book a transfer"/`/transfer` while they are off. Costs no
+   * extra request: TanStack Query dedupes this against the same cache entry
+   * `<PaymentOptions>` asks for once a hold exists.
    */
+  const { data: settings } = trpc.settings.get.useQuery();
+  const showTours = settings?.showTours ?? false;
 
   /*
    * An invalid/expired coupon fails the WHOLE quote (couponCode is part of
@@ -343,10 +349,10 @@ export default function CheckoutPage() {
           We need a tour, a date and a group size before we can quote a price.
         </p>
         <Link
-          to="/tours"
+          to={showTours ? '/tours' : '/transfer'}
           className="bg-brand-blue-700 tap-target hover:bg-brand-blue-800 mt-6 inline-flex items-center justify-center rounded-md px-5 font-semibold text-white"
         >
-          Browse tours
+          {showTours ? 'Browse tours' : 'Book a transfer'}
         </Link>
       </div>
     );

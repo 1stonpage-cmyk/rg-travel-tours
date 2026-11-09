@@ -256,3 +256,34 @@ describe('BookingStatusPage — cancelled retry (Task 8b)', () => {
     expect(screen.queryByRole('button', { name: /try paying again/i })).not.toBeInTheDocument();
   });
 });
+
+/**
+ * DEMO POLISH task 1B (owner decision 1): every guest-facing tour CTA
+ * follows `show_tours`. This page's bottom "Browse tours" button renders
+ * under every booking regardless of status or whether it was a tour or a
+ * transfer booking, so it needs the gate too — "Book a transfer"/`/transfer`
+ * while tours are off, "Browse tours"/`/tours` (unchanged) while they are on.
+ */
+describe('BookingStatusPage — bottom CTA follows show_tours (DEMO POLISH task 1B)', () => {
+  it('shows "Browse tours" → /tours when show_tours is on', async () => {
+    mockTrpc({ 'checkout.bookingStatus': { ...BASE_STATUS, status: 'confirmed' } });
+    mockTrpc({ 'settings.get': SETTINGS_FIXTURE }); // SETTINGS_FIXTURE.showTours is true.
+    renderStatusPage();
+
+    await screen.findByText(/booking confirmed/i);
+    const link = screen.getByRole('link', { name: /^browse tours$/i });
+    expect(link).toHaveAttribute('href', '/tours');
+    expect(screen.queryByRole('link', { name: /^book a transfer$/i })).not.toBeInTheDocument();
+  });
+
+  it('shows "Book a transfer" → /transfer when show_tours is off', async () => {
+    mockTrpc({ 'checkout.bookingStatus': { ...BASE_STATUS, status: 'confirmed' } });
+    mockTrpc({ 'settings.get': { ...SETTINGS_FIXTURE, showTours: false } });
+    renderStatusPage();
+
+    await screen.findByText(/booking confirmed/i);
+    const link = screen.getByRole('link', { name: /^book a transfer$/i });
+    expect(link).toHaveAttribute('href', '/transfer');
+    expect(screen.queryByRole('link', { name: /^browse tours$/i })).not.toBeInTheDocument();
+  });
+});

@@ -144,6 +144,18 @@ export default function BookingStatusPage() {
   const [searchParams] = useSearchParams();
   const cancelled = searchParams.get('cancelled') === '1';
 
+  /*
+   * `show_tours` gate (DEMO POLISH task 1B, owner decision 1): the
+   * "Browse tours" CTA below renders under every booking, tour or
+   * transfer alike, and must follow the same switch every other
+   * guest-facing tour CTA does — "Browse tours"/`/tours` while tours are
+   * on, "Book a transfer"/`/transfer` while they are off. TanStack Query
+   * dedupes this against the same cache entry `<PaymentOptions>` asks for
+   * inside the cancelled notice below, so this costs no extra request.
+   */
+  const { data: settings } = trpc.settings.get.useQuery();
+  const showTours = settings?.showTours ?? false;
+
   const statusQuery = trpc.checkout.bookingStatus.useQuery(
     { ref: ref ?? '' },
     {
@@ -261,7 +273,11 @@ export default function BookingStatusPage() {
                 </Card>
 
                 <Button asChild variant="outline" className="tap-target w-full">
-                  <Link to="/tours">Browse tours</Link>
+                  {showTours ? (
+                    <Link to="/tours">Browse tours</Link>
+                  ) : (
+                    <Link to="/transfer">Book a transfer</Link>
+                  )}
                 </Button>
               </div>
             );

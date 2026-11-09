@@ -408,6 +408,33 @@ describe('CheckoutPage — pay now (Task 8b)', () => {
 });
 
 /**
+ * DEMO POLISH task 1B (owner decision 1): every guest-facing tour CTA
+ * follows `show_tours` — "Book a transfer"/`/transfer` while tours are off,
+ * the existing tour-facing wording/link while they are on. This page's
+ * "no selection yet" empty state (no tourSlug/date/pax in the URL, so
+ * `checkout.quote` is never even asked) has one such CTA, "Browse tours".
+ */
+describe('CheckoutPage — "no selection" empty state CTA follows show_tours (DEMO POLISH task 1B)', () => {
+  it('shows "Browse tours" → /tours when show_tours is on', async () => {
+    mockTrpc({ 'settings.get': SETTINGS_FIXTURE }); // SETTINGS_FIXTURE.showTours is true.
+    renderCheckout('/checkout/oslob-tour');
+
+    const link = await screen.findByRole('link', { name: /^browse tours$/i });
+    expect(link).toHaveAttribute('href', '/tours');
+    expect(screen.queryByRole('link', { name: /^book a transfer$/i })).not.toBeInTheDocument();
+  });
+
+  it('shows "Book a transfer" → /transfer when show_tours is off', async () => {
+    mockTrpc({ 'settings.get': { ...SETTINGS_FIXTURE, showTours: false } });
+    renderCheckout('/checkout/oslob-tour');
+
+    const link = await screen.findByRole('link', { name: /^book a transfer$/i });
+    expect(link).toHaveAttribute('href', '/transfer');
+    expect(screen.queryByRole('link', { name: /^browse tours$/i })).not.toBeInTheDocument();
+  });
+});
+
+/**
  * Task 8b: the date picker upstream of this page can still offer a date
  * `createHold` will refuse (BUILD_SPEC §3D's own documented gap). Until
  * that is fully closed everywhere, this page itself calls the advisory
