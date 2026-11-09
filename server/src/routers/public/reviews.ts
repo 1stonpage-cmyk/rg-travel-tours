@@ -82,13 +82,42 @@ export const reviewsRouter = router({
     .input(reviewsPublishedInput)
     .query(async ({ input }): Promise<ReviewsPublishedResult> => {
       const db = getDb();
+
+      // BUG-124 (owner decision 3): while tours are globally hidden, a
+      // review card must show no tour name, tour link or tour-identifying
+      // text — only the rating, the body, the guest name and the date. Read
+      // FIRST because every tour-shaped decision below depends on it, the
+      // same ordering `forTour`'s own BUG-122 fix uses.
+      const showTours = await readShowTours();
+
+      /*
+       * While tours are hidden the `tourId` filter is INERT — ignored, not
+       * refused, so every response is the site-wide one and no input can
+       * partition it. Ignoring rather than refusing is BUG-122's own shape:
+       * the answer is the one an un-tour-filtered call produces, so nothing
+       * about it confirms that the id names a tour.
+       *
+       * ONE variable, read by the `WHERE` and by BOTH aggregates below.
+       * Nulling the row fields alone would not have been enough: the items
+       * carry no `tourId` but `displayAggregate(input.tourId)` would still
+       * answer that tour's real average and review count, and a non-null
+       * aggregate for an id is exactly the existence-and-popularity oracle
+       * over a sequential integer that BUG-124 is about. Three call sites
+       * gated separately is how one of them later gets forgotten.
+       *
+       * No production caller passes `tourId` (the home page calls `{}`; a
+       * tour page's own reviews are `forTour`), so this changes nothing any
+       * surface does today — it closes a direct-call path.
+       */
+      const effectiveTourId = showTours ? input.tourId : undefined;
+
       const conditions = [eq(reviews.status, 'published')];
-      if (input.tourId !== undefined) conditions.push(eq(reviews.tourId, input.tourId));
+      if (effectiveTourId !== undefined) conditions.push(eq(reviews.tourId, effectiveTourId));
 
       // One query, one left join — a review has at most one tour, so there's
       // no fan-out to batch (unlike tours.list's per-tour images/ratings).
       // Never N+1: see "no N+1" test in public-queries.test.ts.
-      const items = await db
+      const rows = await db
         .select({
           id: reviews.id,
           tourId: reviews.tourId,
@@ -111,9 +140,20 @@ export const reviewsRouter = router({
         .orderBy(desc(reviews.createdAt), desc(reviews.id))
         .limit(input.limit);
 
+      // BUG-124: the fields themselves are nulled HERE, on the server
+      // response, not merely hidden by the client — `tourId` is a sequential
+      // integer and leaving it on the wire would let a crawler of the
+      // network response (not just the rendered page) correlate reviews to
+      // tours while the catalog is meant to be invisible. ON (unchanged):
+      // every row keeps its real `tourId`/`tourTitle`, exactly as before this
+      // fix existed.
+      const items: Review[] = showTours
+        ? rows
+        : rows.map((row) => ({ ...row, tourId: null, tourTitle: null }));
+
       const [display, real] = await Promise.all([
-        displayAggregate(input.tourId),
-        realAggregate(input.tourId),
+        displayAggregate(effectiveTourId),
+        realAggregate(effectiveTourId),
       ]);
 
       return { items, displayAggregate: display, realAggregate: real };

@@ -286,13 +286,118 @@ describeWithDb('public queries', () => {
     try {
       const r = await caller.reviews.published({});
       expect(r.items.length).toBeGreaterThan(0);
-      // The joined items query plus displayAggregate() and realAggregate()
-      // (run in parallel via Promise.all) — fixed regardless of how many
-      // reviews exist, never one query per review.
-      expect(calls).toBe(3);
+      // The show_tours read (BUG-124), the joined items query, plus
+      // displayAggregate() and realAggregate() (run in parallel via
+      // Promise.all) — fixed regardless of how many reviews exist, never
+      // one query per review.
+      expect(calls).toBe(4);
     } finally {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (pool as any).query = originalQuery;
+    }
+  });
+
+  /**
+   * BUG-124 (owner decision 3): while `show_tours` is off, a review card
+   * must carry NO tour-identifying data — not just render none. `tourId` is
+   * a sequential integer, so leaving it on the wire while only hiding
+   * `tourTitle` in the UI would still let the catalog be enumerated from the
+   * network response alone. Asserted on the PROCEDURE'S OWN OUTPUT, the same
+   * way BUG-122's `forTour` fix is pinned — a DOM assertion could pass while
+   * the field still leaked.
+   */
+  it('reviews.published nulls tourId and tourTitle while show_tours is off (BUG-124)', async () => {
+    const db = getDb();
+    await db.update(settingsTable).set({ value: false }).where(eq(settingsTable.key, 'show_tours'));
+    try {
+      const r = await caller.reviews.published({});
+      expect(r.items.length).toBeGreaterThan(0);
+      for (const item of r.items) {
+        expect(item.tourId).toBeNull();
+        expect(item.tourTitle).toBeNull();
+      }
+      // Nothing tour-identifying anywhere in the serialized payload either —
+      // guards against a future field that also names the tour.
+      expect(JSON.stringify(r.items)).not.toMatch(/"tourId":\d/);
+    } finally {
+      await db
+        .update(settingsTable)
+        .set({ value: true })
+        .where(eq(settingsTable.key, 'show_tours'));
+    }
+  });
+
+  /**
+   * BUG-124, the input half (found by the dedicated reviewer of the fix
+   * above). Nulling the row fields is not sufficient on its own: the
+   * procedure's `tourId` INPUT also drove the `WHERE` and both aggregates,
+   * so `{tourId: N}` while tours were hidden still answered that tour's real
+   * average and review count — a non-null aggregate for an id is an
+   * existence-and-popularity oracle over a sequential integer, which is the
+   * whole of what BUG-124 is about, and the items being anonymized does not
+   * undo it.
+   *
+   * While off, the filter is INERT: the tour-filtered call must be
+   * indistinguishable from the unfiltered one, items and aggregates alike.
+   * The ON premise is asserted rather than assumed — without it the whole
+   * test could pass vacuously on a seed where one tour's aggregate happens
+   * to equal the site's.
+   */
+  it('reviews.published ignores the tourId filter entirely while show_tours is off (BUG-124, input half)', async () => {
+    const db = getDb();
+
+    // The premise, ON: the filter really does narrow both the items and the
+    // aggregate, so "identical while off" below is a real difference erased.
+    const onAll = await caller.reviews.published({ limit: 50 });
+    const firstWithTour = onAll.items.find((i) => i.tourId !== null);
+    expect(firstWithTour).toBeDefined();
+    const someTourId = firstWithTour!.tourId!;
+    const onFiltered = await caller.reviews.published({ tourId: someTourId, limit: 50 });
+    expect(onFiltered.items.length).toBeGreaterThan(0);
+    expect(onFiltered.items.length).toBeLessThan(onAll.items.length);
+    expect(onFiltered.displayAggregate!.count).toBeLessThan(onAll.displayAggregate!.count);
+
+    await db.update(settingsTable).set({ value: false }).where(eq(settingsTable.key, 'show_tours'));
+    try {
+      const offFiltered = await caller.reviews.published({ tourId: someTourId, limit: 50 });
+      const offAll = await caller.reviews.published({ limit: 50 });
+
+      // Same rows, in the same order — the filter selected nothing.
+      expect(offFiltered.items.map((i) => i.id)).toEqual(offAll.items.map((i) => i.id));
+      // And the aggregates are the site-wide pair, never the tour's own.
+      expect(offFiltered.displayAggregate).toEqual(offAll.displayAggregate);
+      expect(offFiltered.realAggregate).toEqual(offAll.realAggregate);
+      // Stated absolutely too, so a future refactor that merely made the two
+      // calls agree on some OTHER tour-scoped number still goes red here.
+      expect(offFiltered.displayAggregate!.count).toBe(onAll.displayAggregate!.count);
+    } finally {
+      await db
+        .update(settingsTable)
+        .set({ value: true })
+        .where(eq(settingsTable.key, 'show_tours'));
+    }
+  });
+
+  /**
+   * ON leaves `published` exactly as it already was (owner decision 3's own
+   * "ON -> unchanged" clause) — same real `tourId`/`tourTitle` as the
+   * existing "joins each review to its tour title" test above, just also
+   * pinned explicitly against the flag so a regression that always nulls
+   * the fields (rather than only while off) goes red here.
+   */
+  it('reviews.published returns the real tourId and tourTitle while show_tours is on (unchanged)', async () => {
+    const db = getDb();
+    const tourTitles = new Map(
+      (await db.select({ id: toursTable.id, title: toursTable.title }).from(toursTable)).map(
+        (t) => [t.id, t.title],
+      ),
+    );
+
+    const r = await caller.reviews.published({});
+    const withTour = r.items.filter((i) => i.tourId !== null);
+    expect(withTour.length).toBeGreaterThan(0);
+    for (const item of withTour) {
+      expect(item.tourTitle).toBe(tourTitles.get(item.tourId!));
     }
   });
 
