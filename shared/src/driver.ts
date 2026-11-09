@@ -313,17 +313,21 @@ export type PaymentBoxState =
  * Note `total` counts the trip-start pseudo-stop, so a three-stop tour
  * reads 0 / 4.
  *
- * ## The five fields below (Task T22)
+ * ## The eight fields below (Task T22)
  *
- * All five are NULL for a tour (no `booking_transfer_details` row) and, with
- * the exception of `transferRouteLabel`, read straight off that table for a
- * transfer. Admitted under the same bar the header above sets — the driver
- * drives there, or is released there — and nothing wider: no flight number,
- * no airline, no vehicle-type name (the van's own plate already identifies
- * it). `transferRouteLabel` holds the server's existing route-or-custom-
- * description fallback (`services/reports/money.ts`'s `transferTitle()`,
- * Task T18) computed for THIS booking, since `tourTitle` is always `null`
- * here and the screen must show the driver where they are going.
+ * All eight are NULL for a tour (no `booking_transfer_details` row) and,
+ * with the exception of `transferRouteLabel`, read straight off that table
+ * for a transfer. The plan's own file-by-file table names this screen's
+ * scope directly: "Pickup time, luggage, dropoff, flight/airline" — which
+ * is the actual bar, not this interface's own older RA-10173 framing
+ * above (written before transfers existed, and silent on all eight of
+ * these). No vehicle-type name either way (the van's own plate already
+ * identifies it). `transferRouteLabel` holds the server's existing
+ * route-or-custom-description fallback (`services/reports/money.ts`'s
+ * `transferTitle()`, Task T18) computed for THIS booking, since `tourTitle`
+ * is always `null` here and the screen must show the driver where they are
+ * going. `flightNumber`/`airline` are additionally NULL for a day-use hire
+ * (no flight) and for a one-way leg that is not an airport pickup.
  */
 export interface TripDetail {
   bookingId: number;
@@ -348,6 +352,10 @@ export interface TripDetail {
   dayUseEndTime: string | null;
   dropoffAddress: string | null;
   dropoffMapsUrl: string | null;
+  luggageCount: number | null;
+  /** Airport pickups only. NULL for a tour, a day-use hire, or a non-airport one-way leg. */
+  flightNumber: string | null;
+  airline: string | null;
   /** `booking_notes.note`, oldest first. Text only. */
   officeNotes: string[];
   payment: PaymentBoxState;

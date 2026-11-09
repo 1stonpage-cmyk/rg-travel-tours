@@ -504,6 +504,24 @@ describeWithDb('driver.trip', () => {
       'Guest waiting at the second gate, not the lobby.',
       'One guest is in a wheelchair; front seat.',
     ]);
+    /*
+     * T22 review finding: nothing elsewhere asserted the "all NULL for a
+     * tour" half of the new contract — a removed `row.tourId === null`
+     * guard in `driverTripDetail` would silently gain
+     * `transferRouteLabel: 'Custom transfer'` on every tour booking with
+     * no test going red, since the client's own `tourTitle ??
+     * transferRouteLabel` fallback would still render the real tour
+     * title and hide the leak. This is a TOUR fixture, so every one of
+     * these must be null.
+     */
+    expect(detail.transferRouteLabel).toBeNull();
+    expect(detail.pickupTime).toBeNull();
+    expect(detail.dayUseEndTime).toBeNull();
+    expect(detail.dropoffAddress).toBeNull();
+    expect(detail.dropoffMapsUrl).toBeNull();
+    expect(detail.luggageCount).toBeNull();
+    expect(detail.flightNumber).toBeNull();
+    expect(detail.airline).toBeNull();
   });
 
   it('renders a trip with no van, no pickup and no notes rather than hiding it', async () => {

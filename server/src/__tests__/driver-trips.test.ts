@@ -345,6 +345,17 @@ describeWithDb('driver.trips', () => {
     expect(trips.map((t) => t.vanPlate)).toEqual([plate!.plate, plate!.plate, plate!.plate]);
     expect(trips.find((t) => t.ref === pastRef)!.status).toBe('completed');
     expect(trips.find((t) => t.ref === todayRef)!.pax).toBe(2);
+    /*
+     * T22 review finding: the "all NULL for a tour" half of
+     * `listDriverTrips`'s own new contract was unproven — a removed
+     * `row.tourId === null` guard would silently gain
+     * `transferRouteLabel: 'Custom transfer'` on every tour row with no
+     * test going red (the client's `tourTitle ?? transferRouteLabel`
+     * fallback would still render the real title and hide the leak).
+     * Every row here is a tour fixture, so both must be null throughout.
+     */
+    expect(trips.every((t) => t.transferRouteLabel === null)).toBe(true);
+    expect(trips.every((t) => t.pickupTime === null)).toBe(true);
   });
 
   /**

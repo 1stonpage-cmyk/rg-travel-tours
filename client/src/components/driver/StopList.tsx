@@ -188,10 +188,21 @@ export default function StopList({ bookingId, status, progress, onChanged }: Sto
          * would read as FINISHED when the trip has barely begun, so that
          * case gets its own copy rather than the generic count. Progress
          * in words either way — never a bar on its own.
+         *
+         * `status` participates here, not just `done` (T22 review finding):
+         * a COMPLETED zero-stop trip also has `done === 1` (completion
+         * writes no checkpoint of its own — `checkins.ts`'s own note), so
+         * without this branch it read "Trip started" for a trip that had
+         * in fact ended, and told the driver to tap a Complete button that
+         * `status === 'in_progress'` below has already removed.
          */}
         {progress.total === 1 ? (
           <p className="text-brand-blue-900 mt-1 text-lg font-semibold">
-            {progress.done === 1 ? 'Trip started' : 'Not started yet'}
+            {status === 'completed'
+              ? 'Trip completed'
+              : progress.done === 1
+                ? 'Trip started'
+                : 'Not started yet'}
           </p>
         ) : (
           <p className="text-brand-blue-900 mt-1 text-lg font-semibold">
@@ -199,9 +210,11 @@ export default function StopList({ bookingId, status, progress, onChanged }: Sto
           </p>
         )}
         <p className="text-brand-blue-900 text-sm">
-          {progress.total === 1
-            ? 'No itinerary stops on this trip. Tap Complete trip when it is over.'
-            : 'Leaving for the pickup counts as the first.'}
+          {progress.total !== 1
+            ? 'Leaving for the pickup counts as the first.'
+            : status === 'in_progress'
+              ? 'No itinerary stops on this trip. Tap Complete trip when it is over.'
+              : 'No itinerary stops on this trip.'}
         </p>
       </div>
 

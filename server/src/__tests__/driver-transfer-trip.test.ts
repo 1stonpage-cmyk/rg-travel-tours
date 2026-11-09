@@ -66,6 +66,8 @@ import { describeWithDb } from './helpers/db';
 
 /** This file's own day — unclaimed by any other suite (`grep -rn 2096 server/src` matches nothing else). */
 const DAY = '2096-11-20';
+/** A fixed instant, not `new Date()` (T22 review finding) — `listDriverTrips` takes `now` as a parameter precisely so a suite need not read the machine clock. */
+const NOW = new Date(`${DAY}T00:00:00Z`);
 
 const created = {
   userIds: [] as number[],
@@ -281,10 +283,43 @@ describeWithDb('driverTripDetail carries transfer fields (Task T22)', () => {
     // widened alongside `driverTripDetail` once `driver.ts:127`'s own
     // comment ("what the screen should show instead … is T22's") named it
     // as part of this task too, not deferred to a later one.
-    const rows = await listDriverTrips(driverId, new Date());
+    const rows = await listDriverTrips(driverId, NOW);
     const row = rows.find((candidate) => candidate.bookingId === held.bookingId);
     expect(row?.transferRouteLabel).toBe(routeDisplayName(fromName, toName, 'forward'));
     expect(row?.pickupTime).toBe('08:30');
+  });
+
+  /**
+   * T22 review finding: every other assertion here pins `direction:
+   * 'forward'`, the input's own default — so dropping
+   * `bookingTransferDetails.direction` from either query's `select` would
+   * change nothing observable (`transferTitle`'s own fallback is `??
+   * 'forward'`). This pins the REVERSE half, where a dropped column would
+   * show the driver the route backwards.
+   */
+  it('reads the route backwards for a reverse-direction booking', async () => {
+    const driverId = await makeDriver();
+    await makeVan();
+    const { routeId, fromName, toName } = await makeRoute(
+      `T22 Rev-From ${unique()}`,
+      `T22 Rev-To ${unique()}`,
+    );
+
+    const held = await createTransferBooking(
+      baseInput({ routeId, direction: 'reverse', priceSource: { kind: 'catalog' } }),
+    );
+    created.bookingIds.push(held.bookingId);
+    await assignDriver(held.bookingId, driverId);
+
+    const detail = await driverTripDetail(driverId, held.bookingId);
+    expect(detail.transferRouteLabel).toBe(routeDisplayName(fromName, toName, 'reverse'));
+    // Not the forward label — the two must actually differ for this to
+    // mean anything, since `fromName`/`toName` are distinct places.
+    expect(detail.transferRouteLabel).not.toBe(routeDisplayName(fromName, toName, 'forward'));
+
+    const rows = await listDriverTrips(driverId, NOW);
+    const row = rows.find((candidate) => candidate.bookingId === held.bookingId);
+    expect(row?.transferRouteLabel).toBe(routeDisplayName(fromName, toName, 'reverse'));
   });
 
   it('falls back to the custom route description and carries the day-use end time', async () => {

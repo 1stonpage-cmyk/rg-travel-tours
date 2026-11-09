@@ -137,7 +137,17 @@ function TripScreen({
         >
           WhatsApp
         </a>
-        {trip.pickup === null ? (
+        {/*
+         * The time is hoisted OUT of the `pickup === null` branch
+         * (T22 review finding): `bookings.pickup` is optional for a
+         * transfer exactly as it already is for a tour (the checkout
+         * schema's own "Optional and bounded exactly as a tour's `pickup`
+         * is" note), but `pickupTime` never is for one — a guest who left
+         * the address blank must not also lose the time that tells the
+         * driver when to leave. No heading at all when there is neither
+         * (the ordinary tour-with-no-pickup case, unchanged).
+         */}
+        {trip.pickup === null && trip.pickupTime === null ? (
           <p className="text-brand-blue-900 text-base">
             No pickup point recorded. Ring the guest or the office.
           </p>
@@ -156,17 +166,25 @@ function TripScreen({
                 </>
               )}
             </p>
-            <p className="text-brand-blue-900 text-base">{trip.pickup}</p>
-            {trip.pickupMapsUrl === null ? null : (
-              <a
-                href={trip.pickupMapsUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={`${CONTACT_CLASS} mt-2`}
-              >
-                <Navigation className="size-5" aria-hidden="true" />
-                Open in Maps
-              </a>
+            {trip.pickup === null ? (
+              <p className="text-brand-blue-900 text-base">
+                No pickup point recorded. Ring the guest or the office.
+              </p>
+            ) : (
+              <>
+                <p className="text-brand-blue-900 text-base">{trip.pickup}</p>
+                {trip.pickupMapsUrl === null ? null : (
+                  <a
+                    href={trip.pickupMapsUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`${CONTACT_CLASS} mt-2`}
+                  >
+                    <Navigation className="size-5" aria-hidden="true" />
+                    Open in Maps
+                  </a>
+                )}
+              </>
             )}
           </div>
         )}
@@ -191,6 +209,24 @@ function TripScreen({
               </a>
             )}
           </div>
+        )}
+        {/*
+         * Airport pickups only (T22, per the plan's own "flight/airline"
+         * line) — null otherwise. The one fact that decides whether the
+         * driver waits or leaves on an airport leg, which is exactly why
+         * it is admitted alongside pickup time and drop-off.
+         */}
+        {trip.flightNumber === null && trip.airline === null ? null : (
+          <p className="text-brand-blue-900 text-base">
+            Flight {trip.flightNumber ?? '(number not given)'}
+            {trip.airline === null ? null : ` (${trip.airline})`}
+          </p>
+        )}
+        {/* Null for a tour; every transfer carries a count, zero included (T22). */}
+        {trip.luggageCount === null ? null : (
+          <p className="text-brand-blue-900 text-base">
+            {trip.luggageCount === 1 ? '1 bag' : `${trip.luggageCount} bags`}
+          </p>
         )}
       </section>
 

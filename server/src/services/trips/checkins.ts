@@ -235,8 +235,14 @@ interface TripRow {
    * transfer trip starts, completes and un-completes normally, and its van is
    * taken to `on_trip` and back exactly as a tour's is.
    *
-   * What a transfer's PROGRESS should mean (it has no stop list, so
-   * `tripProgress` reports trip-start alone, `0 of 1`) is T22's question.
+   * **Answered by Task T22: no code change here either.** A transfer's
+   * progress is exactly what `tripProgress` already reports with no stop
+   * list — trip-start alone, `0 of 1` before Start and `1 of 1` after —
+   * and no caller needed a different number. The one place that number
+   * read as misleading was copy, not data: `StopList.tsx`'s own
+   * `total === 1` branch (fixed in T22) and `routers/admin/departures.ts`'s
+   * progress bar, which still reads 100% the instant a transfer starts —
+   * flagged there for T23, which owns that screen.
    */
   tourId: number | null;
   status: BookingStatus;
@@ -732,8 +738,15 @@ export async function checkInStop(
    * incoherent whatever state the trip is in.
    *
    * A transfer trip is NOT otherwise blocked from running: `startTrip` and
-   * `completeTrip` (the Complete tap) both work on it. T22 decides what
-   * check-in should mean for a product with no stop list.
+   * `completeTrip` (the Complete tap) both work on it.
+   *
+   * **Answered by Task T22: check-in means nothing for a product with no
+   * stop list, and that needed no new code.** A driver simply has no stop
+   * to tap between Start and Complete — confirmed end to end in
+   * `driver-transfer-trip.test.ts`, including that this very guard is
+   * redundant with the query below (`eq(tourItineraryStops.tourId, null)`
+   * matches nothing regardless), proven by mutating it out and watching
+   * the fallback refusal answer identically.
    */
   if (trip.tourId === null) return refuse('unknown_stop');
 

@@ -310,8 +310,13 @@ describeWithDb('T6: no surface silently drops a transfer booking', () => {
     /*
      * `tripProgress()` already tolerated a null `tour_id` — it LEFT joins the
      * itinerary stops, so a transfer has the trip-start pseudo-stop and
-     * nothing else: `0 of 1`, not a crash and not an empty list. What progress
-     * SHOULD mean for a transfer is T22's question.
+     * nothing else: `0 of 1`, not a crash and not an empty list. **Answered
+     * by Task T22**: this number is also what progress MEANS for a
+     * transfer — no new code needed, confirmed end to end in
+     * `driver-transfer-trip.test.ts`. This departures-board row (T23's
+     * screen) still renders that `0 of 1` / `1 of 1` as a 100%-full bar
+     * the instant a transfer starts; see `routers/admin/departures.ts`'s
+     * own note.
      */
     expect(row!.progress.total).toBe(1);
     expect(row!.progress.done).toBe(0);

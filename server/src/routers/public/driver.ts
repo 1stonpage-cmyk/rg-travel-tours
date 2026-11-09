@@ -268,17 +268,19 @@ function paymentBox(input: {
  * integers. Callers that DO need the clock (the cash claim's today-only
  * rule) take their own explicit `now`, so this stays a pure read.
  *
- * ## The four new LEFT JOINs (Task T22) cannot fan out this row out
+ * ## The four new LEFT JOINs (Task T22) cannot fan this row out
  *
  * `booking_transfer_details.booking_id` is this table's PRIMARY KEY, so at
  * most one row per booking. `transfer_routes` is reached by
- * `bookings.route_id`, a plain FK — at most one row. Each `transfer_places`
- * alias is reached by that route's `from_place_id` / `to_place_id`, both
- * `NOT NULL` FKs on `transfer_routes` — at most one row each, same as the
- * existing `tours`/`vans` joins this function already LEFT JOINs. Every new
- * join is therefore 1:1-or-absent, same as the two it already had, so
- * `recordDriverCash` — which also calls this function — sees no row
- * duplicated and no money figure double-counted.
+ * `bookings.route_id`, which lands on `transfer_routes.id` — ITS primary
+ * key, which is what bounds the match to one row, not the FK itself. Each
+ * `transfer_places` alias is reached by that route's `from_place_id` /
+ * `to_place_id`, both `NOT NULL` FKs landing on `transfer_places.id` — at
+ * most one row each, same as the existing `tours`/`vans` joins this
+ * function already LEFT JOINs. Every new join is therefore 1:1-or-absent,
+ * same as the two it already had, so `recordDriverCash` — which also calls
+ * this function — sees no row duplicated and no money figure
+ * double-counted.
  */
 async function loadDriverTrip(driverId: number, bookingId: number) {
   const db = getDb();
@@ -309,11 +311,21 @@ async function loadDriverTrip(driverId: number, bookingId: number) {
       totalCentavos: bookings.totalCentavos,
       paidCentavos: bookings.amountPaidCentavos,
       reviewRequired: bookings.paymentReviewRequired,
-      // Task T22 — all five NULL for a tour, see the module note above.
+      /*
+       * Task T22 — the eight `TripDetail` fields that payload's own doc
+       * comment lists, all NULL for a tour. `luggageCount`/`flightNumber`/
+       * `airline` are the plan's own line ("Pickup time, luggage, dropoff,
+       * flight/airline") — read straight off `booking_transfer_details`
+       * like `pickupTime`/`dropoffAddress`, no further guard needed since
+       * that table has no row at all for a tour.
+       */
       pickupTime: bookingTransferDetails.pickupTime,
       dayUseEndTime: bookingTransferDetails.dayUseEndTime,
       dropoffAddress: bookingTransferDetails.dropoffAddress,
       dropoffMapsUrl: bookingTransferDetails.dropoffMapUrl,
+      luggageCount: bookingTransferDetails.luggageCount,
+      flightNumber: bookingTransferDetails.flightNumber,
+      airline: bookingTransferDetails.airline,
       customRouteDescription: bookingTransferDetails.customRouteDescription,
       direction: bookingTransferDetails.direction,
       fromPlaceName: driverFromPlace.name,
@@ -452,6 +464,9 @@ export async function driverTripDetail(driverId: number, bookingId: number): Pro
     dayUseEndTime: trip.dayUseEndTime,
     dropoffAddress: trip.dropoffAddress,
     dropoffMapsUrl: trip.dropoffMapsUrl,
+    luggageCount: trip.luggageCount,
+    flightNumber: trip.flightNumber,
+    airline: trip.airline,
     officeNotes: notes.map((row) => row.note),
     payment,
     /** Task 3's answer, unchanged — `total` counts the trip-start stop. */

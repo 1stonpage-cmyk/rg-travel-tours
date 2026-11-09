@@ -98,17 +98,25 @@ function trip(
     status?: BookingStatus;
     payment?: PaymentBoxState;
     stops?: TripProgressStop[];
-    // Task T22's five new fields — explicit here (rather than left to fall
-    // through to `undefined`) so this fixture cannot silently drift out of
-    // sync with `TripDetail` the way an untyped literal would. Defaulted to
-    // the TOUR shape (all null); the transfer-specific tests below override
-    // them.
+    // Task T22's eight new fields — explicit here (rather than left to
+    // fall through to `undefined`) so this fixture cannot silently drift
+    // out of sync with `TripDetail` the way an untyped literal would.
+    // Defaulted to the TOUR shape (all null); the transfer-specific tests
+    // below override them. (This same merge would clobber a default with
+    // an explicit `undefined` override, the mirror image of the `??` bug
+    // it replaces — no current test does that, but it is why `status`,
+    // `stops` and `payment` below stay on their own `??`, since neither
+    // admits `null`.)
     tourTitle?: string | null;
+    pickup?: string | null;
     transferRouteLabel?: string | null;
     pickupTime?: string | null;
     dayUseEndTime?: string | null;
     dropoffAddress?: string | null;
     dropoffMapsUrl?: string | null;
+    luggageCount?: number | null;
+    flightNumber?: string | null;
+    airline?: string | null;
   } = {},
 ): TripDetail {
   const status = overrides.status ?? 'in_progress';
@@ -122,11 +130,15 @@ function trip(
    */
   const fields = {
     tourTitle: 'Oslob Whale Shark Watching' as string | null,
+    pickup: 'Radisson Blu lobby, Cebu City' as string | null,
     transferRouteLabel: null as string | null,
     pickupTime: null as string | null,
     dayUseEndTime: null as string | null,
     dropoffAddress: null as string | null,
     dropoffMapsUrl: null as string | null,
+    luggageCount: null as number | null,
+    flightNumber: null as string | null,
+    airline: null as string | null,
     ...overrides,
   };
   return {
@@ -138,7 +150,7 @@ function trip(
     status,
     leadName: 'Maria Santos',
     leadPhone: '09170000000',
-    pickup: 'Radisson Blu lobby, Cebu City',
+    pickup: fields.pickup,
     pickupMapsUrl: 'https://maps.example.test/radisson',
     vanPlate: 'ABC 123',
     transferRouteLabel: fields.transferRouteLabel,
@@ -146,6 +158,9 @@ function trip(
     dayUseEndTime: fields.dayUseEndTime,
     dropoffAddress: fields.dropoffAddress,
     dropoffMapsUrl: fields.dropoffMapsUrl,
+    luggageCount: fields.luggageCount,
+    flightNumber: fields.flightNumber,
+    airline: fields.airline,
     officeNotes: ['Guest is waiting at the second gate.'],
     payment: overrides.payment ?? ({ kind: 'collect_cash', amountCentavos: 150_000 } as const),
     progress: {
@@ -261,6 +276,69 @@ describe('DriverTripPage — the manifest', () => {
     renderTrip();
 
     expect(await screen.findByText('Day use until 17:00')).toBeInTheDocument();
+  });
+
+  /**
+   * T22 review finding: `bookings.pickup` is optional for a transfer
+   * exactly as it already is for a tour, but the pickup TIME never is.
+   * The time must survive even when the guest left the address blank —
+   * before this fix it was nested inside the `pickup !== null` branch and
+   * disappeared along with it.
+   */
+  it('still shows the pickup time when no pickup address was recorded', async () => {
+    mockTrpc({
+      'driver.trip': trip({
+        tourTitle: null,
+        transferRouteLabel: 'Custom transfer',
+        pickup: null,
+        pickupTime: '06:30',
+        dropoffAddress: 'The office',
+        stops: [STOPS[0]!],
+      }),
+      'driver.trips': tripsRow(),
+    });
+    renderTrip();
+
+    expect(await screen.findByText('06:30')).toBeInTheDocument();
+    expect(
+      screen.getByText('No pickup point recorded. Ring the guest or the office.'),
+    ).toBeInTheDocument();
+  });
+
+  /** Airport pickups only (T22, the plan's own "flight/airline" line). */
+  it('shows the flight number and airline for an airport pickup', async () => {
+    mockTrpc({
+      'driver.trip': trip({
+        tourTitle: null,
+        transferRouteLabel: 'Custom transfer',
+        pickupTime: '05:00',
+        dropoffAddress: 'A hotel in Cebu City',
+        flightNumber: '5J 561',
+        airline: 'Cebu Pacific',
+        stops: [STOPS[0]!],
+      }),
+      'driver.trips': tripsRow(),
+    });
+    renderTrip();
+
+    expect(await screen.findByText('Flight 5J 561 (Cebu Pacific)')).toBeInTheDocument();
+  });
+
+  it('shows the luggage count, including zero', async () => {
+    mockTrpc({
+      'driver.trip': trip({
+        tourTitle: null,
+        transferRouteLabel: 'Custom transfer',
+        pickupTime: '05:00',
+        dropoffAddress: 'A hotel in Cebu City',
+        luggageCount: 0,
+        stops: [STOPS[0]!],
+      }),
+      'driver.trips': tripsRow(),
+    });
+    renderTrip();
+
+    expect(await screen.findByText('0 bags')).toBeInTheDocument();
   });
 });
 
@@ -613,9 +691,10 @@ describe('StopList — a checklist, not a form', () => {
     renderTrip();
 
     expect(await screen.findByText('Not started yet')).toBeInTheDocument();
-    expect(
-      screen.getByText('No itinerary stops on this trip. Tap Complete trip when it is over.'),
-    ).toBeInTheDocument();
+    // Not started yet, so no Complete button exists to tap — the caption
+    // must not instruct a tap the screen has not offered.
+    expect(screen.getByText('No itinerary stops on this trip.')).toBeInTheDocument();
+    expect(screen.queryByText(/tap complete trip/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/of 1 stops/)).not.toBeInTheDocument();
   });
 
@@ -636,7 +715,42 @@ describe('StopList — a checklist, not a form', () => {
     renderTrip();
 
     expect(await screen.findByText('Trip started')).toBeInTheDocument();
+    // Running, so the Complete button IS on screen — the caption may tell
+    // the driver to tap it.
+    expect(
+      screen.getByText('No itinerary stops on this trip. Tap Complete trip when it is over.'),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/of 1 stops/)).not.toBeInTheDocument();
+  });
+
+  /**
+   * T22 review finding: `completeTrip` writes no checkpoint of its own
+   * (`checkins.ts`'s own note — `stop_key` 0 is already trip start), so a
+   * COMPLETED zero-stop trip also reads `done === 1`. Without `status`
+   * deciding this, the screen said "Trip started" about a trip that had
+   * in fact ended, and told the driver to tap a Complete button that
+   * `status === 'in_progress'`'s own gate had already removed.
+   */
+  it('says "Trip completed", not "Trip started", once a zero-stop trip is done', async () => {
+    const started: TripProgressStop[] = [
+      {
+        stopId: null,
+        name: 'Start trip',
+        sortOrder: 0,
+        checkedAt: '2026-10-16T01:15:00.000Z',
+        undone: false,
+      },
+    ];
+    mockTrpc({
+      'driver.trip': trip({ status: 'completed', stops: started }),
+      'driver.trips': tripsRow(),
+    });
+    renderTrip();
+
+    expect(await screen.findByText('Trip completed')).toBeInTheDocument();
+    expect(screen.queryByText('Trip started')).not.toBeInTheDocument();
+    expect(screen.queryByText(/tap complete trip/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^complete trip$/i })).not.toBeInTheDocument();
   });
 
   it('keeps a retracted check-in visible and its stop tappable again', async () => {

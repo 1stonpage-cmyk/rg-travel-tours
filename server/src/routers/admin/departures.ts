@@ -119,8 +119,21 @@ export async function todayDepartures(now: Date): Promise<TodayDeparture[]> {
    * transfers from the live departures board — the one screen that says what
    * is on the road right now. `TodayDeparture.tourTitle` is nullable for them.
    * `tripProgress()` already tolerates a null `tour_id` (it left-joins the
-   * itinerary stops, so a transfer reads trip-start only); what "progress"
-   * should MEAN for a transfer is T22's question.
+   * itinerary stops, so a transfer reads trip-start only). **Answered by
+   * Task T22**: that number — `0 of 1` before Start, `1 of 1` after — is
+   * also what "progress" means for a transfer; no change needed in
+   * `tripProgress` or here to produce it.
+   *
+   * **Left open for T23, which owns this screen's rendering (unlike this
+   * query, which T22 did touch to confirm the number above):**
+   * `DeparturesBoard.tsx` renders `{done} of {total} stops` and a percent
+   * bar from these same two fields, so a transfer reads "1 of 1 stops" at
+   * 100% full the INSTANT it starts — the board says the trip is finished
+   * while the van is still at the pickup. `StopList.tsx` (the driver's own
+   * screen) already special-cases `total === 1` for exactly this reason;
+   * this board does not yet, and the two surfaces disagreeing about the
+   * same trip is the one thing this module's own header above says must
+   * not happen.
    */
   const rows = await db
     .select({
