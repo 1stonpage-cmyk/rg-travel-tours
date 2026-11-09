@@ -384,6 +384,43 @@ describe('renderTemplate', () => {
   });
 
   /**
+   * Task T24 — the tour-only-language sweep. These three events said "tour"
+   * in a sentence that is also sent for a transfer booking (`tourTitle:
+   * null`), which would have been FALSE for one: there is no tour, so
+   * "Your tour is tomorrow" or "Balance on tour day" names a thing that does
+   * not exist. Each assertion runs the TRANSFER shape specifically, not the
+   * tour fixture `SAMPLE` already uses everywhere else — the tour case could
+   * not have caught this, since "tour" reads true for a tour either way.
+   */
+  it('says "trip", never "tour", in the balance line a transfer booking also receives', () => {
+    const transferPayload = { ...SAMPLE.booking_confirmed, tourTitle: null };
+    const { html, text } = renderTemplate('booking_confirmed', transferPayload);
+    for (const body of [html, text]) {
+      expect(body).toContain('Balance on trip day');
+      expect(body).not.toMatch(/\btour\b/i);
+    }
+  });
+
+  it('says "trip", never "tour", in the driver-assigned balance line for a transfer', () => {
+    const transferPayload = { ...SAMPLE.driver_assigned, tourTitle: null };
+    const { html, text } = renderTemplate('driver_assigned', transferPayload);
+    for (const body of [html, text]) {
+      expect(body).toContain('Balance on trip day');
+      expect(body).not.toMatch(/\btour\b/i);
+    }
+  });
+
+  it('says "Your trip is tomorrow", never "tour", for a transfer booking', () => {
+    const transferPayload = { ...SAMPLE.trip_reminder, tourTitle: null };
+    const { subject, html, text } = renderTemplate('trip_reminder', transferPayload);
+    expect(subject).toContain('Your trip is tomorrow');
+    for (const body of [html, text]) {
+      expect(body).toContain('Your trip is tomorrow');
+      expect(body).not.toMatch(/\btour\b/i);
+    }
+  });
+
+  /**
    * Task T21. `tripLabel` and the priced total are the email's whole point —
    * a staff-quoted guest reads this to learn what their custom trip costs.
    */

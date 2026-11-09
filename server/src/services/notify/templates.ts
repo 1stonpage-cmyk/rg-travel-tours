@@ -82,12 +82,16 @@ export interface NotifyPayload {
    * worse than no label. The booking reference identifies the trip in either
    * case, and it is the first row of both tables.
    *
-   * **Still tour-only, and deliberately left to T24:** the WORDING of several
-   * events ("Your tour is tomorrow", "Balance on tour day"). T24 owns the
-   * tour-only-language sweep across every event's copy; naming a transfer's
-   * real route here would be a partial version of work it will redo with full
-   * context. This task's bar is that no sentence is FALSE because of a null,
-   * which omitting the row satisfies.
+   * **The tour-only-language sweep is Task T24's.** It swept "Your tour is
+   * tomorrow" to "Your trip is tomorrow" (`trip_reminder`) and "Balance on
+   * tour day" to "Balance on trip day" (`booking_confirmed`, `driver_assigned`)
+   * — product-neutral wording that needs no new field, since every other
+   * event's copy already read correctly for either product (audited event by
+   * event; see `docs/superpowers/plans/2026-11-10-transfers-HANDOVER-13.md`).
+   * Naming a transfer's real ROUTE in an email (rather than just avoiding the
+   * word "tour") is a separate, larger change this task did NOT make — see
+   * that handover for the reasoning. This task's bar is that no sentence is
+   * FALSE because of a null, which omitting the row satisfies.
    */
   tourTitle: string | null;
   /** A civil date, `YYYY-MM-DD`, as every tour date is. */
@@ -300,9 +304,9 @@ export function renderTemplate(event: NotifyEvent, payload: NotifyPayload): Rend
           'Your booking is confirmed',
           `<p style="margin:0;">Thank you — we have your payment and your trip is booked.</p>${details}` +
             `<p style="margin:0;">Paid: <strong>${escapeHtml(paid)}</strong>. ` +
-            `Balance on tour day: <strong>${escapeHtml(balance)}</strong>.</p>`,
+            `Balance on trip day: <strong>${escapeHtml(balance)}</strong>.</p>`,
         ),
-        text: `Your booking is confirmed.\n\n${detailsPlain}\nPaid: ${paid}\nBalance on tour day: ${balance}\n`,
+        text: `Your booking is confirmed.\n\n${detailsPlain}\nPaid: ${paid}\nBalance on trip day: ${balance}\n`,
       };
     }
 
@@ -378,18 +382,18 @@ export function renderTemplate(event: NotifyEvent, payload: NotifyPayload): Rend
             `<tr><td style="padding:4px 0;color:${MUTED};">Van plate</td>` +
             `<td style="padding:4px 0;font-weight:bold;">${escapeHtml(plate)}</td></tr>` +
             '</table>' +
-            `<p style="margin:12px 0 0 0;">Balance on tour day: <strong>${escapeHtml(balance)}</strong>.</p>`,
+            `<p style="margin:12px 0 0 0;">Balance on trip day: <strong>${escapeHtml(balance)}</strong>.</p>`,
         ),
         text:
           `Your driver and van are set.\n\n${detailsPlain}\n` +
           `Driver: ${driver}\nVan plate: ${plate}\n` +
-          `Balance on tour day: ${balance}\n`,
+          `Balance on trip day: ${balance}\n`,
       };
     }
 
     case 'trip_reminder': {
       /*
-       * Sent the afternoon before the tour. The balance is the one number a
+       * Sent the afternoon before the trip. The balance is the one number a
        * guest has to act on — a deposit booking settles the rest with the
        * driver, so it belongs in the email they read the night before rather
        * than only on a page they may not open.
@@ -406,16 +410,16 @@ export function renderTemplate(event: NotifyEvent, payload: NotifyPayload): Rend
           ? `Please have ${balance} ready for your driver.`
           : 'Your trip is fully paid — nothing to settle on the day.';
       return {
-        subject: `Your tour is tomorrow — ${payload.ref}`,
+        subject: `Your trip is tomorrow — ${payload.ref}`,
         html: document_(
-          'Your tour is tomorrow',
+          'Your trip is tomorrow',
           '<p style="margin:0;">We are looking forward to it. Here are your details.</p>' +
             details +
             `<p style="margin:0;">${moneyLine}</p>` +
             linkHtml(url, 'View my booking'),
         ),
         text:
-          `Your tour is tomorrow.\n\n${detailsPlain}\n${moneyPlain}\n\n` +
+          `Your trip is tomorrow.\n\n${detailsPlain}\n${moneyPlain}\n\n` +
           `View my booking: ${url}\n`,
       };
     }
