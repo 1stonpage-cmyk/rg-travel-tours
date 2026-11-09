@@ -32,17 +32,19 @@
  */
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { and, asc, eq, inArray, or } from 'drizzle-orm';
-import type { TransferRouteCreateInput } from '@rg/shared';
+import type { TransferPriceSnapshot, TransferRouteCreateInput } from '@rg/shared';
 import { appRouter } from '../routers/_app';
 import { getDb, getPool } from '../db/client';
 import {
   auditLog,
+  bookings,
   transferPlaces,
   transferRouteVehiclePrices,
   transferRoutes,
   users,
   vehicleTypes,
 } from '../db/schema';
+import { generateBookingRef } from '../services/booking-ref';
 import { customerContext, staffContext, testContext } from './helpers/ctx';
 import { describeWithDb } from './helpers/db';
 
@@ -715,6 +717,95 @@ describeWithDb('admin.transferRoutes', () => {
     const row = (await ownerApi().admin.transferRoutes.list()).find((r) => r.id === id);
     expect(row?.prices.find((p) => p.vehicleTypeId === VAN_ID)?.price).toEqual(repricedVan);
     expect(row?.prices.find((p) => p.vehicleTypeId === SUV_ID)?.price).toEqual(VALID_PRICES.suv);
+  });
+
+  /**
+   * 0B (DEMO POLISH batch, 2026-11-09). Reprovises "price is locked on the
+   * booking at hold time" (plan Architecture, owner decision 2026-10-28 §2)
+   * against the admin side of that promise: an admin editing a route's price
+   * AFTER a guest already booked at the old price must not silently change
+   * what that guest owes. `price_snapshot` is a JSON column with no FK back
+   * to `transfer_route_vehicle_prices` — nothing in the schema enforces this
+   * on its own, so it is pinned here, directly, the same way
+   * `booking-transfer-schema.test.ts` pins the CHECK constraint shape.
+   *
+   * The booking row is inserted directly (not through `createTransferBooking`)
+   * because the property under test is narrowly "does an unrelated admin
+   * write touch this column" — pulling in the full hold/capacity/notice
+   * pipeline to produce the row would test machinery this test has no
+   * opinion about and isn't allowed to assume away.
+   */
+  it("an existing booking's frozen price_snapshot survives a later admin price edit on the same route", async () => {
+    const { id: routeId } = await createRoute();
+    const originalVanSnapshot: TransferPriceSnapshot = {
+      productType: 'transfer_one_way',
+      vehicleTypeId: VAN_ID,
+      vehicleTypeName: 'Van',
+      routeId,
+      customRouteDescription: null,
+      priceSource: 'catalog',
+      priceCentavos: VALID_PRICES.van.oneWayPriceCentavos,
+      coupon: null,
+      depositPercent: 30,
+      freeCancelHours: 24,
+      subtotalCentavos: VALID_PRICES.van.oneWayPriceCentavos,
+      discountCentavos: 0,
+      totalCentavos: VALID_PRICES.van.oneWayPriceCentavos,
+    };
+
+    const [inserted] = await getDb()
+      .insert(bookings)
+      .values({
+        ref: generateBookingRef(),
+        tourId: null,
+        productType: 'transfer_one_way',
+        routeId,
+        vehicleTypeId: VAN_ID,
+        tourDate: new Date('2099-12-15T00:00:00Z'),
+        pax: 2,
+        leadName: '0B Fixture Guest',
+        leadEmail: `0b-fixture-${unique()}@example.test`,
+        leadPhone: '09170000099',
+        payMode: 'full',
+        priceSnapshot: originalVanSnapshot,
+        subtotalCentavos: originalVanSnapshot.subtotalCentavos,
+        totalCentavos: originalVanSnapshot.totalCentavos,
+      });
+    const bookingId = inserted.insertId;
+
+    try {
+      // A materially different price — if anything re-derived the
+      // snapshot from the catalog, this is what it would change to.
+      await ownerApi().admin.transferRoutes.update({
+        id: routeId,
+        patch: {
+          prices: {
+            [String(VAN_ID)]: { oneWayPriceCentavos: 999_000, dayUsePriceCentavos: 999_000 },
+            [String(SUV_ID)]: { ...VALID_PRICES.suv },
+          },
+        },
+      });
+
+      const [row] = await getDb()
+        .select({ priceSnapshot: bookings.priceSnapshot, totalCentavos: bookings.totalCentavos })
+        .from(bookings)
+        .where(eq(bookings.id, bookingId));
+
+      expect(row?.priceSnapshot).toEqual(originalVanSnapshot);
+      expect(row?.totalCentavos).toBe(VALID_PRICES.van.oneWayPriceCentavos);
+
+      // And the route's OWN new price really did take, proving this isn't
+      // a false pass from the update itself silently failing.
+      const freshRoute = (await ownerApi().admin.transferRoutes.list()).find(
+        (r) => r.id === routeId,
+      );
+      expect(freshRoute?.prices.find((p) => p.vehicleTypeId === VAN_ID)?.price).toEqual({
+        oneWayPriceCentavos: 999_000,
+        dayUsePriceCentavos: 999_000,
+      });
+    } finally {
+      await getDb().delete(bookings).where(eq(bookings.id, bookingId));
+    }
   });
 
   /**

@@ -309,6 +309,53 @@ describe('AdminTransferRoutesPage', () => {
     });
   });
 
+  /**
+   * 0B (DEMO POLISH batch, 2026-11-09): proves a CHANGED price reaches the
+   * mutation, not only an untouched one restated. The "Save changes" button
+   * (`EntityForm`'s own submit button) renders ABOVE the "Prices per vehicle
+   * type" section in the DOM — a real layout concern flagged during read-only
+   * admin QA — but `submit()` reads price input state directly rather than
+   * serializing a DOM `<form>`, so the button's visual position should not
+   * matter. This test exercises that claim instead of assuming it: it edits
+   * the price fields, clicks the button sitting above them, and checks the
+   * actual outgoing payload.
+   */
+  it('a changed price typed into the edit form reaches the save payload, from the button above the price table', async () => {
+    const sent: unknown[] = [];
+    renderPage({
+      'admin.transferRoutes.update': (input: unknown) => {
+        sent.push(input);
+        return { ok: true };
+      },
+    });
+    await screen.findAllByText(/Mactan-Cebu International Airport → Oslob/);
+
+    const editButtons = await screen.findAllByRole('button', { name: /^edit$/i });
+    await user.click(editButtons[0]!);
+    const saveButton = await screen.findByRole('button', { name: /save changes/i });
+
+    // Change the VAN's one-way price; leave its day-use and the SUV's whole
+    // card untouched.
+    const vanOneWay = screen.getByLabelText('One-way (pesos)', {
+      selector: '#route-price-1-oneway',
+    });
+    await user.clear(vanOneWay);
+    await user.type(vanOneWay, '2750.00');
+
+    await user.click(saveButton);
+
+    await waitFor(() => expect(sent).toHaveLength(1));
+    const payload = sent[0] as { patch: { prices: Record<string, unknown> } };
+    expect(payload.patch.prices['1']).toEqual({
+      oneWayPriceCentavos: 275_000,
+      dayUsePriceCentavos: 500_000,
+    });
+    expect(payload.patch.prices['2']).toEqual({
+      oneWayPriceCentavos: 300_000,
+      dayUsePriceCentavos: 600_000,
+    });
+  });
+
   it('converts duration hours + minutes into total minutes, and prices in pesos into centavos', async () => {
     const sent: unknown[] = [];
     renderPage({
