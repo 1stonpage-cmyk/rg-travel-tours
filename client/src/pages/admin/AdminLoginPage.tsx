@@ -200,11 +200,7 @@ export default function AdminLoginPage() {
             </div>
           </div>
 
-          <Button
-            type="submit"
-            disabled={login.isPending}
-            className="tap-target bg-brand-blue-700 hover:bg-brand-blue-800 w-full rounded-[10px] font-semibold text-white transition-colors"
-          >
+          <Button type="submit" variant="primary-pill" disabled={login.isPending}>
             {login.isPending ? (
               <>
                 <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />
