@@ -14,7 +14,7 @@
 import { config } from 'dotenv';
 import { resolve } from 'node:path';
 
-config({ path: resolve(process.cwd(), '../.env') });
+config({ path: resolve(process.cwd(), '../.env'), quiet: true });
 
 const APP_DATABASE_NAME = 'rg_travel';
 
