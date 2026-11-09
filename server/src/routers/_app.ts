@@ -30,7 +30,7 @@ import { portalRouter } from './public/portal';
 import { reviewsRouter } from './public/reviews';
 import { settingsRouter } from './public/settings';
 import { toursRouter } from './public/tours';
-import { transferRoutesRouter, vehicleTypesRouter } from './public/transfers';
+import { transferRoutesRouter } from './public/transfers';
 import { mergeRouters, publicProcedure, router } from '../trpc';
 
 export const appRouter = router({
@@ -59,15 +59,6 @@ export const appRouter = router({
    * it carries no admin-only field (see the router's own note).
    */
   transferRoutes: transferRoutesRouter,
-
-  /*
-   * The public vehicle-type picker (owner decision 2026-11-08: flexible
-   * places/routes/vehicle types). Active types only — id, name, slug — for
-   * a guest choosing which vehicle to book. Mounted at the TOP level beside
-   * `transferRoutes`, for the identical reason that one is not nested under
-   * a `public.*` namespace.
-   */
-  vehicleTypes: vehicleTypesRouter,
 
   // Public mutations (Task 1.7) — rate-limited in app.ts.
   inquiries: inquiriesRouter,

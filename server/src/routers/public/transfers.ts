@@ -1,13 +1,19 @@
 /**
- * `transferRoutes.list` / `vehicleTypes.list` — the PUBLIC transfer-route
- * catalog and vehicle-type picker (transfers-launch plan, File Structure:
- * `routers/public/transfers.ts`). Restructured 2026-11-08 (owner decision:
- * flexible places/routes/vehicle types — see
- * `docs/superpowers/plans/2026-11-08-flexible-routes.md` §2/§4).
+ * `transferRoutes.list` — the PUBLIC transfer-route catalog
+ * (transfers-launch plan, File Structure: `routers/public/transfers.ts`).
+ * Restructured 2026-11-08 (owner decision: flexible places/routes/vehicle
+ * types — see `docs/superpowers/plans/2026-11-08-flexible-routes.md` §2/§4).
  *
- * Both routers are mounted at the TOP level, beside `tours` and `packages`
+ * This router is mounted at the TOP level, beside `tours` and `packages`
  * — this project's public routers are not nested under a `public.*`
  * namespace (see `_app.ts`).
+ *
+ * The public `vehicleTypes.list` procedure this file used to also export was
+ * removed (owner decision 2026-11-09, decision 4): confirmed unused — the
+ * public booking UI resolves every vehicle type a guest needs from this
+ * router's own `vehiclePrices` array, and nothing else called it. The admin
+ * `admin.vehicleTypes.*` router (`routers/admin/vehicle-types.ts`) is
+ * unrelated and unaffected.
  *
  * **Two independent soft-delete filters on the route, both meaning what
  * they say.** Only `transfer_routes.is_active` routes are listed, and only
@@ -161,21 +167,5 @@ export const transferRoutesRouter = router({
         vehiclePrices,
       };
     });
-  }),
-});
-
-/**
- * `vehicleTypes.list` (public) — active vehicle types only, for a guest's
- * vehicle picker. Deliberately narrow: no `defaultSeats`/`defaultLuggage`
- * (prefill fields for the admin "add van" form, meaningless to a guest) and
- * no `sortOrder` (an internal ordering key, applied here rather than shown).
- */
-export const vehicleTypesRouter = router({
-  list: publicProcedure.query(async () => {
-    return getDb()
-      .select({ id: vehicleTypes.id, name: vehicleTypes.name, slug: vehicleTypes.slug })
-      .from(vehicleTypes)
-      .where(eq(vehicleTypes.isActive, true))
-      .orderBy(asc(vehicleTypes.sortOrder), asc(vehicleTypes.name));
   }),
 });
