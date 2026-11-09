@@ -283,10 +283,16 @@ describe('AdminVansPage', () => {
 
   /**
    * jsdom does no layout, so no unit test here can measure 44 physical
-   * pixels. What it CAN prove is that every control carries the project's
-   * own `tap-target` utility (`client/src/index.css`).
+   * pixels. What it CAN prove is that every control is at least 44px tall
+   * by one of this project's two equivalent mechanisms: the shared
+   * `tap-target` utility (`client/src/index.css`, `min-h-11 min-w-11`), or
+   * a fixed `h-11` (44px) — the admin "Clean Pill" button system's own
+   * primary/secondary/ghost variants (B1, DEMO POLISH batch, 2026-11-09)
+   * size themselves with `h-11` directly rather than `tap-target`, since
+   * `min-h-11` would let a taller icon/label force the pill past 44px,
+   * where the design calls for an exact height.
    */
-  it('gives every control the tap-target utility', async () => {
+  it('gives every control a real 44px tap target', async () => {
     renderPage();
     await screen.findAllByText(VAN.plate);
     const controls = Array.from(
@@ -297,7 +303,7 @@ describe('AdminVansPage', () => {
       expect(
         control.className,
         `${control.tagName}[${control.getAttribute('type') ?? 'n/a'}]`,
-      ).toMatch(/tap-target/);
+      ).toMatch(/\btap-target\b|\bh-11\b/);
     }
   });
 

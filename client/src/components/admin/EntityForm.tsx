@@ -71,6 +71,20 @@ export interface EntityFormProps {
   submitLabel: string;
   onChange: (name: string, value: string) => void;
   onSubmit: () => void;
+  /**
+   * B2 (DEMO POLISH batch, 2026-11-09): when a page renders content AFTER
+   * this form that is NOT itself inside `<form>` (e.g. the price table on
+   * `AdminTransferRoutesPage.tsx`), EntityForm's own submit button sitting
+   * above that content reads as though it does not cover it — a real,
+   * owner-flagged QA finding, even though `onSubmit` always reads current
+   * values correctly regardless of DOM position (0B proved this; this prop
+   * fixes the LAYOUT, not any logic). Set `true` and render a `FormActions`
+   * footer with `submitType="button"` and `onSave={onSubmit}` after the rest
+   * of the page's own content instead. Still wraps fields in a real
+   * `<form onSubmit>` so Enter-to-submit keeps working on THIS form's own
+   * inputs; only the trailing button is suppressed.
+   */
+  hideSubmit?: boolean;
 }
 
 /** Does this environment implement `matchMedia`? jsdom does not at all. */
@@ -173,6 +187,7 @@ export default function EntityForm({
   submitLabel,
   onChange,
   onSubmit,
+  hideSubmit = false,
 }: EntityFormProps) {
   const idPrefix = useId();
   // Lazy initial state only — this is "open at lg, collapsed otherwise on
@@ -228,13 +243,13 @@ export default function EntityForm({
         </Accordion>
       ) : null}
 
-      <Button
-        type="submit"
-        disabled={pending}
-        className="tap-target bg-brand-blue-700 hover:bg-brand-blue-800 w-full rounded-[10px] font-semibold text-white transition-colors sm:w-auto"
-      >
-        {pending ? 'Saving…' : submitLabel}
-      </Button>
+      {hideSubmit ? null : (
+        <div className="flex justify-end">
+          <Button type="submit" variant="primary-pill" disabled={pending}>
+            {pending ? 'Saving…' : submitLabel}
+          </Button>
+        </div>
+      )}
     </form>
   );
 }
