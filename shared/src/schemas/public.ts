@@ -7,6 +7,7 @@
  * `newsletter.subscribe`) to this same module.
  */
 import { z } from 'zod';
+import { INQUIRY_TYPES } from '../packages-admin';
 
 export const toursListInput = z.object({
   /** Destination slug. Omit to list every active tour. */
@@ -28,8 +29,19 @@ export const reviewsPublishedInput = z.object({
 });
 
 export const inquiryInput = z.object({
-  type: z.enum(['contact', 'package']),
+  // Reads `INQUIRY_TYPES` rather than repeating the literal — a second,
+  // hand-copied enum is exactly how this list drifts from the admin side's.
+  type: z.enum(INQUIRY_TYPES),
   packageId: z.number().int().positive().optional(),
+  /**
+   * The `transfer_custom` fields (transfers-launch plan §6, task T17).
+   * Optional here the same way `packageId` above is optional for every type
+   * that isn't `package` — the form decides which boxes it shows for which
+   * type; this schema just gives each one a validated place to land.
+   */
+  requestedDate: z.iso.date().optional(),
+  pax: z.number().int().positive().max(50).optional(),
+  routeDescription: z.string().trim().min(1).max(300).optional(),
   name: z.string().min(1).max(160),
   // .max(200) matches the `varchar(200)` email column (round 1 review,
   // I4) — a format-valid but over-long address must fail Zod validation

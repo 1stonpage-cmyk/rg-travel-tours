@@ -38,7 +38,9 @@ function ChatIcon({ tone, children }: { tone: 'whatsapp' | 'viber'; children: Re
  * for (task A4). A flat `.strict()` object, so these are exactly the names
  * the server reports. `type` and `packageId` are set by the code, never by
  * the visitor, so a message about either has no box and falls to the generic
- * line — see `unplacedMessages` below.
+ * line — see `unplacedMessages` below. `requestedDate`/`pax`/`routeDescription`
+ * (T17) are added here for the same reason: they are real boxes on this form
+ * once "Custom trip request" is picked, not form-level concerns.
  */
 const PLACED_INQUIRY_FIELDS: ReadonlySet<string> = new Set([
   'name',
@@ -46,10 +48,20 @@ const PLACED_INQUIRY_FIELDS: ReadonlySet<string> = new Set([
   'phone',
   'message',
   'consent',
+  'requestedDate',
+  'pax',
+  'routeDescription',
 ]);
 
 export default function ContactSection() {
   const [consentError, setConsentError] = useState<string | null>(null);
+  /**
+   * T17: this form now covers the "existing public inquiry form" the
+   * transfers-launch plan's §6 Custom Trip Request flow sends a guest
+   * through. `type` picks which `inquiryInput` fields the submit actually
+   * sends — see `handleSubmit` below.
+   */
+  const [requestKind, setRequestKind] = useState<'contact' | 'transfer_custom'>('contact');
   const sendInquiry = trpc.inquiries.create.useMutation();
 
   function handleSubmit(e: FormEvent<HTMLFormElement>) {
@@ -69,6 +81,26 @@ export default function ContactSection() {
     }
     setConsentError(null);
     const phone = String(data.get('phone') ?? '').trim();
+    if (requestKind === 'transfer_custom') {
+      const requestedDate = String(data.get('requestedDate') ?? '').trim();
+      const pax = Number(data.get('pax'));
+      const routeDescription = String(data.get('routeDescription') ?? '').trim();
+      sendInquiry.mutate(
+        {
+          type: 'transfer_custom',
+          requestedDate: requestedDate === '' ? undefined : requestedDate,
+          pax: Number.isFinite(pax) && pax > 0 ? pax : undefined,
+          routeDescription: routeDescription === '' ? undefined : routeDescription,
+          name: String(data.get('name') ?? ''),
+          email: String(data.get('email') ?? ''),
+          phone: phone === '' ? undefined : phone,
+          message: String(data.get('message') ?? ''),
+          consent: true,
+        },
+        { onSuccess: () => form.reset() },
+      );
+      return;
+    }
     sendInquiry.mutate(
       {
         type: 'contact',
@@ -285,6 +317,89 @@ export default function ContactSection() {
             className="bg-background space-y-4 rounded-2xl p-6"
           >
             <h3 className="text-brand-blue-900 text-lg font-semibold">Send us a message</h3>
+
+            {/*
+             * T17: which kind of request this is. Radio buttons, not a
+             * `<select>` — there are only two choices and both should be
+             * visible without opening anything (CLAUDE.md, 44px targets).
+             */}
+            <fieldset className="space-y-2">
+              <legend className="text-brand-ink text-sm font-medium">What's this about?</legend>
+              <div className="flex flex-col gap-2 sm:flex-row sm:gap-4">
+                <label className="border-input has-checked:border-brand-blue-500 has-checked:bg-brand-blue-50 tap-target flex min-h-11 items-center gap-2 rounded-xl border px-3 text-sm">
+                  <input
+                    type="radio"
+                    name="requestKind"
+                    value="contact"
+                    checked={requestKind === 'contact'}
+                    onChange={() => setRequestKind('contact')}
+                    className="accent-brand-blue-600 size-4"
+                  />
+                  General message
+                </label>
+                <label className="border-input has-checked:border-brand-blue-500 has-checked:bg-brand-blue-50 tap-target flex min-h-11 items-center gap-2 rounded-xl border px-3 text-sm">
+                  <input
+                    type="radio"
+                    name="requestKind"
+                    value="transfer_custom"
+                    checked={requestKind === 'transfer_custom'}
+                    onChange={() => setRequestKind('transfer_custom')}
+                    className="accent-brand-blue-600 size-4"
+                  />
+                  Custom trip request
+                </label>
+              </div>
+            </fieldset>
+
+            {requestKind === 'transfer_custom' ? (
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="contact-requested-date">Travel date</Label>
+                  <Input
+                    id="contact-requested-date"
+                    name="requestedDate"
+                    type="date"
+                    aria-describedby={
+                      fieldErrors?.requestedDate ? 'contact-requested-date-error' : undefined
+                    }
+                    aria-invalid={fieldErrors?.requestedDate ? true : undefined}
+                    className="tap-target"
+                  />
+                  <FieldError
+                    id="contact-requested-date-error"
+                    message={fieldErrors?.requestedDate}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="contact-pax">How many travelling</Label>
+                  <Input
+                    id="contact-pax"
+                    name="pax"
+                    type="number"
+                    min={1}
+                    max={50}
+                    aria-describedby={fieldErrors?.pax ? 'contact-pax-error' : undefined}
+                    aria-invalid={fieldErrors?.pax ? true : undefined}
+                    className="tap-target"
+                  />
+                  <FieldError id="contact-pax-error" message={fieldErrors?.pax} />
+                </div>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label htmlFor="contact-route">Where to, where from</Label>
+                  <Input
+                    id="contact-route"
+                    name="routeDescription"
+                    placeholder="e.g. Mactan airport to Oslob"
+                    aria-describedby={
+                      fieldErrors?.routeDescription ? 'contact-route-error' : undefined
+                    }
+                    aria-invalid={fieldErrors?.routeDescription ? true : undefined}
+                    className="tap-target"
+                  />
+                  <FieldError id="contact-route-error" message={fieldErrors?.routeDescription} />
+                </div>
+              </div>
+            ) : null}
 
             <div className="space-y-1.5">
               <Label htmlFor="contact-name">Your name</Label>

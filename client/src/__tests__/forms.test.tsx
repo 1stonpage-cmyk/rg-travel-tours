@@ -130,6 +130,70 @@ describe('ContactSection — wired to inquiries.create', () => {
     expect(within(form).queryByRole('status')).not.toBeInTheDocument();
   });
 
+  /**
+   * T17: picking "Custom trip request" sends `type: 'transfer_custom'` with
+   * the three transfer-only fields, and switching back to "General message"
+   * sends the plain `contact` shape with none of them — proving the radio
+   * actually gates which `inquiryInput` keys go out, not just which boxes
+   * are visible.
+   */
+  it('switches to a custom trip request and sends its transfer-specific fields', async () => {
+    const user = userEvent.setup();
+    let submitted: Record<string, unknown> | undefined;
+    mockTrpc({
+      'inquiries.create': (input: unknown) => {
+        submitted = input as Record<string, unknown>;
+        return { ok: true };
+      },
+    });
+    renderContact();
+
+    const form = screen.getByRole('form', { name: /contact inquiry/i });
+    await user.click(within(form).getByLabelText(/custom trip request/i));
+    await user.type(within(form).getByLabelText(/travel date/i), '2027-02-20');
+    await user.type(within(form).getByLabelText(/how many travelling/i), '6');
+    await user.type(
+      within(form).getByLabelText(/where to, where from/i),
+      'Mactan airport to Oslob',
+    );
+    await fillContactForm(user, form);
+    await user.click(within(form).getByRole('button', { name: /send message/i }));
+
+    await within(form).findByRole('status');
+    expect(submitted).toMatchObject({
+      type: 'transfer_custom',
+      requestedDate: '2027-02-20',
+      pax: 6,
+      routeDescription: 'Mactan airport to Oslob',
+      name: 'Test Guest',
+    });
+  });
+
+  it('leaves the transfer fields out of a general message, even after switching back', async () => {
+    const user = userEvent.setup();
+    let submitted: Record<string, unknown> | undefined;
+    mockTrpc({
+      'inquiries.create': (input: unknown) => {
+        submitted = input as Record<string, unknown>;
+        return { ok: true };
+      },
+    });
+    renderContact();
+
+    const form = screen.getByRole('form', { name: /contact inquiry/i });
+    await user.click(within(form).getByLabelText(/custom trip request/i));
+    await user.click(within(form).getByLabelText(/^general message$/i));
+    expect(within(form).queryByLabelText(/travel date/i)).not.toBeInTheDocument();
+    await fillContactForm(user, form);
+    await user.click(within(form).getByRole('button', { name: /send message/i }));
+
+    await within(form).findByRole('status');
+    expect(submitted).toMatchObject({ type: 'contact' });
+    expect(submitted).not.toHaveProperty('requestedDate');
+    expect(submitted).not.toHaveProperty('pax');
+    expect(submitted).not.toHaveProperty('routeDescription');
+  });
+
   it('disables the submit button while in flight and re-enables after', async () => {
     const user = userEvent.setup();
     let resolveMutation!: (value: { ok: true }) => void;

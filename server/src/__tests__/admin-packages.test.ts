@@ -140,15 +140,22 @@ async function createPackage(overrides: Record<string, unknown> = {}) {
  * would be testing a path nothing ships.
  */
 async function createInquiry(
-  opts: { packageId?: number | null; name?: string; message?: string } = {},
+  opts: {
+    packageId?: number | null;
+    name?: string;
+    message?: string;
+    /** T17: force `transfer_custom` without a `packageId`. */
+    transferCustom?: { requestedDate?: string; pax?: number; routeDescription?: string };
+  } = {},
 ) {
   const suffix = unique();
   const email = `${EMAIL_PREFIX}guest_${suffix}@example.test`;
   await publicApi().inquiries.create({
-    type: opts.packageId ? 'package' : 'contact',
+    type: opts.transferCustom ? 'transfer_custom' : opts.packageId ? 'package' : 'contact',
     // `inquiryInput.packageId` is OPTIONAL, not nullable — a general contact
     // enquiry omits it rather than sending null.
     ...(opts.packageId ? { packageId: opts.packageId } : {}),
+    ...(opts.transferCustom ?? {}),
     name: opts.name ?? 'Maria Santos',
     email,
     phone: '09170000000',
@@ -508,6 +515,36 @@ describeWithDb('admin.inquiries.list', () => {
       packageId: null,
       packageTitle: null,
       name: 'General Asker',
+    });
+  });
+
+  it('carries the custom-trip-request fields, and leaves them null on an ordinary enquiry (T17)', async () => {
+    const custom = await createInquiry({
+      name: 'Transfer Asker',
+      transferCustom: {
+        requestedDate: '2027-02-20',
+        pax: 6,
+        routeDescription: 'Cebu city to Moalboal',
+      },
+    });
+    const ordinary = await createInquiry({ name: 'Ordinary Asker' });
+
+    const { items: rows } = await ownerApi().admin.inquiries.list({ limit: 100 });
+
+    expect(rows.find((row) => row.id === custom.id)).toMatchObject({
+      type: 'transfer_custom',
+      requestedDate: '2027-02-20',
+      pax: 6,
+      routeDescription: 'Cebu city to Moalboal',
+      convertedBookingId: null,
+      convertedBookingRef: null,
+    });
+    expect(rows.find((row) => row.id === ordinary.id)).toMatchObject({
+      requestedDate: null,
+      pax: null,
+      routeDescription: null,
+      convertedBookingId: null,
+      convertedBookingRef: null,
     });
   });
 

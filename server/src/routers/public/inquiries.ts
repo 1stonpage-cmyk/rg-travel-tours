@@ -19,6 +19,9 @@ export const inquiriesRouter = router({
       await db.insert(inquiries).values({
         type: input.type,
         packageId: input.packageId,
+        requestedDate: input.requestedDate,
+        pax: input.pax,
+        routeDescription: input.routeDescription,
         name: input.name,
         email: input.email,
         phone: input.phone,

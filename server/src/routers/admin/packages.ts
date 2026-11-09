@@ -56,7 +56,7 @@ import {
 import { asc, desc, eq, sql } from 'drizzle-orm';
 import { getDb } from '../../db/client';
 import { isDuplicateKeyError } from '../../db/duplicate-key';
-import { inquiries, packages } from '../../db/schema';
+import { bookings, inquiries, packages } from '../../db/schema';
 import { writeAudit } from '../../services/audit';
 import { adminProcedure, router } from '../../trpc';
 
@@ -419,10 +419,20 @@ export const adminInquiriesRouter = router({
             email: inquiries.email,
             phone: inquiries.phone,
             message: inquiries.message,
+            requestedDate: inquiries.requestedDate,
+            pax: inquiries.pax,
+            routeDescription: inquiries.routeDescription,
+            convertedBookingId: inquiries.convertedBookingId,
+            // `LEFT JOIN bookings`, same reason as the `packages` join above:
+            // `converted_booking_id` is nullable (most rows are never
+            // converted), and the screen shows the booking's ref, not a bare
+            // id a dispatcher would have to look up by hand.
+            convertedBookingRef: bookings.ref,
             createdAt: inquiries.createdAt,
           })
           .from(inquiries)
           .leftJoin(packages, eq(inquiries.packageId, packages.id))
+          .leftJoin(bookings, eq(inquiries.convertedBookingId, bookings.id))
           // `id` after `created_at`: `created_at` is a `DATETIME` with second
           // precision, so two enquiries can share an instant and a queue needs a
           // total order.
@@ -445,6 +455,11 @@ export const adminInquiriesRouter = router({
             email: row.email,
             phone: row.phone,
             message: row.message,
+            requestedDate: row.requestedDate,
+            pax: row.pax,
+            routeDescription: row.routeDescription,
+            convertedBookingId: row.convertedBookingId,
+            convertedBookingRef: row.convertedBookingRef,
             // UTC instants out as UTC instants: the SCREEN converts to Manila.
             createdAt: row.createdAt.toISOString(),
           })),

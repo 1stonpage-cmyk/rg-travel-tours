@@ -532,8 +532,41 @@ function InquiryRow({ row }: { row: InquiryAdminRow }) {
       </div>
 
       <p className="text-brand-error text-xs">
-        {row.packageTitle === null ? 'General enquiry' : `About ${row.packageTitle}`}
+        {row.type === 'transfer_custom'
+          ? 'Custom trip request'
+          : row.packageTitle === null
+            ? 'General enquiry'
+            : `About ${row.packageTitle}`}
       </p>
+
+      {row.type === 'transfer_custom' ? (
+        <dl className="text-brand-ink grid gap-1 text-sm sm:grid-cols-2">
+          {row.requestedDate === null ? null : (
+            <div className="flex gap-1.5">
+              <dt className="text-muted-foreground">Travel date:</dt>
+              <dd>{row.requestedDate}</dd>
+            </div>
+          )}
+          {row.pax === null ? null : (
+            <div className="flex gap-1.5">
+              <dt className="text-muted-foreground">Pax:</dt>
+              <dd>{row.pax}</dd>
+            </div>
+          )}
+          {row.routeDescription === null ? null : (
+            <div className="flex gap-1.5 sm:col-span-2">
+              <dt className="text-muted-foreground">Route:</dt>
+              <dd>{row.routeDescription}</dd>
+            </div>
+          )}
+          {row.convertedBookingRef === null ? null : (
+            <div className="flex gap-1.5 sm:col-span-2">
+              <dt className="text-muted-foreground">Converted to booking:</dt>
+              <dd className="font-semibold">{row.convertedBookingRef}</dd>
+            </div>
+          )}
+        </dl>
+      ) : null}
 
       <div className="text-sm">
         <p className="text-brand-ink">

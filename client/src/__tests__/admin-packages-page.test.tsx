@@ -98,6 +98,11 @@ function inquiry(overrides: Partial<InquiryAdminRow> = {}): InquiryAdminRow {
     email: 'maria@example.test',
     phone: '09170000000',
     message: 'Can you collect us from the pier?',
+    requestedDate: null,
+    pax: null,
+    routeDescription: null,
+    convertedBookingId: null,
+    convertedBookingRef: null,
     createdAt: '2026-06-15T02:00:00.000Z',
     ...overrides,
   };
@@ -124,6 +129,18 @@ const GENERAL_INQUIRY = inquiry({
   name: 'John Dela Cruz',
   phone: null,
   message: 'Do you run airport transfers?',
+});
+const TRANSFER_CUSTOM_INQUIRY = inquiry({
+  id: 12,
+  type: 'transfer_custom',
+  status: 'new',
+  packageId: null,
+  packageTitle: null,
+  name: 'Pedro Cruz',
+  message: 'Can we add a stop on the way?',
+  requestedDate: '2027-02-20',
+  pax: 6,
+  routeDescription: 'Cebu city to Moalboal',
 });
 
 /** `admin.inquiries.list`'s paginated result shape — mirrors `admin.bookings.list`. */
@@ -302,6 +319,19 @@ describe('AdminPackagesPage — the enquiries', () => {
 
     const general = rowFor('John Dela Cruz');
     expect(within(general).getByText(/general enquiry/i)).toBeInTheDocument();
+  });
+
+  it('shows a custom trip request with its travel date, pax and route (T17)', async () => {
+    renderPage({
+      'admin.inquiries.list': inquiryPage([NEW_INQUIRY, GENERAL_INQUIRY, TRANSFER_CUSTOM_INQUIRY]),
+    });
+    await screen.findByText('Pedro Cruz');
+
+    const row = rowFor('Pedro Cruz');
+    expect(within(row).getByText(/custom trip request/i)).toBeInTheDocument();
+    expect(within(row).getByText('2027-02-20')).toBeInTheDocument();
+    expect(within(row).getByText('6')).toBeInTheDocument();
+    expect(within(row).getByText('Cebu city to Moalboal')).toBeInTheDocument();
   });
 
   it('counts the enquiries still waiting for an answer', async () => {

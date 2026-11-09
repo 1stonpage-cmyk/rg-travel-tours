@@ -458,12 +458,13 @@ export const inquiries = mysqlTable(
   'inquiries',
   {
     id: int('id').autoincrement().primaryKey(),
-    type: mysqlEnum('type', ['contact', 'package']).notNull(),
+    type: mysqlEnum('type', ['contact', 'package', 'transfer_custom']).notNull(),
     /**
-     * The package this enquiry is about; null for a general contact form.
-     * Retro-fitted as a real foreign key in the core-schema plan's Task 11.
-     * A dangling id renders as "enquiry about (nothing)" in the admin list,
-     * which is how a real customer's question gets lost.
+     * The package this enquiry is about; null for a general contact form or
+     * a custom trip request. Retro-fitted as a real foreign key in the
+     * core-schema plan's Task 11. A dangling id renders as "enquiry about
+     * (nothing)" in the admin list, which is how a real customer's question
+     * gets lost.
      */
     packageId: int('package_id').references(() => packages.id),
     name: varchar('name', { length: 160 }).notNull(),
@@ -471,6 +472,27 @@ export const inquiries = mysqlTable(
     phone: varchar('phone', { length: 40 }),
     message: text('message').notNull(),
     status: mysqlEnum('status', ['new', 'read', 'replied', 'closed']).notNull().default('new'),
+    /**
+     * The four `transfer_custom` fields (transfers-launch plan §6, task
+     * T17). NULL for `contact`/`package` — same unenforced-at-the-database
+     * shape `packageId` already has above, rather than a new
+     * `bookings_product_type_shape`-style CHECK: unlike that CHECK (which
+     * guards against a silently-dropping INNER JOIN or a double-priced
+     * booking), a stray non-null value here has no join or money consequence
+     * to guard against, only a screen that would show a date nobody asked
+     * about — not worth a second enforcement mechanism this table didn't
+     * already have.
+     */
+    requestedDate: date('requested_date', { mode: 'string' }),
+    pax: int('pax'),
+    routeDescription: varchar('route_description', { length: 300 }),
+    /**
+     * Set once owner/finance convert this request into a real booking
+     * (`admin.transferQuotes.convert`, task T19/T20). Plain RESTRICT, no
+     * `onDelete` — house style, and safe since bookings are never
+     * hard-deleted (CLAUDE.md, "No hard deletes").
+     */
+    convertedBookingId: int('converted_booking_id').references(() => bookings.id),
     createdAt: datetime('created_at', { mode: 'date' })
       .notNull()
       .$defaultFn(() => new Date()),

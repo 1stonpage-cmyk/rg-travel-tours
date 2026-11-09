@@ -198,8 +198,13 @@ export interface PackageAdminRow {
 
 /* ----------------------------------------------------------------- Inquiries */
 
-/** `inquiries.type`, mirroring the MySQL enum in `server/src/db/schema.ts`. */
-export const INQUIRY_TYPES = ['contact', 'package'] as const;
+/**
+ * `inquiries.type`, mirroring the MySQL enum in `server/src/db/schema.ts`.
+ * The one place this list is spelled out — `inquiryInput` (public mutation
+ * schema) imports it rather than repeating the literal, so the two can never
+ * drift apart the way a second copy eventually does.
+ */
+export const INQUIRY_TYPES = ['contact', 'package', 'transfer_custom'] as const;
 export type InquiryType = (typeof INQUIRY_TYPES)[number];
 
 /** `inquiries.status`, mirroring the MySQL enum. `new` is where a submission lands. */
@@ -251,6 +256,12 @@ export type InquiryStatusInput = z.infer<typeof inquiryStatusInput>;
  * `packageTitle` is joined when `packageId` is set and null for a general
  * contact-form enquiry, so "enquiry about (nothing)" cannot appear on the
  * screen — the reason `inquiries.package_id` was made a real foreign key.
+ *
+ * The four fields below `createdAt` exist only on a `transfer_custom` row
+ * (T17) — null on `contact`/`package` rows. `convertedBookingRef` is the
+ * same "join it, don't make the screen show a bare id" choice as
+ * `packageTitle`: once owner/finance convert the request (T19/T20), the
+ * screen can point straight at the booking rather than a number.
  */
 export interface InquiryAdminRow {
   id: number;
@@ -264,6 +275,16 @@ export interface InquiryAdminRow {
   email: string;
   phone: string | null;
   message: string;
+  /** `transfer_custom` only: the date the guest asked to travel. */
+  requestedDate: string | null;
+  /** `transfer_custom` only: how many are travelling. */
+  pax: number | null;
+  /** `transfer_custom` only: the route the guest described, in their words. */
+  routeDescription: string | null;
+  /** Set once this request has been converted into a real booking. */
+  convertedBookingId: number | null;
+  /** That booking's human-readable ref, or null when not yet converted. */
+  convertedBookingRef: string | null;
   /** ISO instant. The screen converts to Asia/Manila. */
   createdAt: string;
 }

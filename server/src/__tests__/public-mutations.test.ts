@@ -73,6 +73,27 @@ describeWithDb('public mutations', () => {
     expect(rows[0]?.status).toBe('new');
   });
 
+  it('stores a custom trip request with its transfer-specific fields (T17)', async () => {
+    const email = `${MARK}transfer@example.com`;
+    await caller.inquiries.create({
+      type: 'transfer_custom',
+      requestedDate: '2027-01-15',
+      pax: 4,
+      routeDescription: 'Mactan airport to Oslob',
+      name: 'Vitest',
+      email,
+      message: 'Can you fit a stop in Carcar?',
+      consent: true,
+    });
+    const rows = await getDb().select().from(inquiries).where(eq(inquiries.email, email));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.type).toBe('transfer_custom');
+    expect(rows[0]?.requestedDate).toBe('2027-01-15');
+    expect(rows[0]?.pax).toBe(4);
+    expect(rows[0]?.routeDescription).toBe('Mactan airport to Oslob');
+    expect(rows[0]?.convertedBookingId).toBeNull();
+  });
+
   it('treats a duplicate newsletter signup as success, not an error', async () => {
     const email = `${MARK}dupe@example.com`;
     const first = await caller.newsletter.subscribe({ email });

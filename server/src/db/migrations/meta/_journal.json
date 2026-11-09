@@ -176,6 +176,13 @@
       "when": 1794086171202,
       "tag": "0024_flexible_routes_stage2_subtractive",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "5",
+      "when": 1794241811943,
+      "tag": "0025_military_mauler",
+      "breakpoints": true
     }
   ]
 }
