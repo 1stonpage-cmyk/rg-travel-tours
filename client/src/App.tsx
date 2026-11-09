@@ -18,6 +18,7 @@ import AdminTransferPlacesPage from '@/pages/admin/AdminTransferPlacesPage';
 import AdminTransferRoutesPage from '@/pages/admin/AdminTransferRoutesPage';
 import AdminVehicleTypesPage from '@/pages/admin/AdminVehicleTypesPage';
 import AdminChangePasswordPage from '@/pages/admin/AdminChangePasswordPage';
+import AdminNotFoundPage from '@/pages/admin/AdminNotFoundPage';
 import AdminForgotPasswordPage from '@/pages/admin/AdminForgotPasswordPage';
 import AdminLoginPage from '@/pages/admin/AdminLoginPage';
 import AdminResetPasswordPage from '@/pages/admin/AdminResetPasswordPage';
@@ -192,6 +193,14 @@ export default function App() {
         <Route path="staff" element={<AdminStaffPage />} />
         <Route path="settings" element={<AdminSettingsPage />} />
         <Route path="change-password" element={<AdminChangePasswordPage />} />
+        {/*
+         * B3 (DEMO POLISH batch, owner decision 1): "Unknown /admin/*
+         * paths render a 404 inside the admin layout (sidebar kept)."
+         * Must stay LAST among this block's children — React Router tries
+         * siblings in order, and a literal path added below this one would
+         * never be reached.
+         */}
+        <Route path="*" element={<AdminNotFoundPage />} />
       </Route>
 
       {/*

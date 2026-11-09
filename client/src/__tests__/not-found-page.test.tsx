@@ -67,25 +67,35 @@ describe('NotFoundPage — catch-all for an unmatched public URL', () => {
   });
 
   /**
-   * The verification step the task asked for, made concrete rather than
-   * reasoned from the route tree alone: `/admin` lives in its own top-level
-   * `<Route path="admin" element={<AdminLayout/>}>` block, entirely separate
-   * from the `<Route element={<PublicLayout/>}>` block the catch-all sits
-   * inside. React Router matches a pathname against the WHOLE route tree,
-   * not tree-by-tree, so `/admin/this-does-not-exist` matches neither
-   * `AdminLayout`'s own children (none of which is `this-does-not-exist`)
-   * nor any literal public route — it falls through to the public
-   * catch-all and renders with PUBLIC chrome (this suite's banner/footer),
-   * not `AdminLayout`'s nav. That is stated here as an observed fact from
-   * actually rendering `<App/>` at that path, not assumed from reading the
-   * JSX.
+   * INVERTED by B3 (DEMO POLISH batch, 2026-11-09, owner decision 1):
+   * "Unknown /admin/* paths render a 404 inside the admin layout (sidebar
+   * kept)." Before B3, `/admin` had no `path="*"` child of its own, so an
+   * unmatched admin subpath fell all the way through to this file's PUBLIC
+   * catch-all and rendered with public chrome — the assertion this test
+   * used to make, on purpose, as an observed (not assumed) fact. B3 added
+   * `AdminNotFoundPage` as the last child inside
+   * `<Route path="admin" element={<AdminLayout/>}>`, which now matches
+   * first, so the admin shell mounts (sidebar nav `aria-label="Admin"`)
+   * instead of `PublicLayout`'s header/footer. This is a deliberate
+   * behaviour change, not a weakened assertion — the test now pins the
+   * NEW, correct fall-through target.
+   *
+   * `AdminLayout` also renders its own `<header>` (the phone top bar), so
+   * a bare "no banner" assertion is wrong — both layouts have one. The
+   * distinguishing check is which one: the admin bar's own "Staff
+   * console" text, not `PublicLayout`'s brand header, and no `<footer>`
+   * at all (`AdminLayout` renders none).
    */
-  it('an unmatched ADMIN subpath also falls through to the PUBLIC catch-all (observed, not assumed)', async () => {
+  it('an unmatched ADMIN subpath renders the ADMIN 404 inside the admin shell, not the public catch-all', async () => {
     renderAppAt('/admin/this-does-not-exist');
 
     expect(await screen.findByRole('heading', { name: /page not found/i })).toBeInTheDocument();
-    // Public chrome, not AdminLayout's nav — the admin shell is never mounted.
-    expect(screen.getByRole('banner')).toBeInTheDocument();
-    expect(screen.getByRole('contentinfo')).toBeInTheDocument();
+    // The admin shell's sidebar nav is mounted (sidebar kept, per the
+    // decision).
+    expect(screen.getByRole('navigation', { name: 'Admin' })).toBeInTheDocument();
+    // The banner present is the ADMIN phone top bar, not PublicLayout's.
+    expect(within(screen.getByRole('banner')).getByText('Staff console')).toBeInTheDocument();
+    // AdminLayout renders no footer at all.
+    expect(screen.queryByRole('contentinfo')).not.toBeInTheDocument();
   });
 });
