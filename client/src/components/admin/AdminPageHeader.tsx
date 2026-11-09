@@ -1,9 +1,12 @@
 import type { ReactNode } from 'react';
+import { cn } from '@/lib/utils';
 
 export interface AdminPageHeaderProps {
   /** Short uppercase section label, e.g. "Operations". */
   eyebrow: string;
   title: string;
+  /** Extra classes merged onto the `<h1>` — e.g. `font-mono` for an identifier-shaped title. */
+  titleClassName?: string;
   description?: string;
   /**
    * The page's one primary action (CLAUDE.md "Admin buttons": at most ONE
@@ -27,6 +30,7 @@ export interface AdminPageHeaderProps {
 export default function AdminPageHeader({
   eyebrow,
   title,
+  titleClassName,
   description,
   action,
 }: AdminPageHeaderProps) {
@@ -36,7 +40,9 @@ export default function AdminPageHeader({
         <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.08em]">
           {eyebrow}
         </p>
-        <h1 className="text-brand-ink text-2xl font-bold sm:text-3xl">{title}</h1>
+        <h1 className={cn('text-brand-ink text-2xl font-bold sm:text-3xl', titleClassName)}>
+          {title}
+        </h1>
         {description ? <p className="text-brand-error text-sm">{description}</p> : null}
       </div>
       {action ? (

@@ -52,6 +52,7 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { splitFieldErrors } from '@/lib/field-errors';
 import { trpc } from '@/lib/trpc';
+import AdminPageHeader from '@/components/admin/AdminPageHeader';
 import AssignPanel from '@/components/admin/AssignPanel';
 import CancelRefundPanel from '@/components/admin/CancelRefundPanel';
 import PaymentDecisions from '@/components/admin/PaymentDecisions';
@@ -63,10 +64,6 @@ const NOTE_FIELD_NAMES: ReadonlySet<string> = new Set(['note']);
 
 const CARD = 'border-brand-blue-100 rounded-[14px] border bg-white p-5 text-sm';
 const HEADING = 'text-brand-ink text-lg font-bold';
-const PRIMARY_BUTTON =
-  'tap-target bg-brand-blue-700 hover:bg-brand-blue-800 rounded-[10px] font-semibold text-white transition-colors';
-const OUTLINE_BUTTON =
-  'tap-target border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 hover:text-brand-blue-800 rounded-[10px] font-semibold transition-colors';
 
 export default function AdminBookingDetailPage() {
   const { ref = '' } = useParams();
@@ -108,7 +105,7 @@ export default function AdminBookingDetailPage() {
         <p className="text-brand-error text-sm">
           That reference does not match a booking, or your session has ended.
         </p>
-        <Button asChild variant="outline" className={OUTLINE_BUTTON}>
+        <Button asChild variant="secondary-pill">
           <Link to="/admin/bookings">Back to bookings</Link>
         </Button>
       </div>
@@ -152,11 +149,17 @@ export default function AdminBookingDetailPage() {
         ← Bookings
       </Link>
 
-      <header className="flex flex-col gap-1">
-        <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.08em]">
-          Booking
-        </p>
-        <h1 className="text-brand-ink font-mono text-2xl font-bold sm:text-3xl">{booking.ref}</h1>
+      <div className="flex flex-col gap-1">
+        {/*
+         * `AdminPageHeader` only takes an eyebrow/title/plain-text
+         * description, so the booking's richer second line (tour title,
+         * date/pax, and the live `BookingStatusPill`) renders as a sibling
+         * right after it rather than being forced into that single prop —
+         * same text and markup as before, just split across the component
+         * boundary. `titleClassName` restores the ref's monospace styling
+         * (distinguishes O/0, 1/l) that the plain `<h1>` would otherwise drop.
+         */}
+        <AdminPageHeader eyebrow="Booking" title={booking.ref} titleClassName="font-mono" />
         {/* Null on a transfer booking (T6); T23 shows the real route here. */}
         <p className="text-brand-ink font-semibold">
           {booking.tourTitle ?? TRANSFER_BOOKING_LABEL}
@@ -167,7 +170,7 @@ export default function AdminBookingDetailPage() {
           </span>
           <BookingStatusPill status={booking.status} />
         </p>
-      </header>
+      </div>
 
       <section aria-labelledby="guest-heading" className={CARD}>
         <h2 id="guest-heading" className={HEADING}>
@@ -424,7 +427,7 @@ export default function AdminBookingDetailPage() {
 
               <Button
                 type="submit"
-                className={PRIMARY_BUTTON}
+                variant="primary-pill"
                 disabled={noteIsEmpty || addNote.isPending}
               >
                 {addNote.isPending ? (

@@ -36,8 +36,10 @@
 import { Link, useSearchParams } from 'react-router-dom';
 import { ExternalLink, Loader2 } from 'lucide-react';
 import { TRANSFER_BOOKING_LABEL, formatPeso } from '@rg/shared';
+import AdminPageHeader from '@/components/admin/AdminPageHeader';
 import PaymentDecisions from '@/components/admin/PaymentDecisions';
 import { findPendingCash, findPendingReceipt } from '@/components/admin/pending-payments';
+import { Button } from '@/components/ui/button';
 import { pesosInWords } from '@/lib/peso-words';
 import { MONEY_ROLES, roleMay } from '@/lib/roles';
 import { trpc } from '@/lib/trpc';
@@ -122,15 +124,11 @@ export default function AdminPaymentsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.08em]">
-          Finance
-        </p>
-        <h1 className="text-brand-ink text-2xl font-bold sm:text-3xl">Payment checks</h1>
-        <p className="text-brand-error text-sm">
-          A booking is only marked paid after someone here approves the receipt.
-        </p>
-      </header>
+      <AdminPageHeader
+        eyebrow="Finance"
+        title="Payment checks"
+        description="A booking is only marked paid after someone here approves the receipt."
+      />
 
       {queue.isPending ? (
         <p className="text-brand-error flex items-center gap-2 text-sm">
@@ -313,15 +311,16 @@ export default function AdminPaymentsPage() {
                               className="border-brand-blue-200 max-h-64 w-auto self-start rounded-[10px] border object-contain"
                             />
                           ) : null}
-                          <a
-                            href={`/api/receipts/${payment.receiptPath}`}
-                            target="_blank"
-                            rel="noreferrer noopener"
-                            className="border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 tap-target inline-flex items-center gap-2 self-start rounded-[10px] border px-4 text-sm font-semibold transition-colors"
-                          >
-                            <ExternalLink className="size-4" aria-hidden="true" />
-                            Open receipt
-                          </a>
+                          <Button asChild variant="secondary-pill" className="self-start">
+                            <a
+                              href={`/api/receipts/${payment.receiptPath}`}
+                              target="_blank"
+                              rel="noreferrer noopener"
+                            >
+                              <ExternalLink className="size-4" aria-hidden="true" />
+                              Open receipt
+                            </a>
+                          </Button>
                         </div>
                       ))}
                   </div>

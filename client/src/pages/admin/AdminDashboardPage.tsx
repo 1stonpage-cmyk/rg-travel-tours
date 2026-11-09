@@ -42,6 +42,8 @@ import { Link } from 'react-router-dom';
 import type { DashboardAlert } from '@rg/shared';
 import AlertCard from '@/components/admin/AlertCard';
 import DeparturesBoard from '@/components/admin/DeparturesBoard';
+import AdminPageHeader from '@/components/admin/AdminPageHeader';
+import { Button } from '@/components/ui/button';
 import { MONEY_ROLES, roleMay } from '@/lib/roles';
 import { trpc } from '@/lib/trpc';
 
@@ -123,22 +125,15 @@ export default function AdminDashboardPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div className="flex flex-col gap-1">
-          <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.08em]">
-            {manilaToday()} · Manila time
-          </p>
-          <h1 className="text-brand-ink text-2xl font-bold sm:text-3xl">
-            {me.data?.name ? `${manilaGreeting()}, ${me.data.name}` : 'Dashboard'}
-          </h1>
-        </div>
-        <Link
-          to="/admin/bookings"
-          className="bg-brand-blue-700 hover:bg-brand-blue-800 tap-target inline-flex items-center rounded-[10px] px-5 text-sm font-semibold text-white transition-colors"
-        >
-          Find a booking
-        </Link>
-      </header>
+      <AdminPageHeader
+        eyebrow={`${manilaToday()} · Manila time`}
+        title={me.data?.name ? `${manilaGreeting()}, ${me.data.name}` : 'Dashboard'}
+        action={
+          <Button asChild variant="primary-pill">
+            <Link to="/admin/bookings">Find a booking</Link>
+          </Button>
+        }
+      />
 
       <section aria-labelledby="needs-attention-heading" className="flex flex-col gap-3">
         <h2 id="needs-attention-heading" className="text-brand-ink text-lg font-bold">

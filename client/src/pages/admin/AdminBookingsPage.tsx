@@ -33,14 +33,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { trpc } from '@/lib/trpc';
+import AdminPageHeader from '@/components/admin/AdminPageHeader';
 import BookingStatusPill from '@/components/admin/BookingStatusPill';
 
 const PAGE_SIZE = 25;
 
 const CARD = 'border-brand-blue-100 rounded-[14px] border bg-white';
 const FIELD = 'tap-target border-brand-blue-200 rounded-[10px] bg-white';
-const OUTLINE_BUTTON =
-  'tap-target border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 hover:text-brand-blue-800 rounded-[10px] font-semibold transition-colors';
 
 export default function AdminBookingsPage() {
   const [status, setStatus] = useState<string>('');
@@ -69,13 +68,11 @@ export default function AdminBookingsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.08em]">
-          Operations
-        </p>
-        <h1 className="text-brand-ink text-2xl font-bold sm:text-3xl">Bookings</h1>
-        <p className="text-brand-error text-sm">Soonest tour first. Open a booking to act on it.</p>
-      </header>
+      <AdminPageHeader
+        eyebrow="Operations"
+        title="Bookings"
+        description="Soonest tour first. Open a booking to act on it."
+      />
 
       <form
         aria-label="Filter bookings"
@@ -241,8 +238,7 @@ export default function AdminBookingsPage() {
             <div className="flex gap-2">
               <Button
                 type="button"
-                variant="outline"
-                className={OUTLINE_BUTTON}
+                variant="secondary-pill"
                 disabled={offset === 0}
                 onClick={() => setOffset(Math.max(offset - PAGE_SIZE, 0))}
               >
@@ -250,8 +246,7 @@ export default function AdminBookingsPage() {
               </Button>
               <Button
                 type="button"
-                variant="outline"
-                className={OUTLINE_BUTTON}
+                variant="secondary-pill"
                 disabled={query.data.offset + query.data.items.length >= query.data.total}
                 onClick={() => setOffset(offset + PAGE_SIZE)}
               >
