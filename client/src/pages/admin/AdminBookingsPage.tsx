@@ -159,8 +159,18 @@ export default function AdminBookingsPage() {
                 </Link>
                 {/* Null on a transfer booking (T6) — never a blank line. */}
                 <p className="text-brand-ink font-semibold">
-                  {booking.tourTitle ?? TRANSFER_BOOKING_LABEL}
+                  {booking.tourTitle ?? booking.transferRouteLabel ?? TRANSFER_BOOKING_LABEL}
                 </p>
+                {/* Task T23 — null for a tour, so this line only appears for a transfer. */}
+                {booking.pickupTime === null && booking.vehicleTypeLabel === null ? null : (
+                  <p className="text-brand-error">
+                    {booking.pickupTime === null ? null : `Pickup ${booking.pickupTime}`}
+                    {booking.pickupTime !== null && booking.vehicleTypeLabel !== null
+                      ? ' · '
+                      : null}
+                    {booking.vehicleTypeLabel}
+                  </p>
+                )}
                 <p className="text-brand-error">
                   {booking.tourDate} · {booking.pax} pax · {booking.leadName}
                 </p>
@@ -183,7 +193,7 @@ export default function AdminBookingsPage() {
                     Reference
                   </th>
                   <th scope="col" className="px-4 py-3 font-semibold">
-                    Tour
+                    Trip
                   </th>
                   <th scope="col" className="px-4 py-3 font-semibold">
                     Date
@@ -214,7 +224,19 @@ export default function AdminBookingsPage() {
                       </Link>
                     </td>
                     <td className="text-brand-ink px-4 py-3 font-medium">
-                      {booking.tourTitle ?? TRANSFER_BOOKING_LABEL}
+                      <span className="block">
+                        {booking.tourTitle ?? booking.transferRouteLabel ?? TRANSFER_BOOKING_LABEL}
+                      </span>
+                      {/* Task T23 — null for a tour. */}
+                      {booking.pickupTime === null && booking.vehicleTypeLabel === null ? null : (
+                        <span className="text-brand-error block text-xs">
+                          {booking.pickupTime === null ? null : `Pickup ${booking.pickupTime}`}
+                          {booking.pickupTime !== null && booking.vehicleTypeLabel !== null
+                            ? ' · '
+                            : null}
+                          {booking.vehicleTypeLabel}
+                        </span>
+                      )}
                     </td>
                     <td className="text-brand-ink px-4 py-3 tabular-nums">{booking.tourDate}</td>
                     <td className="text-brand-ink px-4 py-3">{booking.leadName}</td>

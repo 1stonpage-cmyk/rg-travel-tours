@@ -47,12 +47,27 @@
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import { and, asc, eq, notInArray, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/mysql-core';
 import { calendarMonthSchema, manilaCivilDate } from '@rg/shared';
 import type { CalendarDay, CalendarTrip } from '@rg/shared';
 import { getDb } from '../../db/client';
-import { bookingTransferDetails, bookings, drivers, tours, vans } from '../../db/schema';
+import {
+  bookingTransferDetails,
+  bookings,
+  drivers,
+  tours,
+  transferPlaces,
+  transferRoutes,
+  vans,
+  vehicleTypes,
+} from '../../db/schema';
 import { driversFreeOn, vansFreeOn } from '../../services/dispatch/availability';
+import { transferTitle } from '../../services/transfers/display';
 import { adminProcedure, router } from '../../trpc';
+
+/** Two aliases onto `transfer_places`, the same pattern `routers/public/driver.ts` uses. */
+const calendarFromPlace = alias(transferPlaces, 'calendarFromPlace');
+const calendarToPlace = alias(transferPlaces, 'calendarToPlace');
 
 /**
  * `column BETWEEN :from AND :to`, comparing a civil date column to two
@@ -109,7 +124,14 @@ export const adminCalendarRouter = router({
         .select({
           bookingId: bookings.id,
           ref: bookings.ref,
+          tourId: bookings.tourId,
           tourTitle: tours.title,
+          pickupTime: bookingTransferDetails.pickupTime,
+          customRouteDescription: bookingTransferDetails.customRouteDescription,
+          direction: bookingTransferDetails.direction,
+          fromPlaceName: calendarFromPlace.name,
+          toPlaceName: calendarToPlace.name,
+          vehicleTypeLabel: vehicleTypes.name,
           pax: bookings.pax,
           status: bookings.status,
           tourDate: bookings.tourDate,
@@ -125,10 +147,24 @@ export const adminCalendarRouter = router({
          * dispatch calendar entirely — a trip with no van and no driver,
          * invisible on the screen whose `needsAssignmentCount` exists to
          * surface exactly that. `CalendarTrip.tourTitle` is nullable for it.
+         *
+         * Task T23 adds the four joins below — the same 1:1-or-absent
+         * pattern `routers/public/driver.ts`'s `loadDriverTrip` carries —
+         * so this list can show `transferRouteLabel`, `pickupTime` and
+         * `vehicleTypeLabel` in `tourTitle`'s place. `vehicleTypeLabel` in
+         * particular is the one piece of information in this feature a
+         * dispatcher reads on THIS screen specifically: this is where a van
+         * gets picked for the trip, and `dayOptions` below already warns on
+         * `luggageCount` for the same reason.
          */
         .leftJoin(tours, eq(tours.id, bookings.tourId))
         .leftJoin(vans, eq(vans.id, bookings.vanId))
         .leftJoin(drivers, eq(drivers.id, bookings.driverId))
+        .leftJoin(bookingTransferDetails, eq(bookingTransferDetails.bookingId, bookings.id))
+        .leftJoin(transferRoutes, eq(transferRoutes.id, bookings.routeId))
+        .leftJoin(calendarFromPlace, eq(calendarFromPlace.id, transferRoutes.fromPlaceId))
+        .leftJoin(calendarToPlace, eq(calendarToPlace.id, transferRoutes.toPlaceId))
+        .leftJoin(vehicleTypes, eq(vehicleTypes.id, bookings.vehicleTypeId))
         .where(
           and(
             betweenDates(bookings.tourDate, from, to),
@@ -159,6 +195,19 @@ export const adminCalendarRouter = router({
           bookingId: row.bookingId,
           ref: row.ref,
           tourTitle: row.tourTitle,
+          // Same guard as `driverTripDetail`/`todayDepartures` —
+          // `transferTitle()` cannot tell a tour from a routeless transfer.
+          transferRouteLabel:
+            row.tourId === null
+              ? transferTitle({
+                  fromName: row.fromPlaceName,
+                  toName: row.toPlaceName,
+                  direction: row.direction,
+                  customRouteDescription: row.customRouteDescription,
+                })
+              : null,
+          pickupTime: row.pickupTime,
+          vehicleTypeLabel: row.vehicleTypeLabel,
           pax: row.pax,
           status: row.status,
           vanId: row.vanId,

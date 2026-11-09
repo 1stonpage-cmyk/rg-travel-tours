@@ -335,8 +335,18 @@ export default function AdminCalendarPage() {
                         <span className="flex min-w-0 flex-col gap-1">
                           <span className="text-brand-ink text-base font-bold">
                             {/* Null on a transfer booking (T6). */}
-                            {trip.tourTitle ?? TRANSFER_BOOKING_LABEL}
+                            {trip.tourTitle ?? trip.transferRouteLabel ?? TRANSFER_BOOKING_LABEL}
                           </span>
+                          {/* Task T23 — null for a tour. */}
+                          {trip.pickupTime === null && trip.vehicleTypeLabel === null ? null : (
+                            <span className="text-brand-error text-sm">
+                              {trip.pickupTime === null ? null : `Pickup ${trip.pickupTime}`}
+                              {trip.pickupTime !== null && trip.vehicleTypeLabel !== null
+                                ? ' · '
+                                : null}
+                              {trip.vehicleTypeLabel}
+                            </span>
+                          )}
                           <span className="text-brand-error text-sm">
                             <span className="font-mono">{trip.ref}</span> · {trip.pax}{' '}
                             {trip.pax === 1 ? 'guest' : 'guests'} ·{' '}
@@ -376,7 +386,7 @@ export default function AdminCalendarPage() {
             <div className="flex min-w-0 flex-[1_1_300px] flex-col gap-2">
               <p className="text-brand-error text-sm">
                 For <span className="font-mono">{activeTrip.ref}</span> ·{' '}
-                {activeTrip.tourTitle ?? TRANSFER_BOOKING_LABEL}
+                {activeTrip.tourTitle ?? activeTrip.transferRouteLabel ?? TRANSFER_BOOKING_LABEL}
               </p>
               <AssignPanel
                 key={activeTrip.bookingId}

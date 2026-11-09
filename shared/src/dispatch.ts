@@ -311,6 +311,16 @@ export interface CalendarTrip {
    * rather than the row being dropped by an inner join.
    */
   tourTitle: string | null;
+  /**
+   * The route, travelled order, or the staff-quoted description (Task
+   * T23) — null for a tour. Shown in `tourTitle`'s place, the same
+   * `tourId === null` guard every other surface in this feature uses.
+   */
+  transferRouteLabel: string | null;
+  /** `"HH:mm"`, Asia/Manila civil time — null for a tour. */
+  pickupTime: string | null;
+  /** The booked vehicle class's name (e.g. "Sedan") — null for a tour. */
+  vehicleTypeLabel: string | null;
   pax: number;
   status: BookingStatus;
   vanId: number | null;

@@ -33,6 +33,9 @@ function trip(
 ): CalendarTrip {
   return {
     tourTitle: 'Oslob Whale Shark Watching',
+    transferRouteLabel: null,
+    pickupTime: null,
+    vehicleTypeLabel: null,
     pax: 2,
     status: 'confirmed',
     vanId: null,

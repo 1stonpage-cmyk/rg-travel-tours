@@ -18,11 +18,13 @@
  *
  * ## What is NOT claimed here
  *
- * That a transfer booking RENDERS WELL. It does not yet: there is no route
- * name, no pickup time, no vehicle type on any of these payloads, and the
- * guest-facing copy still says "tour" in places. That is the display work of
- * T18 (reports), T22 (driver portal), T23 (admin screens) and T24 (portal and
- * notification copy). The bar asserted below is T6's own: **never silently
+ * That a transfer booking RENDERS WELL. T18 (reports), T22 (driver portal)
+ * and T23 (admin screens — `admin.bookings.list`/`.detail`,
+ * `admin.calendar.month`, `todayDepartures`) have since done that display
+ * work for their own surfaces; `admin-transfer-display.test.ts` is T23's own
+ * proof. What is NOT yet true is the guest-facing side: the portal and the
+ * notification copy still say "tour" in places — T24's work. The bar
+ * asserted below is T6's own and still holds regardless: **never silently
  * dropped, never a crash, never a false statement.**
  *
  * ## The fixture is written directly, because nothing can create one yet
@@ -313,10 +315,12 @@ describeWithDb('T6: no surface silently drops a transfer booking', () => {
      * nothing else: `0 of 1`, not a crash and not an empty list. **Answered
      * by Task T22**: this number is also what progress MEANS for a
      * transfer — no new code needed, confirmed end to end in
-     * `driver-transfer-trip.test.ts`. This departures-board row (T23's
-     * screen) still renders that `0 of 1` / `1 of 1` as a 100%-full bar
-     * the instant a transfer starts; see `routers/admin/departures.ts`'s
-     * own note.
+     * `driver-transfer-trip.test.ts`. **Task T23** closed the rendering
+     * side of this too: `DeparturesBoard.tsx` used to show that `0 of 1` /
+     * `1 of 1` as a 100%-full bar the instant a transfer started; it now
+     * special-cases `total === 1` the same way `StopList.tsx` already did
+     * — see `routers/admin/departures.ts`'s own note and
+     * `departures-board.test.tsx`'s zero-stop tests.
      */
     expect(row!.progress.total).toBe(1);
     expect(row!.progress.done).toBe(0);

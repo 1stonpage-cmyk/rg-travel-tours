@@ -33,6 +33,9 @@ function trip(overrides: Partial<CalendarTrip> & { bookingId: number }): Calenda
   return {
     ref: `RG-TRIP0${overrides.bookingId}`,
     tourTitle: 'Kawasan Falls Day Trip',
+    transferRouteLabel: null,
+    pickupTime: null,
+    vehicleTypeLabel: null,
     pax: 4,
     status: 'confirmed',
     vanId: null,
@@ -136,6 +139,44 @@ describe('AdminCalendarPage', () => {
     expect(done?.textContent).toMatch(/ABC 123/);
     expect(done?.textContent).toMatch(/Maria Santos/);
     expect(done?.textContent).toMatch(/1 guest\b/);
+  });
+
+  it('shows the route, pickup time and vehicle for a transfer, instead of the generic label', async () => {
+    const transferTrip = trip({
+      bookingId: 9,
+      ref: 'RG-XFER99',
+      tourTitle: null,
+      transferRouteLabel: 'Mactan Airport → Oslob',
+      pickupTime: '04:30',
+      vehicleTypeLabel: 'Sedan',
+      status: 'assigned',
+      vanId: 11,
+      vanPlate: 'XYZ 789',
+      driverId: 8,
+      driverName: 'Noel Cuizon',
+      needsAssignment: false,
+    });
+    mockTrpc({
+      'staffAuth.me': { role: 'owner' },
+      'admin.calendar.month': { days: [day(TODAY, [transferTrip])] },
+      'admin.calendar.dayOptions': { vans: [], drivers: [] },
+    });
+    render(
+      <TrpcProviders>
+        <MemoryRouter>
+          <AdminCalendarPage />
+        </MemoryRouter>
+      </TrpcProviders>,
+    );
+
+    const card = await screen.findByTestId('calendar-trip');
+    expect(within(card).getByText('Mactan Airport → Oslob')).toBeInTheDocument();
+    expect(within(card).getByText('Pickup 04:30 · Sedan')).toBeInTheDocument();
+    expect(within(card).queryByText('Transfer booking')).toBeNull();
+
+    // The assign panel's own label line carries the route too, not the fallback.
+    await user.click(within(card).getByRole('button'));
+    expect(await screen.findByText(/For.*Mactan Airport → Oslob/)).toBeInTheDocument();
   });
 
   it('opens the assign panel on the first trip that needs one, and follows the selection', async () => {

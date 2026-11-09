@@ -160,9 +160,9 @@ export default function AdminBookingDetailPage() {
          * (distinguishes O/0, 1/l) that the plain `<h1>` would otherwise drop.
          */}
         <AdminPageHeader eyebrow="Booking" title={booking.ref} titleClassName="font-mono" />
-        {/* Null on a transfer booking (T6); T23 shows the real route here. */}
+        {/* Null on a transfer booking (T6); its route shows here instead (Task T23). */}
         <p className="text-brand-ink font-semibold">
-          {booking.tourTitle ?? TRANSFER_BOOKING_LABEL}
+          {booking.tourTitle ?? booking.transferRouteLabel ?? TRANSFER_BOOKING_LABEL}
         </p>
         <p className="text-brand-error flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
           <span>
@@ -171,6 +171,80 @@ export default function AdminBookingDetailPage() {
           <BookingStatusPill status={booking.status} />
         </p>
       </div>
+
+      {/*
+       * Task T23 — the transfer-only fields `TripDetail` (the driver's own
+       * payload) already carries, plus `vehicleTypeLabel`, which the driver
+       * has no need to be told but a dispatcher reading this page does.
+       * The whole section is absent for a tour booking, which has no
+       * `booking_transfer_details` row and so every one of these is null.
+       */}
+      {booking.transferRouteLabel === null ? null : (
+        <section aria-labelledby="transfer-heading" className={CARD}>
+          <h2 id="transfer-heading" className={HEADING}>
+            Transfer
+          </h2>
+          <dl className="mt-3 space-y-1">
+            {booking.vehicleTypeLabel === null ? null : (
+              <div className="flex gap-2">
+                <dt className="text-brand-error w-28 shrink-0">Vehicle</dt>
+                <dd className="text-brand-ink font-medium">{booking.vehicleTypeLabel}</dd>
+              </div>
+            )}
+            {booking.pickupTime === null ? null : (
+              <div className="flex gap-2">
+                <dt className="text-brand-error w-28 shrink-0">Pickup time</dt>
+                <dd className="text-brand-ink font-medium">{booking.pickupTime}</dd>
+              </div>
+            )}
+            {booking.dayUseEndTime === null ? null : (
+              <div className="flex gap-2">
+                <dt className="text-brand-error w-28 shrink-0">Day use until</dt>
+                <dd className="text-brand-ink font-medium">{booking.dayUseEndTime}</dd>
+              </div>
+            )}
+            {booking.dropoffAddress === null ? null : (
+              <div className="flex gap-2">
+                <dt className="text-brand-error w-28 shrink-0">Drop-off</dt>
+                <dd className="text-brand-ink font-medium">
+                  {booking.dropoffAddress}
+                  {booking.dropoffMapsUrl === null ? null : (
+                    <>
+                      {' '}
+                      <a
+                        href={booking.dropoffMapsUrl}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className="text-brand-blue-700 hover:text-brand-blue-900 tap-target inline-flex items-center gap-1 underline transition-colors"
+                      >
+                        <ExternalLink className="size-3.5" aria-hidden="true" />
+                        Open in Maps
+                      </a>
+                    </>
+                  )}
+                </dd>
+              </div>
+            )}
+            {booking.luggageCount === null ? null : (
+              <div className="flex gap-2">
+                <dt className="text-brand-error w-28 shrink-0">Luggage</dt>
+                <dd className="text-brand-ink font-medium">
+                  {booking.luggageCount === 1 ? '1 bag' : `${booking.luggageCount} bags`}
+                </dd>
+              </div>
+            )}
+            {booking.flightNumber === null && booking.airline === null ? null : (
+              <div className="flex gap-2">
+                <dt className="text-brand-error w-28 shrink-0">Flight</dt>
+                <dd className="text-brand-ink font-medium">
+                  {booking.flightNumber ?? '(number not given)'}
+                  {booking.airline === null ? null : ` (${booking.airline})`}
+                </dd>
+              </div>
+            )}
+          </dl>
+        </section>
+      )}
 
       <section aria-labelledby="guest-heading" className={CARD}>
         <h2 id="guest-heading" className={HEADING}>

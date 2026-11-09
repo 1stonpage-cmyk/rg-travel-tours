@@ -43,17 +43,22 @@ import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import { BOOKING_STATUSES, addBookingNoteInputSchema, manilaCivilDate } from '@rg/shared';
 import { and, asc, desc, eq, gte, lte, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/mysql-core';
 import { getDb } from '../../db/client';
 import {
   PAYMENT_METHODS,
   auditLog,
   bookingAddons,
   bookingNotes,
+  bookingTransferDetails,
   bookings,
   drivers,
   payments,
   tours,
+  transferPlaces,
+  transferRoutes,
   vans,
+  vehicleTypes,
 } from '../../db/schema';
 import { writeAudit } from '../../services/audit';
 import { notify } from '../../services/notify';
@@ -69,7 +74,12 @@ import {
 } from '../../services/payments/errors';
 import { decideManualReceipt } from '../../services/payments/manual-receipt';
 import { rejectCashPayment, verifyCashPayment } from '../../services/payments/record-payment';
+import { transferTitle } from '../../services/transfers/display';
 import { adminProcedure, router } from '../../trpc';
+
+/** Two aliases onto `transfer_places`, the same pattern `routers/public/driver.ts` uses. */
+const bookingsFromPlace = alias(transferPlaces, 'bookingsFromPlace');
+const bookingsToPlace = alias(transferPlaces, 'bookingsToPlace');
 
 /**
  * The rejection reason, bounded by its column (`varchar(400)`).
@@ -394,7 +404,16 @@ export const adminBookingsRouter = router({
           id: bookings.id,
           ref: bookings.ref,
           status: bookings.status,
+          tourId: bookings.tourId,
           tourTitle: tours.title,
+          // Task T23 — same fields and cardinality argument as
+          // `routers/public/driver.ts`'s `loadDriverTrip`, kept short here.
+          pickupTime: bookingTransferDetails.pickupTime,
+          customRouteDescription: bookingTransferDetails.customRouteDescription,
+          direction: bookingTransferDetails.direction,
+          fromPlaceName: bookingsFromPlace.name,
+          toPlaceName: bookingsToPlace.name,
+          vehicleTypeLabel: vehicleTypes.name,
           tourDate: bookings.tourDate,
           pax: bookings.pax,
           leadName: bookings.leadName,
@@ -441,8 +460,18 @@ export const adminBookingsRouter = router({
          * `awaitingVerification` queue, so a transfer guest's receipt would
          * wait for a decision nobody could see. The count below is joined the
          * same way, or the pager would count a different set from the page.
+         *
+         * The four joins below (Task T23) are the same 1:1-or-absent pattern
+         * `routers/public/driver.ts`'s `loadDriverTrip` carries, so they
+         * cannot fan this row out — not replicated on the `counted` query
+         * below since a LEFT join never changes `COUNT(*)` either way.
          */
         .leftJoin(tours, eq(tours.id, bookings.tourId))
+        .leftJoin(bookingTransferDetails, eq(bookingTransferDetails.bookingId, bookings.id))
+        .leftJoin(transferRoutes, eq(transferRoutes.id, bookings.routeId))
+        .leftJoin(bookingsFromPlace, eq(bookingsFromPlace.id, transferRoutes.fromPlaceId))
+        .leftJoin(bookingsToPlace, eq(bookingsToPlace.id, transferRoutes.toPlaceId))
+        .leftJoin(vehicleTypes, eq(vehicleTypes.id, bookings.vehicleTypeId))
         .where(condition)
         // Soonest tour first: an operations list is a diary, not a log.
         .orderBy(asc(bookings.tourDate), asc(bookings.id))
@@ -460,8 +489,18 @@ export const adminBookingsRouter = router({
         items: rows.map((row) => {
           // `leadPhone` never leaves this function: masked below, and the
           // real value is deliberately not in the object this returns
-          // (RA 10173 — CLAUDE.md Security).
-          const { leadPhone, pendingPaymentMethod, ...rest } = row;
+          // (RA 10173 — CLAUDE.md Security). `tourId` is only the guard
+          // below; the computed label is what the client gets.
+          const {
+            leadPhone,
+            pendingPaymentMethod,
+            tourId,
+            fromPlaceName,
+            toPlaceName,
+            direction,
+            customRouteDescription,
+            ...rest
+          } = row;
           return {
             ...rest,
             tourDate: manilaCivilDate(row.tourDate),
@@ -469,6 +508,17 @@ export const adminBookingsRouter = router({
             attemptNumber: Number(row.attemptNumber),
             method: pendingPaymentMethod ? paymentMethodLabel(pendingPaymentMethod) : null,
             phoneMasked: maskPhone(leadPhone),
+            // Same guard as `driverTripDetail`/`todayDepartures` —
+            // `transferTitle()` cannot tell a tour from a routeless transfer.
+            transferRouteLabel:
+              tourId === null
+                ? transferTitle({
+                    fromName: fromPlaceName,
+                    toName: toPlaceName,
+                    direction,
+                    customRouteDescription,
+                  })
+                : null,
           };
         }),
         /** For the pager. `COUNT(*)` comes back as a string on some drivers. */
@@ -491,13 +541,28 @@ export const adminBookingsRouter = router({
   detail: adminProcedure('bookingsView')
     .input(z.object({ ref: z.string().min(1).max(20) }).strict())
     .query(async ({ input }) => {
-      const [booking] = await getDb()
+      const [bookingRow] = await getDb()
         .select({
           id: bookings.id,
           ref: bookings.ref,
           status: bookings.status,
           tourId: bookings.tourId,
           tourTitle: tours.title,
+          // Task T23 — the full guest-field set, same columns and the same
+          // cardinality argument `routers/public/driver.ts`'s
+          // `loadDriverTrip` carries for `TripDetail`.
+          pickupTime: bookingTransferDetails.pickupTime,
+          dayUseEndTime: bookingTransferDetails.dayUseEndTime,
+          dropoffAddress: bookingTransferDetails.dropoffAddress,
+          dropoffMapsUrl: bookingTransferDetails.dropoffMapUrl,
+          luggageCount: bookingTransferDetails.luggageCount,
+          flightNumber: bookingTransferDetails.flightNumber,
+          airline: bookingTransferDetails.airline,
+          customRouteDescription: bookingTransferDetails.customRouteDescription,
+          direction: bookingTransferDetails.direction,
+          fromPlaceName: bookingsFromPlace.name,
+          toPlaceName: bookingsToPlace.name,
+          vehicleTypeLabel: vehicleTypes.name,
           tourDate: bookings.tourDate,
           pax: bookings.pax,
           payMode: bookings.payMode,
@@ -521,14 +586,42 @@ export const adminBookingsRouter = router({
          * reference" about a booking that exists, which is the worst kind of
          * wrong answer for the one screen an admin reaches for when a guest
          * rings. `tourTitle` is nullable; `tourId` already was.
+         *
+         * The four joins below (Task T23) are the same 1:1-or-absent
+         * pattern as every other surface in this feature — see
+         * `routers/public/driver.ts`'s `loadDriverTrip` for the cardinality
+         * argument in full.
          */
         .leftJoin(tours, eq(tours.id, bookings.tourId))
+        .leftJoin(bookingTransferDetails, eq(bookingTransferDetails.bookingId, bookings.id))
+        .leftJoin(transferRoutes, eq(transferRoutes.id, bookings.routeId))
+        .leftJoin(bookingsFromPlace, eq(bookingsFromPlace.id, transferRoutes.fromPlaceId))
+        .leftJoin(bookingsToPlace, eq(bookingsToPlace.id, transferRoutes.toPlaceId))
+        .leftJoin(vehicleTypes, eq(vehicleTypes.id, bookings.vehicleTypeId))
         .where(eq(bookings.ref, input.ref))
         .limit(1);
 
-      if (!booking) {
+      if (!bookingRow) {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'No booking with that reference.' });
       }
+
+      // The raw join columns the label is computed from — destructured out
+      // here so they never reach the client, same as `admin.bookings.list`.
+      const { fromPlaceName, toPlaceName, direction, customRouteDescription, ...rest } = bookingRow;
+      const booking = {
+        ...rest,
+        // Same guard as `driverTripDetail`/`todayDepartures` —
+        // `transferTitle()` cannot tell a tour from a routeless transfer.
+        transferRouteLabel:
+          bookingRow.tourId === null
+            ? transferTitle({
+                fromName: fromPlaceName,
+                toName: toPlaceName,
+                direction,
+                customRouteDescription,
+              })
+            : null,
+      };
 
       /*
        * The driver is LEFT-joined, not looked up afterwards: `drivers` is

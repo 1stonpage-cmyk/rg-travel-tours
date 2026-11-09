@@ -38,6 +38,10 @@ const LIST = {
       ref: 'RG-AAAAA1',
       status: 'pending_verification',
       tourTitle: 'Oslob Whale Shark Watching',
+      // Task T23 — null on every tour booking, same as the server sends.
+      transferRouteLabel: null,
+      pickupTime: null,
+      vehicleTypeLabel: null,
       tourDate: '2026-12-25',
       pax: 3,
       leadName: 'Maria Santos',
@@ -51,6 +55,9 @@ const LIST = {
       ref: 'RG-BBBBB2',
       status: 'confirmed',
       tourTitle: 'Kawasan Falls Canyoneering',
+      transferRouteLabel: null,
+      pickupTime: null,
+      vehicleTypeLabel: null,
       tourDate: '2026-12-28',
       pax: 2,
       leadName: 'Juan Dela Cruz',
@@ -71,6 +78,16 @@ const DETAIL = {
   status: 'pending_verification',
   tourId: 9,
   tourTitle: 'Oslob Whale Shark Watching',
+  // Task T23 — null on every tour booking, same as the server sends.
+  transferRouteLabel: null,
+  vehicleTypeLabel: null,
+  pickupTime: null,
+  dayUseEndTime: null,
+  dropoffAddress: null,
+  dropoffMapsUrl: null,
+  luggageCount: null,
+  flightNumber: null,
+  airline: null,
   tourDate: '2026-12-25',
   pax: 3,
   payMode: 'full',
@@ -132,6 +149,41 @@ const DETAIL = {
     },
   ],
   assignment: null,
+};
+
+/** Task T23 — the transfer-only fields `admin.bookings.list`/`.detail` now carry. */
+const TRANSFER_LIST_ITEM = {
+  id: 3,
+  ref: 'RG-CCCCC3',
+  status: 'confirmed',
+  tourTitle: null,
+  transferRouteLabel: 'Mactan Airport → Oslob',
+  pickupTime: '04:30',
+  vehicleTypeLabel: 'Sedan',
+  tourDate: '2026-12-26',
+  pax: 2,
+  leadName: 'Ana Reyes',
+  totalCentavos: 500_000,
+  paidCentavos: 150_000,
+  paymentReviewRequired: false,
+  createdAt: new Date().toISOString(),
+};
+
+const TRANSFER_DETAIL = {
+  ...DETAIL,
+  id: 3,
+  ref: 'RG-CCCCC3',
+  tourId: null,
+  tourTitle: null,
+  transferRouteLabel: 'Mactan Airport → Oslob',
+  vehicleTypeLabel: 'Sedan',
+  pickupTime: '04:30',
+  dayUseEndTime: null,
+  dropoffAddress: 'A resort in Oslob',
+  dropoffMapsUrl: 'https://maps.example.test/oslob-resort',
+  luggageCount: 2,
+  flightNumber: '5J123',
+  airline: 'Cebu Pacific',
 };
 
 function renderList() {
@@ -248,6 +300,17 @@ describe('AdminBookingsPage', () => {
     }
   });
 
+  it('shows the route, pickup time and vehicle for a transfer, instead of the generic label', async () => {
+    mockTrpc({ 'admin.bookings.list': { ...LIST, items: [TRANSFER_LIST_ITEM], total: 1 } });
+    renderList();
+    await screen.findByRole('table');
+
+    expect(screen.getAllByText('Mactan Airport → Oslob').length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Pickup 04:30 · Sedan/).length).toBeGreaterThan(0);
+    // The generic fallback never appears when there is a real route label.
+    expect(screen.queryByText('Transfer booking')).toBeNull();
+  });
+
   it('says so plainly when nothing matches', async () => {
     mockTrpc({ 'admin.bookings.list': { items: [], total: 0, limit: 25, offset: 0 } });
     renderList();
@@ -276,6 +339,35 @@ describe('AdminBookingDetailPage', () => {
     expect(screen.getByText(/2 × snorkel set/i)).toBeInTheDocument();
     expect(screen.getByText(/early pickup/i)).toBeInTheDocument();
     expect(screen.getByText(/payment.receipt_submitted/)).toBeInTheDocument();
+  });
+
+  it('shows a transfer section with the route, vehicle and guest fields, and no tour title', async () => {
+    mockTrpc({
+      'admin.bookings.detail': TRANSFER_DETAIL,
+      'staffAuth.me': { userId: 1, role: 'owner' },
+    });
+    renderDetail();
+
+    await screen.findByRole('heading', { name: 'RG-CCCCC3' });
+    expect(screen.getByText('Mactan Airport → Oslob')).toBeInTheDocument();
+    const section = screen.getByRole('region', { name: 'Transfer' });
+    expect(within(section).getByText('Sedan')).toBeInTheDocument();
+    expect(within(section).getByText('04:30')).toBeInTheDocument();
+    expect(within(section).getByText(/A resort in Oslob/)).toBeInTheDocument();
+    expect(within(section).getByRole('link', { name: /open in maps/i })).toHaveAttribute(
+      'href',
+      'https://maps.example.test/oslob-resort',
+    );
+    expect(within(section).getByText('2 bags')).toBeInTheDocument();
+    expect(within(section).getByText('5J123 (Cebu Pacific)')).toBeInTheDocument();
+  });
+
+  it('draws no transfer section for a tour booking', async () => {
+    mockTrpc({ 'admin.bookings.detail': DETAIL, 'staffAuth.me': { userId: 1, role: 'owner' } });
+    renderDetail();
+
+    await screen.findByRole('heading', { name: 'RG-AAAAA1' });
+    expect(screen.queryByRole('region', { name: 'Transfer' })).not.toBeInTheDocument();
   });
 
   it('states the booking’s status in words under its reference', async () => {
