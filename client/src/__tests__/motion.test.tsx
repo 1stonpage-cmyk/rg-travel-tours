@@ -839,7 +839,7 @@ describe('Mobile bottom bar — "Book a tour" + WhatsApp (spec task 2.9B)', () =
     localStorage.clear();
   });
 
-  it('renders a "Book a tour" link to /tours and an icon-only, aria-labelled WhatsApp link', () => {
+  it('renders a "Book a tour" link to /tours and an icon-only, aria-labelled WhatsApp link', async () => {
     render(
       <TrpcProviders>
         <MemoryRouter>
@@ -849,7 +849,13 @@ describe('Mobile bottom bar — "Book a tour" + WhatsApp (spec task 2.9B)', () =
         </MemoryRouter>
       </TrpcProviders>,
     );
-    const bookLink = screen.getByRole('link', { name: /book a tour/i });
+    // DEMO POLISH task 1B: this link now follows `settings.showTours`
+    // (SETTINGS_FIXTURE's is `true`), read from an async query — `findByRole`
+    // waits for that resolution rather than asserting on the pre-resolution
+    // render, which defaults to the OFF ("Book a transfer") label. See
+    // layout.test.tsx's own "follows show_tours" tests for the full ON/OFF
+    // coverage; this test only needs to keep working for the ON case.
+    const bookLink = await screen.findByRole('link', { name: /book a tour/i });
     expect(bookLink).toHaveAttribute('href', '/tours');
 
     const chatLinks = screen.getAllByRole('link', { name: /chat with us on whatsapp/i });
