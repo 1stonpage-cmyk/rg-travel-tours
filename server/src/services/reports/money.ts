@@ -338,10 +338,16 @@ export async function revenueByTour(range: DateRangeInput): Promise<TourRevenueR
  * names: `reportSummary` already includes transfer money; this is what lets
  * the per-route table (and the per-tour one) sum back to it.
  *
- * **`INNER JOIN booking_transfer_details`, not `LEFT`:** every row with
- * `product_type <> 'tour'` has exactly one, written together with the
- * booking in `createTransferBooking()` — unlike `tours`, there is no
- * nullable case to guard against here.
+ * **`LEFT JOIN booking_transfer_details`, deliberately, even though every
+ * `product_type <> 'tour'` row has exactly one today** (written together with
+ * the booking in `createTransferBooking()`). An `INNER JOIN` here would trust
+ * a cross-table invariant no CHECK can express — exactly the reasoning
+ * `services/transfers/capacity.ts` and `services/dispatch/availability.ts`
+ * give for the same join elsewhere — so a missing details row (a future
+ * writer's bug, not today's) drops that booking's money from this report with
+ * no error, rather than failing loudly. `requireDirection()` below is the loud
+ * failure: it throws rather than silently defaulting, the same choice
+ * `requireVehicleTypeId()` makes a few lines down.
  *
  * **Grouped by route + direction + vehicle type, not by product type.** A
  * route's row therefore mixes one-way and day-use revenue — the plan's own
@@ -368,7 +374,7 @@ export async function revenueByRoute(range: DateRangeInput): Promise<RouteRevenu
     })
     .from(payments)
     .innerJoin(bookings, eq(bookings.id, payments.bookingId))
-    .innerJoin(bookingTransferDetails, eq(bookingTransferDetails.bookingId, bookings.id))
+    .leftJoin(bookingTransferDetails, eq(bookingTransferDetails.bookingId, bookings.id))
     .where(and(createdInWindow(range), notTour))
     .groupBy(bookings.routeId, bookingTransferDetails.direction, bookings.vehicleTypeId);
 
@@ -381,7 +387,7 @@ export async function revenueByRoute(range: DateRangeInput): Promise<RouteRevenu
       count: BOOKING_COUNT,
     })
     .from(bookings)
-    .innerJoin(bookingTransferDetails, eq(bookingTransferDetails.bookingId, bookings.id))
+    .leftJoin(bookingTransferDetails, eq(bookingTransferDetails.bookingId, bookings.id))
     .where(and(tourDateInWindow(range), notTour))
     .groupBy(bookings.routeId, bookingTransferDetails.direction, bookings.vehicleTypeId);
 
@@ -398,6 +404,37 @@ export async function revenueByRoute(range: DateRangeInput): Promise<RouteRevenu
       throw new Error('revenueByRoute: a non-tour booking has a null vehicle_type_id.');
     }
     return id;
+  }
+
+  /**
+   * `direction` reads back `TransferDirection | null` only because of the
+   * `LEFT JOIN` above — the column itself is NOT NULL. A null here means the
+   * join found no `booking_transfer_details` row at all, which the comment
+   * above this function explains is a real (if latent) bug to surface loudly,
+   * not paper over.
+   */
+  function requireDirection(direction: TransferDirection | null): TransferDirection {
+    if (direction === null) {
+      throw new Error('revenueByRoute: a non-tour booking has no booking_transfer_details row.');
+    }
+    return direction;
+  }
+
+  /**
+   * A routeless custom trip has no two places to travel between in two
+   * directions — `createTransferBooking()`'s `reverseEnabled` check only runs
+   * when a route actually exists (design note §1.7), so a custom booking's
+   * `direction` column can legitimately read either value and means nothing.
+   * Normalised to `'forward'` here so every custom transfer lands in ONE
+   * bucket: without this, two money-bearing rows could render with the
+   * byte-identical label "Custom transfer (Van)" — indistinguishable on
+   * screen from a duplicate or a double-count, in a report about money.
+   */
+  function normalizedDirection(
+    routeId: number | null,
+    direction: TransferDirection,
+  ): TransferDirection {
+    return routeId === null ? 'forward' : direction;
   }
 
   type Entry = Omit<RouteRevenueRow, 'routeLabel'>;
@@ -421,8 +458,9 @@ export async function revenueByRoute(range: DateRangeInput): Promise<RouteRevenu
   const merged = new Map<string, Entry>();
   for (const row of moneyRows) {
     const vehicleTypeId = requireVehicleTypeId(row.vehicleTypeId);
-    const key = keyOf(row.routeId, row.direction, vehicleTypeId);
-    const entry = merged.get(key) ?? blank(row.routeId, row.direction, vehicleTypeId);
+    const direction = normalizedDirection(row.routeId, requireDirection(row.direction));
+    const key = keyOf(row.routeId, direction, vehicleTypeId);
+    const entry = merged.get(key) ?? blank(row.routeId, direction, vehicleTypeId);
     entry.receivedCentavos = Number(row.received);
     entry.refundedCentavos = Number(row.refunded);
     entry.netReceivedCentavos = entry.receivedCentavos - entry.refundedCentavos;
@@ -430,8 +468,9 @@ export async function revenueByRoute(range: DateRangeInput): Promise<RouteRevenu
   }
   for (const row of bookingRows) {
     const vehicleTypeId = requireVehicleTypeId(row.vehicleTypeId);
-    const key = keyOf(row.routeId, row.direction, vehicleTypeId);
-    const entry = merged.get(key) ?? blank(row.routeId, row.direction, vehicleTypeId);
+    const direction = normalizedDirection(row.routeId, requireDirection(row.direction));
+    const key = keyOf(row.routeId, direction, vehicleTypeId);
+    const entry = merged.get(key) ?? blank(row.routeId, direction, vehicleTypeId);
     entry.stillToCollectCentavos = Number(row.still);
     entry.bookingCount = Number(row.count);
     merged.set(key, entry);

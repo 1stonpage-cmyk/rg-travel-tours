@@ -386,7 +386,13 @@ const created = {
   routeIds: [] as number[],
 };
 
-const tourIds: Record<'a' | 'b' | 'c' | 'hostile', number> = { a: 0, b: 0, c: 0, hostile: 0 };
+const tourIds: Record<'a' | 'b' | 'c' | 'hostile' | 'august', number> = {
+  a: 0,
+  b: 0,
+  c: 0,
+  hostile: 0,
+  august: 0,
+};
 const bookingIds: Record<string, number> = {};
 let owner = 0;
 let dispatcher = 0;
@@ -394,14 +400,17 @@ let finance = 0;
 
 /** T18 fixtures: one real route (forward AND reverse legs sold) and one custom, routeless trip. */
 let VAN_ID = 0;
+let SUV_ID = 0;
 let routeAB = 0;
 const placeNames = { a: '', b: '' };
-const transferIds: Record<'forward' | 'reverse' | 'custom' | 'customUnpaid', number> = {
-  forward: 0,
-  reverse: 0,
-  custom: 0,
-  customUnpaid: 0,
-};
+const transferIds: Record<'forward' | 'reverse' | 'custom' | 'customUnpaid' | 'moneyOnly', number> =
+  {
+    forward: 0,
+    reverse: 0,
+    custom: 0,
+    customUnpaid: 0,
+    moneyOnly: 0,
+  };
 
 const apiFor = (userId: number, role: AdminRole) =>
   appRouter.createCaller(staffContext(userId, role) as never);
@@ -749,9 +758,9 @@ describeWithDb('admin.reports', () => {
     });
 
     /*
-     * T18 fixtures: March transfer bookings, so `revenueByRoute` and the
+     * T18 fixtures: AUGUST transfer bookings, so `revenueByRoute` and the
      * LEFT JOIN fix on `outstandingBookings` have real non-tour rows to
-     * read. Three shapes, each proving something the tour fixtures above
+     * read. Several shapes, each proving something the tour fixtures above
      * cannot:
      *  - `forward` and `reverse` share the SAME route id but must land in
      *    DIFFERENT grouped rows — the whole point of grouping by direction.
@@ -759,6 +768,16 @@ describeWithDb('admin.reports', () => {
      *    `INNER JOIN tours` dropped from `outstandingBookings` regardless of
      *    which route (or none) it carried, and cancelled besides, so it also
      *    proves `bookingCount` still counts it while `stillToCollect` does not.
+     *  - `moneyOnly` (SUV, not van — its own bucket) has an AUGUST payment
+     *    but a SEPTEMBER tour date, the transfer-side mirror of tour C/`b5`
+     *    above: it proves `revenueByRoute`'s money and booking queries are
+     *    read independently, not from one join, the same thing `b5` proves
+     *    for `revenueByTour`.
+     *  - one ordinary TOUR booking, fully paid, so August is not a
+     *    transfers-only month — the reconciliation test below needs a real,
+     *    non-zero `byTour` contribution to actually exercise "the two sums
+     *    add up to the summary" rather than reducing to "byRoute equals the
+     *    summary" with a provably-zero `byTour`.
      *
      * **In AUGUST, their own month** — not March. Every March figure above is
      * a hand-checked number asserted exactly (370,000 received, bookingCount
@@ -769,11 +788,28 @@ describeWithDb('admin.reports', () => {
      * its own month.
      */
     VAN_ID = await vehicleTypeIdBySlug('van');
+    SUV_ID = await vehicleTypeIdBySlug('suv');
     const placeA = await makePlace();
     const placeB = await makePlace();
     placeNames.a = placeA.name;
     placeNames.b = placeB.name;
     routeAB = await makeRoute(placeA.id, placeB.id);
+
+    tourIds.august = await makeTour('T18 Fixture Tour (August)');
+    bookingIds.august = await makeBooking({
+      tourId: tourIds.august,
+      tourDate: '2098-08-15',
+      totalCentavos: 100_000,
+      paidCentavos: 100_000,
+      status: 'confirmed',
+    });
+    await makePayment({
+      bookingId: bookingIds.august,
+      type: 'payment',
+      status: 'paid',
+      amountCentavos: 100_000,
+      createdAt: '2098-08-15T02:00:00Z',
+    });
 
     transferIds.forward = await makeTransferBooking({
       routeId: routeAB,
@@ -819,6 +855,23 @@ describeWithDb('admin.reports', () => {
       status: 'confirmed',
       customRouteDescription: 'Fixture unpaid custom route',
     });
+    /*
+     * SEPTEMBER tour date, AUGUST payment — SUV rather than van, its own
+     * bucket, so this fixture cannot be mistaken for adding money to
+     * `forward`'s already-exact-asserted figures. Belongs to `revenueByRoute`
+     * for AUGUST (money) with a zero `bookingCount`/`stillToCollect` there,
+     * and to a SEPTEMBER window's `bookingRows` instead — the same
+     * independence `b5`/tour C proves for `revenueByTour`.
+     */
+    transferIds.moneyOnly = await makeTransferBooking({
+      routeId: routeAB,
+      direction: 'forward',
+      vehicleTypeId: SUV_ID,
+      tourDate: '2098-09-01',
+      totalCentavos: 90_000,
+      paidCentavos: 90_000,
+      status: 'confirmed',
+    });
 
     await makePayment({
       bookingId: transferIds.forward,
@@ -833,6 +886,13 @@ describeWithDb('admin.reports', () => {
       status: 'paid',
       amountCentavos: 80_000,
       createdAt: '2098-08-11T02:00:00Z',
+    });
+    await makePayment({
+      bookingId: transferIds.moneyOnly,
+      type: 'payment',
+      status: 'paid',
+      amountCentavos: 90_000,
+      createdAt: '2098-08-20T02:00:00Z',
     });
   }, 30_000);
 
@@ -1027,6 +1087,11 @@ describeWithDb('admin.reports', () => {
     expect(total('refundedCentavos')).toBe(summary.refundedCentavos);
     expect(total('stillToCollectCentavos')).toBe(summary.stillToCollectCentavos);
     expect(rows.reduce((sum, row) => sum + row.bookingCount, 0)).toBe(summary.bookingCount);
+    // March is tour-only by construction (the T18 transfer fixtures live in
+    // AUGUST specifically so they don't disturb the numbers above) — stated
+    // here so a future March transfer fixture fails LOUDLY on this line,
+    // rather than this test quietly starting to assert a partial truth.
+    expect(await ownerApi().admin.reports.byRoute(MARCH)).toEqual([]);
   });
 
   /* ----------------------------------------------------- By route (T18) */
@@ -1086,6 +1151,50 @@ describeWithDb('admin.reports', () => {
     });
   });
 
+  it('reads the money and the booking queries independently, like revenueByTour’s own September/March booking does', async () => {
+    const rows = await ownerApi().admin.reports.byRoute(TRANSFER_MONTH);
+    const [suvType] = await getDb()
+      .select({ name: vehicleTypes.name })
+      .from(vehicleTypes)
+      .where(eq(vehicleTypes.id, SUV_ID));
+    const suvName = suvType!.name;
+
+    // `moneyOnly`'s tour date is SEPTEMBER; only its AUGUST payment belongs
+    // here. A query that joined money and bookings in one statement — rather
+    // than reading them independently, as `revenueByTour` already does for
+    // tours — would either drop this row entirely or give it a nonzero
+    // `bookingCount` it has no business having in AUGUST.
+    const moneyOnly = rows.find((row) => row.vehicleTypeId === SUV_ID);
+    expect(moneyOnly).toEqual({
+      routeId: routeAB,
+      direction: 'forward',
+      vehicleTypeId: SUV_ID,
+      routeLabel: `${placeNames.a} → ${placeNames.b} (${suvName})`,
+      receivedCentavos: 90_000,
+      refundedCentavos: 0,
+      netReceivedCentavos: 90_000,
+      stillToCollectCentavos: 0,
+      bookingCount: 0,
+    });
+
+    // And its real month reads the other half: a booking, no August money.
+    const september = await ownerApi().admin.reports.byRoute({
+      from: '2098-09-01',
+      to: '2098-09-30',
+    });
+    expect(september.find((row) => row.vehicleTypeId === SUV_ID)).toEqual({
+      routeId: routeAB,
+      direction: 'forward',
+      vehicleTypeId: SUV_ID,
+      routeLabel: `${placeNames.a} → ${placeNames.b} (${suvName})`,
+      receivedCentavos: 0,
+      refundedCentavos: 0,
+      netReceivedCentavos: 0,
+      stillToCollectCentavos: 0,
+      bookingCount: 1,
+    });
+  });
+
   it('reconciles with revenueByTour against the summary (Task T18’s own acceptance test)', async () => {
     const api = ownerApi();
     const [summary, byTour, byRoute] = await Promise.all([
@@ -1093,8 +1202,21 @@ describeWithDb('admin.reports', () => {
       api.admin.reports.byTour(TRANSFER_MONTH),
       api.admin.reports.byRoute(TRANSFER_MONTH),
     ]);
-    // No tour ran in August at all — every figure here belongs to transfers.
-    expect(byTour).toEqual([]);
+    // One real tour fixture ran in August too (see `beforeAll`) — a nonzero,
+    // independently-checkable `byTour` contribution, so this reconciliation
+    // is actually "byTour + byRoute == summary" and not just "byRoute ==
+    // summary" with a provably-empty `byTour` added for show.
+    expect(byTour).toEqual([
+      {
+        tourId: tourIds.august,
+        tourTitle: 'T18 Fixture Tour (August)',
+        receivedCentavos: 100_000,
+        refundedCentavos: 0,
+        netReceivedCentavos: 100_000,
+        stillToCollectCentavos: 0,
+        bookingCount: 1,
+      },
+    ]);
 
     const sumOf = (key: 'receivedCentavos' | 'refundedCentavos' | 'stillToCollectCentavos') =>
       byTour.reduce((sum, row) => sum + row[key], 0) +
@@ -1121,6 +1243,10 @@ describeWithDb('admin.reports', () => {
     // No raw centavos integer leaks through — every money cell has two decimals.
     expect(csv).not.toMatch(/\b240000\b/);
     expect(csv).toContain('2400.00');
+    // One line per bucket: forward, reverse, custom and moneyOnly — pins that
+    // every one of the four reaches the file, not only the one row above.
+    expect(lines).toHaveLength(5);
+    expect(csv).toContain('Custom transfer');
   });
 
   /* --------------------------------------------------------- Outstanding */
