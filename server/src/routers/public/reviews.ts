@@ -24,7 +24,7 @@ import {
 } from '@rg/shared';
 import { TRPCError } from '@trpc/server';
 import { and, desc, eq, sql } from 'drizzle-orm';
-import { readTrustSettings } from '../../content/settings';
+import { readShowTours, readTrustSettings } from '../../content/settings';
 import { getDb } from '../../db/client';
 import { isDuplicateKeyError } from '../../db/duplicate-key';
 import { destinations, reviewHelpfulVotes, reviews, tours } from '../../db/schema';
@@ -129,13 +129,15 @@ export const reviewsRouter = router({
    * or one whose DESTINATION is inactive (I1). A tour that is not publicly
    * visible has no publicly visible reviews either.
    *
-   * ## Five queries, whatever the review count
+   * ## Six queries, whatever the review count
    *
-   * The slug lookup, the page of reviews (left-joined to their votes so
-   * `helpfulCount` and the `helpful` ordering come from one query), the star
-   * breakdown, the sub-score averages, and the `trust` settings row. None of
-   * them runs once per review — `reviews-moderation.test.ts` counts the real
-   * `pool.query()` calls rather than trusting this paragraph.
+   * The `show_tours` settings row (BUG-122, read first so a hidden catalog
+   * costs no tour query), the slug lookup, the page of reviews (left-joined to
+   * their votes so `helpfulCount` and the `helpful` ordering come from one
+   * query), the star breakdown, the sub-score averages, and the `trust`
+   * settings row. None of them runs once per review —
+   * `reviews-moderation.test.ts` counts the real `pool.query()` calls rather
+   * than trusting this paragraph.
    *
    * ## The headline numbers ignore the filter
    *
@@ -159,18 +161,25 @@ export const reviewsRouter = router({
     .query(async ({ input }): Promise<TourReviewsResult> => {
       const db = getDb();
 
-      const [tour] = await db
-        .select({ id: tours.id })
-        .from(tours)
-        .innerJoin(destinations, eq(tours.destinationId, destinations.id))
-        .where(
-          and(
-            eq(tours.slug, input.tourSlug),
-            eq(tours.isActive, true),
-            eq(destinations.isActive, true),
-          ),
-        )
-        .limit(1);
+      // BUG-122: while tours are globally hidden, this must not leak
+      // whether `input.tourSlug` exists. The tour is looked up only when
+      // `show_tours` is on; off, `tour` is `undefined` exactly as it would
+      // be for an unknown slug, so BOTH cases throw the SAME `tourNotFound`
+      // call below — one call site, not two that merely look alike today.
+      const [tour] = (await readShowTours())
+        ? await db
+            .select({ id: tours.id })
+            .from(tours)
+            .innerJoin(destinations, eq(tours.destinationId, destinations.id))
+            .where(
+              and(
+                eq(tours.slug, input.tourSlug),
+                eq(tours.isActive, true),
+                eq(destinations.isActive, true),
+              ),
+            )
+            .limit(1)
+        : [];
       if (!tour) throw tourNotFound(input.tourSlug);
 
       /*

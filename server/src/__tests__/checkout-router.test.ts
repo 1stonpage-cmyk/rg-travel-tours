@@ -896,6 +896,51 @@ describeWithDb('checkout router', () => {
   });
 
   /**
+   * BUG-122: while `show_tours` is off, `availability` must not leak
+   * whether a specific slug names a real tour — a real, active tour's slug
+   * and a slug matching nothing must answer BYTE-IDENTICALLY. Asserted with
+   * `toEqual` between the two live results directly (not each against a
+   * hardcoded shape separately), so a later edit that lets them drift apart
+   * in some detail neither of these two calls anticipated still fails this
+   * test.
+   */
+  it('availability answers identically for a real tour and an unknown slug while show_tours is off', async () => {
+    const tour = await makeTour();
+    await makeFleet();
+    const db = getDb();
+
+    // The premise: this exact slug gets a genuine verdict while the gate is open.
+    await expect(
+      caller.checkout.availability({ tourSlug: tour.slug, date: DAY, pax: 2 }),
+    ).resolves.toEqual({ ok: true });
+
+    await db.update(settings).set({ value: false }).where(eq(settings.key, 'show_tours'));
+    try {
+      const realTourResult = await caller.checkout.availability({
+        tourSlug: tour.slug,
+        date: DAY,
+        pax: 2,
+      });
+      const unknownSlugResult = await caller.checkout.availability({
+        tourSlug: `__checkout_router_missing__${unique()}`,
+        date: DAY,
+        pax: 2,
+      });
+      expect(realTourResult).toEqual(unknownSlugResult);
+      expect(realTourResult).toEqual({ ok: false, reason: 'tour_unavailable' });
+    } finally {
+      await db.update(settings).set({ value: true }).where(eq(settings.key, 'show_tours'));
+    }
+  });
+
+  it('availability reports a genuine verdict for a real tour while show_tours is on (unchanged behavior)', async () => {
+    const tour = await makeTour();
+    await makeFleet();
+    const verdict = await caller.checkout.availability({ tourSlug: tour.slug, date: DAY, pax: 2 });
+    expect(verdict).toEqual({ ok: true });
+  });
+
+  /**
    * Round 1 review (Important): `availability` had no try/catch at all, so
    * an unexpected failure's raw `.message` would have reached the client
    * verbatim — `trpc.ts`'s `errorFormatter` only path-scrubs a message, it

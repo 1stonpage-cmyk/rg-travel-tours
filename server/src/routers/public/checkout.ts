@@ -101,7 +101,12 @@ import {
   type QuoteResult,
   type QuoteTransferResult,
 } from '@rg/shared';
-import { readSettingBlock, readTrustSettings, resolvePaymentMethods } from '../../content/settings';
+import {
+  readSettingBlock,
+  readShowTours,
+  readTrustSettings,
+  resolvePaymentMethods,
+} from '../../content/settings';
 import { getDb } from '../../db/client';
 import { bookings, tourBlockedDates, tours } from '../../db/schema';
 import { env } from '../../env';
@@ -973,10 +978,18 @@ export const checkoutRouter = router({
     .input(availabilityInput)
     .query(async ({ input }): Promise<AvailabilityVerdict> => {
       try {
-        const [tour] = await getDb()
-          .select({ id: tours.id })
-          .from(tours)
-          .where(and(eq(tours.slug, input.tourSlug), eq(tours.isActive, true)));
+        // BUG-122: while tours are globally hidden, this must not leak
+        // whether `input.tourSlug` exists. The tour is looked up only when
+        // `show_tours` is on; off, `tour` is `undefined` exactly as it would
+        // be for an unknown slug, so BOTH cases fall into the SAME
+        // "not found" return below — one statement, not two that merely
+        // look alike today.
+        const [tour] = (await readShowTours())
+          ? await getDb()
+              .select({ id: tours.id })
+              .from(tours)
+              .where(and(eq(tours.slug, input.tourSlug), eq(tours.isActive, true)))
+          : [];
         // A legitimate answer, not a failure — returned, never thrown.
         if (!tour) return { ok: false, reason: 'tour_unavailable' };
 

@@ -32,6 +32,7 @@ import {
   destinations,
   reviewHelpfulVotes,
   reviews,
+  settings,
   tours,
   users,
 } from '../db/schema';
@@ -580,6 +581,58 @@ describeWithDb('reviews.forTour', () => {
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
+  /**
+   * BUG-122: while `show_tours` is off, `forTour` must not leak whether a
+   * specific slug names a real tour — a real tour's slug and a slug
+   * matching nothing must throw the SAME refusal, captured and compared
+   * directly rather than each checked separately against a hardcoded
+   * expectation.
+   *
+   * `tourNotFound()`'s message echoes back whichever slug it was CALLED
+   * with (`no tour found for slug "${slug}"`), so the two raw strings
+   * differ by that substring alone — that is the input being echoed, not a
+   * leak about which one is real. The slug is stripped out of both before
+   * comparing, which is what makes this assert the two refusals share one
+   * template rather than merely both saying "not found" in their own words.
+   */
+  it('throws the identical NOT_FOUND for a real tour and an unknown slug while show_tours is off', async () => {
+    const tour = await makeTour();
+    const unknownSlug = `__no_such_tour__${unique()}`;
+    const db = getDb();
+
+    // The premise: this exact slug resolves while the gate is open.
+    await expect(publicApi().reviews.forTour({ tourSlug: tour.slug })).resolves.toBeDefined();
+
+    await db.update(settings).set({ value: false }).where(eq(settings.key, 'show_tours'));
+    try {
+      const realTourError = await publicApi()
+        .reviews.forTour({ tourSlug: tour.slug })
+        .catch((e: unknown) => e);
+      const unknownSlugError = await publicApi()
+        .reviews.forTour({ tourSlug: unknownSlug })
+        .catch((e: unknown) => e);
+
+      expect(realTourError).toMatchObject({ code: 'NOT_FOUND' });
+      expect(unknownSlugError).toMatchObject({ code: 'NOT_FOUND' });
+      const real = realTourError as { code?: string; message?: string };
+      const unknown = unknownSlugError as { code?: string; message?: string };
+      expect(real.code).toBe(unknown.code);
+      expect(real.message).toContain(tour.slug);
+      expect(unknown.message).toContain(unknownSlug);
+      expect(real.message?.replace(tour.slug, '<slug>')).toBe(
+        unknown.message?.replace(unknownSlug, '<slug>'),
+      );
+    } finally {
+      await db.update(settings).set({ value: true }).where(eq(settings.key, 'show_tours'));
+    }
+  });
+
+  it('resolves a real tour normally while show_tours is on (unchanged behavior)', async () => {
+    const tour = await makeTour();
+    const result = await publicApi().reviews.forTour({ tourSlug: tour.slug });
+    expect(result.tourId).toBe(tour.id);
+  });
+
   it('builds the 5-to-1 breakdown from published reviews only', async () => {
     const tour = await makeTour();
     await makeReview({ tourId: tour.id, status: 'published', rating: 5 });
@@ -735,9 +788,11 @@ describeWithDb('reviews.forTour', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (pool as any).query = originalQuery;
     }
-    // The slug lookup, the items, the breakdown, the sub-scores and the trust
-    // settings row — fixed, whatever the review count.
-    expect(calls).toBe(5);
+    // The show_tours settings row (BUG-122, read first so a hidden catalog
+    // costs no tour query), the slug lookup, the items, the breakdown, the
+    // sub-scores and the trust settings row — fixed, whatever the review
+    // count.
+    expect(calls).toBe(6);
   });
 
   /**
