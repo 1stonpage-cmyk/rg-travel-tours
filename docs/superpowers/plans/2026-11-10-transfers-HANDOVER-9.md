@@ -109,7 +109,99 @@ Full suite after T18: shared 8/99, client 84/1035, server 129/2644, both standal
 green. `pnpm lint` / `typecheck` / `format:check` / `ALLOW_PLACEHOLDER_BUILD=1 pnpm build` all clean.
 No schema change this task (T18 is schema-free per the plan).
 
+## T19 — new `transferQuoting` role area + `admin.transferQuotes.convert` — DONE
+
+Commits `0147f9b` (implementation) and `804513b` (dedicated-review follow-up).
+
+Owner/finance can now convert a `transfer_custom` inquiry into a real, held transfer booking
+with a staff-entered price. New `ROLE_MATRIX` area `transferQuoting: ['owner', 'finance']`,
+transcribed into `BUILD_SPEC.md` §9's table and `role-isolation.test.ts`'s `AREA_LABELS`/
+`adminHarness`/counts (12→13 areas, 23→25 allowed, 13→14 denied) in the same commit, per that
+test's own enforced convention. `admin.transferQuotes.convert` is gated `adminProcedure`
+`('transferQuoting')` and is the only entry point into the new service.
+
+**Closed a real, pre-existing gap named by an earlier task, not invented by this one.**
+`services/transfers/overlap.ts`'s `computeTransferWindow()` doc comment (written during T7,
+before T19 existed) explicitly said a one-way custom (routeless) transfer has no stored
+duration anywhere in the schema and THROWS rather than default one, naming T19 as the task that
+must close it. `CreateTransferBookingInput` gains `customRouteDurationMinutes: number | null`
+(required exactly for a routeless one-way trip); `assertBookableShape` gains a new, pre-
+transaction typed refusal (`custom_one_way_needs_duration`) instead of leaving that throw
+reachable. One variable (`routeDurationMinutesUsed`) feeds both the capacity-window computation
+and the frozen `booking_transfer_details` column, so the two cannot disagree. No new migration —
+`booking_transfer_details.route_duration_minutes_used` already existed from an earlier task.
+
+**`convertTransferQuote()` (`services/transfers/convert-quote.ts`) is three steps, deliberately
+not one transaction** — `createTransferBooking()` manages its own self-contained transaction and
+its own doc comment warns against a second pooled connection being held open across it:
+
+1. A plain, lockless pre-check of the inquiry (exists, `type='transfer_custom'`,
+   `convertedBookingId IS NULL`, `routeDescription` present — a malformed-row guard, since T17
+   added no CHECK).
+2. `createTransferBooking({..., priceSource:{kind:'staff', priceCentavos, staffUserId}})` —
+   commits independently.
+3. A small transaction, wrapped in the same `withDeadlockRetry()` the shared writer uses, that
+   links `inquiries.convertedBookingId` via a compare-and-swap `UPDATE ... WHERE
+   converted_booking_id IS NULL` (the same pattern `admin.auth.resetPassword` already uses on
+   `password_reset_tokens.used_at`) and writes the dedicated `transfer.custom_quote_converted`
+   audit row the plan names (actor, inquiry id, price — no PII).
+
+**The accepted, documented consequence:** two staff converting the same inquiry concurrently can
+both pass step 1 and both create a real booking in step 2; step 3's compare-and-swap lets exactly
+one link. The loser's booking is a live, unlinked `pending_payment` hold — not silently
+discarded: `TransferQuoteConvertRaceError` names both booking refs, and the admin screen surfaces
+a `CONFLICT` pointing staff at `admin.refunds.cancelBooking` to clean up the duplicate. The orphan
+is bounded either way: `expire-holds.ts`'s sweep has no tour-only filter and reclaims it after
+`staffQuoteHoldHours`.
+
+**Deliberate decisions, not oversights (each documented in `transferQuoteConvertInput`'s own
+header in `shared/src/transfers-admin.ts`):**
+
+- `leadPhone` and `pax` are required, staff-typed fields, even though the plan's own §6 step 2
+  prose lists neither — read as illustrative ("the full set of transfer-booking fields"), not
+  exhaustive. `inquiries.phone`/`inquiries.pax` are both nullable while `bookings.leadPhone` and
+  `assertBookableShape`'s pax check are not; riding either through unedited would make any
+  inquiry where the guest skipped one permanently unconvertible. `routeDescription` and the
+  guest's own `message` DO ride through unedited (they are the request, not a value with a
+  nullability mismatch).
+- No `couponCode`, `payMode` or `direction` field: no discount layered on the one legitimate
+  staff-entered price; `payMode` is always `'deposit'` (nobody is at checkout when staff
+  convert a request); `direction` is always `'forward'` (no catalog route on this path — the
+  same normalisation `revenueByRoute()`, Task T18, already applies to a routeless transfer).
+
+**Dedicated Opus review (required for T19 per the merged-run rules — money AND a new role
+boundary, the plan's own dual-trigger) ran and approved, no blockers**, with 5 should-fix and 4
+nitpicks, all fixed in `804513b`, each with its own new test proven able to fail where
+applicable:
+
+1. `priceCentavos` gained a `MAX_CENTAVOS` cap — bare `.positive()` let an `INT`-overflowing
+   staff typo roll back as a raw MySQL error-1264 instead of a named refusal.
+2. `transfer-clock-pattern-parity.test.ts` extended to this task's own (fourth) independent
+   `HH:mm` regex copy.
+3. New `shared/src/__tests__/transfers-admin.test.ts`: direct, DB-free coverage of
+   `transferQuoteConvertInput`'s `superRefine` — all four cross-field branches, previously
+   untested anywhere.
+4. The day-use "freezes none" test now actually reads
+   `booking_transfer_details.route_duration_minutes_used` and asserts `null`.
+5. Step 3 wrapped in `withDeadlockRetry()` — a transient failure there used to roll back the
+   link while leaving the already-created booking live, the same orphan the documented race
+   produces, reached a different way.
+6–9 (nitpicks): a stale comment claiming `inquiries.message` is nullable, a doc comment
+   overclaiming a stray duration is refused rather than ignored, a bare `Error` in the
+   double-race fallback now a `TransferQuoteLinkUnconfirmedError` naming the orphaned booking,
+   and an operational note for T20's form (don't offer a placeholder phone for "no number
+   given" — it would trip the per-phone hold cap on the THIRD such conversion).
+
+Full suite after T19: shared 9/109, client 84/1035, server 130/2675, both standalone guards —
+all green. `pnpm lint` / `typecheck` / `format:check` / `ALLOW_PLACEHOLDER_BUILD=1 pnpm build`
+all clean. No migration this task — `transferQuoting` is a role-matrix-only change; nothing new
+owed on the server beyond the migrations already recorded above.
+
 ## Next
 
-T19 — new `transferQuoting` role area + `admin.transferQuotes.convert`. Dedicated Opus review
-required (money AND a new role boundary — the plan's own dual-trigger for maximum scrutiny).
+T20 — `ConvertInquiryForm.tsx` + `AdminPackagesPage.tsx` "Quote & convert to booking" control.
+Owner/finance only; dispatcher sees the request read-only. Must use the shared Option A
+components (AdminPageHeader, FormActions, button variants). **Do not start until T19's review
+had returned** (it has) — T20's form is written against T19's exact `transferQuoteConvertInput`
+contract, including the `leadPhone`/`pax` staff-entered fields and the placeholder-phone caveat
+above.
