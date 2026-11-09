@@ -44,7 +44,6 @@ const DAY = '2095-09-13';
 const NOW = new Date(`${DAY}T00:00:00Z`);
 
 const created = {
-  userIds: [] as number[],
   bookingIds: [] as number[],
   routeIds: [] as number[],
   placeIds: [] as number[],
@@ -254,13 +253,19 @@ describeWithDb('todayDepartures shows a transfer booking’s product (Task T23)'
     const { ref, bookingId } = await createTransferBooking(baseInput({ routeId }));
     created.bookingIds.push(bookingId);
 
+    const [vehicleType] = await getDb()
+      .select({ name: vehicleTypes.name })
+      .from(vehicleTypes)
+      .where(eq(vehicleTypes.id, VAN_TYPE_ID))
+      .limit(1);
+
     const departures = await todayDepartures(NOW);
     const row = departures.find((d) => d.ref === ref);
     expect(row, 'the transfer is missing from today’s departures').toBeDefined();
     expect(row!.tourTitle).toBeNull();
     expect(row!.transferRouteLabel).toBe(routeDisplayName(fromName, toName, 'forward'));
     expect(row!.pickupTime).toBe('05:15');
-    expect(row!.vehicleTypeLabel).not.toBeNull();
+    expect(row!.vehicleTypeLabel).toBe(vehicleType!.name);
   });
 
   it('reads null on every new field for a tour booking', async () => {
