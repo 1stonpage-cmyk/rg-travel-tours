@@ -69,6 +69,7 @@ import { TRPCClientError } from '@trpc/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import AdminPageHeader from '@/components/admin/AdminPageHeader';
 import {
   BLOCKS_BY_KEY,
   GROUPS,
@@ -88,10 +89,6 @@ const NOTICE =
   'border-brand-blue-200 bg-brand-blue-50 text-brand-blue-900 rounded-xl border p-3 text-sm font-medium';
 const ALERT =
   'border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-xl border p-3 text-sm font-medium';
-const PRIMARY_BUTTON =
-  'tap-target bg-brand-blue-700 hover:bg-brand-blue-800 rounded-[10px] font-semibold text-white transition-colors';
-const OUTLINE_BUTTON =
-  'tap-target border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 hover:text-brand-blue-800 rounded-[10px] font-semibold transition-colors';
 const FIELD = 'tap-target border-brand-blue-200 w-full rounded-[10px] bg-white';
 const ROW_ERROR = 'text-brand-gold-800 text-xs font-medium';
 const SUMMARY =
@@ -429,11 +426,19 @@ function PaymentQrImage({
                 current one.
               </p>
               <div className="flex flex-wrap gap-2">
+                {/*
+                 * This sub-widget's own upload action, nested inside the
+                 * payment_qr block's larger form — which keeps the block's
+                 * usual bottom "Save" (the text fields) as the one
+                 * primary-pill per the "one primary per visible region"
+                 * rule, rather than two blue pills competing in the same
+                 * open panel while a preview is shown.
+                 */}
                 <Button
                   type="button"
+                  variant="secondary-pill"
                   disabled={saving}
                   onClick={() => void save()}
-                  className={`${PRIMARY_BUTTON} w-full sm:w-auto`}
                 >
                   {saving ? (
                     <>
@@ -446,10 +451,9 @@ function PaymentQrImage({
                 </Button>
                 <Button
                   type="button"
-                  variant="outline"
+                  variant="admin-ghost"
                   disabled={saving}
                   onClick={cancelPreview}
-                  className={`${OUTLINE_BUTTON} w-full sm:w-auto`}
                 >
                   Cancel
                 </Button>
@@ -514,13 +518,11 @@ function ObjectBlockEditor({ block, stored }: { block: BlockSpec; stored: unknow
         onChange={(name, next) => setRow((current) => ({ ...current, [name]: next }))}
       />
 
-      <Button
-        type="submit"
-        disabled={write.isPending}
-        className={`${PRIMARY_BUTTON} w-full sm:w-auto`}
-      >
-        {write.isPending ? 'Saving…' : 'Save'}
-      </Button>
+      <div className="flex justify-end">
+        <Button type="submit" variant="primary-pill" disabled={write.isPending}>
+          {write.isPending ? 'Saving…' : 'Save'}
+        </Button>
+      </div>
     </form>
   );
 }
@@ -578,9 +580,7 @@ function ArrayBlockEditor({ block, stored }: { block: BlockSpec; stored: unknown
               {block.fixedLength ? null : (
                 <Button
                   type="button"
-                  variant="outline"
-                  size="sm"
-                  className={OUTLINE_BUTTON}
+                  variant="row"
                   aria-label={`Remove ${nameOf(index)}`}
                   onClick={() => setRows((current) => current.filter((_, i) => i !== index))}
                 >
@@ -606,18 +606,13 @@ function ArrayBlockEditor({ block, stored }: { block: BlockSpec; stored: unknown
       </ol>
 
       <div className="flex flex-wrap gap-2">
-        <Button
-          type="submit"
-          disabled={write.isPending}
-          className={`${PRIMARY_BUTTON} w-full sm:w-auto`}
-        >
+        <Button type="submit" variant="primary-pill" disabled={write.isPending}>
           {write.isPending ? 'Saving…' : 'Save'}
         </Button>
         {block.fixedLength ? null : (
           <Button
             type="button"
-            variant="outline"
-            className={`${OUTLINE_BUTTON} w-full sm:w-auto`}
+            variant="secondary-pill"
             onClick={() => setRows((current) => [...current, blankRow(block.fields)])}
           >
             Add an entry
@@ -683,19 +678,28 @@ function FlagBlockEditor({ block, stored }: { block: BlockSpec; stored: unknown 
               — a page a crawler has already read has been read.
             </p>
             <div className="flex flex-wrap gap-2">
+              {/*
+               * Publishing is irreversible in the sense that matters (a
+               * crawler that already read a page has read it), the same
+               * shape as a destructive deactivate confirm elsewhere in this
+               * tree — so it takes the full-size destructive pair
+               * (`amber-pill` + standalone `admin-ghost` Cancel), never a
+               * second `primary-pill`, matching the bug fix already applied
+               * to the equivalent confirm on AdminVehicleTypesPage /
+               * AdminDriversPage.
+               */}
               <Button
                 type="button"
+                variant="amber-pill"
                 disabled={write.isPending}
-                className={`${PRIMARY_BUTTON} w-full sm:w-auto`}
                 onClick={() => save(false)}
               >
                 {write.isPending ? 'Saving…' : 'Yes, publish the site to search engines'}
               </Button>
               <Button
                 type="button"
-                variant="outline"
+                variant="admin-ghost"
                 disabled={write.isPending}
-                className={`${OUTLINE_BUTTON} w-full sm:w-auto`}
                 onClick={() => setConfirming(false)}
               >
                 Cancel
@@ -703,20 +707,15 @@ function FlagBlockEditor({ block, stored }: { block: BlockSpec; stored: unknown 
             </div>
           </div>
         ) : (
-          <Button
-            type="button"
-            className={`${PRIMARY_BUTTON} w-full sm:w-auto`}
-            onClick={() => setConfirming(true)}
-          >
+          <Button type="button" variant="amber-pill" onClick={() => setConfirming(true)}>
             Mark the content verified
           </Button>
         )
       ) : (
         <Button
           type="button"
-          variant="outline"
+          variant="secondary-pill"
           disabled={write.isPending}
-          className={`${OUTLINE_BUTTON} w-full sm:w-auto`}
           onClick={() => save(true)}
         >
           {write.isPending ? 'Saving…' : 'Mark the content unverified again'}
@@ -856,17 +855,16 @@ function SettingsAdmin() {
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.08em]">
-          Owner only
-        </p>
-        <h1 className="text-brand-ink text-2xl font-bold sm:text-3xl">Settings</h1>
-        <p className="text-brand-error text-sm">
-          Everything the public site reads from the database: its words, its hours, its contact
-          details, the deposit taken at checkout, and whether search engines may see any of it. Each
-          block is saved on its own.
-        </p>
-      </header>
+      {/*
+       * No `action`: every block below saves itself (each `<form>`/editor is
+       * its own region with its own primary), so a header action here would
+       * be a second primary floating above nineteen others.
+       */}
+      <AdminPageHeader
+        eyebrow="Owner only"
+        title="Settings"
+        description="Everything the public site reads from the database: its words, its hours, its contact details, the deposit taken at checkout, and whether search engines may see any of it. Each block is saved on its own."
+      />
 
       {all.isPending ? (
         <p className="text-brand-error flex items-center gap-2 text-sm">

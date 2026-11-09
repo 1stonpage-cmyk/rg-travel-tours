@@ -22,6 +22,7 @@ import { useNavigate } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { TRPCClientError } from '@trpc/client';
 import { STAFF_PASSWORD_MIN_LENGTH, staffPasswordSchema } from '@rg/shared';
+import AdminPageHeader from '@/components/admin/AdminPageHeader';
 import PasswordField from '@/components/admin/PasswordField';
 import { Button } from '@/components/ui/button';
 import { firstValidationMessage, splitFieldErrors } from '@/lib/field-errors';
@@ -125,19 +126,15 @@ export default function AdminChangePasswordPage() {
 
   return (
     <div className="flex max-w-md flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.08em]">
-          Your account
-        </p>
-        <h1 className="text-brand-ink text-2xl font-bold sm:text-3xl">
-          {forced ? 'Set a new password' : 'Change password'}
-        </h1>
-        <p className="text-brand-error text-sm">
-          {forced
+      <AdminPageHeader
+        eyebrow="Your account"
+        title={forced ? 'Set a new password' : 'Change password'}
+        description={
+          forced
             ? 'You signed in with a temporary password. Choose your own to continue — nothing else is available until you do.'
-            : 'Choose a new password. Any other device you are signed in on will be signed out.'}
-        </p>
-      </header>
+            : 'Choose a new password. Any other device you are signed in on will be signed out.'
+        }
+      />
 
       {done ? (
         <p
@@ -182,11 +179,7 @@ export default function AdminChangePasswordPage() {
           error={errors.confirmPassword}
         />
 
-        <Button
-          type="submit"
-          disabled={change.isPending}
-          className="tap-target bg-brand-blue-700 hover:bg-brand-blue-800 w-full rounded-[10px] font-semibold text-white transition-colors"
-        >
+        <Button type="submit" variant="primary-pill" disabled={change.isPending}>
           {change.isPending ? (
             <>
               <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />

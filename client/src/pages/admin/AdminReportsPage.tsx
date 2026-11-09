@@ -54,6 +54,7 @@ import {
   type ReportSummary,
   type TourRevenueRow,
 } from '@rg/shared';
+import AdminPageHeader from '@/components/admin/AdminPageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -66,10 +67,6 @@ const NOTICE =
   'border-brand-blue-200 bg-brand-blue-50 text-brand-blue-900 rounded-xl border p-3 text-sm font-medium';
 const ALERT =
   'border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-xl border p-3 text-sm font-medium';
-const PRIMARY_BUTTON =
-  'tap-target bg-brand-blue-700 hover:bg-brand-blue-800 rounded-[10px] font-semibold text-white transition-colors';
-const OUTLINE_BUTTON =
-  'tap-target border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 hover:text-brand-blue-800 rounded-[10px] font-semibold transition-colors';
 const FIELD = 'tap-target border-brand-blue-200 rounded-[10px] bg-white';
 
 /**
@@ -179,14 +176,7 @@ function CsvButton({ report, range }: { report: ReportName; range: { from: strin
 
   return (
     <div className="flex flex-col gap-1">
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className={OUTLINE_BUTTON}
-        disabled={pending}
-        onClick={() => void run()}
-      >
+      <Button type="button" variant="secondary-pill" disabled={pending} onClick={() => void run()}>
         {pending ? (
           <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />
         ) : (
@@ -427,17 +417,16 @@ function ReportsAdmin() {
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.08em]">
-          Finance
-        </p>
-        <h1 className="text-brand-ink text-2xl font-bold sm:text-3xl">Reports</h1>
-        <p className="text-brand-error text-sm">
-          Money received and refunded counts by the date it moved. Bookings and the balance still to
-          collect count by the tour date. Both are Asia/Manila days, so the two halves of a window
-          are not meant to add up to each other.
-        </p>
-      </header>
+      {/*
+       * No `action`: "Show these dates" below is this screen's one primary
+       * (see the comment beside it) — a header action here would be a
+       * second primary visible at once.
+       */}
+      <AdminPageHeader
+        eyebrow="Finance"
+        title="Reports"
+        description="Money received and refunded counts by the date it moved. Bookings and the balance still to collect count by the tour date. Both are Asia/Manila days, so the two halves of a window are not meant to add up to each other."
+      />
 
       <Card className={CARD}>
         <CardHeader>
@@ -471,16 +460,8 @@ function ReportsAdmin() {
                 onChange={(event) => setDraft({ ...draft, to: event.target.value })}
               />
             </div>
-            {/*
-              The one primary action on this screen, so the filled button:
-              `OUTLINE_BUTTON` here left shadcn's default `bg-primary` under
-              `text-brand-blue-700`, which is blue text on a blue fill.
-            */}
-            <Button
-              type="submit"
-              disabled={invalid}
-              className={`${PRIMARY_BUTTON} w-full sm:w-auto`}
-            >
+            {/* The one primary action on this screen (see the header's own note above). */}
+            <Button type="submit" variant="primary-pill" disabled={invalid}>
               Show these dates
             </Button>
           </form>

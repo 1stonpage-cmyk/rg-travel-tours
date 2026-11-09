@@ -443,11 +443,15 @@ describe('AdminSettingsPage', () => {
 
   /**
    * CLAUDE.md: 44px minimum tap targets, and most of this console is used on a
-   * phone. Every control inside an opened block carries `.tap-target`
-   * (`min-h-11 min-w-11`) — asserted over whatever the block renders rather
-   * than over a list of names, so a field type added later is covered too.
+   * phone. Every control inside an opened block carries a REAL 44px tap
+   * target — the `.tap-target` utility (`min-h-11 min-w-11`) on a plain
+   * input/select, the admin pill system's own `h-11` (DEMO POLISH batch,
+   * 2026-11-09), or `row`/`row-amber`'s compact `h-8` with its invisible
+   * `::before` hit-area extension — asserted over whatever the block renders
+   * rather than over a list of names, so a field type added later is covered
+   * too.
    */
-  it('gives every control in an opened block a 44px tap target', async () => {
+  it('gives every control in an opened block a real 44px tap target', async () => {
     mockOwner();
     renderPage();
 
@@ -459,9 +463,12 @@ describe('AdminSettingsPage', () => {
     ];
     expect(controls.length).toBeGreaterThan(4);
     for (const control of controls) {
-      expect(control.className, `${control.id || control.textContent} is under 44px`).toMatch(
-        /tap-target/,
-      );
+      const className = control.className;
+      const hasRealTapTarget =
+        /\btap-target\b/.test(className) ||
+        /\bh-11\b/.test(className) ||
+        (/\bh-8\b/.test(className) && /before:-inset-y-1\.5/.test(className));
+      expect(hasRealTapTarget, `${control.id || control.textContent} is under 44px`).toBe(true);
     }
   });
 

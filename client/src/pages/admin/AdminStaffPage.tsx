@@ -29,7 +29,7 @@
  * half. Role is always spelled out in words, and Active/Inactive likewise:
  * colour is reinforcement, never the only signal.
  */
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { TRPCClientError } from '@trpc/client';
@@ -40,6 +40,8 @@ import {
   updateStaffUserInputSchema,
   type AdminRole,
 } from '@rg/shared';
+import AdminPageHeader from '@/components/admin/AdminPageHeader';
+import FormActions from '@/components/admin/FormActions';
 import PasswordField from '@/components/admin/PasswordField';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -69,10 +71,6 @@ const ROLE_BADGE_CLASS: Record<AdminRole, string> = {
 
 const CARD = 'border-brand-blue-100 rounded-[14px] border bg-white';
 
-const OUTLINE_BUTTON =
-  'tap-target border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 hover:text-brand-blue-800 rounded-[10px] font-semibold transition-colors';
-const PRIMARY_BUTTON =
-  'tap-target bg-brand-blue-700 hover:bg-brand-blue-800 rounded-[10px] font-semibold text-white transition-colors';
 const FIELD = 'tap-target border-brand-blue-200 rounded-[10px] bg-white';
 
 const NOTICE_CLASS =
@@ -270,7 +268,7 @@ function AddStaffForm({ onCreated }: { onCreated: (name: string) => void }) {
             error={errors.tempPassword}
           />
 
-          <Button type="submit" disabled={create.isPending} className={`${PRIMARY_BUTTON} w-full`}>
+          <Button type="submit" variant="primary-pill" disabled={create.isPending}>
             {create.isPending ? (
               <>
                 <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />
@@ -381,21 +379,7 @@ function EditPanel({
             : 'A role change applies from their next request.'}
         </p>
       </div>
-      <div className="flex flex-wrap gap-2">
-        <Button type="submit" size="sm" className={PRIMARY_BUTTON} disabled={update.isPending}>
-          {update.isPending ? 'Saving…' : 'Save changes'}
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className={OUTLINE_BUTTON}
-          disabled={update.isPending}
-          onClick={onDone}
-        >
-          Cancel
-        </Button>
-      </div>
+      <FormActions onCancel={onDone} saveLabel="Save changes" pending={update.isPending} />
     </form>
   );
 }
@@ -473,18 +457,17 @@ function ResetPanel({
         hint="At least 12 characters. Give it to them in person."
         error={error}
       />
+      {/*
+       * Resetting signs someone out of every device right now — the same
+       * destructive-confirm shape as Deactivate below, so `amber-pill`
+       * rather than a blue `primary-pill`, with `admin-ghost` for the
+       * standalone Cancel (never red; CLAUDE.md).
+       */}
       <div className="flex flex-wrap gap-2">
-        <Button type="submit" size="sm" className={PRIMARY_BUTTON} disabled={reset.isPending}>
+        <Button type="submit" variant="amber-pill" disabled={reset.isPending}>
           {reset.isPending ? 'Resetting…' : `Reset and sign out ${user.name}`}
         </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className={OUTLINE_BUTTON}
-          disabled={reset.isPending}
-          onClick={onDone}
-        >
+        <Button type="button" variant="admin-ghost" disabled={reset.isPending} onClick={onDone}>
           Cancel
         </Button>
       </div>
@@ -539,8 +522,7 @@ function DeactivatePanel({
       <div className="mt-3 flex flex-wrap gap-2">
         <Button
           type="button"
-          size="sm"
-          className={PRIMARY_BUTTON}
+          variant="amber-pill"
           disabled={setActive.isPending}
           onClick={() => setActive.mutate({ id: user.id, isActive: false })}
         >
@@ -549,9 +531,7 @@ function DeactivatePanel({
         <Button
           ref={cancelRef}
           type="button"
-          variant="outline"
-          size="sm"
-          className={OUTLINE_BUTTON}
+          variant="admin-ghost"
           disabled={setActive.isPending}
           onClick={onDone}
         >
@@ -570,17 +550,14 @@ function DeactivatePanel({
  * eyebrow and `<h1>`. Two copies of an `<h1>` is how a page ends up with
  * two different names for itself, so the branches differ only in what they
  * put under it.
+ *
+ * No `action`: `AddStaffForm` is always rendered as a sibling section
+ * (never a toggled "Add" form), so it already carries its own one
+ * primary-pill — a header action here would be a second one in the same
+ * view.
  */
-function StaffPageHeader({ children }: { children?: ReactNode }) {
-  return (
-    <header className="flex flex-col gap-1">
-      <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.08em]">
-        Owner only
-      </p>
-      <h1 className="text-brand-ink text-2xl font-bold sm:text-3xl">Staff accounts</h1>
-      {children}
-    </header>
-  );
+function StaffPageHeader({ description }: { description?: string }) {
+  return <AdminPageHeader eyebrow="Owner only" title="Staff accounts" description={description} />;
 }
 
 function StaffAccounts() {
@@ -613,11 +590,7 @@ function StaffAccounts() {
 
   return (
     <div className="flex flex-col gap-6">
-      <StaffPageHeader>
-        <p className="text-brand-error text-sm">
-          Only the owner sees this page. Staff sign in at the staff sign-in with their email.
-        </p>
-      </StaffPageHeader>
+      <StaffPageHeader description="Only the owner sees this page. Staff sign in at the staff sign-in with their email." />
 
       {notice ? (
         <p
@@ -712,9 +685,7 @@ function StaffAccounts() {
                     <div className="mt-3 flex flex-wrap items-center gap-2">
                       <Button
                         type="button"
-                        variant="outline"
-                        size="sm"
-                        className={OUTLINE_BUTTON}
+                        variant="row"
                         onClick={() => setPanel({ kind: 'edit', id: user.id })}
                       >
                         Edit
@@ -722,9 +693,7 @@ function StaffAccounts() {
                       {!isSelf ? (
                         <Button
                           type="button"
-                          variant="outline"
-                          size="sm"
-                          className={OUTLINE_BUTTON}
+                          variant="row"
                           onClick={() => setPanel({ kind: 'reset', id: user.id })}
                         >
                           Reset password
@@ -733,9 +702,7 @@ function StaffAccounts() {
                       {!isSelf && user.isActive ? (
                         <Button
                           type="button"
-                          variant="outline"
-                          size="sm"
-                          className={OUTLINE_BUTTON}
+                          variant="row-amber"
                           onClick={() => setPanel({ kind: 'deactivate', id: user.id })}
                         >
                           Deactivate
@@ -744,9 +711,7 @@ function StaffAccounts() {
                       {!user.isActive ? (
                         <Button
                           type="button"
-                          variant="outline"
-                          size="sm"
-                          className={OUTLINE_BUTTON}
+                          variant="row"
                           /*
                            * The PER-ROW predicate, not `reactivate.isPending`.
                            * One mutation object is shared by every row, so the
