@@ -49,11 +49,13 @@ const DRIVER = {
   id: 1,
   name: 'Maria Santos',
   code: 'MS01',
-  // Already in `phPhoneSchema`'s normalized `+63...` form (not the `09...`
-  // form a dispatcher might type) so that `submitEdit`'s round trip through
-  // `driverInputSchema` — which always normalizes — never disagrees with
-  // this fixture's own stored value and sneaks an unrelated `phone` key into
-  // a patch that should only carry what a Task T16 test actually changed.
+  // `+63...` form. Used to matter which form this fixture used — BUG-123,
+  // fixed below — because `buildDriverPatch` compared the normalized NEW
+  // phone against the possibly-un-normalized STORED one, so a driver stored
+  // in `09...` form tripped a false "changed" on every unrelated edit. The
+  // comparison now normalizes both sides (`normalizedStoredPhone` in
+  // `AdminDriversPage.tsx`), so this value could be either form; see the
+  // "editing an unrelated field" block below for the `09...` coverage.
   phone: '+639171234567',
   licenseNo: 'N01-23-456789',
   licenseExpiry: '2027-06-01',
@@ -84,6 +86,8 @@ interface RenderOverrides {
   rating?: { average: number; count: number } | null;
   /** Task T16 — the per-driver transfer-job override, as the server sends it. */
   maxTransferJobsPerDay?: number | null;
+  /** BUG-123 coverage — the stored phone, in whatever form the fixture wants. */
+  phone?: string;
   onResetPin?: (input: unknown) => void;
   onRemoveLeave?: (input: unknown) => void;
   /** Records what `setActive` was called with. */
@@ -117,6 +121,7 @@ function renderPage(overrides: RenderOverrides = {}) {
     ...(overrides.maxTransferJobsPerDay === undefined
       ? {}
       : { maxTransferJobsPerDay: overrides.maxTransferJobsPerDay }),
+    ...(overrides.phone === undefined ? {} : { phone: overrides.phone }),
   };
   // `list` answers from variables `setActive` and `unlock` flip, as the real
   // server does, so a test can see the page re-render what the server now
@@ -530,6 +535,65 @@ describe('AdminDriversPage', () => {
       await user.click(screen.getByRole('button', { name: 'Save changes' }));
 
       await waitFor(() => expect(calls).toEqual([{ id: 1, patch: { maxTransferJobsPerDay: 0 } }]));
+    });
+  });
+
+  /*
+   * BUG-123: `driverInputSchema.phone` (`phPhoneSchema`) always normalizes
+   * into `+63...` form. `buildDriverPatch` used to diff that normalized NEW
+   * value against the raw STORED one, so a driver whose phone happened to
+   * be stored in `09...` form got an unrelated-looking `phone` key sneaked
+   * into the patch on EVERY edit, however unrelated the field actually
+   * touched. Fixed by normalizing the stored side before comparing
+   * (`normalizedStoredPhone` in `AdminDriversPage.tsx`).
+   */
+  describe('phone format is not rewritten by an unrelated edit (BUG-123)', () => {
+    /**
+     * "Add a driver" and "Edit <name>" both render a `Name`/`Phone`-labelled
+     * field once Edit is open, so a bare `getByLabelText` is ambiguous —
+     * same reason `openEditMoreDetails()` above scopes to the Edit card.
+     */
+    function editCard(): HTMLElement {
+      return screen.getByText('Edit Maria Santos').closest('[data-slot="card"]') as HTMLElement;
+    }
+
+    it('does not include phone in the patch when only the name changes, for a driver stored in 09... form', async () => {
+      const calls: unknown[] = [];
+      renderPage({ phone: '09171234567', onUpdate: (v) => calls.push(v) });
+
+      await user.click(await screen.findByRole('button', { name: 'Edit' }));
+      const nameField = within(editCard()).getByLabelText(/^name$/i);
+      await user.clear(nameField);
+      await user.type(nameField, 'Maria Cruz');
+      await user.click(within(editCard()).getByRole('button', { name: 'Save changes' }));
+
+      // Full equality, not `not.toHaveProperty` — it also catches any OTHER
+      // stray key, and matches this file's existing house style.
+      await waitFor(() => expect(calls).toEqual([{ id: 1, patch: { name: 'Maria Cruz' } }]));
+    });
+
+    it('saves nothing at all when a driver stored in 09... form is opened and touched nowhere', async () => {
+      const calls: unknown[] = [];
+      renderPage({ phone: '09171234567', onUpdate: (v) => calls.push(v) });
+
+      await user.click(await screen.findByRole('button', { name: 'Edit' }));
+      await user.click(within(editCard()).getByRole('button', { name: 'Save changes' }));
+
+      expect(await screen.findByText(/no changes to save/i)).toBeTruthy();
+      expect(calls).toEqual([]);
+    });
+
+    it('DOES include the normalized phone when the phone field itself is genuinely edited', async () => {
+      const calls: unknown[] = [];
+      renderPage({ phone: '09171234567', onUpdate: (v) => calls.push(v) });
+
+      await user.click(await screen.findByRole('button', { name: 'Edit' }));
+      const phoneField = within(editCard()).getByLabelText(/^phone$/i);
+      await user.clear(phoneField);
+      await user.type(phoneField, '0908 469 6246');
+      await user.click(within(editCard()).getByRole('button', { name: 'Save changes' }));
+
+      await waitFor(() => expect(calls).toEqual([{ id: 1, patch: { phone: '+639084696246' } }]));
     });
   });
 });

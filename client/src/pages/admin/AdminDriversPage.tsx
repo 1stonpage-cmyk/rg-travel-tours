@@ -109,6 +109,7 @@ import {
   driverLeaveInputSchema,
   driverAvailability,
   manilaCivilDate,
+  phPhoneSchema,
   type DriverInput,
   type DriverRow,
 } from '@rg/shared';
@@ -235,12 +236,29 @@ function valuesFromDriverRow(row: DriverRow): Record<string, string> {
   };
 }
 
+/**
+ * `phPhoneSchema` always normalizes into `+63…` form (BUG-123): a driver
+ * stored as `09…` re-parsed through the identical digits comes out `+63…`,
+ * which is not the STORED value even though nothing about the number
+ * changed. So the stored side of the comparison has to go through the same
+ * normalization before it is comparable to the parsed `next.phone` — the
+ * transform is idempotent on an already-`+63` value
+ * (`shared/src/__tests__/checkout.test.ts`), so this is a no-op for every
+ * driver already stored in canonical form. A stored value that is not a
+ * valid PH mobile at all falls back to itself, so a genuinely new phone is
+ * still detected and still sent.
+ */
+function normalizedStoredPhone(value: string): string {
+  const parsed = phPhoneSchema.safeParse(value);
+  return parsed.success ? parsed.data : value;
+}
+
 /** Only the keys that actually changed — the empty-patch rule (`AdminVansPage.tsx`). */
 function buildDriverPatch(next: DriverInput, original: DriverRow): Partial<DriverInput> {
   const patch: Partial<DriverInput> = {};
   if (next.name !== original.name) patch.name = next.name;
   if (next.code !== original.code) patch.code = next.code;
-  if (next.phone !== original.phone) patch.phone = next.phone;
+  if (next.phone !== normalizedStoredPhone(original.phone)) patch.phone = next.phone;
   if (next.licenseNo !== original.licenseNo) patch.licenseNo = next.licenseNo;
   if (next.licenseExpiry !== original.licenseExpiry) patch.licenseExpiry = next.licenseExpiry;
   if (JSON.stringify(next.languages) !== JSON.stringify(original.languages)) {
