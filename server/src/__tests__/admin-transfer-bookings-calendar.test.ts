@@ -328,6 +328,12 @@ describeWithDb('Admin screens show a transfer booking’s product (Task T23)', (
     const { ref, bookingId } = await createTransferBooking(baseInput({ routeId }));
     created.bookingIds.push(bookingId);
 
+    const [vehicleType] = await getDb()
+      .select({ name: vehicleTypes.name })
+      .from(vehicleTypes)
+      .where(eq(vehicleTypes.id, VAN_TYPE_ID))
+      .limit(1);
+
     const { days } = await ownerApi().admin.calendar.month({
       year: Number(DAY.slice(0, 4)),
       month: Number(DAY.slice(5, 7)),
@@ -338,7 +344,7 @@ describeWithDb('Admin screens show a transfer booking’s product (Task T23)', (
     expect(trip!.tourTitle).toBeNull();
     expect(trip!.transferRouteLabel).toBe(routeDisplayName(fromName, toName, 'forward'));
     expect(trip!.pickupTime).toBe('05:15');
-    expect(trip!.vehicleTypeLabel).not.toBeNull();
+    expect(trip!.vehicleTypeLabel).toBe(vehicleType!.name);
   });
 
   it('reads null on every new field for a tour booking', async () => {
