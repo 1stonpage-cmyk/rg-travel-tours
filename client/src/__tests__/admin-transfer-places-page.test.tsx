@@ -178,7 +178,20 @@ describe('AdminTransferPlacesPage', () => {
     expect(screen.queryByText('Mactan-Cebu International Airport')).toBeNull();
   });
 
-  it('gives every control the tap-target utility', async () => {
+  /*
+   * jsdom does no layout, so no unit test here can measure 44 physical
+   * pixels. What it CAN prove is that every control is at least 44px tall
+   * by one of this project's three equivalent mechanisms: the shared
+   * `tap-target` utility (`client/src/index.css`, `min-h-11 min-w-11`); a
+   * fixed `h-11` (44px) — the admin "Clean Pill" system's
+   * primary/secondary/ghost/amber-pill variants size themselves with
+   * `h-11` directly rather than `tap-target`; or the compact `row`/
+   * `row-amber` table variants' own 32px box (`h-8`) PAIRED with their
+   * invisible `::before` hit-area extension (`before:-inset-y-1.5`) — bare
+   * `h-8` alone is a real 32px target and must NOT pass this check on its
+   * own (B1/B2, DEMO POLISH batch, 2026-11-09).
+   */
+  it('gives every control a real 44px tap target', async () => {
     renderPage();
     await screen.findAllByText('Mactan-Cebu International Airport');
     const controls = Array.from(
@@ -186,10 +199,15 @@ describe('AdminTransferPlacesPage', () => {
     ).filter((control) => control.getAttribute('aria-hidden') !== 'true');
     expect(controls.length).toBeGreaterThan(0);
     for (const control of controls) {
+      const className = control.className;
+      const hasTapTarget = /\btap-target\b/.test(className);
+      const hasFixed44 = /\bh-11\b/.test(className);
+      const hasCompactWithHitArea =
+        /\bh-8\b/.test(className) && /before:-inset-y-1\.5/.test(className);
       expect(
-        control.className,
-        `${control.tagName}[${control.getAttribute('type') ?? 'n/a'}]`,
-      ).toMatch(/tap-target/);
+        hasTapTarget || hasFixed44 || hasCompactWithHitArea,
+        `${control.tagName}[${control.getAttribute('type') ?? 'n/a'}] class="${className}"`,
+      ).toBe(true);
     }
   });
 });

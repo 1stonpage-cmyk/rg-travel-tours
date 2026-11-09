@@ -61,7 +61,9 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import AdminPageHeader from '@/components/admin/AdminPageHeader';
 import EntityForm, { type EntityFormField } from '@/components/admin/EntityForm';
+import FormActions from '@/components/admin/FormActions';
 import { centavosToPesosInput, pesosToCentavos } from '@/lib/money-input';
 import { utcIsoToManilaLabel } from '@/lib/manila-datetime';
 import { firstValidationMessage, splitFieldErrors } from '@/lib/field-errors';
@@ -72,10 +74,6 @@ const NOTICE =
   'border-brand-blue-200 bg-brand-blue-50 text-brand-blue-900 rounded-xl border p-3 text-sm font-medium';
 const ALERT =
   'border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-xl border p-3 text-sm font-medium';
-const PRIMARY_BUTTON =
-  'tap-target bg-brand-blue-700 hover:bg-brand-blue-800 rounded-[10px] font-semibold text-white transition-colors';
-const OUTLINE_BUTTON =
-  'tap-target border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 hover:text-brand-blue-800 rounded-[10px] font-semibold transition-colors';
 
 /** Same page size `AdminBookingsPage.tsx` uses for its own Prev/Next pager. */
 const INQUIRY_PAGE_SIZE = 25;
@@ -393,17 +391,16 @@ function PackageForm({
         submitLabel={mode === 'edit' ? 'Save changes' : 'Add package'}
         onChange={(name, nextValue) => setValues((current) => ({ ...current, [name]: nextValue }))}
         onSubmit={submit}
+        hideSubmit
       />
 
-      <Button
-        type="button"
-        variant="outline"
-        disabled={pending}
-        className={`${OUTLINE_BUTTON} w-full sm:w-auto`}
-        onClick={onClose}
-      >
-        Cancel
-      </Button>
+      <FormActions
+        onCancel={onClose}
+        saveLabel={mode === 'edit' ? 'Save changes' : 'Add package'}
+        pending={pending}
+        submitType="button"
+        onSave={submit}
+      />
     </div>
   );
 }
@@ -441,14 +438,7 @@ function PackageActions({ row, onEdit }: { row: PackageAdminRow; onEdit: () => v
        * "Edit", so without it a screen-reader user tabbing the list hears
        * "Edit" five times with nothing to tell the five apart.
        */}
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className={OUTLINE_BUTTON}
-        aria-label={`Edit ${row.title}`}
-        onClick={onEdit}
-      >
+      <Button type="button" variant="row" aria-label={`Edit ${row.title}`} onClick={onEdit}>
         Edit
       </Button>
 
@@ -459,10 +449,16 @@ function PackageActions({ row, onEdit }: { row: PackageAdminRow; onEdit: () => v
             aria-label={`Confirm deactivating ${row.title}`}
             className="flex flex-wrap items-center gap-2"
           >
+            {/*
+             * BUG FIX (same shape as AdminVehicleTypesPage's destructive-
+             * confirm fix): this was a solid blue `PRIMARY_BUTTON` for an
+             * actual destructive confirm, contradicting owner decision 1
+             * ("Deactivate = amber outline pill. Never red").
+             */}
             <Button
               type="button"
-              size="sm"
-              className={PRIMARY_BUTTON}
+              variant="row-amber"
+              className="whitespace-normal"
               disabled={setActive.isPending}
               onClick={() => setActive.mutate({ id: row.id, isActive: false })}
             >
@@ -470,9 +466,7 @@ function PackageActions({ row, onEdit }: { row: PackageAdminRow; onEdit: () => v
             </Button>
             <Button
               type="button"
-              variant="outline"
-              size="sm"
-              className={OUTLINE_BUTTON}
+              variant="row"
               disabled={setActive.isPending}
               onClick={() => setConfirming(false)}
             >
@@ -482,9 +476,7 @@ function PackageActions({ row, onEdit }: { row: PackageAdminRow; onEdit: () => v
         ) : (
           <Button
             type="button"
-            variant="outline"
-            size="sm"
-            className={OUTLINE_BUTTON}
+            variant="row-amber"
             aria-label={`Deactivate ${row.title}`}
             onClick={() => setConfirming(true)}
           >
@@ -494,9 +486,7 @@ function PackageActions({ row, onEdit }: { row: PackageAdminRow; onEdit: () => v
       ) : (
         <Button
           type="button"
-          variant="outline"
-          size="sm"
-          className={OUTLINE_BUTTON}
+          variant="row"
           disabled={setActive.isPending}
           aria-label={`Reactivate ${row.title}`}
           onClick={() => setActive.mutate({ id: row.id, isActive: true })}
@@ -582,9 +572,7 @@ function InquiryRow({ row }: { row: InquiryAdminRow }) {
           <Button
             key={status}
             type="button"
-            variant="outline"
-            size="sm"
-            className={OUTLINE_BUTTON}
+            variant="row"
             disabled={setStatus.isPending}
             aria-label={`Mark ${INQUIRY_STATUS_LABELS[status].toLowerCase()} — enquiry from ${row.name}`}
             onClick={() => setStatus.mutate({ id: row.id, status })}
@@ -658,9 +646,7 @@ function NewsletterExportCard() {
         </p>
         <Button
           type="button"
-          variant="outline"
-          size="sm"
-          className={OUTLINE_BUTTON}
+          variant="secondary-pill"
           disabled={exportList.isPending}
           onClick={() => exportList.mutate()}
         >
@@ -743,16 +729,25 @@ function PackagesAdmin({ isOwner }: { isOwner: boolean }) {
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.08em]">
-          Operations
-        </p>
-        <h1 className="text-brand-ink text-2xl font-bold sm:text-3xl">Packages</h1>
-        <p className="text-brand-error text-sm">
-          Multi-day packages, the enquiries guests send about them, and the newsletter list.
-          Deactivating a package takes it off the site and keeps every enquiry about it.
-        </p>
-      </header>
+      <AdminPageHeader
+        eyebrow="Operations"
+        title="Packages"
+        description="Multi-day packages, the enquiries guests send about them, and the newsletter list. Deactivating a package takes it off the site and keeps every enquiry about it."
+        action={
+          editingId === null ? (
+            <Button
+              type="button"
+              variant="primary-pill"
+              onClick={() => {
+                setNotice(null);
+                setEditingId('new');
+              }}
+            >
+              Add a package
+            </Button>
+          ) : undefined
+        }
+      />
 
       {notice ? (
         <p role="status" className={NOTICE}>
@@ -760,18 +755,7 @@ function PackagesAdmin({ isOwner }: { isOwner: boolean }) {
         </p>
       ) : null}
 
-      {editingId === null ? (
-        <Button
-          type="button"
-          className={`${PRIMARY_BUTTON} w-full sm:w-auto`}
-          onClick={() => {
-            setNotice(null);
-            setEditingId('new');
-          }}
-        >
-          Add a package
-        </Button>
-      ) : (
+      {editingId === null ? null : (
         <Card className={CARD}>
           <CardHeader>
             <CardTitle className="text-brand-ink text-lg font-bold">
@@ -878,8 +862,7 @@ function PackagesAdmin({ isOwner }: { isOwner: boolean }) {
               <div className="flex gap-2">
                 <Button
                   type="button"
-                  variant="outline"
-                  className={OUTLINE_BUTTON}
+                  variant="secondary-pill"
                   disabled={inquiryOffset === 0}
                   onClick={() => setInquiryOffset(Math.max(inquiryOffset - INQUIRY_PAGE_SIZE, 0))}
                 >
@@ -887,8 +870,7 @@ function PackagesAdmin({ isOwner }: { isOwner: boolean }) {
                 </Button>
                 <Button
                   type="button"
-                  variant="outline"
-                  className={OUTLINE_BUTTON}
+                  variant="secondary-pill"
                   disabled={
                     inquiryList.data.offset + inquiryList.data.items.length >=
                     inquiryList.data.total

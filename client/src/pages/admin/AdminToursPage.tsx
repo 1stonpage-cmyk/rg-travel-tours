@@ -78,7 +78,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import AdminPageHeader from '@/components/admin/AdminPageHeader';
 import EntityForm, { type EntityFormField } from '@/components/admin/EntityForm';
+import FormActions from '@/components/admin/FormActions';
 import { centavosToPesosInput, pesosToCentavos } from '@/lib/money-input';
 import { firstValidationMessage, splitFieldErrors } from '@/lib/field-errors';
 import { trpc } from '@/lib/trpc';
@@ -88,10 +90,6 @@ const NOTICE =
   'border-brand-blue-200 bg-brand-blue-50 text-brand-blue-900 rounded-xl border p-3 text-sm font-medium';
 const ALERT =
   'border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-xl border p-3 text-sm font-medium';
-const PRIMARY_BUTTON =
-  'tap-target bg-brand-blue-700 hover:bg-brand-blue-800 rounded-[10px] font-semibold text-white transition-colors';
-const OUTLINE_BUTTON =
-  'tap-target border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 hover:text-brand-blue-800 rounded-[10px] font-semibold transition-colors';
 const FIELD = 'tap-target border-brand-blue-200 rounded-[10px] bg-white';
 const ROW_ERROR = 'text-brand-gold-800 text-xs font-medium';
 const SECTION = 'border-brand-blue-100 rounded-xl border p-4';
@@ -450,13 +448,7 @@ function PriceTiersSection({
                   </p>
                 ) : null}
               </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className={OUTLINE_BUTTON}
-                onClick={() => removeRow(index)}
-              >
+              <Button type="button" variant="row" onClick={() => removeRow(index)}>
                 Remove tier
               </Button>
             </div>
@@ -465,9 +457,8 @@ function PriceTiersSection({
       </div>
       <Button
         type="button"
-        variant="outline"
-        size="sm"
-        className={`${OUTLINE_BUTTON} mt-3`}
+        variant="row"
+        className="mt-3"
         onClick={() => onChange([...rows, emptyTierRow()])}
       >
         + Add a price tier
@@ -534,13 +525,7 @@ function ImagesSection({
                   </p>
                 ) : null}
               </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className={OUTLINE_BUTTON}
-                onClick={() => removeRow(index)}
-              >
+              <Button type="button" variant="row" onClick={() => removeRow(index)}>
                 Remove image
               </Button>
             </div>
@@ -549,9 +534,8 @@ function ImagesSection({
       </div>
       <Button
         type="button"
-        variant="outline"
-        size="sm"
-        className={`${OUTLINE_BUTTON} mt-3`}
+        variant="row"
+        className="mt-3"
         onClick={() => onChange([...rows, emptyImageRow()])}
       >
         + Add an image
@@ -617,13 +601,7 @@ function ItinerarySection({
                   onChange={(e) => updateRow(index, { description: e.target.value })}
                 />
               </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className={OUTLINE_BUTTON}
-                onClick={() => removeRow(index)}
-              >
+              <Button type="button" variant="row" onClick={() => removeRow(index)}>
                 Remove stop
               </Button>
             </div>
@@ -632,9 +610,8 @@ function ItinerarySection({
       </div>
       <Button
         type="button"
-        variant="outline"
-        size="sm"
-        className={`${OUTLINE_BUTTON} mt-3`}
+        variant="row"
+        className="mt-3"
         onClick={() => onChange([...rows, emptyStopRow()])}
       >
         + Add a stop
@@ -729,13 +706,7 @@ function AddonsSection({
                 Active
               </label>
               {row.id === undefined ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className={OUTLINE_BUTTON}
-                  onClick={() => removeRow(index)}
-                >
+                <Button type="button" variant="row" onClick={() => removeRow(index)}>
                   Remove unsaved add-on
                 </Button>
               ) : null}
@@ -745,9 +716,8 @@ function AddonsSection({
       </div>
       <Button
         type="button"
-        variant="outline"
-        size="sm"
-        className={`${OUTLINE_BUTTON} mt-3`}
+        variant="row"
+        className="mt-3"
         onClick={() => onChange([...rows, emptyAddonRow()])}
       >
         + Add an add-on
@@ -954,6 +924,7 @@ function TourForm({
         submitLabel={mode === 'edit' ? 'Save changes' : 'Add tour'}
         onChange={(name, value) => setScalarValues((current) => ({ ...current, [name]: value }))}
         onSubmit={submit}
+        hideSubmit
       />
 
       <PriceTiersSection idPrefix={idPrefix} rows={tiers} errors={tierErrors} onChange={setTiers} />
@@ -962,20 +933,19 @@ function TourForm({
       <AddonsSection idPrefix={idPrefix} rows={addons} errors={addonErrors} onChange={setAddons} />
 
       {/*
-       * `EntityForm`'s own submit button (above, labelled "Add tour" or
-       * "Save changes") is the single save action for the whole tour —
-       * scalar fields and all four arrays together. Only Cancel needs a
-       * second control down here, now that the arrays are below the fold.
+       * The single save action for the whole tour — scalar fields and all
+       * four arrays together — now sits in this footer, after the arrays,
+       * paired with Cancel (B2, DEMO POLISH batch, 2026-11-09): `EntityForm`'s
+       * own submit button used to render ABOVE the arrays while Cancel sat
+       * alone below them, which read as though it did not cover that content.
        */}
-      <Button
-        type="button"
-        variant="outline"
-        disabled={pending}
-        className={`${OUTLINE_BUTTON} w-full sm:w-auto`}
-        onClick={onClose}
-      >
-        Cancel
-      </Button>
+      <FormActions
+        onCancel={onClose}
+        saveLabel={mode === 'edit' ? 'Save changes' : 'Add tour'}
+        pending={pending}
+        submitType="button"
+        onSave={submit}
+      />
     </div>
   );
 }
@@ -1072,7 +1042,7 @@ function DeactivateControl({ tour, onEdit }: { tour: TourAdminListItem; onEdit: 
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <Button type="button" variant="outline" size="sm" className={OUTLINE_BUTTON} onClick={onEdit}>
+      <Button type="button" variant="row" onClick={onEdit}>
         Edit
       </Button>
 
@@ -1083,10 +1053,16 @@ function DeactivateControl({ tour, onEdit }: { tour: TourAdminListItem; onEdit: 
             aria-label={`Confirm deactivating ${tour.title}`}
             className="flex flex-wrap items-center gap-2"
           >
+            {/*
+             * BUG FIX (same shape as AdminVehicleTypesPage's destructive-
+             * confirm fix): this was a solid blue `PRIMARY_BUTTON` for an
+             * actual destructive confirm, contradicting owner decision 1
+             * ("Deactivate = amber outline pill. Never red").
+             */}
             <Button
               type="button"
-              size="sm"
-              className={PRIMARY_BUTTON}
+              variant="row-amber"
+              className="whitespace-normal"
               disabled={setActive.isPending}
               onClick={() => setActive.mutate({ id: tour.id, isActive: false })}
             >
@@ -1094,9 +1070,7 @@ function DeactivateControl({ tour, onEdit }: { tour: TourAdminListItem; onEdit: 
             </Button>
             <Button
               type="button"
-              variant="outline"
-              size="sm"
-              className={OUTLINE_BUTTON}
+              variant="row"
               disabled={setActive.isPending}
               onClick={() => setConfirming(false)}
             >
@@ -1106,9 +1080,7 @@ function DeactivateControl({ tour, onEdit }: { tour: TourAdminListItem; onEdit: 
         ) : (
           <Button
             type="button"
-            variant="outline"
-            size="sm"
-            className={OUTLINE_BUTTON}
+            variant="row-amber"
             aria-label={`Deactivate ${tour.title}`}
             onClick={() => setConfirming(true)}
           >
@@ -1118,9 +1090,7 @@ function DeactivateControl({ tour, onEdit }: { tour: TourAdminListItem; onEdit: 
       ) : (
         <Button
           type="button"
-          variant="outline"
-          size="sm"
-          className={OUTLINE_BUTTON}
+          variant="row"
           disabled={setActive.isPending}
           aria-label={`Reactivate ${tour.title}`}
           onClick={() => setActive.mutate({ id: tour.id, isActive: true })}
@@ -1198,15 +1168,25 @@ function ToursAdmin() {
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.08em]">
-          Operations
-        </p>
-        <h1 className="text-brand-ink text-2xl font-bold sm:text-3xl">Tours &amp; pricing</h1>
-        <p className="text-brand-error text-sm">
-          Title, pricing tiers, gallery, itinerary and add-ons for every tour in the catalog.
-        </p>
-      </header>
+      <AdminPageHeader
+        eyebrow="Operations"
+        title="Tours & pricing"
+        description="Title, pricing tiers, gallery, itinerary and add-ons for every tour in the catalog."
+        action={
+          editingId === null ? (
+            <Button
+              type="button"
+              variant="primary-pill"
+              onClick={() => {
+                setNotice(null);
+                setEditingId('new');
+              }}
+            >
+              Add a tour
+            </Button>
+          ) : undefined
+        }
+      />
 
       {notice ? (
         <p role="status" className={NOTICE}>
@@ -1214,18 +1194,7 @@ function ToursAdmin() {
         </p>
       ) : null}
 
-      {editingId === null ? (
-        <Button
-          type="button"
-          className={`${PRIMARY_BUTTON} w-full sm:w-auto`}
-          onClick={() => {
-            setNotice(null);
-            setEditingId('new');
-          }}
-        >
-          Add a tour
-        </Button>
-      ) : (
+      {editingId === null ? null : (
         <TourEditorCard
           editingId={editingId}
           destinations={destinations}

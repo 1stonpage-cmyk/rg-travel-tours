@@ -56,7 +56,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import AdminPageHeader from '@/components/admin/AdminPageHeader';
 import EntityForm, { type EntityFormField } from '@/components/admin/EntityForm';
+import FormActions from '@/components/admin/FormActions';
 import { centavosToPesosInput, pesosToCentavos } from '@/lib/money-input';
 import {
   manilaLocalToUtcIso,
@@ -76,10 +78,6 @@ const NOTICE =
   'border-brand-blue-200 bg-brand-blue-50 text-brand-blue-900 rounded-xl border p-3 text-sm font-medium';
 const ALERT =
   'border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-xl border p-3 text-sm font-medium';
-const PRIMARY_BUTTON =
-  'tap-target bg-brand-blue-700 hover:bg-brand-blue-800 rounded-[10px] font-semibold text-white transition-colors';
-const OUTLINE_BUTTON =
-  'tap-target border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 hover:text-brand-blue-800 rounded-[10px] font-semibold transition-colors';
 const FIELD = 'tap-target border-brand-blue-200 rounded-[10px] bg-white';
 const ROW_ERROR = 'text-brand-gold-800 text-xs font-medium';
 const SECTION = 'border-brand-blue-100 rounded-xl border p-4';
@@ -460,6 +458,7 @@ function CouponForm({
           }))
         }
         onSubmit={submit}
+        hideSubmit
       />
 
       <div className={SECTION}>
@@ -507,20 +506,19 @@ function CouponForm({
       </div>
 
       {/*
-       * `EntityForm`'s own submit button (above, "Add coupon" or "Save
-       * changes") is the single save action for the whole coupon — the scalar
-       * fields and the window together. Only Cancel needs a second control
-       * down here, now that the window section is below it.
+       * The single save action for the whole coupon — the scalar fields and
+       * the validity window together — now sits in this footer, after the
+       * window section, paired with Cancel (B2, DEMO POLISH batch,
+       * 2026-11-09): `EntityForm`'s own submit button used to render ABOVE
+       * the window section while Cancel sat alone below it.
        */}
-      <Button
-        type="button"
-        variant="outline"
-        disabled={pending}
-        className={`${OUTLINE_BUTTON} w-full sm:w-auto`}
-        onClick={onClose}
-      >
-        Cancel
-      </Button>
+      <FormActions
+        onCancel={onClose}
+        saveLabel={mode === 'edit' ? 'Save changes' : 'Add coupon'}
+        pending={pending}
+        submitType="button"
+        onSave={submit}
+      />
     </div>
   );
 }
@@ -634,15 +632,13 @@ function CouponActions({
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <Button type="button" variant="outline" size="sm" className={OUTLINE_BUTTON} onClick={onEdit}>
+      <Button type="button" variant="row" onClick={onEdit}>
         Edit
       </Button>
 
       <Button
         type="button"
-        variant="outline"
-        size="sm"
-        className={OUTLINE_BUTTON}
+        variant="row"
         aria-expanded={logOpen}
         aria-label={`${logOpen ? 'Hide' : 'Show'} redemptions of ${coupon.code}`}
         onClick={onToggleLog}
@@ -657,14 +653,20 @@ function CouponActions({
             aria-label={`Confirm deactivating ${coupon.code}`}
             className="flex flex-wrap items-center gap-2"
           >
+            {/*
+             * BUG FIX (same shape as AdminVehicleTypesPage's destructive-
+             * confirm fix): this was a solid blue `PRIMARY_BUTTON` for an
+             * actual destructive confirm, contradicting owner decision 1
+             * ("Deactivate = amber outline pill. Never red"). `whitespace-
+             * normal` overrides the variant's own `whitespace-nowrap` (7N,
+             * Task 8): a 40-character code makes "Yes, deactivate <code>"
+             * the longest string on this screen, and nowrap pushed it past
+             * the card's edge at 360px.
+             */}
             <Button
               type="button"
-              size="sm"
-              // `whitespace-normal` overrides the button base's own
-              // `whitespace-nowrap` (7N, Task 8): a 40-character code makes
-              // "Yes, deactivate <code>" the longest string on this screen,
-              // and nowrap pushed it past the card's edge at 360px.
-              className={`${PRIMARY_BUTTON} whitespace-normal`}
+              variant="row-amber"
+              className="whitespace-normal"
               disabled={setActive.isPending}
               onClick={() => setActive.mutate({ id: coupon.id, isActive: false })}
             >
@@ -672,9 +674,7 @@ function CouponActions({
             </Button>
             <Button
               type="button"
-              variant="outline"
-              size="sm"
-              className={OUTLINE_BUTTON}
+              variant="row"
               disabled={setActive.isPending}
               onClick={() => setConfirming(false)}
             >
@@ -684,9 +684,7 @@ function CouponActions({
         ) : (
           <Button
             type="button"
-            variant="outline"
-            size="sm"
-            className={OUTLINE_BUTTON}
+            variant="row-amber"
             aria-label={`Deactivate ${coupon.code}`}
             onClick={() => setConfirming(true)}
           >
@@ -696,9 +694,7 @@ function CouponActions({
       ) : (
         <Button
           type="button"
-          variant="outline"
-          size="sm"
-          className={OUTLINE_BUTTON}
+          variant="row"
           disabled={setActive.isPending}
           aria-label={`Reactivate ${coupon.code}`}
           onClick={() => setActive.mutate({ id: coupon.id, isActive: true })}
@@ -764,17 +760,25 @@ function CouponsAdmin() {
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.08em]">
-          Operations
-        </p>
-        <h1 className="text-brand-ink text-2xl font-bold sm:text-3xl">Coupons</h1>
-        <p className="text-brand-error text-sm">
-          Discount codes a guest types at checkout, and the bookings that have used them.
-          Deactivating a code stops it being accepted and changes nothing a guest has already
-          booked.
-        </p>
-      </header>
+      <AdminPageHeader
+        eyebrow="Operations"
+        title="Coupons"
+        description="Discount codes a guest types at checkout, and the bookings that have used them. Deactivating a code stops it being accepted and changes nothing a guest has already booked."
+        action={
+          editingId === null ? (
+            <Button
+              type="button"
+              variant="primary-pill"
+              onClick={() => {
+                setNotice(null);
+                setEditingId('new');
+              }}
+            >
+              Add a coupon
+            </Button>
+          ) : undefined
+        }
+      />
 
       {notice ? (
         <p role="status" className={NOTICE}>
@@ -782,18 +786,7 @@ function CouponsAdmin() {
         </p>
       ) : null}
 
-      {editingId === null ? (
-        <Button
-          type="button"
-          className={`${PRIMARY_BUTTON} w-full sm:w-auto`}
-          onClick={() => {
-            setNotice(null);
-            setEditingId('new');
-          }}
-        >
-          Add a coupon
-        </Button>
-      ) : (
+      {editingId === null ? null : (
         <Card className={CARD}>
           <CardHeader>
             <CardTitle className="text-brand-ink text-lg font-bold">

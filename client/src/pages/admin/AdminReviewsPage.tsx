@@ -45,6 +45,7 @@ import {
 } from '@rg/shared';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import AdminPageHeader from '@/components/admin/AdminPageHeader';
 import StarRating from '@/components/common/StarRating';
 import { utcIsoToManilaLabel } from '@/lib/manila-datetime';
 import { firstValidationMessage } from '@/lib/field-errors';
@@ -55,10 +56,6 @@ const NOTICE =
   'border-brand-blue-200 bg-brand-blue-50 text-brand-blue-900 rounded-xl border p-3 text-sm font-medium';
 const ALERT =
   'border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-xl border p-3 text-sm font-medium';
-const PRIMARY_BUTTON =
-  'tap-target bg-brand-blue-700 hover:bg-brand-blue-800 rounded-[10px] font-semibold text-white transition-colors';
-const OUTLINE_BUTTON =
-  'tap-target border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 hover:text-brand-blue-800 rounded-[10px] font-semibold transition-colors';
 const FIELD = 'tap-target border-brand-blue-200 rounded-[10px] bg-white';
 
 const STATUS_LABEL: Record<ReviewModerationRow['status'], string> = {
@@ -167,23 +164,16 @@ function ReplyForm({
         </p>
       ) : null}
       <div className="flex flex-wrap gap-2">
-        <Button
-          type="button"
-          size="sm"
-          className={PRIMARY_BUTTON}
-          disabled={reply.isPending}
-          onClick={submit}
-        >
+        {/*
+         * `row`, not `primary-pill` (owner decision 1's "one primary pill
+         * per visible region"): this reply form is one of potentially many
+         * open at once, one per review row, so a full-size primary pill
+         * here would read as several "the" primary actions on one screen.
+         */}
+        <Button type="button" variant="row" disabled={reply.isPending} onClick={submit}>
           {reply.isPending ? 'Saving…' : 'Save reply'}
         </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className={OUTLINE_BUTTON}
-          disabled={reply.isPending}
-          onClick={onClose}
-        >
+        <Button type="button" variant="row" disabled={reply.isPending} onClick={onClose}>
           Cancel
         </Button>
       </div>
@@ -263,10 +253,19 @@ function ReviewRow({ row }: { row: ReviewModerationRow }) {
       ) : null}
 
       <div className="flex flex-wrap items-center gap-2">
+        {/*
+         * `row` for Publish, `row-amber` for Hide — never `primary-pill`
+         * for either (owner decision 1's "one primary pill per visible
+         * region"): this queue can show many rows at once, each with its
+         * own Publish, so a full-size primary pill per row would read as
+         * several page-level primaries on one screen. Publish is the safe,
+         * non-destructive half; Hide pulls a review off the public site, so
+         * it takes the same amber this codebase reserves for Deactivate/
+         * Reject elsewhere, never red.
+         */}
         <Button
           type="button"
-          size="sm"
-          className={row.status === 'published' ? OUTLINE_BUTTON : PRIMARY_BUTTON}
+          variant="row"
           disabled={row.status === 'published' || setStatus.isPending}
           onClick={() => changeStatus('published')}
         >
@@ -274,22 +273,14 @@ function ReviewRow({ row }: { row: ReviewModerationRow }) {
         </Button>
         <Button
           type="button"
-          variant="outline"
-          size="sm"
-          className={OUTLINE_BUTTON}
+          variant="row-amber"
           disabled={row.status === 'hidden' || setStatus.isPending}
           onClick={() => changeStatus('hidden')}
         >
           {row.status === 'hidden' ? 'Hidden' : 'Hide'}
         </Button>
         {!replying ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className={OUTLINE_BUTTON}
-            onClick={() => setReplying(true)}
-          >
+          <Button type="button" variant="row" onClick={() => setReplying(true)}>
             {row.reply ? 'Edit reply' : 'Add a reply'}
           </Button>
         ) : null}
@@ -350,16 +341,17 @@ function ReviewsAdmin() {
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.08em]">
-          Operations
-        </p>
-        <h1 className="text-brand-ink text-2xl font-bold sm:text-3xl">Reviews</h1>
-        <p className="text-brand-error text-sm">
-          Guest reviews waiting for a decision, and every review that has already been published or
-          hidden. Publishing and hiding are both reversible.
-        </p>
-      </header>
+      {/*
+       * No `action`: this is a moderation queue, not a CRUD-with-add-form
+       * screen — there is no page-level "Add a review" primary. Each row's
+       * own Publish/Hide/reply controls are compact `row`/`row-amber`
+       * actions, never `primary-pill` (see `ReviewRow`'s own comment).
+       */}
+      <AdminPageHeader
+        eyebrow="Operations"
+        title="Reviews"
+        description="Guest reviews waiting for a decision, and every review that has already been published or hidden. Publishing and hiding are both reversible."
+      />
 
       {list.isPending ? (
         <p className="text-brand-error flex items-center gap-2 text-sm">
