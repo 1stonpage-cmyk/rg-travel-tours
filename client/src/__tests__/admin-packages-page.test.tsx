@@ -13,17 +13,44 @@
  * The export button's absence for a dispatcher is cosmetic and is tested AS
  * cosmetic — the server refusal is `admin-packages.test.ts`'s job. A test that
  * only checked the button would be checking the weaker half.
+ *
+ * The "quote & convert" control (Task T20; `admin.transferQuotes.convert` is
+ * `adminProcedure('transferQuoting')`, owner and finance) is tested the same
+ * cosmetic way: drawn for an owner on an unconverted custom-trip request,
+ * absent for a dispatcher who can see the same request read-only.
  */
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { InquiryAdminRow, PackageAdminRow } from '@rg/shared';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { InquiryAdminRow, PackageAdminRow, VehicleTypeAdminRow } from '@rg/shared';
 import AdminPackagesPage from '@/pages/admin/AdminPackagesPage';
 import { TrpcProviders } from '@/lib/trpc';
-import { mockTrpc, mockTrpcError, resetTrpcMock } from './helpers/mock-trpc';
+import {
+  mockTrpc,
+  mockTrpcError,
+  mockTrpcValidationError,
+  resetTrpcMock,
+} from './helpers/mock-trpc';
 
 const user = userEvent.setup();
+
+/*
+ * Radix's `Select` needs three DOM APIs jsdom does not implement (see
+ * `assign-panel.test.tsx`'s own note, the first file in this project to open
+ * one) — without them the listbox never opens and every `getByRole('option')`
+ * fails looking like a component bug rather than a jsdom gap. Shims, not
+ * stubs of behaviour under test: pointer capture and scrolling are things a
+ * real browser does that `ConvertInquiryForm`'s productType/vehicle-type
+ * selects never ask about.
+ */
+beforeAll(() => {
+  const proto = window.Element.prototype as unknown as Record<string, unknown>;
+  proto.hasPointerCapture = () => false;
+  proto.setPointerCapture = () => {};
+  proto.releasePointerCapture = () => {};
+  proto.scrollIntoView = () => {};
+});
 
 /** Every object URL this test created, and the anchor that was clicked. */
 const downloads: Array<{ blob: Blob }> = [];
@@ -151,11 +178,27 @@ function inquiryPage(
   return { items, total: items.length, limit: 25, offset: 0, ...overrides };
 }
 
+function vehicleType(overrides: Partial<VehicleTypeAdminRow> = {}): VehicleTypeAdminRow {
+  return {
+    id: 1,
+    name: 'Mini Van',
+    slug: 'mini-van',
+    defaultSeats: 10,
+    defaultLuggage: 10,
+    isActive: true,
+    sortOrder: 0,
+    ...overrides,
+  };
+}
+
+const MINI_VAN = vehicleType();
+
 function renderPage(extra: Record<string, unknown> = {}) {
   mockTrpc({
     'staffAuth.me': { userId: 1, role: 'owner', mustChangePassword: false },
     'admin.packages.list': [ACTIVE, RETIRED],
     'admin.inquiries.list': inquiryPage([NEW_INQUIRY, GENERAL_INQUIRY]),
+    'admin.vehicleTypes.list': [MINI_VAN],
     ...extra,
   });
   return render(
@@ -401,6 +444,222 @@ describe('AdminPackagesPage — the enquiries', () => {
     await user.click(within(row).getByRole('button', { name: /mark read/i }));
 
     expect(await within(row).findByText('No enquiry with that id.')).toBeInTheDocument();
+  });
+});
+
+describe('AdminPackagesPage — quote & convert to booking (T20)', () => {
+  const CONVERTED_INQUIRY = inquiry({
+    id: 13,
+    type: 'transfer_custom',
+    status: 'closed',
+    packageId: null,
+    packageTitle: null,
+    name: 'Ana Reyes',
+    requestedDate: '2027-04-01',
+    pax: 2,
+    routeDescription: 'Cebu city to Oslob',
+    convertedBookingId: 99,
+    convertedBookingRef: 'TR-99',
+  });
+
+  /**
+   * Fills every field the review step needs for a one-way quote.
+   *
+   * `date` is cleared first: `TRANSFER_CUSTOM_INQUIRY.requestedDate` already
+   * pre-fills the pickup-date box (T20's own "staff confirm the date" intent
+   * for a `requestedDate` the guest gave), so typing onto it without clearing
+   * would append onto `2027-02-20` rather than replace it.
+   */
+  async function fillOneWayFields(row: HTMLElement) {
+    await user.clear(within(row).getByLabelText(/^pickup date$/i));
+    await user.type(within(row).getByLabelText(/^pickup date$/i), '2027-03-01');
+    await user.type(within(row).getByLabelText(/^pickup time$/i), '08:30');
+    await user.type(within(row).getByLabelText(/trip duration/i), '90');
+    await user.type(within(row).getByLabelText(/drop-off address/i), 'Moalboal White Beach');
+    await user.type(within(row).getByLabelText(/quoted price/i), '2500.00');
+  }
+
+  it('offers the control only for an unconverted custom-trip request, for an owner', async () => {
+    renderPage({
+      'admin.inquiries.list': inquiryPage([
+        NEW_INQUIRY,
+        TRANSFER_CUSTOM_INQUIRY,
+        CONVERTED_INQUIRY,
+      ]),
+    });
+    await screen.findByText('Pedro Cruz');
+    // `admin.vehicleTypes.list` resolves after the inquiry list does; the
+    // control only draws (rather than the "no vehicle type" notice) once it
+    // has.
+    await within(rowFor('Pedro Cruz')).findByRole('button', { name: /quote.*convert/i });
+
+    expect(
+      within(rowFor('Maria Santos')).queryByRole('button', { name: /quote.*convert/i }),
+    ).toBeNull();
+    expect(
+      within(rowFor('Ana Reyes')).queryByRole('button', { name: /quote.*convert/i }),
+    ).toBeNull();
+    // The already-converted request still shows its booking ref.
+    expect(within(rowFor('Ana Reyes')).getByText('TR-99')).toBeInTheDocument();
+  });
+
+  it('is cosmetically absent for a dispatcher, who still sees the request read-only', async () => {
+    renderPage({
+      'staffAuth.me': { userId: 2, role: 'dispatcher', mustChangePassword: false },
+      'admin.inquiries.list': inquiryPage([NEW_INQUIRY, TRANSFER_CUSTOM_INQUIRY]),
+    });
+    await screen.findByText('Pedro Cruz');
+
+    expect(within(rowFor('Pedro Cruz')).getByText(/custom trip request/i)).toBeInTheDocument();
+    expect(
+      within(rowFor('Pedro Cruz')).queryByRole('button', { name: /quote.*convert/i }),
+    ).toBeNull();
+  });
+
+  /*
+   * Named, not a dead end: with no active vehicle type to offer, the convert
+   * control would otherwise default `vehicleTypeId` to `''` and surface a
+   * bare Zod "greater than 0" message on a select with no options — the gap
+   * the advisor flagged. Covers both the owner-genuinely-has-none case and
+   * (via the same empty list) the day `admin.vehicleTypes.list`'s own
+   * owner-only gate is the thing standing between a finance session and this
+   * control.
+   */
+  it('names the gap rather than offering a dead-end control when no vehicle type is active', async () => {
+    renderPage({
+      'admin.inquiries.list': inquiryPage([TRANSFER_CUSTOM_INQUIRY]),
+      'admin.vehicleTypes.list': [],
+    });
+    await screen.findByText('Pedro Cruz');
+    const row = rowFor('Pedro Cruz');
+
+    expect(await within(row).findByText(/no vehicle type is available/i)).toBeInTheDocument();
+    expect(within(row).queryByRole('button', { name: /quote.*convert/i })).toBeNull();
+  });
+
+  it('pre-fills the guest-given phone and pax, converts, and shows the booking ref', async () => {
+    const calls: unknown[] = [];
+    renderPage({
+      'admin.inquiries.list': inquiryPage([TRANSFER_CUSTOM_INQUIRY]),
+      'admin.transferQuotes.convert': (input: unknown) => {
+        calls.push(input);
+        return { ref: 'TR-1001', bookingId: 1001, holdExpiresAt: new Date().toISOString() };
+      },
+    });
+    await screen.findByText('Pedro Cruz');
+    const row = rowFor('Pedro Cruz');
+
+    await user.click(await within(row).findByRole('button', { name: /quote.*convert/i }));
+    expect(within(row).getByLabelText(/^passengers$/i)).toHaveValue(6);
+    expect(within(row).getByLabelText(/phone we can call/i)).toHaveValue('09170000000');
+
+    await fillOneWayFields(row);
+    await user.click(within(row).getByRole('button', { name: /review & convert/i }));
+
+    // The confirm step states the price in figures and in words.
+    expect(within(row).getByText(/₱2,500/)).toBeInTheDocument();
+    expect(within(row).getByText(/two thousand five hundred pesos/i)).toBeInTheDocument();
+
+    await user.click(within(row).getByRole('button', { name: /confirm — convert to a booking/i }));
+
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]).toMatchObject({
+      inquiryId: 12,
+      vehicleTypeId: 1,
+      productType: 'transfer_one_way',
+      date: '2027-03-01',
+      pickupTime: '08:30',
+      customRouteDurationMinutes: 90,
+      pax: 6,
+      luggageCount: 0,
+      dropoffAddress: 'Moalboal White Beach',
+      // `phPhoneSchema` normalises the guest's locally-typed number — same
+      // normalisation `createHoldInput.lead.phone` applies (T19's own note).
+      leadPhone: '+639170000000',
+      priceCentavos: 250_000,
+    });
+    expect(await within(row).findByText(/converted to booking: TR-1001/i)).toBeInTheDocument();
+  });
+
+  it('blocks on a badly-typed price, inline, without calling the server', async () => {
+    const calls: unknown[] = [];
+    renderPage({
+      'admin.inquiries.list': inquiryPage([TRANSFER_CUSTOM_INQUIRY]),
+      'admin.transferQuotes.convert': (input: unknown) => {
+        calls.push(input);
+        return { ref: 'TR-1001', bookingId: 1001, holdExpiresAt: new Date().toISOString() };
+      },
+    });
+    await screen.findByText('Pedro Cruz');
+    const row = rowFor('Pedro Cruz');
+
+    await user.click(await within(row).findByRole('button', { name: /quote.*convert/i }));
+    await fillOneWayFields(row);
+    await user.clear(within(row).getByLabelText(/quoted price/i));
+    await user.type(within(row).getByLabelText(/quoted price/i), '12.345');
+    await user.click(within(row).getByRole('button', { name: /review & convert/i }));
+
+    expect(await within(row).findByRole('alert')).toHaveTextContent(/enter a quoted price/i);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('places a server-side priceCentavos refusal on the price box, not only the banner', async () => {
+    renderPage({ 'admin.inquiries.list': inquiryPage([TRANSFER_CUSTOM_INQUIRY]) });
+    await screen.findByText('Pedro Cruz');
+    const row = rowFor('Pedro Cruz');
+
+    await user.click(await within(row).findByRole('button', { name: /quote.*convert/i }));
+    await fillOneWayFields(row);
+    await user.click(within(row).getByRole('button', { name: /review & convert/i }));
+    expect(within(row).getByText(/₱2,500/)).toBeInTheDocument();
+
+    // `transferQuoteConvertInput`'s own `MAX_CENTAVOS` cap (T19 follow-up),
+    // keyed `priceCentavos` — this form's only box of that name is `priceInput`.
+    mockTrpcValidationError('admin.transferQuotes.convert', {
+      fieldErrors: { priceCentavos: ['That price is too large — please double-check it.'] },
+    });
+    await user.click(within(row).getByRole('button', { name: /confirm — convert to a booking/i }));
+
+    const priceField = await within(row).findByLabelText(/quoted price/i);
+    expect(priceField).toHaveAttribute('aria-invalid', 'true');
+    expect(within(row).getByRole('alert')).toHaveTextContent(/too large/i);
+  });
+
+  it('switching to day-use drops the one-way-only fields from what is sent, not just hides them', async () => {
+    const calls: unknown[] = [];
+    renderPage({
+      'admin.inquiries.list': inquiryPage([TRANSFER_CUSTOM_INQUIRY]),
+      'admin.transferQuotes.convert': (input: unknown) => {
+        calls.push(input);
+        return { ref: 'TR-1002', bookingId: 1002, holdExpiresAt: new Date().toISOString() };
+      },
+    });
+    await screen.findByText('Pedro Cruz');
+    const row = rowFor('Pedro Cruz');
+
+    await user.click(await within(row).findByRole('button', { name: /quote.*convert/i }));
+    // Type a one-way-only value, then switch away from it.
+    await user.type(within(row).getByLabelText(/trip duration/i), '90');
+
+    await user.click(within(row).getByRole('combobox', { name: /trip type/i }));
+    await user.click(await screen.findByRole('option', { name: /day-use hire/i }));
+
+    expect(within(row).queryByLabelText(/trip duration/i)).toBeNull();
+    await user.type(within(row).getByLabelText(/vehicle needed until/i), '18:00');
+    await user.clear(within(row).getByLabelText(/^pickup date$/i));
+    await user.type(within(row).getByLabelText(/^pickup date$/i), '2027-03-01');
+    await user.type(within(row).getByLabelText(/^pickup time$/i), '08:30');
+    await user.type(within(row).getByLabelText(/drop-off address/i), 'Oslob Whale Sharks');
+    await user.type(within(row).getByLabelText(/quoted price/i), '3000.00');
+
+    await user.click(within(row).getByRole('button', { name: /review & convert/i }));
+    await user.click(within(row).getByRole('button', { name: /confirm — convert to a booking/i }));
+
+    await waitFor(() => expect(calls).toHaveLength(1));
+    const sent = calls[0] as Record<string, unknown>;
+    expect(sent.productType).toBe('transfer_day_use');
+    expect(sent.dayUseEndTime).toBe('18:00');
+    expect(sent).not.toHaveProperty('customRouteDurationMinutes');
   });
 });
 

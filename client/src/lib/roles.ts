@@ -44,6 +44,27 @@ export const MONEY_ROLES: readonly AdminRole[] = ['owner', 'finance'];
 export const BOOKING_VIEW_ROLES: readonly AdminRole[] = ADMIN_ROLES;
 
 /**
+ * §9 "Quote & convert custom trips" (Task T19/T20) — owner and finance.
+ *
+ * NOT folded into `MONEY_ROLES` even though today's two roles are the same
+ * pair: this file's own header explains that one constant stands for one §9
+ * ANSWER, not for a coincidence of roles, and `transferQuoting` is its own
+ * ROLE_MATRIX area with its own reasoning (a dispatcher may read a custom-trip
+ * inquiry but must not price or convert it). If a future spec change gives
+ * `transferQuoting` a different answer from `verifyPayments`/`cancelRefund`/
+ * `reports`, this constant must be free to move without touching those.
+ *
+ * **Owner decision needed, not yet made:** `admin.inquiries.list` (which
+ * draws the screen this control lives on) and `admin.vehicleTypes.list`
+ * (which populates its vehicle-type picker) are BOTH gated owner+dispatcher
+ * and owner-only respectively — neither admits finance today. So a finance
+ * user cannot reach this control no matter what this constant says; the gate
+ * below is written correctly for the day that changes, but today it is
+ * owner-only in practice. See HANDOVER-9.
+ */
+export const TRANSFER_QUOTING_ROLES: readonly AdminRole[] = ['owner', 'finance'];
+
+/**
  * True when `role` — as `staffAuth.me` reports it, which may be `undefined`
  * while that query is pending or has failed — is in `allowed`.
  *

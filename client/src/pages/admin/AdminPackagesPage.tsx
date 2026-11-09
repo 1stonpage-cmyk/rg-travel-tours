@@ -54,19 +54,23 @@ import {
   INQUIRY_STATUSES,
   packageCreateInput,
   packageUpdateInput,
+  type AdminRole,
   type InquiryAdminRow,
   type InquiryStatus,
   type PackageAdminRow,
+  type VehicleTypeAdminRow,
 } from '@rg/shared';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import AdminPageHeader from '@/components/admin/AdminPageHeader';
+import ConvertInquiryForm from '@/components/admin/ConvertInquiryForm';
 import EntityForm, { type EntityFormField } from '@/components/admin/EntityForm';
 import FormActions from '@/components/admin/FormActions';
 import { centavosToPesosInput, pesosToCentavos } from '@/lib/money-input';
 import { utcIsoToManilaLabel } from '@/lib/manila-datetime';
 import { firstValidationMessage, splitFieldErrors } from '@/lib/field-errors';
+import { roleMay, TRANSFER_QUOTING_ROLES } from '@/lib/roles';
 import { trpc } from '@/lib/trpc';
 
 const CARD = 'border-brand-blue-100 rounded-[14px] border bg-white';
@@ -506,9 +510,19 @@ function PackageActions({ row, onEdit }: { row: PackageAdminRow; onEdit: () => v
 
 /* -------------------------------------------------------------- One enquiry */
 
-function InquiryRow({ row }: { row: InquiryAdminRow }) {
+function InquiryRow({
+  row,
+  role,
+  vehicleTypes,
+}: {
+  row: InquiryAdminRow;
+  role: AdminRole | undefined;
+  vehicleTypes: readonly VehicleTypeAdminRow[];
+}) {
   const utils = trpc.useUtils();
   const [rowBanner, setRowBanner] = useState<string | null>(null);
+  const [converting, setConverting] = useState(false);
+  const [convertedNotice, setConvertedNotice] = useState<string | null>(null);
 
   const setStatus = trpc.admin.inquiries.setStatus.useMutation({
     onSuccess: () => {
@@ -518,6 +532,18 @@ function InquiryRow({ row }: { row: InquiryAdminRow }) {
     onError: (error) =>
       setRowBanner(describeError(error, 'Could not change this enquiry. Nothing was changed.')),
   });
+
+  /*
+   * §9 "Quote & convert custom trips" — owner and finance (`transferQuoting`).
+   * Cosmetic only, same as every other role check on this screen: the server
+   * refuses `admin.transferQuotes.convert` from anyone else regardless of
+   * whether this control is drawn. A request already converted, or one that
+   * is not a custom-trip request at all, offers nothing to convert.
+   */
+  const showConvertSection =
+    roleMay(role, TRANSFER_QUOTING_ROLES) &&
+    row.type === 'transfer_custom' &&
+    row.convertedBookingId === null;
 
   return (
     <li className={`${CARD} space-y-3 p-4`}>
@@ -622,6 +648,45 @@ function InquiryRow({ row }: { row: InquiryAdminRow }) {
           </Button>
         ))}
       </div>
+
+      {convertedNotice ? (
+        <p role="status" className={NOTICE}>
+          {convertedNotice}
+        </p>
+      ) : null}
+
+      {showConvertSection ? (
+        vehicleTypes.length === 0 ? (
+          /*
+           * `admin.vehicleTypes.list` came back empty — either this session
+           * cannot even query it (finance, today: see
+           * `AdminPackagesPage`'s own note on `isOwner`-gating that query),
+           * or an owner session genuinely has no active vehicle type yet.
+           * Either way, a select with no options is a dead end dressed as a
+           * refusal nobody can read; naming it beats letting the form reach
+           * that state silently.
+           */
+          <p className="text-brand-error text-sm">
+            No vehicle type is available to quote this trip yet.
+          </p>
+        ) : converting ? (
+          <div className="border-brand-blue-100 border-t pt-3">
+            <ConvertInquiryForm
+              inquiry={row}
+              vehicleTypes={vehicleTypes}
+              onClose={() => setConverting(false)}
+              onConverted={(ref) => {
+                setConverting(false);
+                setConvertedNotice(`Converted to booking: ${ref}`);
+              }}
+            />
+          </div>
+        ) : (
+          <Button type="button" variant="primary-pill" onClick={() => setConverting(true)}>
+            Quote &amp; convert to booking
+          </Button>
+        )
+      ) : null}
     </li>
   );
 }
@@ -739,13 +804,31 @@ function DeniedState() {
 
 /* ------------------------------------------------------------------ The page */
 
-function PackagesAdmin({ isOwner }: { isOwner: boolean }) {
+function PackagesAdmin({ role }: { role: AdminRole | undefined }) {
+  const isOwner = role === 'owner';
   const list = trpc.admin.packages.list.useQuery(undefined, { retry: false });
   const [inquiryOffset, setInquiryOffset] = useState(0);
   const inquiryList = trpc.admin.inquiries.list.useQuery(
     { limit: INQUIRY_PAGE_SIZE, offset: inquiryOffset },
     { retry: false },
   );
+  /*
+   * `admin.vehicleTypes.list` is `adminProcedure('toursPricing')` — OWNER
+   * ONLY, a narrower gate than `transferQuoting`'s owner-or-finance (see
+   * `lib/roles.ts`'s `TRANSFER_QUOTING_ROLES` note). Gated on `isOwner`, not
+   * `canConvert`: a finance session would otherwise fire a query the server
+   * refuses with FORBIDDEN, land on an empty list, and silently default
+   * `vehicleTypeId` to `''` — a Zod "greater than 0" message on a select with
+   * no options to pick, rather than a sentence anyone can act on. The
+   * `vehicleTypes.length === 0` branch on each row's convert control is the
+   * explicit version of that same gap for an owner session too (no active
+   * vehicle type exists yet).
+   */
+  const vehicleTypesQuery = trpc.admin.vehicleTypes.list.useQuery(undefined, {
+    retry: false,
+    enabled: isOwner,
+  });
+  const vehicleTypes = vehicleTypesQuery.data ?? [];
   const [editingId, setEditingId] = useState<number | 'new' | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -889,7 +972,7 @@ function PackagesAdmin({ isOwner }: { isOwner: boolean }) {
           </p>
           <ul className="space-y-3">
             {inquiries.map((row) => (
-              <InquiryRow key={row.id} row={row} />
+              <InquiryRow key={row.id} row={row} role={role} vehicleTypes={vehicleTypes} />
             ))}
           </ul>
 
@@ -952,5 +1035,5 @@ export default function AdminPackagesPage() {
     return <DeniedState />;
   }
 
-  return <PackagesAdmin isOwner={me.data?.role === 'owner'} />;
+  return <PackagesAdmin role={me.data?.role} />;
 }
