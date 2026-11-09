@@ -1,7 +1,8 @@
 /**
  * Transfers-launch plan, Task T22 — `TripDetail` AND `DriverTripRow` carry
- * the transfer fields (`services/reports/money.ts`'s
- * `transferTitle`/`routeDisplayName`, now wired into both of
+ * the transfer fields (`services/transfers/display.ts`'s
+ * `transferTitle`/`routeDisplayName` — extracted from `services/reports
+ * /money.ts` in Task T23, its original home — now wired into both of
  * `routers/public/driver.ts`'s `loadDriverTrip` and `listDriverTrips`), and
  * the zero-itinerary-stop check-in path is CONFIRMED here, not assumed.
  *
@@ -54,7 +55,7 @@ import {
   vans,
   vehicleTypes,
 } from '../db/schema';
-import { routeDisplayName } from '../services/reports/money';
+import { routeDisplayName } from '../services/transfers/display';
 import {
   createTransferBooking,
   type CreateTransferBookingInput,

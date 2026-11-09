@@ -60,32 +60,13 @@ import {
   transferRoutes,
   vehicleTypes,
 } from '../../db/schema';
+import { routeDisplayName, transferTitle } from '../transfers/display';
 
 /** Two aliases onto the same `transfer_places` table — one per report function below. */
 const outstandingFromPlace = alias(transferPlaces, 'outstandingFromPlace');
 const outstandingToPlace = alias(transferPlaces, 'outstandingToPlace');
 const routeRevenueFromPlace = alias(transferPlaces, 'routeRevenueFromPlace');
 const routeRevenueToPlace = alias(transferPlaces, 'routeRevenueToPlace');
-
-/**
- * A route's two places, in guest-facing order for the direction travelled —
- * the same forward/reverse swap `RoutePicker.tsx`'s `legsFor()` does for the
- * booking flow, read backwards here for reporting.
- *
- * Exported for `routers/public/driver.ts` (Task T22), the first caller
- * outside this file — narrow re-use rather than a new shared module, since
- * this file is still the only place that OWNS the question. T23 (admin
- * bookings/calendar screens) will be the third caller; that is the point to
- * decide whether this belongs in its own module, once its shape is known
- * from two real callers rather than guessed from one.
- */
-export function routeDisplayName(
-  fromName: string,
-  toName: string,
-  direction: TransferDirection,
-): string {
-  return direction === 'reverse' ? `${toName} → ${fromName}` : `${fromName} → ${toName}`;
-}
 
 /* ------------------------------------------------------------- Date windows */
 
@@ -623,37 +604,6 @@ export async function outstandingBookings(range: DateRangeInput): Promise<Outsta
     paidCentavos: row.paidCentavos,
     outstandingCentavos: row.totalCentavos - row.paidCentavos,
   }));
-}
-
-/**
- * `tourTitle`'s transfer-side fallback (Task T18): a route's two places in
- * travelled order, or "Custom transfer" for a staff-quoted booking with no
- * catalog route. Shared by `outstandingBookings` above (one row, a real
- * `customRouteDescription`) and `revenueByRoute` below (grouped, so there is
- * no single description to show for the custom bucket — see that function's
- * own note).
- *
- * Exported for `routers/public/driver.ts` (Task T22) — see `routeDisplayName`'s
- * own note on why this is a narrow re-export rather than a new module yet.
- * **The caller decides whether to call this at all.** Every input here is
- * `null` for a TOUR booking (no route, no custom description), and this
- * function cannot tell a tour from a routeless, description-less transfer —
- * it would answer `'Custom transfer'` for both. `outstandingBookings` and
- * `revenueByRoute` never face that ambiguity (both already know they are
- * looking at a transfer row before they call this); any new caller must
- * check the same thing first — `bookings.tour_id === null` — or risk naming
- * a tour "Custom transfer".
- */
-export function transferTitle(opts: {
-  fromName: string | null;
-  toName: string | null;
-  direction: TransferDirection | null;
-  customRouteDescription: string | null;
-}): string {
-  if (opts.fromName !== null && opts.toName !== null) {
-    return routeDisplayName(opts.fromName, opts.toName, opts.direction ?? 'forward');
-  }
-  return opts.customRouteDescription ?? 'Custom transfer';
 }
 
 /**

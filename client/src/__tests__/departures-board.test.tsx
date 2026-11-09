@@ -77,11 +77,25 @@ function departure(overrides: Partial<TodayDeparture> = {}): TodayDeparture {
     bookingId: 101,
     ref: 'RG-7KQ4M9',
     tourTitle: 'Kawasan Falls Canyoneering',
+    transferRouteLabel: null,
+    pickupTime: null,
+    vehicleTypeLabel: null,
     driverName: 'Maria Santos',
     vanPlate: 'ABC 123',
     status: 'in_progress',
     ...overrides,
     progress: overrides.progress ?? progressOf(stops),
+  };
+}
+
+/** Trip-start-only progress — every transfer's shape (Task T22/T23). */
+function zeroStopProgress(done: 0 | 1): TripProgress {
+  return {
+    bookingId: 101,
+    status: done === 1 ? 'in_progress' : 'confirmed',
+    stops: [stop('Start trip', null, done === 1 ? '2026-10-16T01:45:00.000Z' : null)],
+    done,
+    total: 1,
   };
 }
 
@@ -141,6 +155,60 @@ describe('DeparturesBoard', () => {
     expect(screen.getByText('Kawasan Falls Canyoneering')).toBeTruthy();
     expect(screen.getByText(/Maria Santos · ABC 123/)).toBeTruthy();
     expect(screen.getByText('On tour')).toBeTruthy();
+  });
+
+  it('shows the route, pickup time and vehicle for a transfer, instead of the generic label', async () => {
+    renderBoard([
+      departure({
+        tourTitle: null,
+        transferRouteLabel: 'Mactan Airport → Oslob',
+        pickupTime: '04:30',
+        vehicleTypeLabel: 'Sedan',
+      }),
+    ]);
+    expect(await screen.findByText('Mactan Airport → Oslob')).toBeTruthy();
+    expect(screen.getByText('Pickup 04:30 · Sedan')).toBeTruthy();
+  });
+
+  it('falls back to the generic transfer label when there is no route either', async () => {
+    renderBoard([departure({ tourTitle: null, transferRouteLabel: null })]);
+    expect(await screen.findByText('Transfer booking')).toBeTruthy();
+  });
+
+  it('does not say "1 of 1 stops" for a transfer that has not started', async () => {
+    renderBoard([
+      departure({
+        progress: zeroStopProgress(0),
+        status: 'confirmed',
+        transferRouteLabel: 'A → B',
+      }),
+    ]);
+    expect(await screen.findByText('Not started yet')).toBeTruthy();
+    expect(screen.queryByText(/of 1 stops/)).toBeNull();
+  });
+
+  it('says "Trip started", not a stop count, once a zero-stop transfer leaves', async () => {
+    renderBoard([
+      departure({
+        progress: zeroStopProgress(1),
+        status: 'in_progress',
+        transferRouteLabel: 'A → B',
+      }),
+    ]);
+    expect(await screen.findByText('Trip started')).toBeTruthy();
+    expect(screen.queryByText(/of 1 stops/)).toBeNull();
+  });
+
+  it('says "Trip completed", not "Trip started", once a zero-stop transfer is done', async () => {
+    renderBoard([
+      departure({
+        progress: zeroStopProgress(1),
+        status: 'completed',
+        transferRouteLabel: 'A → B',
+      }),
+    ]);
+    expect(await screen.findByText('Trip completed')).toBeTruthy();
+    expect(screen.queryByText('Trip started')).toBeNull();
   });
 
   it('reports the last stop reached, at its Manila time', async () => {

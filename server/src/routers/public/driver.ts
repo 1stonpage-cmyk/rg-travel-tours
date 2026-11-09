@@ -70,7 +70,7 @@ import {
   vans,
 } from '../../db/schema';
 import { recordPendingCash } from '../../services/payments/record-payment';
-import { transferTitle } from '../../services/reports/money';
+import { transferTitle } from '../../services/transfers/display';
 import {
   checkInStop,
   completeTrip,

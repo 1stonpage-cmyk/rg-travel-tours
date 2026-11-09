@@ -456,14 +456,19 @@ describeWithDb('admin.departures.today', () => {
     // is the wrong place for personal data, and the booking detail page is
     // one click away. Asserted on the KEYS, so a field added later is
     // caught rather than a value this test happened to look for.
+    // `pickupTime`/`transferRouteLabel`/`vehicleTypeLabel` (Task T23) are
+    // operational, not personal — see `TodayDeparture`'s own doc comment.
     expect(Object.keys(departure!).sort()).toEqual([
       'bookingId',
       'driverName',
+      'pickupTime',
       'progress',
       'ref',
       'status',
       'tourTitle',
+      'transferRouteLabel',
       'vanPlate',
+      'vehicleTypeLabel',
     ]);
   });
 

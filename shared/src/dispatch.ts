@@ -604,12 +604,25 @@ export type SuggestInput = z.infer<typeof suggestInputSchema>;
  * The guest's name, phone and e-mail are deliberately absent: a board
  * polled every fifteen seconds on an office screen is the wrong place for
  * personal data (RA 10173), and the booking detail page is one click away.
+ *
+ * `transferRouteLabel`, `pickupTime` and `vehicleTypeLabel` (Task T23) are
+ * operational, not personal — a pickup time and a vehicle class are not
+ * "the guest's name, phone and e-mail" above — and a dispatcher reading this
+ * board needs them: which transfer is leaving when, and in what. All three
+ * are `null` for a tour, the same `tourId === null` guard `CalendarTrip` and
+ * `DriverTripRow` (`@rg/shared/driver`) already use.
  */
 export interface TodayDeparture {
   bookingId: number;
   ref: string;
   /** NULL on a transfer booking, which has no tour (Task T6) — as `CalendarTrip`. */
   tourTitle: string | null;
+  /** The route, travelled order, or the staff-quoted description — null for a tour. */
+  transferRouteLabel: string | null;
+  /** `"HH:mm"`, Asia/Manila civil time — null for a tour. */
+  pickupTime: string | null;
+  /** The booked vehicle class's name (e.g. "Sedan") — null for a tour. */
+  vehicleTypeLabel: string | null;
   driverName: string | null;
   vanPlate: string | null;
   status: BookingStatus;

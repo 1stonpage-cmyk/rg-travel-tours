@@ -14,9 +14,20 @@
  * sentence has not already said. `progress.total` counts the trip-start
  * pseudo-stop, so a three-stop tour reads `0 of 4` before departure and `1
  * of 4` once the van leaves: that is what makes this bar move at departure,
- * and it is NOT adjusted here — the driver's checklist reads the same
- * numbers (`StopList.tsx`), and a board that quietly subtracted one would
- * disagree with the screen in the van.
+ * and that part is deliberately NOT adjusted — the driver's checklist reads
+ * the same numbers (`StopList.tsx`), and a board that quietly subtracted one
+ * would disagree with the screen in the van.
+ *
+ * **The `total === 1` case IS adjusted (Task T23).** Every transfer has no
+ * itinerary stops at all, so its `total` is always `1` — the trip-start
+ * pseudo-stop is the only one there is. Rendering that through the generic
+ * sentence read "1 of 1 stops" at a 100% full bar the INSTANT the van left,
+ * which told a dispatcher the trip was finished while it was still on the
+ * road. `StopList.tsx` hit the identical reading (Task T22's review) and
+ * special-cases `total === 1` with status-aware prose instead of a count;
+ * this board now mirrors that branch, and drops the bar for that case
+ * entirely rather than drawing one that is always either 0% or 100% and
+ * therefore never informative.
  *
  * ## Fifteen seconds, and no spinner
  *
@@ -139,8 +150,17 @@ function DepartureRow({ departure }: { departure: TodayDeparture }) {
 
       {/* `tourTitle` is null on a transfer booking (T6) — never an empty heading. */}
       <p className="text-brand-ink mt-1 text-base font-semibold">
-        {departure.tourTitle ?? TRANSFER_BOOKING_LABEL}
+        {departure.tourTitle ?? departure.transferRouteLabel ?? TRANSFER_BOOKING_LABEL}
       </p>
+
+      {/* Task T23 — null for a tour, so this line only appears for a transfer. */}
+      {departure.pickupTime === null && departure.vehicleTypeLabel === null ? null : (
+        <p className="text-brand-error text-sm">
+          {departure.pickupTime === null ? null : `Pickup ${departure.pickupTime}`}
+          {departure.pickupTime !== null && departure.vehicleTypeLabel !== null ? ' · ' : null}
+          {departure.vehicleTypeLabel}
+        </p>
+      )}
 
       <p className="text-brand-error mt-0.5 text-sm">
         {departure.driverName ?? 'No driver yet'} · {departure.vanPlate ?? 'No van yet'}
@@ -152,28 +172,47 @@ function DepartureRow({ departure }: { departure: TodayDeparture }) {
         </p>
       ) : null}
 
-      {/* The numbers, in words. The bar below only repeats them. */}
-      <p className="text-brand-ink mt-3 text-sm font-semibold">
-        {progress.done} of {progress.total} stops
-      </p>
-      <div
-        aria-hidden="true"
-        className="bg-brand-blue-100 mt-1 h-2 w-full overflow-hidden rounded-full"
-      >
-        <div
-          /*
-           * Tailwind transitions only (`emilkowalski-motion` is not
-           * installed). No `motion-reduce:` variant here on purpose: the
-           * unconditional `prefers-reduced-motion` block in `index.css`
-           * already clamps every `transition-duration` to 0.01ms, so a
-           * per-class override would be a second, narrower copy of a rule
-           * the stylesheet already applies site-wide — the same reasoning
-           * `FloatingWhatsApp.tsx` and `SiteHeader.tsx` record.
-           */
-          className="bg-brand-blue-600 h-full rounded-full transition-[width] duration-500 ease-out"
-          style={{ width: `${percent}%` }}
-        />
-      </div>
+      {/*
+       * The numbers, in words. The bar below only repeats them — except at
+       * `total === 1` (every transfer, no itinerary stops at all), where
+       * there is nothing a count or a bar can usefully show: it is either
+       * 0% or 100%, and 100% the instant the van leaves is the exact
+       * "trip already finished" misreading this branch exists to avoid.
+       * `StopList.tsx` carries the identical branch for the driver's screen.
+       */}
+      {progress.total === 1 ? (
+        <p className="text-brand-ink mt-3 text-sm font-semibold">
+          {departure.status === 'completed'
+            ? 'Trip completed'
+            : progress.done === 1
+              ? 'Trip started'
+              : 'Not started yet'}
+        </p>
+      ) : (
+        <>
+          <p className="text-brand-ink mt-3 text-sm font-semibold">
+            {progress.done} of {progress.total} stops
+          </p>
+          <div
+            aria-hidden="true"
+            className="bg-brand-blue-100 mt-1 h-2 w-full overflow-hidden rounded-full"
+          >
+            <div
+              /*
+               * Tailwind transitions only (`emilkowalski-motion` is not
+               * installed). No `motion-reduce:` variant here on purpose: the
+               * unconditional `prefers-reduced-motion` block in `index.css`
+               * already clamps every `transition-duration` to 0.01ms, so a
+               * per-class override would be a second, narrower copy of a rule
+               * the stylesheet already applies site-wide — the same reasoning
+               * `FloatingWhatsApp.tsx` and `SiteHeader.tsx` record.
+               */
+              className="bg-brand-blue-600 h-full rounded-full transition-[width] duration-500 ease-out"
+              style={{ width: `${percent}%` }}
+            />
+          </div>
+        </>
+      )}
 
       <p className="text-brand-error mt-1 text-sm">
         {reached === null

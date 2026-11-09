@@ -74,11 +74,26 @@
  * read in a log.
  */
 import { and, asc, eq, notInArray, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/mysql-core';
 import { manilaCivilDate, type TodayDeparture } from '@rg/shared';
 import { getDb } from '../../db/client';
-import { bookings, drivers, tours, vans } from '../../db/schema';
+import {
+  bookingTransferDetails,
+  bookings,
+  drivers,
+  tours,
+  transferPlaces,
+  transferRoutes,
+  vans,
+  vehicleTypes,
+} from '../../db/schema';
+import { transferTitle } from '../../services/transfers/display';
 import { tripProgress } from '../../services/trips/progress';
 import { adminProcedure, router } from '../../trpc';
+
+/** Two aliases onto `transfer_places`, the same pattern `routers/public/driver.ts` uses. */
+const departuresFromPlace = alias(transferPlaces, 'departuresFromPlace');
+const departuresToPlace = alias(transferPlaces, 'departuresToPlace');
 
 /**
  * `column = :date`, comparing a civil-date column to a civil-date STRING.
@@ -124,22 +139,32 @@ export async function todayDepartures(now: Date): Promise<TodayDeparture[]> {
    * also what "progress" means for a transfer; no change needed in
    * `tripProgress` or here to produce it.
    *
-   * **Left open for T23, which owns this screen's rendering (unlike this
-   * query, which T22 did touch to confirm the number above):**
-   * `DeparturesBoard.tsx` renders `{done} of {total} stops` and a percent
-   * bar from these same two fields, so a transfer reads "1 of 1 stops" at
-   * 100% full the INSTANT it starts — the board says the trip is finished
-   * while the van is still at the pickup. `StopList.tsx` (the driver's own
-   * screen) already special-cases `total === 1` for exactly this reason;
-   * this board does not yet, and the two surfaces disagreeing about the
-   * same trip is the one thing this module's own header above says must
-   * not happen.
+   * **Task T23** adds the four joins below (`bookingTransferDetails`,
+   * `transferRoutes`, the two `transferPlaces` aliases, plus `vehicleTypes`)
+   * — the same 1:1-or-absent pattern `routers/public/driver.ts`'s
+   * `loadDriverTrip` carries (each lands on a primary key, so none of them
+   * can fan this row out) — so the board can show `transferRouteLabel`,
+   * `pickupTime` and `vehicleTypeLabel` in place of a tour's title. It ALSO
+   * fixes the divergence the T22 review found: `DeparturesBoard.tsx` used
+   * to render `{done} of {total} stops` and a percent bar unconditionally,
+   * so a transfer (`total` always `1`) read "1 of 1 stops" at 100% full the
+   * instant it started — the board said the trip was finished while the van
+   * was still at the pickup. The component now special-cases `total === 1`
+   * the same way `StopList.tsx` (the driver's own screen) already does, so
+   * the two surfaces no longer disagree about the same trip.
    */
   const rows = await db
     .select({
       bookingId: bookings.id,
       ref: bookings.ref,
+      tourId: bookings.tourId,
       tourTitle: tours.title,
+      pickupTime: bookingTransferDetails.pickupTime,
+      customRouteDescription: bookingTransferDetails.customRouteDescription,
+      direction: bookingTransferDetails.direction,
+      fromPlaceName: departuresFromPlace.name,
+      toPlaceName: departuresToPlace.name,
+      vehicleTypeLabel: vehicleTypes.name,
       driverName: drivers.name,
       vanPlate: vans.plate,
       status: bookings.status,
@@ -148,6 +173,11 @@ export async function todayDepartures(now: Date): Promise<TodayDeparture[]> {
     .leftJoin(tours, eq(tours.id, bookings.tourId))
     .leftJoin(vans, eq(vans.id, bookings.vanId))
     .leftJoin(drivers, eq(drivers.id, bookings.driverId))
+    .leftJoin(bookingTransferDetails, eq(bookingTransferDetails.bookingId, bookings.id))
+    .leftJoin(transferRoutes, eq(transferRoutes.id, bookings.routeId))
+    .leftJoin(departuresFromPlace, eq(departuresFromPlace.id, transferRoutes.fromPlaceId))
+    .leftJoin(departuresToPlace, eq(departuresToPlace.id, transferRoutes.toPlaceId))
+    .leftJoin(vehicleTypes, eq(vehicleTypes.id, bookings.vehicleTypeId))
     .where(and(onDate(bookings.tourDate, today), notInArray(bookings.status, [...NOT_DEPARTING])))
     .orderBy(asc(bookings.id));
 
@@ -160,7 +190,29 @@ export async function todayDepartures(now: Date): Promise<TodayDeparture[]> {
      * cannot disagree within a request, and the row's is the one reported
      * so the board's status and its sort come from one statement.
      */
-    departures.push({ ...row, progress: await tripProgress(db, row.bookingId) });
+    const progress = await tripProgress(db, row.bookingId);
+    departures.push({
+      bookingId: row.bookingId,
+      ref: row.ref,
+      tourTitle: row.tourTitle,
+      // Same guard as `driverTripDetail`/`listDriverTrips` — `transferTitle()`
+      // cannot tell a tour from a routeless transfer on its own.
+      transferRouteLabel:
+        row.tourId === null
+          ? transferTitle({
+              fromName: row.fromPlaceName,
+              toName: row.toPlaceName,
+              direction: row.direction,
+              customRouteDescription: row.customRouteDescription,
+            })
+          : null,
+      pickupTime: row.pickupTime,
+      vehicleTypeLabel: row.vehicleTypeLabel,
+      driverName: row.driverName,
+      vanPlate: row.vanPlate,
+      status: row.status,
+      progress,
+    });
   }
   return departures;
 }
