@@ -1,6 +1,6 @@
 /**
  * The day-before trip reminder (Week 7 Task 14, 7E) — §11's "day-before
- * reminder", the sixth of its seven events.
+ * reminder", the sixth of its (now eight) events.
  *
  * One email per booking departing TOMORROW in Manila, sent the afternoon
  * before. Same discipline as `expire-holds.ts` and `orphaned-vans.ts`: the

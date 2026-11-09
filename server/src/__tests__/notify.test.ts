@@ -98,6 +98,17 @@ const SAMPLE: Record<NotifyEvent, Parameters<typeof notify>[1]> = {
     totalCentavos: 567800,
     paidCentavos: 567800,
   },
+  /** Task T21's own event. `tourTitle` is null — a transfer has no tour. */
+  custom_quote_ready: {
+    to: 'guest@example.test',
+    ref: 'RG-7KQ4M9',
+    tourTitle: null,
+    tourDate: '2026-11-20',
+    totalCentavos: 450000,
+    paidCentavos: 0,
+    tripLabel: 'Mactan airport to a private resort in Argao',
+    holdExpiresAt: '2026-11-22T10:00:00.000Z',
+  },
 };
 
 beforeEach(() => {
@@ -369,6 +380,36 @@ describe('renderTemplate', () => {
     const { html, text } = renderTemplate('review_request', SAMPLE.review_request);
     for (const body of [html, text]) {
       expect(body).not.toMatch(/[?&](rating|stars|score)=/i);
+    }
+  });
+
+  /**
+   * Task T21. `tripLabel` and the priced total are the email's whole point —
+   * a staff-quoted guest reads this to learn what their custom trip costs.
+   */
+  it('names the trip and the price in the quote-ready email', () => {
+    const { html, text } = renderTemplate('custom_quote_ready', SAMPLE.custom_quote_ready);
+    for (const body of [html, text]) {
+      expect(body).toContain('Mactan airport to a private resort in Argao');
+      expect(body).toContain('4,500');
+    }
+  });
+
+  /**
+   * `manilaDateTimeLabel` goes through `Intl.DateTimeFormat`, which this
+   * file's other assertions never exercise — a `formatPeso`-style helper
+   * with no test of its own rendered output. ICU's exact wording (comma
+   * placement, 12- vs 24-hour, "PM" vs "p.m.") is not this codebase's to
+   * control, so a Node/ICU upgrade could silently reword or misdate the
+   * one line that tells a guest when their hold expires. Pinning the
+   * rendered string for a fixed instant means that drift fails loudly here
+   * instead of only in a guest's inbox.
+   */
+  it('renders the hold deadline as a Manila date and time', () => {
+    // '2026-11-22T10:00:00.000Z' is 2026-11-22 18:00 in Asia/Manila (UTC+8).
+    const { html, text } = renderTemplate('custom_quote_ready', SAMPLE.custom_quote_ready);
+    for (const body of [html, text]) {
+      expect(body).toContain('Nov 22, 6:00 PM');
     }
   });
 });

@@ -1,19 +1,25 @@
 /**
- * Email templates (Week 4 plan, Task 4; completed Week 7 Task 14) — §11's
- * "plain, branded HTML".
+ * Email templates (Week 4 plan, Task 4; completed Week 7 Task 14; an eighth
+ * event added by the transfers-launch plan, Task T21) — §11's "plain,
+ * branded HTML".
  *
- * **All seven §11 events, and every one of them has a caller.** Four came
- * from Phase 1's flows: a confirmed booking, a receipt received, a payment
- * rejected, and the admin's "there is a receipt to verify". The remaining
- * three were deliberately absent until their callers existed, on the rule
- * that a template with no caller is a template nobody keeps accurate — Week 7
- * Task 14 built those callers, so the templates landed with them:
+ * **Eight events, and every one of them has a caller.** Four came from
+ * Phase 1's flows: a confirmed booking, a receipt received, a payment
+ * rejected, and the admin's "there is a receipt to verify". The next three
+ * were deliberately absent until their callers existed, on the rule that a
+ * template with no caller is a template nobody keeps accurate — Week 7 Task
+ * 14 built those callers, so the templates landed with them:
  *
  *  - `driver_assigned` — `admin.dispatch.assign`, after its transaction
  *    commits (`routers/admin/dispatch.ts`).
  *  - `trip_reminder` — `jobs/trip-reminders.ts`, 16:00 Manila the day before.
  *  - `review_request` — `jobs/review-requests.ts`, 07:00 Manila the morning
  *    after (owner decision 2026-10-23, Q5).
+ *
+ * The eighth, `custom_quote_ready`, is Task T21's own: sent by
+ * `admin.transferQuotes.convert`, after `convertTransferQuote()` returns
+ * (`routers/admin/transfer-quotes.ts`) — see that event's own `renderTemplate`
+ * case for what it says and why.
  *
  * ## Plain HTML, inline styles, tables
  *
@@ -50,7 +56,7 @@
 import { formatPeso } from '@rg/shared';
 import { env } from '../../env';
 
-/** The events Phase 1 sends. */
+/** The events Phase 1 sends, plus `custom_quote_ready` (transfers-launch plan, Task T21). */
 export const NOTIFY_EVENTS = [
   'booking_confirmed',
   'receipt_received',
@@ -59,6 +65,7 @@ export const NOTIFY_EVENTS = [
   'driver_assigned',
   'trip_reminder',
   'review_request',
+  'custom_quote_ready',
 ] as const;
 export type NotifyEvent = (typeof NOTIFY_EVENTS)[number];
 
@@ -96,13 +103,34 @@ export interface NotifyPayload {
    *
    * Optional on the type rather than modelled as a per-event payload union:
    * one flat interface is what lets `notify()`, the transport and this
-   * switch stay one code path for seven events. The cost is that "required
+   * switch stay one code path for every event. The cost is that "required
    * for one event" is a convention the template enforces rather than the
    * compiler, so `driver_assigned`'s case falls back to wording that is true
    * with either value missing instead of printing `undefined` at a guest.
    */
   driverName?: string;
   vanPlate?: string;
+  /**
+   * Only `custom_quote_ready` carries these two, and both are required for
+   * that event — the same arrangement `reason` and `driverName`/`vanPlate`
+   * have above.
+   *
+   * `tripLabel` exists because `tourTitle` is contractually `null` for every
+   * transfer (its own doc comment above says so) — reusing it here for a
+   * staff-quoted trip's route description would break that contract for
+   * every other template's "no Tour row" omission. This is its own field,
+   * read from `booking_transfer_details.customRouteDescription` by the
+   * caller (Task T19/T21 — a staff-converted booking always has one; see
+   * that column's own NOT NULL-when-routeless note).
+   *
+   * `holdExpiresAt` is an ISO instant, not a civil date like `tourDate`:
+   * `transfer_operations.staffQuoteHoldHours` (T19) exists so the guest has
+   * time to come back before `expire-holds` reclaims the booking, and a
+   * sentence that does not say WHEN defeats the setting it was built
+   * around — the hour matters, not just the day.
+   */
+  tripLabel?: string;
+  holdExpiresAt?: string;
 }
 
 export interface RenderedMail {
@@ -209,6 +237,25 @@ function detailsText(payload: NotifyPayload): string {
 function portalLoginUrl(ref: string): string {
   const base = env.PUBLIC_BASE_URL.replace(/\/+$/, '');
   return `${base}/portal/login?ref=${encodeURIComponent(ref)}`;
+}
+
+/**
+ * An ISO instant, as "6:00 PM, Nov 12" Asia/Manila — pure (no clock read; the
+ * instant is the argument), so `renderTemplate` keeps its own purity.
+ *
+ * Used only by `custom_quote_ready`, for the hold deadline — see
+ * `NotifyPayload.holdExpiresAt`'s own note on why the hour matters here and
+ * nowhere else in this file (every other date in this system is a CIVIL
+ * date, which is what `tourDate` already is).
+ */
+function manilaDateTimeLabel(iso: string): string {
+  return new Intl.DateTimeFormat('en-PH', {
+    timeZone: 'Asia/Manila',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(iso));
 }
 
 /** One call-to-action button. Brand ink with the white glyph — never red. */
@@ -395,6 +442,52 @@ export function renderTemplate(event: NotifyEvent, payload: NotifyPayload): Rend
         text:
           `Thank you for travelling with us.\n\n${detailsPlain}\n` +
           `If you have a minute, you can leave a review from your booking page:\n${url}\n`,
+      };
+    }
+
+    case 'custom_quote_ready': {
+      /*
+       * §6 step 5 (transfers-launch plan, Task T21): sent right after
+       * `admin.transferQuotes.convert` creates the held booking — the
+       * guest's custom request now has a price and a van reserved, and
+       * needs them to come back and pay (or arrange cash on the day)
+       * before the hold's longer `staffQuoteHoldHours` window runs out.
+       *
+       * `tripLabel`/`holdExpiresAt` fall back to wording that stays TRUE
+       * with either missing (the same discipline `driver_assigned` uses for
+       * `driverName`/`vanPlate`), though in practice the caller
+       * (`routers/admin/transfer-quotes.ts`) always supplies both.
+       */
+      const trip = payload.tripLabel ?? 'your trip';
+      const url = portalLoginUrl(payload.ref);
+      const price = formatPeso(payload.totalCentavos);
+      const deadlineHtml =
+        payload.holdExpiresAt === undefined
+          ? ''
+          : `<p style="margin:0;">Please respond by <strong>${escapeHtml(
+              manilaDateTimeLabel(payload.holdExpiresAt),
+            )}</strong> to keep this quote.</p>`;
+      const deadlinePlain =
+        payload.holdExpiresAt === undefined
+          ? ''
+          : `Please respond by ${manilaDateTimeLabel(payload.holdExpiresAt)} to keep this quote.\n`;
+      return {
+        subject: `Your trip quote is ready — ${payload.ref}`,
+        html: document_(
+          'Your trip quote is ready',
+          `<p style="margin:0;">We have priced ${escapeHtml(trip)} at ` +
+            `<strong>${escapeHtml(price)}</strong> and reserved a vehicle for it.</p>` +
+            details +
+            deadlineHtml +
+            '<p style="margin:0;">Pay the deposit online now, or settle the balance in cash ' +
+            'on the day.</p>' +
+            linkHtml(url, 'View my booking'),
+        ),
+        text:
+          `We have priced ${trip} at ${price} and reserved a vehicle for it.\n\n${detailsPlain}\n` +
+          `${deadlinePlain}\n` +
+          `Pay the deposit online now, or settle the balance in cash on the day.\n\n` +
+          `View my booking: ${url}\n`,
       };
     }
   }

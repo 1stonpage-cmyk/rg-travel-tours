@@ -25,7 +25,7 @@
  * capacity counts depend on an otherwise-empty fleet, proven in `beforeEach`
  * rather than assumed.
  */
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import type { TransferQuoteConvertInput } from '@rg/shared';
 import { ROLE_MATRIX } from '../middleware/require-role';
@@ -41,6 +41,7 @@ import {
   vans,
   vehicleTypes,
 } from '../db/schema';
+import { resetTransportForTests, setTransportForTests } from '../services/notify';
 import {
   convertTransferQuote,
   TransferQuoteConvertRaceError,
@@ -48,6 +49,28 @@ import {
 } from '../services/transfers/convert-quote';
 import { staffContext, testContext } from './helpers/ctx';
 import { describeWithDb } from './helpers/db';
+
+/**
+ * Captures what `sendQuoteReadyNotice` (Task T21) sends through the REAL
+ * router, the same way `phase1-walkthrough.test.ts` captures mail. Only
+ * `admin.transferQuotes.convert` calls it — `convertTransferQuote()` itself
+ * never does — so this file, which is the only one that converts through
+ * the actual mounted procedure, is where the wiring can be proven to fire
+ * at all, rather than relying on the SMTP-not-configured console warning.
+ */
+const mail: Array<{ to: string; subject: string }> = [];
+
+beforeAll(() => {
+  setTransportForTests({
+    sendMail: async (message) => {
+      mail.push({ to: String(message.to), subject: String(message.subject) });
+    },
+  });
+});
+
+afterAll(() => {
+  resetTransportForTests();
+});
 
 /** This file's own day — distinct from every other transfer suite's. */
 const DAY = '2099-11-20';
@@ -316,6 +339,7 @@ describeWithDb('admin.transferQuotes.convert', () => {
     dispatcherId = await makeStaff('dispatcher');
     financeId = await makeStaff('finance');
     VAN_ID = await vehicleTypeIdBySlug('van');
+    mail.length = 0;
   });
 
   afterEach(async () => {
@@ -348,7 +372,7 @@ describeWithDb('admin.transferQuotes.convert', () => {
   });
 
   it('ALLOWS owner to convert', async () => {
-    const { id: inquiryId } = await createInquiry();
+    const { id: inquiryId, email } = await createInquiry();
     await makeVan();
     await makeDriver();
 
@@ -357,6 +381,15 @@ describeWithDb('admin.transferQuotes.convert', () => {
 
     expect(result.ref).toMatch(/^RG-/);
     expect((await inquiryRow(inquiryId))?.convertedBookingId).toBe(result.bookingId);
+
+    // Task T21's guest notice — sent by the router AFTER the commit above,
+    // not by `convertTransferQuote()` itself. This is the one test in the
+    // codebase that proves `sendQuoteReadyNotice` actually fires.
+    expect(mail).toHaveLength(1);
+    expect(mail[0]).toMatchObject({
+      to: email,
+      subject: `Your trip quote is ready — ${result.ref}`,
+    });
   });
 
   it('ALLOWS finance to convert', async () => {

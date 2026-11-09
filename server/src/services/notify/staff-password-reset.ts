@@ -5,13 +5,13 @@
  * ## Why it is not `notify('staff_password_reset', …)`
  *
  * `NotifyPayload` is booking-shaped: `ref`, `tourDate`, `totalCentavos` and
- * `paidCentavos` are all REQUIRED, because all seven existing events are
- * about a booking. A password reset is about an account. Adding it to that
- * union would mean either making four fields optional for every event that
+ * `paidCentavos` are all REQUIRED, because every `NotifyEvent` is about a
+ * booking. A password reset is about an account. Adding it to that union
+ * would mean either making four fields optional for every event that
  * genuinely needs them, or stuffing this one with a fake ref and three
  * zeros — an email one line away from telling a staff member their booking
  * total is ₱0.00. So it gets its own sender, five lines of its own payload,
- * and the SAME transport and the SAME visual shell as the other seven.
+ * and the SAME transport and the SAME visual shell as every other event.
  *
  * ## It cannot throw, exactly as `notify()` cannot
  *

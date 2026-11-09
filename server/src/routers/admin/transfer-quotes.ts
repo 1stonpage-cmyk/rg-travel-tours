@@ -6,8 +6,12 @@
  * `adminProcedure('transferQuoting')` — a **new** ROLE_MATRIX area, owner and
  * finance only (owner answer 4). A dispatcher is denied by the gate itself,
  * never by a hidden button; `role-isolation.test.ts`'s generated 39-case
- * matrix already covers the denial the moment the area exists, and T21's own
- * dedicated test is the end-to-end proof against this exact procedure.
+ * matrix already covers the denial the moment the area exists, and
+ * `admin-transfer-quotes.test.ts`'s own role-boundary test proves it against
+ * this exact mounted procedure (Task T19). `transfer-quote-lifecycle.test.ts`
+ * (Task T21) is the end-to-end proof that the whole thing — this call, the
+ * guest notice below, dispatch, and the reused payment/cash machinery — fits
+ * together for a staff-quoted booking specifically.
  *
  * Nothing here decides anything — the same discipline `admin/refunds.ts`
  * documents for itself. The resolver reads the admin's id off the gate's
@@ -15,7 +19,10 @@
  * and turns a refusal into a sentence.
  */
 import { TRPCError } from '@trpc/server';
-import { transferQuoteConvertInput } from '@rg/shared';
+import { eq } from 'drizzle-orm';
+import { manilaCivilDate, transferQuoteConvertInput } from '@rg/shared';
+import { getDb } from '../../db/client';
+import { bookingTransferDetails, bookings } from '../../db/schema';
 import {
   GatewayMinimumNotMetError,
   HoldContentionError,
@@ -33,6 +40,7 @@ import {
   TransferQuoteInquiryNotFoundError,
   TransferQuoteLinkUnconfirmedError,
 } from '../../services/transfers/convert-quote';
+import { notify } from '../../services/notify';
 import { adminProcedure, router } from '../../trpc';
 
 /** Why the inquiry itself refused conversion, in a sentence a staff screen can show. */
@@ -150,12 +158,66 @@ function asTrpcError(error: unknown): TRPCError {
     : new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'That did not work.', cause: error });
 }
 
+/**
+ * §6 step 5's guest notice (Task T21): "Your trip quote is ready", sent
+ * right after `convertTransferQuote()` commits.
+ *
+ * Shaped exactly like `sendAssignmentNotice` (`routers/admin/dispatch.ts`):
+ * re-queries the just-committed booking FRESH by id rather than trusting
+ * anything already in hand (the service's own return carries no email and
+ * no route description), and is wrapped in its own try/catch even though
+ * `notify()` itself cannot throw — this READ can, and a database hiccup
+ * must not fail a booking that is already committed and already correct.
+ *
+ * LEFT, never INNER, on `booking_transfer_details` — the same discipline
+ * Task T18's dedicated review fixed `revenueByRoute()` to use, for the same
+ * reason: the 1:1 pairing is a fact this code relies on, not one a DB CHECK
+ * enforces. A missing row falls back to generic wording rather than silently
+ * mailing nobody.
+ */
+async function sendQuoteReadyNotice(bookingId: number): Promise<void> {
+  try {
+    const [row] = await getDb()
+      .select({
+        ref: bookings.ref,
+        leadEmail: bookings.leadEmail,
+        tourDate: bookings.tourDate,
+        totalCentavos: bookings.totalCentavos,
+        paidCentavos: bookings.amountPaidCentavos,
+        holdExpiresAt: bookings.holdExpiresAt,
+        customRouteDescription: bookingTransferDetails.customRouteDescription,
+      })
+      .from(bookings)
+      .leftJoin(bookingTransferDetails, eq(bookingTransferDetails.bookingId, bookings.id))
+      .where(eq(bookings.id, bookingId))
+      .limit(1);
+    if (!row) return;
+
+    await notify('custom_quote_ready', {
+      to: row.leadEmail,
+      ref: row.ref,
+      tourTitle: null,
+      tourDate: manilaCivilDate(row.tourDate),
+      totalCentavos: row.totalCentavos,
+      paidCentavos: row.paidCentavos,
+      tripLabel: row.customRouteDescription ?? 'your custom trip',
+      holdExpiresAt: row.holdExpiresAt?.toISOString(),
+    });
+  } catch (error) {
+    // The error's TYPE only, never its message — the same rule `notify()`
+    // itself follows, for the same reason.
+    const kind = error instanceof Error ? error.name : typeof error;
+    console.error(`[transfer-quotes] could not send the quote-ready notice (${kind})`);
+  }
+}
+
 export const adminTransferQuotesRouter = router({
   convert: adminProcedure('transferQuoting')
     .input(transferQuoteConvertInput)
     .mutation(async ({ input, ctx }) => {
+      let held;
       try {
-        return await convertTransferQuote(
+        held = await convertTransferQuote(
           {
             inquiryId: input.inquiryId,
             vehicleTypeId: input.vehicleTypeId,
@@ -182,5 +244,17 @@ export const adminTransferQuotesRouter = router({
       } catch (error) {
         throw asTrpcError(error);
       }
+
+      /*
+       * §11's "quote is ready" guest email. HERE, not inside
+       * `convertTransferQuote()`: the booking (and its link back to the
+       * inquiry) is already committed by the time this line runs, and
+       * nothing below — a dead mail server, a slow DNS lookup — can roll
+       * that back. `sendQuoteReadyNotice` swallows its own failures; see
+       * its header.
+       */
+      await sendQuoteReadyNotice(held.bookingId);
+
+      return held;
     }),
 });

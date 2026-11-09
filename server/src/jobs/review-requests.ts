@@ -1,6 +1,7 @@
 /**
  * The review-request sweep (Week 7 Task 14, 7E; owner decision 2026-10-23,
- * Q5) — §11's seventh and last event.
+ * Q5) — §11's seventh event (an eighth, `custom_quote_ready`, was added by
+ * the transfers-launch plan's Task T21).
  *
  * "The review-request email is automatic, one per booking ever, sent the
  * morning after completion by a job on the same `0 7 * * *` Asia/Manila
