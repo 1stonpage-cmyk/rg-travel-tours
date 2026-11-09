@@ -554,9 +554,17 @@ function InquiryRow({ row }: { row: InquiryAdminRow }) {
             </div>
           )}
           {row.routeDescription === null ? null : (
-            <div className="flex gap-1.5 sm:col-span-2">
-              <dt className="text-muted-foreground">Route:</dt>
-              <dd>{row.routeDescription}</dd>
+            <div className="flex min-w-0 gap-1.5 sm:col-span-2">
+              <dt className="text-muted-foreground shrink-0">Route:</dt>
+              {/*
+               * `min-w-0` + `break-words`: a guest can paste a route with no
+               * spaces (a URL, a run-on), and a flex child's default
+               * `min-width: auto` would otherwise let it push the card
+               * sideways at 360px — the same hazard the email link above
+               * guards with `break-all` (CLAUDE.md: the page body must
+               * never scroll horizontally).
+               */}
+              <dd className="min-w-0 break-words">{row.routeDescription}</dd>
             </div>
           )}
           {row.convertedBookingRef === null ? null : (
