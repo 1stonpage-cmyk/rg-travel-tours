@@ -197,11 +197,89 @@ all green. `pnpm lint` / `typecheck` / `format:check` / `ALLOW_PLACEHOLDER_BUILD
 all clean. No migration this task — `transferQuoting` is a role-matrix-only change; nothing new
 owed on the server beyond the migrations already recorded above.
 
-## Next
+## T20 — `ConvertInquiryForm.tsx` + `AdminPackagesPage.tsx` "Quote & convert to booking" control — DONE
 
-T20 — `ConvertInquiryForm.tsx` + `AdminPackagesPage.tsx` "Quote & convert to booking" control.
-Owner/finance only; dispatcher sees the request read-only. Must use the shared Option A
-components (AdminPageHeader, FormActions, button variants). **Do not start until T19's review
-had returned** (it has) — T20's form is written against T19's exact `transferQuoteConvertInput`
-contract, including the `leadPhone`/`pax` staff-entered fields and the placeholder-phone caveat
-above.
+Commit `a64e609`. Combined Sonnet review (not one of the five dedicated-Opus-review tasks) —
+no new blockers, 3 should-fix findings surfaced by `advisor()` and fixed before this commit (see
+below).
+
+Each unconverted `transfer_custom` inquiry row on `AdminPackagesPage.tsx` now draws a "Quote &
+convert to booking" control that opens `ConvertInquiryForm` inline (no modal exists anywhere in
+`client/src/pages/admin/`, confirmed by grep) — `EntityForm` for the fields, `FormActions` for
+Cancel/primary, a two-step confirm (`primary-pill`, not `amber-pill`: this creates a real,
+cancellable hold, not a destructive action) that states the quoted price in figures and words
+before calling `admin.transferQuotes.convert`.
+
+**New `TRANSFER_QUOTING_ROLES` constant in `lib/roles.ts`**, not folded into `MONEY_ROLES` even
+though both are `['owner', 'finance']` today — that file's own header is explicit that one
+constant stands for one §9 ANSWER, not a coincidence of roles, and `transferQuoting` is its own
+`ROLE_MATRIX` area with its own reasoning.
+
+**One schema, two shapes, handled by rebuilding the field list from `productType` on every
+render — not by hiding boxes.** `transferQuoteConvertInput`'s `superRefine` requires
+`customRouteDurationMinutes` on one-way and refuses it (with flight details) on day-use;
+`onProductTypeChange` CLEARS the other shape's values on switch, and the submit payload is built
+branching on `productType`, never on what survived in `values` — the exact bug `advisor()`
+flagged in review (`EntityForm`'s `values` persists a field's value after it leaves `fields`).
+Proven with a mutation test: reverting both the clearing and the branch-based payload build made
+`switching to day-use drops the one-way-only fields...` fail with the expected shape (a day-use
+payload failing its own schema's refusal of a stray `customRouteDurationMinutes`), confirmed, then
+restored.
+
+**Owner decision needed, not yet made — the control is correct-by-construction for the day it
+changes, but is owner-only in practice today, for reasons outside T19/T20's authorization to
+fix:**
+
+1. `admin.inquiries.list` (draws this whole screen) is `adminProcedure('packagesInquiries')` —
+   owner and dispatcher, **not finance**. §9's own stated reasoning: "an enquiry carries no
+   money." Finance cannot reach the row the convert control lives on at all, regardless of
+   `transferQuoting`'s role list.
+2. `admin.vehicleTypes.list` (populates the control's vehicle-type picker) is
+   `adminProcedure('toursPricing')` — **owner only**, narrower even than `transferQuoting`.
+   Gated on `isOwner`, not on `transferQuoting`, specifically so a finance session (today,
+   nobody — see 1) doesn't fire a query the server 403s and silently land on a dead-end empty
+   select; a genuinely-empty active-vehicle-type list (owner session, none configured yet) gets
+   the same explicit "No vehicle type is available to quote this trip yet." notice instead of a
+   bare Zod message on a select with no options.
+3. `AdminPackagesPage`'s own `DeniedState` text ("Only the owner and dispatcher can manage
+   packages and enquiries") is the sentence a finance user sees instead of ever reaching the
+   convert control — unchanged, cosmetic, correct today.
+
+**Did NOT widen `packagesInquiries` or `toursPricing`** to admit finance — that is a role change
+outside what T19 authorized ("Role changes ONLY per T19") and would contradict §9's own stated
+reasoning for excluding finance from enquiries. Whoever decides should look at all three items
+above together, since they change as one unit.
+
+**Tests, each proven able to fail**, 7 new in `client/src/__tests__/admin-packages-page.test.tsx`:
+role-gating (drawn for owner on an unconverted custom-trip request; absent for a non-matching row,
+an already-converted one, and for a dispatcher); the empty-vehicle-types notice; the happy path
+(pre-fills `pax`/`leadPhone` from the inquiry, states the price in words, converts, shows the
+booking ref); an inline client-side price-format refusal; a server-side `priceCentavos` refusal
+(T19's own `MAX_CENTAVOS` message) landing on the price box via a `priceCentavos` → `priceInput`
+name remap, not only the banner; and the day-use field-clearing mutation-proof above.
+
+Full suite after T20: client 84/1042 (+7; shared/server untouched this task — no schema, no
+server file changed). `pnpm lint` / `typecheck` / `format:check` /
+`ALLOW_PLACEHOLDER_BUILD=1 pnpm build` all clean. No migration this task.
+
+## Batch 5 (T17–T20) — summary
+
+Commits, in order: `d0c5b40`/`ff4b510` (T17), `fb364ea`/`f4a7f5f`/`cd76a5c` (T18),
+`0147f9b`/`804513b`/`7662fad` (T19), `a64e609` (T20, this handover still owed its own
+HANDOVER-9 commit).
+
+Migrations owed on the server: **0015 through 0025, in order — back up before applying, per
+0024's own column-removal note** (unchanged since T17; T18/T19/T20 added no migration).
+
+Owner decisions needed (all deferred, not blocking): the three-item finance-reach gap named
+under T20 above (§9 vs. `packagesInquiries`/`toursPricing`); the duplicate-booking cleanup the
+T19 race can leave behind is bounded by `expire-holds.ts` but still needs `admin.refunds
+.cancelBooking` run by hand if staff hit it.
+
+Unrelated bugs found (not fixed): `shared/src/schemas/public.ts`'s `inquiryInput` still has no
+`.strict()` despite being documented as one (T17 finding, still open).
+
+Local URLs to check: client `http://localhost:5180/admin/packages` (owner session) — the new
+convert control on a `transfer_custom` row.
+
+✅ BATCH 5 COMPLETE
