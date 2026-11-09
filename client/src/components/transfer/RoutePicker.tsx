@@ -139,9 +139,9 @@ export default function RoutePicker({ routes, value, onChange, isLoading, error 
                   className="accent-brand-blue-600 size-5 shrink-0"
                 />
                 <div className="min-w-0 flex-1">
-                  <span className="text-brand-blue-900 flex items-center gap-1.5 text-sm font-semibold">
+                  <span className="text-brand-blue-900 flex min-w-0 flex-wrap items-center gap-1.5 text-sm font-semibold">
                     <MapPin className="size-3.5 shrink-0" aria-hidden="true" />
-                    <span className="truncate">
+                    <span className="min-w-0 break-words">
                       {leg.fromName}
                       {' → '}
                       {leg.toName}
