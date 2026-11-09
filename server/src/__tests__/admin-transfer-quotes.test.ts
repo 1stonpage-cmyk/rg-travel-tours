@@ -58,18 +58,30 @@ import { describeWithDb } from './helpers/db';
  * the actual mounted procedure, is where the wiring can be proven to fire
  * at all, rather than relying on the SMTP-not-configured console warning.
  */
-const mail: Array<{ to: string; subject: string }> = [];
+const mail: Array<{ to: string; subject: string; text: string }> = [];
 
 beforeAll(() => {
   setTransportForTests({
     sendMail: async (message) => {
-      mail.push({ to: String(message.to), subject: String(message.subject) });
+      mail.push({
+        to: String(message.to),
+        subject: String(message.subject),
+        text: String(message.text ?? ''),
+      });
     },
   });
 });
 
 afterAll(() => {
   resetTransportForTests();
+});
+
+// File-level, not `describeWithDb`'s own: the pure guard below (`'declares
+// the new transferQuoting gate'`) also runs with the transport installed,
+// and "mail is empty when a test starts" should hold for every test in this
+// file unconditionally rather than only for the inner suite.
+beforeEach(() => {
+  mail.length = 0;
 });
 
 /** This file's own day — distinct from every other transfer suite's. */
@@ -339,7 +351,6 @@ describeWithDb('admin.transferQuotes.convert', () => {
     dispatcherId = await makeStaff('dispatcher');
     financeId = await makeStaff('finance');
     VAN_ID = await vehicleTypeIdBySlug('van');
-    mail.length = 0;
   });
 
   afterEach(async () => {
@@ -390,6 +401,16 @@ describeWithDb('admin.transferQuotes.convert', () => {
       to: email,
       subject: `Your trip quote is ready — ${result.ref}`,
     });
+    /*
+     * Firing proves only that the call site survived; it says nothing
+     * about the LEFT JOIN `sendQuoteReadyNotice` reads its payload through.
+     * A broken join, or a column swap, would fall back to the router's own
+     * `?? 'your custom trip'` wording and this test would stay green on the
+     * two assertions above alone — so assert the actual route description
+     * this inquiry was created with (`createInquiry`'s own default) made it
+     * into the body, proving `customRouteDescription` was read correctly.
+     */
+    expect(mail[0]!.text).toContain('Mactan airport to a private resort in Argao');
   });
 
   it('ALLOWS finance to convert', async () => {

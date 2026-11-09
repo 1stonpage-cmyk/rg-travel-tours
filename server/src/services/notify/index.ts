@@ -44,7 +44,7 @@ export { setTransportForTests, resetTransportForTests } from './transport';
 export type { MailTransport } from './transport';
 /*
  * §12's self-service password reset mail (task 1C). Its own sender rather
- * than an eighth `NotifyEvent`, because `NotifyPayload` is booking-shaped —
+ * than another `NotifyEvent`, because `NotifyPayload` is booking-shaped —
  * see `./staff-password-reset.ts`. Re-exported here so a caller imports from
  * `services/notify` like everything else, and so the cannot-throw discipline
  * is advertised in one place.

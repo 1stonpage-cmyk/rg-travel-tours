@@ -240,7 +240,7 @@ function portalLoginUrl(ref: string): string {
 }
 
 /**
- * An ISO instant, as "6:00 PM, Nov 12" Asia/Manila — pure (no clock read; the
+ * An ISO instant, as "Nov 12, 6:00 PM" Asia/Manila — pure (no clock read; the
  * instant is the argument), so `renderTemplate` keeps its own purity.
  *
  * Used only by `custom_quote_ready`, for the hold deadline — see

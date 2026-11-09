@@ -200,14 +200,24 @@ async function sendQuoteReadyNotice(bookingId: number): Promise<void> {
       tourDate: manilaCivilDate(row.tourDate),
       totalCentavos: row.totalCentavos,
       paidCentavos: row.paidCentavos,
-      tripLabel: row.customRouteDescription ?? 'your custom trip',
+      // `?? undefined`, not a second fallback string of its own:
+      // `renderTemplate`'s `custom_quote_ready` case already falls back to
+      // "your trip" when `tripLabel` is missing (same discipline
+      // `driver_assigned` uses for `driverName`/`vanPlate`). One fallback
+      // spelling, defined once, in the one place that owns the copy.
+      tripLabel: row.customRouteDescription ?? undefined,
       holdExpiresAt: row.holdExpiresAt?.toISOString(),
     });
   } catch (error) {
-    // The error's TYPE only, never its message — the same rule `notify()`
-    // itself follows, for the same reason.
+    // The error's TYPE and the booking id — never the error's MESSAGE
+    // (`notify()`'s own rule, for its own reason), but the id is exactly
+    // what `notify()`'s rule itself allows ("the event and the booking
+    // ref") and what a staff member chasing a silently-undelivered
+    // staff-quoted booking actually needs to find it again.
     const kind = error instanceof Error ? error.name : typeof error;
-    console.error(`[transfer-quotes] could not send the quote-ready notice (${kind})`);
+    console.error(
+      `[transfer-quotes] could not send the quote-ready notice for booking ${bookingId} (${kind})`,
+    );
   }
 }
 

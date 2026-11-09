@@ -412,4 +412,23 @@ describe('renderTemplate', () => {
       expect(body).toContain('Nov 22, 6:00 PM');
     }
   });
+
+  /**
+   * `tripLabel` is guest-typed — it travels straight from
+   * `inquiries.routeDescription` (no character restriction beyond length)
+   * into `booking_transfer_details.custom_route_description` and then into
+   * this email's prose, unlike `driverName`/`vanPlate` above, which are at
+   * least admin-typed. It goes through `escapeHtml` like every other
+   * interpolated value, but — unlike `driverName`/`vanPlate` and `reason` —
+   * had no test of its own proving that.
+   */
+  it('escapes the trip label', () => {
+    const { html } = renderTemplate('custom_quote_ready', {
+      ...SAMPLE.custom_quote_ready,
+      tripLabel: '<script>alert(1)</script> & "x"',
+    });
+    expect(html).not.toContain('<script>');
+    expect(html).toContain('&lt;script&gt;');
+    expect(html).toContain('&amp;');
+  });
 });

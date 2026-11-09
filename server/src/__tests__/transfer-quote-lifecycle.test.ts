@@ -34,14 +34,34 @@
  * driver's later, real-clock cash claim always lands on the right day), and
  * the explicit `now` passed to `convertTransferQuote()` is pinned to
  * exactly 24 hours before this moment. Pickup time is a fixed 10:00. The
- * gap between pickup and that `now` is then always between 10 and 34 hours
+ * gap between pickup and that `now` is then always in `(10, 34]` hours
  * — comfortably clear of the 6-hour rule at any hour of any day — worked
  * out as: `now = today(H:00) − 24h`, so `gap = pickup(10:00) − now =
- * (24 − H) + 10` hours, which for `H` in `[0, 24)` stays in `[10, 34]`.
+ * (24 − H) + 10` hours, which for `H` in `[0, 24)` stays in `(10, 34]`
+ * (the 10 end is approached, at 23:59, but never reached).
+ *
+ * `TODAY` and `NOW_MINUS_24H` are computed fresh in `beforeEach`, not once
+ * at module load: `fileParallelism: false` runs this suite sequentially
+ * with every other file, so the gap between module load and this test
+ * actually running can be minutes, not milliseconds — long enough to cross
+ * a real Manila midnight and turn `TODAY` stale. `driver-cash.test.ts`,
+ * `driver-trips.test.ts` and `driver-trip-detail.test.ts` all compute their
+ * own `TODAY` the same way, for the same reason.
  *
  * This is NOT a workaround for the role gate (already proven elsewhere —
  * see above) or for the driver-ownership gate below, both of which this
  * file still exercises through the real routers.
+ *
+ * **The same `now` also sets `holdExpiresAt`.** `createTransferBooking()`
+ * computes `holdExpiresAt = now + staffQuoteHoldHours` (T19), so this
+ * fixture's hold lands at `(real-now − 24h) + staffQuoteHoldHours`. With the
+ * seeded 48h setting that is comfortably `real-now + 24h` — but the setting
+ * only has a `.min(1)` floor, and at anything ≤ 24h this fixture would be
+ * born with an ALREADY-EXPIRED hold, silently proving a state production
+ * never reaches (a guest paying, and dispatch assigning, a hold
+ * `expire-holds` has already reclaimed). The test below pins both the
+ * seeded value and the resulting hold's liveness, so a future settings
+ * change fails loudly here instead of hollowing this file out silently.
  *
  * **The downstream half goes through the REAL routers and a REAL driver
  * session, deliberately.** Calling `recordPendingCash()` or
@@ -78,7 +98,7 @@ import {
   vans,
   vehicleTypes,
 } from '../db/schema';
-import { readSettingBlock } from '../content/settings';
+import { readTransferOperationsSettings } from '../content/settings';
 import { recordPayment } from '../services/payments/record-payment';
 import {
   convertTransferQuote,
@@ -87,9 +107,17 @@ import {
 import { driverCaller, staffContext, testContext } from './helpers/ctx';
 import { describeWithDb } from './helpers/db';
 
-/** Today's real Manila civil date — see the file header for why. */
-const TODAY = manilaCivilDate(new Date());
-const NOW_MINUS_24H = new Date(Date.now() - 24 * 3_600_000);
+/**
+ * The seeded default (`db/seed-data.ts`, `content/settings-schema.ts`) —
+ * pinned in `beforeEach` below, the same discipline
+ * `transfer-create-booking.test.ts:524` uses, because this fixture's hold
+ * arithmetic depends on it staying above 24h. See the file header.
+ */
+const STAFF_QUOTE_HOLD_HOURS = 48;
+
+/** Today's real Manila civil date and the lifecycle's fixed `now` — see the file header for why these are computed per-test, not at module load. */
+let TODAY = '';
+let NOW_MINUS_24H = new Date(0);
 
 const created = {
   userIds: [] as number[],
@@ -246,9 +274,20 @@ async function cleanup() {
 
 describeWithDb('a staff-quoted custom transfer, hold through full payment', () => {
   beforeEach(async () => {
+    TODAY = manilaCivilDate(new Date());
+    NOW_MINUS_24H = new Date(Date.now() - 24 * 3_600_000);
+
     ownerId = await makeStaff('owner');
     financeId = await makeStaff('finance');
     VAN_TYPE_ID = await vehicleTypeIdBySlug('van');
+
+    // This fixture's hold arithmetic depends on this staying above 24h —
+    // see the file header. Fails HERE, by name, rather than as a confusing
+    // downstream refusal.
+    const operations = await readTransferOperationsSettings();
+    expect(operations.staffQuoteHoldHours, 'the seeded staff-quote hold changed').toBe(
+      STAFF_QUOTE_HOLD_HOURS,
+    );
   });
 
   afterEach(async () => {
@@ -275,10 +314,24 @@ describeWithDb('a staff-quoted custom transfer, hold through full payment', () =
     expect(row.amountPaidCentavos).toBe(0);
     expect(manilaCivilDate(row.tourDate)).toBe(TODAY);
 
-    // 2. The guest pays the deposit online — the deposit frozen at
-    // creation time, not a bare guess at the live setting.
-    const { depositPercent } = await readSettingBlock('trust');
-    const depositAmount = depositCentavos(500_000, depositPercent);
+    // The injected `now` sets this hold's deadline too (see the file
+    // header) — pinned exactly, and independently asserted to still be
+    // alive relative to the REAL clock, which is the invariant that
+    // actually matters: a fixture born with an already-expired hold would
+    // let every step below pass while proving a state production can't
+    // reach.
+    expect(held.holdExpiresAt.getTime()).toBe(
+      NOW_MINUS_24H.getTime() + STAFF_QUOTE_HOLD_HOURS * 3_600_000,
+    );
+    expect(
+      held.holdExpiresAt.getTime(),
+      'this fixture was born with an already-expired hold',
+    ).toBeGreaterThan(Date.now());
+
+    // 2. The guest pays the deposit online — the deposit frozen on the
+    // booking's own `price_snapshot` at creation time, not a bare re-read
+    // of the live setting.
+    const depositAmount = depositCentavos(500_000, row.priceSnapshot.depositPercent);
     await recordPayment({
       bookingId: held.bookingId,
       type: 'payment',
