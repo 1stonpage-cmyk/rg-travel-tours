@@ -143,6 +143,52 @@ There is no `tailwind.config.js`.
   of per-colour sizing exceptions.
 - **Motion:** subtle only (card hovers, tracker progress, check-in confirmation), and only
   after the layout exists.
+- **Admin buttons — Option A "Clean Pill"** (owner decision 1, DEMO POLISH batch,
+  2026-11-09): every admin screen uses six self-contained `Button` variants
+  (`client/src/components/ui/button.tsx`) in place of the old hand-rolled full-width
+  solid-blue CTA bars. Pass only `variant="..."`, never a paired `size` — each variant bakes
+  in its own height/padding/radius so a caller can't have the default `size`'s `h-9` silently
+  beat a pill's `h-11` under `twMerge`'s last-wins rule (`Button` also auto-infers an
+  `unstyled` size for these six when none is passed, so this is belt-and-suspenders, not the
+  only guard). `primary-pill`/`secondary-pill`/`admin-ghost`/`amber-pill` are 44px (`h-11`);
+  `row`/`row-amber` are visually 32px (`h-8`) with a real 44px tap target via an invisible
+  `::before` hit-area extension — never accept bare `h-8` as meeting the tap-target rule above.
+  - `primary-pill` — solid blue, white text. The page's (or, inside a multi-section screen
+    like Settings, the one open region's) ONE primary action. Auto-width, never full-bleed —
+    sits top-right next to the page title via `AdminPageHeader`'s `action` slot (wraps under
+    the title only below `sm`), or as the one Save in a form's `FormActions` footer.
+  - `secondary-pill` — white fill, blue outline, blue text. A non-destructive secondary
+    action: an alternate choice, a pager (Previous/Next), a CSV export, a full-size outline
+    link that isn't the page's primary.
+  - `admin-ghost` — transparent, blue-800 text. A standalone Cancel-type control that sits
+    outside any form footer (named `admin-ghost`, not `ghost` — that key is the PUBLIC site's
+    own variant, `StopList.tsx`/`AnnouncementBar.tsx`, untouched by this decision per decision
+    2: public-site buttons were not part of this run).
+  - `amber-pill` — amber outline, amber text, full size. The destructive (or otherwise
+    irreversible-in-the-sense-that-matters — e.g. publishing content past a crawler) inline
+    confirm, e.g. "Yes, deactivate {name}". **Never blue, never red,** for any destructive or
+    irreversible confirm — reusing a blue `primary-pill` for one was a real, repeated bug this
+    batch found and fixed across half a dozen admin pages.
+  - `row` / `row-amber` — the same compact pair, for a dense table/list's per-row actions
+    (Edit, Reactivate, Assign vs. Deactivate, Reject, Unassign). `row-amber` is `row`'s
+    destructive sibling, same rule as `amber-pill` vs. `primary-pill`.
+  - **One primary pill per visible region.** A region is the page header or one open form's
+    footer — never both at once. An always-rendered add/edit form gets no header action (the
+    form's own Save is the one primary); a form TOGGLED by state shows a header "Add X"
+    primary only while closed. A moderation queue or multi-section settings screen has no
+    page-level primary at all — each row or each section is its own region, each with at most
+    one `row`-sized or section-sized primary of its own.
+  - `AdminPageHeader` (`client/src/components/admin/AdminPageHeader.tsx`) — the shared
+    eyebrow/title/description/action header, with an optional `titleClassName` for a title
+    that needs an extra class (e.g. `font-mono` on a booking ref) without forking the
+    component.
+  - `FormActions` (`client/src/components/admin/FormActions.tsx`) — the shared Cancel+Save
+    footer. `submitType="submit"` (default) inside a `<form onSubmit>`; `submitType="button"`
+    calling `onSave` directly, paired with `EntityForm`'s `hideSubmit` prop, when extra
+    content (a price table, an array section) needs to render between the fields and the one
+    Save that covers all of it.
+  - Admin catch-all: an unmatched `/admin/*` path renders a 404 **inside** the admin layout
+    (sidebar kept) via `AdminNotFoundPage.tsx`, not the public site's own 404.
 
 ## Workflow
 
