@@ -127,11 +127,6 @@ const WARNING_BOX =
 const FIELD =
   'border-brand-blue-200 bg-white focus-visible:ring-brand-blue-600 w-full rounded-[10px] border p-3 text-sm focus-visible:outline-none focus-visible:ring-2';
 
-const PRIMARY_BUTTON =
-  'tap-target bg-brand-blue-700 hover:bg-brand-blue-800 w-full rounded-[10px] font-semibold text-white transition-colors';
-const OUTLINE_BUTTON =
-  'tap-target border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 hover:text-brand-blue-800 w-full rounded-[10px] font-semibold transition-colors';
-
 export default function CancelRefundPanel({
   bookingId,
   bookingRef,
@@ -251,7 +246,7 @@ export default function CancelRefundPanel({
                 </p>
                 <Button
                   type="button"
-                  className={PRIMARY_BUTTON}
+                  variant="amber-pill"
                   disabled={cancel.isPending}
                   onClick={() => cancel.mutate({ bookingId, reason: cancelReason.trim() })}
                 >
@@ -266,8 +261,7 @@ export default function CancelRefundPanel({
                 </Button>
                 <Button
                   type="button"
-                  variant="outline"
-                  className={OUTLINE_BUTTON}
+                  variant="admin-ghost"
                   disabled={cancel.isPending}
                   onClick={() => setConfirmingCancel(false)}
                 >
@@ -275,10 +269,17 @@ export default function CancelRefundPanel({
                 </Button>
               </div>
             ) : (
+              /*
+               * BUG FIX (same shape as AdminVehicleTypesPage's destructive-
+               * confirm fix): this was a blue OUTLINE_BUTTON trigger for an
+               * irreversible action, contradicting owner decision 1
+               * ("Deactivate = amber outline pill. Never red"). Full-size
+               * amber-pill, not the compact row-amber — this trigger sits
+               * alone in its own section, not among other row actions.
+               */
               <Button
                 type="button"
-                variant="outline"
-                className={OUTLINE_BUTTON}
+                variant="amber-pill"
                 disabled={cancelReason.trim().length === 0}
                 onClick={() => setConfirmingCancel(true)}
               >
@@ -440,7 +441,7 @@ export default function CancelRefundPanel({
                     </p>
                     <Button
                       type="button"
-                      className={PRIMARY_BUTTON}
+                      variant="amber-pill"
                       disabled={refund.isPending}
                       onClick={() =>
                         refund.mutate({
@@ -466,8 +467,7 @@ export default function CancelRefundPanel({
                     </Button>
                     <Button
                       type="button"
-                      variant="outline"
-                      className={OUTLINE_BUTTON}
+                      variant="admin-ghost"
                       disabled={refund.isPending}
                       onClick={() => setConfirmingRefundId(null)}
                     >
@@ -475,9 +475,14 @@ export default function CancelRefundPanel({
                     </Button>
                   </div>
                 ) : (
+                  /*
+                   * Same bug-fix shape as the cancel trigger above: moving
+                   * real money out is irreversible here, so amber-pill, not
+                   * a blue PRIMARY_BUTTON.
+                   */
                   <Button
                     type="button"
-                    className={PRIMARY_BUTTON}
+                    variant="amber-pill"
                     disabled={!ready}
                     onClick={() => setConfirmingRefundId(source.id)}
                   >
