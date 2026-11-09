@@ -171,6 +171,8 @@ async function makeRoute(
     isActive?: boolean;
     /** Owner decision 2026-11-08: sellability moved from `destinations` to the route's TO place. */
     toPlaceActive?: boolean;
+    /** Owner decision 2026-11-08: "also bookable in reverse" is per-route, default true. */
+    reverseEnabled?: boolean;
     vehicleTypeIds?: number[];
     oneWayPriceCentavos?: number;
   } = {},
@@ -187,6 +189,7 @@ async function makeRoute(
       estimatedDurationMinutes: DURATION,
       freeCancelHours: ROUTE_FREE_CANCEL_HOURS,
       isActive: opts.isActive ?? true,
+      reverseEnabled: opts.reverseEnabled ?? true,
     });
   created.routeIds.push(route.insertId);
 
@@ -448,6 +451,38 @@ describeWithDb('checkout.createHoldTransfer', () => {
     expect(depositCentavos(row.totalCentavos, row.priceSnapshot.depositPercent)).toBe(
       depositCentavos(ONE_WAY_PRICE, DEPOSIT_PERCENT),
     );
+  });
+
+  // -------------------------------------------------------------------------
+  // Direction (owner decision 2026-11-08) — checked post-catalog-read, inside
+  // `createTransferBooking()` itself, so (unlike the Zod-layer refusals below)
+  // it needs the real route resolved. `transfer-create-booking.test.ts`
+  // already pins this at the service layer; nothing in THIS file (the
+  // public, wire-level wrapper) had exercised it before — this is that gap.
+  // -------------------------------------------------------------------------
+
+  it('refuses a reverse-direction hold on a route with reverseEnabled=false, through the real router', async () => {
+    const routeId = await makeRoute({ reverseEnabled: false });
+    await makeFleet();
+    const before = await writtenRowCounts();
+
+    expect(await refusal(holdInput({ routeId, direction: 'reverse' }))).toMatchObject({
+      code: 'BAD_REQUEST',
+      message: "That route can't be booked in reverse. Please choose the other direction.",
+    });
+    expect(
+      await writtenRowCounts(),
+      'a reverse hold refused for its route must leave no slot, booking or audit row',
+    ).toEqual(before);
+  });
+
+  it('accepts a reverse-direction hold on a route with reverseEnabled=true, through the real router', async () => {
+    const routeId = await makeRoute({ reverseEnabled: true });
+    await makeFleet();
+
+    const result = await hold(holdInput({ routeId, direction: 'reverse' }));
+    const details = await detailsRow(result.bookingId);
+    expect(details.direction).toBe('reverse');
   });
 
   // -------------------------------------------------------------------------

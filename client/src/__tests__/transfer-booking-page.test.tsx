@@ -295,6 +295,36 @@ describe('TransferBookingPage — vehicle unavailable for this route', () => {
 });
 
 /**
+ * 1F item 6 — the combined 1D/1E review found this path safe BY HAND
+ * (`vehicleOptions.length === 0` rendering the `role="status"` message
+ * instead of an empty grid or a crash) but never covered it with a test.
+ * This is that test: a route with NO offered vehicle types at all — the
+ * shape `transferRoutes.list` returns once every priced type on a route
+ * fails the §4 sellability AND-gate (see `transfer-pricing.test.ts`'s own
+ * server-side proof of that gate).
+ */
+describe('TransferBookingPage — a route with no offered vehicle types (1F item 6)', () => {
+  const NO_VEHICLES: TransferRoutePublicRow = { ...MACTAN, vehiclePrices: [] };
+
+  it('renders the "no vehicles available" status message once a route with an empty vehiclePrices array is picked, without crashing', async () => {
+    mockTrpc({
+      'transferRoutes.list': [NO_VEHICLES],
+      'checkout.quoteTransfer': quoteByVehicleTypeId,
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await selectTypeAndRoute(user);
+
+    const status = await screen.findByRole('status');
+    expect(status).toHaveTextContent(/no vehicles are available for this route right now/i);
+    // No vehicle card ever renders — there is nothing to pick.
+    expect(screen.queryByRole('radio', { name: /^van/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: /^suv/i })).not.toBeInTheDocument();
+  });
+});
+
+/**
  * Review fix, Critical 1 — a bad coupon code refuses EVERY offered vehicle's
  * `quoteTransfer` query at once (the same validation runs before any
  * vehicle is priced), which must never be mistaken for the "vehicle

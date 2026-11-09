@@ -529,6 +529,116 @@ describeWithDb('transferRoutes.list (public)', () => {
     // sortOrder 10 ('…aaa…'), sortOrder 10 ('…zzz…'), sortOrder 30.
     expect(mine).toEqual([bothVehicles.id, vanOnly.id, cheapRoute.id]);
   });
+
+  it('OMITS a route whose FROM place is retired (symmetric with the TO-place case above)', async () => {
+    const retiredOrigin = await makeRoute({
+      nameSeed: 'retired-origin-list',
+      sortOrder: 4,
+      fromPlaceActive: false,
+    });
+    const ids = (await caller.transferRoutes.list()).map((r) => r.id);
+    expect(ids).not.toContain(retiredOrigin.id);
+  });
+
+  /**
+   * **1F item 1 — the AND-gate itself, deferred twice before this task**
+   * (CLAUDE.md, "the test database keeps an EMPTY fleet"). Every scenario
+   * above runs against this file's own `beforeAll` seeded van/suv, each of
+   * which ALWAYS has a sellable vehicle — so none of them can tell "priced"
+   * apart from "priced AND sellable", because sellability never varies in
+   * those fixtures. This test varies it directly: a brand-new vehicle type
+   * gets one sellable van, a second brand-new type gets none, BOTH are
+   * priced on the SAME route, and only the first may appear. If
+   * `transferRoutes.list` ever stopped checking `sellableVehiclesByType()`
+   * and fell back to "priced, full stop", this test is what would catch it
+   * — proven by temporarily removing that check (see the commit message /
+   * PR description for the break-red-restore-green record).
+   */
+  it('shows a priced type with a sellable vehicle and HIDES a priced type with none — the AND gate', async () => {
+    const db = getDb();
+    // `vehicle_types.slug` is `varchar(40)` (design note §1.1) — `unique()`
+    // alone is ~23 chars, so the slug (never the longer, merely-descriptive
+    // `name`) gets a short prefix.
+    const sellableName = `T9 AND-gate sellable ${unique()}`;
+    const sellableSlug = `vts_${unique()}`;
+    const [sellableType] = await db
+      .insert(vehicleTypes)
+      .values({ name: sellableName, slug: sellableSlug, isActive: true, sortOrder: 900 });
+    created.vehicleTypeIds.push(sellableType.insertId);
+    await makeSellableVan(sellableType.insertId);
+
+    const unsellableName = `T9 AND-gate unsellable ${unique()}`;
+    const unsellableSlug = `vtu_${unique()}`;
+    const [unsellableType] = await db
+      .insert(vehicleTypes)
+      .values({ name: unsellableName, slug: unsellableSlug, isActive: true, sortOrder: 901 });
+    created.vehicleTypeIds.push(unsellableType.insertId);
+    // Deliberately NO van for this type: priced, but nothing to sell.
+
+    const route = await makeRoute({ nameSeed: 'and-gate', sortOrder: 40, vehicles: [] });
+    await db.insert(transferRouteVehiclePrices).values([
+      {
+        routeId: route.id,
+        vehicleTypeId: sellableType.insertId,
+        oneWayPriceCentavos: 123_00,
+        dayUsePriceCentavos: 456_00,
+      },
+      {
+        routeId: route.id,
+        vehicleTypeId: unsellableType.insertId,
+        oneWayPriceCentavos: 789_00,
+        dayUsePriceCentavos: 101_112,
+      },
+    ]);
+
+    const row = (await caller.transferRoutes.list()).find((r) => r.id === route.id);
+    expect(
+      row?.vehiclePrices.find((p) => p.vehicleTypeId === sellableType.insertId),
+      'a type with a price row AND a sellable vehicle must be offered',
+    ).toMatchObject({ oneWayPriceCentavos: 123_00, dayUsePriceCentavos: 456_00 });
+    expect(
+      row?.vehiclePrices.find((p) => p.vehicleTypeId === unsellableType.insertId),
+      'a type with a price row but NO sellable vehicle must be hidden — the AND, not an OR',
+    ).toBeUndefined();
+  });
+
+  /**
+   * **1F item 2 — the "MPV" shape.** A third vehicle type, priced on ONE
+   * route only. This proves the PER-ROUTE filter (the price-row join),
+   * distinct from the per-type sellability filter the test above proves —
+   * both need a sellable vehicle to show at all, which is why this type
+   * gets one too.
+   */
+  it('a vehicle type priced on exactly one route appears there and is absent from a route it was never priced on', async () => {
+    const db = getDb();
+    const mpvSlug = `__t9-mpv__${unique()}`;
+    const [mpvType] = await db
+      .insert(vehicleTypes)
+      .values({ name: mpvSlug, slug: mpvSlug, isActive: true, sortOrder: 902 });
+    created.vehicleTypeIds.push(mpvType.insertId);
+    await makeSellableVan(mpvType.insertId);
+
+    const pricedRoute = await makeRoute({ nameSeed: 'mpv-priced', sortOrder: 41, vehicles: [] });
+    await db.insert(transferRouteVehiclePrices).values({
+      routeId: pricedRoute.id,
+      vehicleTypeId: mpvType.insertId,
+      oneWayPriceCentavos: 333_00,
+      dayUsePriceCentavos: 444_00,
+    });
+
+    const rows = await caller.transferRoutes.list();
+    const pricedRow = rows.find((r) => r.id === pricedRoute.id);
+    // `bothVehicles` never had the MPV type priced on it — the "different route" control.
+    const neverPricedRow = rows.find((r) => r.id === bothVehicles.id);
+
+    expect(
+      pricedRow?.vehiclePrices.find((p) => p.vehicleTypeId === mpvType.insertId),
+    ).toMatchObject({ oneWayPriceCentavos: 333_00, dayUsePriceCentavos: 444_00 });
+    expect(
+      neverPricedRow?.vehiclePrices.find((p) => p.vehicleTypeId === mpvType.insertId),
+      'a type never priced on this route must not appear on it',
+    ).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
