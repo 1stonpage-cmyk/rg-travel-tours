@@ -442,8 +442,8 @@ export default function AssignPanel({
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <Button
           type="button"
-          variant="outline"
-          className="tap-target border-brand-blue-200 text-brand-blue-700 flex-1 rounded-[10px] font-semibold"
+          variant="secondary-pill"
+          className="flex-1"
           disabled={suggesting || options.isPending}
           onClick={() => void runSuggest()}
         >
@@ -452,7 +452,8 @@ export default function AssignPanel({
         </Button>
         <Button
           type="button"
-          className="tap-target flex-1 rounded-[10px] font-semibold"
+          variant="primary-pill"
+          className="flex-1"
           disabled={!ready || assign.isPending || options.isError}
           onClick={runAssign}
         >
