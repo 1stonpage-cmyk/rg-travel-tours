@@ -140,6 +140,85 @@ async function countRows(): Promise<Record<string, number>> {
   return counts;
 }
 
+/**
+ * Fails LOUDLY if `users` already holds rows before THIS run has inserted
+ * anything — called between `migrate()` and `seedTestBaseline()`, never
+ * before `migrate()` (a brand-new `rg_travel_test` has no `users` table yet)
+ * and never from inside `seedTestBaseline()`/`resetTestDb()` (those run
+ * mid-suite too, by which point tests legitimately hold user rows —
+ * `password-reset.test.ts` is one).
+ *
+ * This exists because `countRows()` above captures the leak detector's
+ * BASELINE, and it only ever runs AFTER seeding — so a stray row already
+ * sitting in `users` before a run starts gets silently adopted as "expected"
+ * for every run from then on, and the detector can never see it again. Four
+ * rows named "Reset Fixture"/"Reset Inactive Fixture" sat in `rg_travel_test`
+ * undetected for days this way (found 2026-11-09, predating this check).
+ * `users` IS in `LEAK_TABLES`, which only ever catches a row ADDED during a
+ * run — it was never positioned to catch one already there when the run
+ * began.
+ *
+ * `seed('test')` leaves `users` empty whenever `OWNER_EMAIL`/`OWNER_PASSWORD`
+ * are unset (the normal case: `server/src/db/seed.ts`'s `seedOwner` skips
+ * entirely). The one allowed exception is a single row that matches
+ * `OWNER_EMAIL` (case-insensitively) AND is a genuine owner row (`role ===
+ * 'owner'`, `isActive === true`) when that var IS set: a dev who points
+ * `OWNER_EMAIL` at a real account to exercise `seedBase` against
+ * `rg_travel_test` too gets a legitimately-reseeded owner row that survives
+ * between runs (seeding there is insert/update-if-missing by email, and
+ * nothing deletes it), and that one row must not be mistaken for a leak.
+ *
+ * **Matching by email alone would be a hole, not a convenience** (review
+ * finding, fix round 2026-11-09): the exact stray fixture this check exists
+ * to catch (`password-reset.test.ts`'s "Reset Fixture", `role: 'owner'`) is
+ * the same shape a coincidental email collision would let through silently.
+ * Requiring `role`/`isActive` too costs nothing against the legitimate case
+ * (`seedOwner` only ever writes `role: 'owner', isActive: true`) and closes
+ * that collision. The exemption also always logs when it actually fires —
+ * silent is how a real leak hides behind this escape hatch.
+ *
+ * Every other row still throws, OWNER_EMAIL-set or not.
+ */
+export async function assertNoPreExistingUsers(): Promise<void> {
+  const db = getDb();
+  const rows = await db
+    .select({
+      id: users.id,
+      name: users.name,
+      email: users.email,
+      role: users.role,
+      isActive: users.isActive,
+    })
+    .from(users);
+
+  const ownerEmail = env.OWNER_EMAIL?.trim().toLowerCase();
+  const isAllowedOwnerRow = (row: (typeof rows)[number]) =>
+    ownerEmail !== undefined &&
+    row.email.toLowerCase() === ownerEmail &&
+    row.role === 'owner' &&
+    row.isActive === true;
+
+  const unexpected = rows.filter((row) => !isAllowedOwnerRow(row));
+  if (unexpected.length === 0) {
+    if (rows.length > 0) {
+      // Deliberate console.warn: a silent exemption is how a real leak hides behind this escape hatch.
+      console.warn(
+        `[global-setup] rg_travel_test.users: allowing ${rows.length} pre-existing OWNER_EMAIL-matched owner row(s) through assertNoPreExistingUsers (` +
+          rows.map((row) => `#${row.id} <${row.email}>`).join(', ') +
+          ').',
+      );
+    }
+    return;
+  }
+
+  const described = unexpected.map((row) => `#${row.id} "${row.name}" <${row.email}>`).join(', ');
+  throw new Error(
+    `rg_travel_test.users has ${unexpected.length} row(s) before this run even started ` +
+      `seeding — a previous run left stray data. Delete them before trusting this run: ` +
+      described,
+  );
+}
+
 export default async function setup(): Promise<() => Promise<void>> {
   if (!env.TEST_DATABASE_URL) {
     throw new Error(
@@ -152,6 +231,9 @@ export default async function setup(): Promise<() => Promise<void>> {
   await assertConnectedDatabase('test');
 
   await migrate(getDb(), { migrationsFolder: MIGRATIONS_FOLDER });
+  // BEFORE seeding, after migrating — see the function's own note on why
+  // here and nowhere else.
+  await assertNoPreExistingUsers();
   // Not a bare `seed('test')`: the harness's baseline flips `show_tours` on
   // (Task T15). See `seedTestBaseline`'s own note on why that is one shared
   // function rather than a flip here.
