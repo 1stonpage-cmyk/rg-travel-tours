@@ -51,9 +51,21 @@ const TYPE_DESCRIPTIONS: Record<TransferProductType, string> = {
 
 const ERROR_ID = 'transfer-type-error';
 
+/**
+ * Task 1F (DEMO POLISH). `TransferBookingPage.tsx` scrolls/focuses this
+ * fieldset by id when a guest picks a route before a transfer type — there
+ * is otherwise no ref this presentational component exposes, and an id is
+ * the same mechanism `PublicLayout.tsx`'s own hash-scroll already uses.
+ */
+export const TRANSFER_TYPE_PICKER_ID = 'transfer-type-picker';
+
 export default function TransferTypePicker({ value, onChange, error }: Props) {
   return (
-    <fieldset className="space-y-2" aria-describedby={error ? ERROR_ID : undefined}>
+    <fieldset
+      id={TRANSFER_TYPE_PICKER_ID}
+      className="space-y-2"
+      aria-describedby={error ? ERROR_ID : undefined}
+    >
       <legend className="text-sm font-medium">What kind of transfer do you need?</legend>
       <div className="grid gap-3 sm:grid-cols-2">
         {TRANSFER_PRODUCT_TYPES.map((type) => {

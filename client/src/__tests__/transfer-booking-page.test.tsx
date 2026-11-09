@@ -13,7 +13,7 @@ import { render, screen, within, fireEvent, waitFor } from '@testing-library/rea
 import userEvent from '@testing-library/user-event';
 import type { TransferRoutePublicRow } from '@rg/shared';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import TransferBookingPage from '@/pages/public/TransferBookingPage';
 import { TrpcProviders } from '@/lib/trpc';
 import { SETTINGS_FIXTURE } from './helpers/fixtures';
@@ -608,5 +608,100 @@ describe('TransferBookingPage — a stale placeholder price must show as loading
 
     resolveDayUseVan(VAN_QUOTE);
     await waitFor(() => expect(screen.getByRole('radio', { name: /^van/i })).not.toBeDisabled());
+  });
+});
+
+/**
+ * Task 1F (DEMO POLISH). Natural top-to-bottom reading never hits this —
+ * `TransferTypePicker` renders ABOVE `RoutePicker` — but nothing stopped a
+ * guest who scrolls past it, or clicks a route card first for any reason,
+ * from getting no feedback at all. `jsdom` has no `Element.prototype.
+ * scrollIntoView` (see `catalog-carousel.test.tsx`'s identical stub), so it
+ * is replaced with a spy here rather than left to throw.
+ */
+describe('TransferBookingPage — route picked before type (Task 1F)', () => {
+  let scrollIntoView: ReturnType<typeof vi.fn>;
+  const originalMatchMedia = window.matchMedia;
+
+  beforeEach(() => {
+    scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+  });
+
+  afterEach(() => {
+    window.matchMedia = originalMatchMedia;
+  });
+
+  it("(a) shows the hint through the type picker's own error display, and scrolls that fieldset into view", async () => {
+    mockTrpc({ 'transferRoutes.list': [MACTAN] });
+    const user = userEvent.setup();
+    renderPage();
+
+    const routeRadio = await screen.findByRole('radio', {
+      name: /^mactan-cebu international airport/i,
+    });
+    await user.click(routeRadio);
+
+    // Pinned to the EXISTING plumbing, not loose text anywhere on the page:
+    // the alert must live inside the type picker's own fieldset, and that
+    // fieldset's `aria-describedby` must point at it.
+    const fieldset = document.getElementById('transfer-type-picker') as HTMLElement;
+    expect(fieldset).toBeInTheDocument();
+    const alert = within(fieldset).getByRole('alert');
+    expect(alert).toHaveTextContent(/choose a transfer type above first/i);
+    expect(fieldset.getAttribute('aria-describedby')).toBe(alert.id);
+
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ block: 'center' }));
+
+    // The route card the guest clicked stays selected — see this file's
+    // header note and the test below for why that is the chosen behaviour.
+    expect(routeRadio).toBeChecked();
+  });
+
+  it('(b)/(c) keeps the route selection and clears the hint once a type is subsequently picked', async () => {
+    mockTrpc({
+      'transferRoutes.list': [MACTAN],
+      'checkout.quoteTransfer': quoteByVehicleTypeId,
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    const routeRadio = await screen.findByRole('radio', {
+      name: /^mactan-cebu international airport/i,
+    });
+    await user.click(routeRadio);
+    expect(await screen.findByText(/choose a transfer type above first/i)).toBeInTheDocument();
+
+    await user.click(await screen.findByRole('radio', { name: /airport transfer/i }));
+
+    // (c) the hint is gone now that a type is selected.
+    expect(screen.queryByText(/choose a transfer type above first/i)).not.toBeInTheDocument();
+
+    // (b) the earlier route choice survived — still checked, and now that
+    // BOTH productType and routeId are set, vehicle pricing for that same
+    // route unlocks (the Van card appears) rather than the guest having to
+    // re-pick the route from scratch.
+    expect(routeRadio).toBeChecked();
+    expect(await screen.findByRole('radio', { name: /^van/i })).toBeInTheDocument();
+  });
+
+  it('respects prefers-reduced-motion by scrolling without smooth animation', async () => {
+    window.matchMedia = ((query: string) => ({
+      matches: true,
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })) as unknown as typeof window.matchMedia;
+
+    mockTrpc({ 'transferRoutes.list': [MACTAN] });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(
+      await screen.findByRole('radio', { name: /^mactan-cebu international airport/i }),
+    );
+
+    expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'auto' }));
   });
 });

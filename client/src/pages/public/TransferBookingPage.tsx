@@ -16,7 +16,9 @@ import RoutePicker, { type TransferRouteSelection } from '@/components/transfer/
 import TransferGuestDetailsForm, {
   type FlightDetailsRequirement,
 } from '@/components/transfer/TransferGuestDetailsForm';
-import TransferTypePicker from '@/components/transfer/TransferTypePicker';
+import TransferTypePicker, {
+  TRANSFER_TYPE_PICKER_ID,
+} from '@/components/transfer/TransferTypePicker';
 import VehicleOptionCard from '@/components/transfer/VehicleOptionCard';
 import { Button } from '@/components/ui/button';
 import {
@@ -176,6 +178,17 @@ const PLACED_HOLD_FIELDS: ReadonlySet<string> = new Set([
 /** See `CheckoutPage.tsx`'s own `LEAD_LEAF_PATHS` note (final-review finding 1). */
 const LEAD_LEAF_PATHS = ['lead.name', 'lead.email', 'lead.phone'] as const;
 
+/**
+ * Task 1F (DEMO POLISH). Mirrors `components/home/CatalogPreview.tsx`'s
+ * identical guard: jsdom (this project's test environment) implements no
+ * `window.matchMedia` at all and throws if called unstubbed, so this checks
+ * the function exists before ever calling it.
+ */
+function prefersReducedMotion(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
 export default function TransferBookingPage() {
   const [searchParams] = useSearchParams();
 
@@ -193,6 +206,25 @@ export default function TransferBookingPage() {
   const [couponInput, setCouponInput] = useState('');
   const [couponError, setCouponError] = useState<string | null>(null);
   const [consentError, setConsentError] = useState<string | null>(null);
+
+  /**
+   * Task 1F (DEMO POLISH). A guest can click a route card before picking a
+   * transfer type above it — natural top-to-bottom reading avoids this, but
+   * nothing stopped it. The route selection itself is kept either way (set
+   * below in `RoutePicker`'s `onChange`, unconditionally): `routeId` and
+   * `productType` are independent pieces of state and `vehiclePricingEnabled`
+   * already requires both, so a route picked early just waits, already
+   * selected, for the type to catch up — the least surprising behaviour,
+   * and the one that costs the guest nothing if they pick type second.
+   * This hint rides through `TransferTypePicker`'s existing `error` prop
+   * (already wired to its own `FieldError`) rather than inventing new UI,
+   * and is cleared the instant a type IS selected (see the effect below).
+   */
+  const [routeBeforeTypeHint, setRouteBeforeTypeHint] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (productType) setRouteBeforeTypeHint(null);
+  }, [productType]);
 
   const routesQuery = trpc.transferRoutes.list.useQuery();
 
@@ -485,7 +517,7 @@ export default function TransferBookingPage() {
           <TransferTypePicker
             value={productType}
             onChange={setProductType}
-            error={holdFieldErrors?.productType}
+            error={holdFieldErrors?.productType ?? routeBeforeTypeHint ?? undefined}
           />
 
           <RoutePicker
@@ -494,6 +526,13 @@ export default function TransferBookingPage() {
             onChange={(selection) => {
               setRouteId(selection.routeId);
               setDirection(selection.direction);
+              if (!productType) {
+                setRouteBeforeTypeHint('Choose a transfer type above first');
+                document.getElementById(TRANSFER_TYPE_PICKER_ID)?.scrollIntoView({
+                  behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+                  block: 'center',
+                });
+              }
             }}
             isLoading={routesQuery.isPending}
             error={holdFieldErrors?.routeId}
