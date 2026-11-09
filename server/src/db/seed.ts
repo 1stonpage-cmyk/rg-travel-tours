@@ -62,7 +62,7 @@ import {
   databaseNameFromUrl,
   type DatabaseContext,
 } from './guard';
-import { closeDb, getDb } from './client';
+import { closeDb, getDb, type Transaction } from './client';
 import { hashPassword } from '../services/password';
 import * as schema from './schema';
 import {
@@ -72,16 +72,21 @@ import {
   SEED_REVIEWS,
   SEED_SETTINGS,
   SEED_TOURS,
+  SEED_TRANSFER_AIRPORT_NAME,
+  SEED_TRANSFER_PLACES,
+  SEED_TRANSFER_ROUTES,
   SEED_UNASSIGNED_TRIPS,
   SEED_VANS,
+  SEED_VEHICLE_TYPES,
   type SeedDestination,
   type SeedPackage,
   type SeedReview,
   type SeedTour,
 } from './seed-data';
-import { bookingRefSchema, manilaCivilDate } from '@rg/shared';
+import { bookingRefSchema, manilaCivilDate, type TransferRoutePricesInput } from '@rg/shared';
 import { REF_ALPHABET } from '../services/booking-ref';
 import { randomInt } from 'node:crypto';
+import { upsertTransferRoute } from '../services/transfers/upsert-route';
 
 type Db = ReturnType<typeof getDb>;
 
@@ -395,6 +400,195 @@ function seedDate(days: number): Date {
   const today = manilaCivilDate(new Date());
   const [year, month, day] = today.split('-').map(Number) as [number, number, number];
   return new Date(Date.UTC(year, month - 1, day + days));
+}
+
+/**
+ * The three demo vehicle types (Task 1G, design note §1.1) — **APP DATABASE
+ * ONLY**, same gate as `upsertFleet`/`upsertItineraryStops` below: nothing
+ * here runs for `context === 'test'`, so `rg_travel_test` never gets an
+ * `mpv` row and keeps exactly the two (`van`, `suv`) migration 0023 itself
+ * backfilled.
+ *
+ * `van`/`suv` already exist by the time this runs — inserted by migration
+ * 0023's own backfill, never by this seed — so for those two this is an
+ * UPDATE-IF-UNSET on `defaultSeats`/`defaultLuggage` only, and never
+ * overwrites a value that is already set (an admin may have filled one in
+ * by hand since; see `vehicle_types`'s own schema comment on why the
+ * backfill left them `NULL` rather than guessing). `mpv` is new: there is no
+ * row for it anywhere, so the first run genuinely inserts it.
+ *
+ * Idempotent like the rest of `seedDemo`: matched on `slug`, never a literal
+ * id. Returns the slug -> id map `upsertFleet` and `upsertDemoTransferRoutes`
+ * both need to resolve the rest of this task's demo content.
+ */
+export async function upsertDemoVehicleTypes(db: Db): Promise<Map<string, number>> {
+  const idBySlug = new Map<string, number>();
+  for (const vt of SEED_VEHICLE_TYPES) {
+    const [existing] = await db
+      .select({
+        id: schema.vehicleTypes.id,
+        defaultSeats: schema.vehicleTypes.defaultSeats,
+        defaultLuggage: schema.vehicleTypes.defaultLuggage,
+      })
+      .from(schema.vehicleTypes)
+      .where(eq(schema.vehicleTypes.slug, vt.slug));
+
+    if (existing) {
+      const patch: Partial<typeof schema.vehicleTypes.$inferInsert> = {};
+      if (existing.defaultSeats === null) patch.defaultSeats = vt.defaultSeats;
+      if (existing.defaultLuggage === null) patch.defaultLuggage = vt.defaultLuggage;
+      if (Object.keys(patch).length > 0) {
+        await db
+          .update(schema.vehicleTypes)
+          .set(patch)
+          .where(eq(schema.vehicleTypes.id, existing.id));
+      }
+      idBySlug.set(vt.slug, existing.id);
+      continue;
+    }
+
+    const [result] = await db.insert(schema.vehicleTypes).values({
+      name: vt.name,
+      slug: vt.slug,
+      defaultSeats: vt.defaultSeats,
+      defaultLuggage: vt.defaultLuggage,
+      sortOrder: vt.sortOrder,
+    });
+    idBySlug.set(vt.slug, result.insertId);
+  }
+  console.log(
+    `[seed] vehicle types: ${SEED_VEHICLE_TYPES.length} (van/suv defaults filled only if unset; mpv created if missing)`,
+  );
+  return idBySlug;
+}
+
+/** The one normalisation `transfer_places.name_key` is built from — the same rule `admin.transferPlaces` enforces (BUG-107/BUG-108's lesson: normalise explicitly, never lean on collation). */
+function transferPlaceNameKey(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+/**
+ * The five demo transfer places (Task 1G, design note §1.2) — **APP DATABASE
+ * ONLY**. Matched by `name_key`, never a literal id: the airport row may
+ * already exist (migration 0024's conditional backfill creates it the
+ * moment any `transfer_routes` row exists on the database being migrated),
+ * and this resolves it rather than risking a duplicate on the `name_key`
+ * UNIQUE.
+ *
+ * Idempotent like the rest of `seedDemo`: a re-run restates the same
+ * name/isAirport/sortOrder rather than drifting. Returns the name-key -> id
+ * map `upsertDemoTransferRoutes` needs.
+ */
+export async function upsertDemoTransferPlaces(db: Db): Promise<Map<string, number>> {
+  const idByNameKey = new Map<string, number>();
+  for (const place of SEED_TRANSFER_PLACES) {
+    const nameKey = transferPlaceNameKey(place.name);
+    const [existing] = await db
+      .select({ id: schema.transferPlaces.id })
+      .from(schema.transferPlaces)
+      .where(eq(schema.transferPlaces.nameKey, nameKey));
+
+    if (existing) {
+      await db
+        .update(schema.transferPlaces)
+        .set({ name: place.name, isAirport: place.isAirport, sortOrder: place.sortOrder })
+        .where(eq(schema.transferPlaces.id, existing.id));
+      idByNameKey.set(nameKey, existing.id);
+      continue;
+    }
+
+    const [result] = await db.insert(schema.transferPlaces).values({
+      name: place.name,
+      nameKey,
+      isAirport: place.isAirport,
+      sortOrder: place.sortOrder,
+    });
+    idByNameKey.set(nameKey, result.insertId);
+  }
+  console.log(`[seed] transfer places: ${SEED_TRANSFER_PLACES.length}`);
+  return idByNameKey;
+}
+
+/**
+ * The four demo transfer routes and their price cards (Task 1G, design note
+ * §1.3/§1.4) — **APP DATABASE ONLY**.
+ *
+ * Reuses `upsertTransferRoute()`, the ONE writer of `transfer_routes` and
+ * `transfer_route_vehicle_prices` (`services/transfers/upsert-route.ts`),
+ * rather than a second hand-rolled insert of a money table. That matters
+ * here specifically: `upsertTransferRoute`'s completeness contract reads a
+ * present `prices` object as the WHOLE price card for the route, so leaving
+ * `mpv` out of three of the four cards is exactly what makes it "not
+ * offered" on those routes rather than "the seed forgot it" — the
+ * demonstration this fixture exists to give (owner decision 4: a route need
+ * not offer every vehicle type).
+ *
+ * Idempotent: each route is looked up by its `(fromPlaceId, toPlaceId)` pair
+ * before the call, so a re-run updates the existing row rather than
+ * colliding with the UNIQUE index.
+ */
+export async function upsertDemoTransferRoutes(
+  db: Db,
+  placeIdByNameKey: Map<string, number>,
+  vehicleTypeIdBySlug: Map<string, number>,
+): Promise<void> {
+  const airportId = placeIdByNameKey.get(transferPlaceNameKey(SEED_TRANSFER_AIRPORT_NAME));
+  if (airportId === undefined) {
+    throw new Error(
+      `seed: transfer routes need the "${SEED_TRANSFER_AIRPORT_NAME}" place to exist first`,
+    );
+  }
+
+  await db.transaction(async (tx: Transaction) => {
+    for (const route of SEED_TRANSFER_ROUTES) {
+      const toPlaceId = placeIdByNameKey.get(transferPlaceNameKey(route.toPlaceName));
+      if (toPlaceId === undefined) {
+        throw new Error(
+          `seed: transfer route "${route.slug}" references unknown place "${route.toPlaceName}"`,
+        );
+      }
+
+      const prices: TransferRoutePricesInput = {};
+      for (const price of route.prices) {
+        const vehicleTypeId = vehicleTypeIdBySlug.get(price.vehicleTypeSlug);
+        if (vehicleTypeId === undefined) {
+          throw new Error(
+            `seed: transfer route "${route.slug}" prices an unknown vehicle type "${price.vehicleTypeSlug}"`,
+          );
+        }
+        prices[String(vehicleTypeId)] = {
+          oneWayPriceCentavos: price.oneWayPricePesos * 100,
+          dayUsePriceCentavos: price.dayUsePricePesos * 100,
+        };
+      }
+
+      const [existing] = await tx
+        .select({ id: schema.transferRoutes.id })
+        .from(schema.transferRoutes)
+        .where(
+          and(
+            eq(schema.transferRoutes.fromPlaceId, airportId),
+            eq(schema.transferRoutes.toPlaceId, toPlaceId),
+          ),
+        );
+
+      await upsertTransferRoute(tx, {
+        id: existing?.id,
+        fromPlaceId: airportId,
+        toPlaceId,
+        reverseEnabled: true,
+        slug: route.slug,
+        estimatedDurationMinutes: route.estimatedDurationMinutes,
+        freeCancelHours: 24,
+        inclusionsText: null,
+        exclusionsText: null,
+        prices,
+      });
+    }
+  });
+  console.log(
+    `[seed] transfer routes: ${SEED_TRANSFER_ROUTES.length} (from "${SEED_TRANSFER_AIRPORT_NAME}")`,
+  );
 }
 
 /**
@@ -907,6 +1101,21 @@ export async function seedDemo(context: DatabaseContext = 'app'): Promise<void> 
   console.log(`[seed] reviews: ${SEED_REVIEWS.length}`);
 
   /*
+   * Vehicle types are APP-ONLY too (Task 1G): `rg_travel_test` keeps exactly
+   * the two rows migration 0023 backfilled (`van`, `suv`) and never gets
+   * `mpv`. Resolved before the fleet so the two new demo vans below
+   * (`DEMO-SUV-01`, `DEMO-MPV-01`) have an id to resolve against.
+   */
+  let vehicleTypeIdBySlug = new Map<string, number>();
+  if (context === 'app') {
+    vehicleTypeIdBySlug = await upsertDemoVehicleTypes(db);
+  } else {
+    console.log(
+      '[seed] vehicle types: skipped (test database keeps only the backfilled van/suv rows)',
+    );
+  }
+
+  /*
    * The fleet is APP-ONLY (controller ruling, 2026-10-15). See
    * `upsertFleet`: `capacity.test.ts` requires an empty fleet in
    * `rg_travel_test`, and that requirement guards the booking path.
@@ -915,6 +1124,21 @@ export async function seedDemo(context: DatabaseContext = 'app'): Promise<void> 
     await upsertFleet(db, tourIdBySlug);
   } else {
     console.log('[seed] fleet: skipped (test database keeps an empty fleet by design)');
+  }
+
+  /*
+   * Transfer places and routes are APP-ONLY, same reasoning (Task 1G):
+   * `rg_travel_test` keeps zero rows in `transfer_places`/`transfer_routes`/
+   * `transfer_route_vehicle_prices` — there is no suite that counts them the
+   * way `capacity.test.ts` counts the fleet, but there is also no reason for
+   * demo marketing content to exist on the database the money-path tests run
+   * against.
+   */
+  if (context === 'app') {
+    const placeIdByNameKey = await upsertDemoTransferPlaces(db);
+    await upsertDemoTransferRoutes(db, placeIdByNameKey, vehicleTypeIdBySlug);
+  } else {
+    console.log('[seed] transfer places/routes: skipped (app-only demo content)');
   }
 
   /*

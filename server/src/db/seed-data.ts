@@ -837,6 +837,128 @@ This placeholder will be replaced with reviewed terms before launch.`,
 };
 
 // ---------------------------------------------------------------------------
+// Flexible transfer places, routes and vehicle types (Task 1G, owner spec
+// 2026-11-08 — docs/superpowers/plans/2026-11-08-flexible-routes.md)
+// ---------------------------------------------------------------------------
+
+/**
+ * The three demo vehicle types. `van`/`suv` are real natural-key rows already
+ * inserted by migration 0023's own backfill (never by this seed) — the writer
+ * that consumes this list (`upsertDemoVehicleTypes` in `seed.ts`) fills in
+ * `defaultSeats`/`defaultLuggage` for those two ONLY IF a database already has
+ * them `NULL`, and never overwrites a value an admin may have set since.
+ * `mpv` is new: there is no backfilled row for it anywhere, so this is a
+ * genuine insert the first time this runs. **APP DATABASE ONLY** — see
+ * `upsertDemoVehicleTypes`'s own comment for why `rg_travel_test` never gets
+ * an `mpv` row.
+ */
+export interface SeedVehicleType {
+  name: string;
+  slug: string;
+  defaultSeats: number;
+  defaultLuggage: number;
+  sortOrder: number;
+}
+
+export const SEED_VEHICLE_TYPES: SeedVehicleType[] = [
+  { name: 'Van', slug: 'van', defaultSeats: 12, defaultLuggage: 8, sortOrder: 0 },
+  { name: 'SUV', slug: 'suv', defaultSeats: 4, defaultLuggage: 4, sortOrder: 1 },
+  { name: 'MPV', slug: 'mpv', defaultSeats: 6, defaultLuggage: 4, sortOrder: 2 },
+];
+
+/**
+ * The demo transfer places — one airport and four destinations, matched by
+ * `transfer_places.name_key` (`name.trim().toLowerCase()`), never a literal
+ * id. The airport row may already exist (migration 0024's conditional
+ * backfill creates it the moment any `transfer_routes` row exists); the
+ * writer resolves it by natural key either way rather than risking a
+ * duplicate. **APP DATABASE ONLY.**
+ */
+export interface SeedTransferPlace {
+  name: string;
+  isAirport: boolean;
+  sortOrder: number;
+}
+
+/** The one place every demo route starts from. Named once so nothing retypes it. */
+export const SEED_TRANSFER_AIRPORT_NAME = 'Mactan-Cebu International Airport';
+
+export const SEED_TRANSFER_PLACES: SeedTransferPlace[] = [
+  { name: SEED_TRANSFER_AIRPORT_NAME, isAirport: true, sortOrder: 0 },
+  { name: 'Cebu City', isAirport: false, sortOrder: 1 },
+  { name: 'Moalboal', isAirport: false, sortOrder: 2 },
+  { name: 'Oslob', isAirport: false, sortOrder: 3 },
+  { name: 'Hagnaya Port', isAirport: false, sortOrder: 4 },
+];
+
+/** One vehicle type's price pair on one demo route, in PESOS — converted to centavos at the call site. */
+export interface SeedTransferRoutePrice {
+  vehicleTypeSlug: 'van' | 'suv' | 'mpv';
+  oneWayPricePesos: number;
+  dayUsePricePesos: number;
+}
+
+/**
+ * A demo route, always `Mactan-Cebu International Airport -> toPlaceName`,
+ * `reverseEnabled: true`, `freeCancelHours: 24` — real owner-given numbers
+ * (the task 1G spec), applied the same way on every route rather than
+ * invented per row.
+ *
+ * **MPV is deliberately priced on Cebu City ONLY** — a type simply absent
+ * from a route's `prices` array is "not offered on this route" under the
+ * owner's decision 4 (reversing the old "exactly two rows" rule), and that is
+ * the whole demonstration this seed exists to give: a route need not offer
+ * every vehicle type. Do not add an MPV entry to Moalboal/Oslob/Hagnaya Port
+ * — that would silently undo the one thing this fixture is for.
+ */
+export interface SeedTransferRoute {
+  slug: string;
+  toPlaceName: string;
+  estimatedDurationMinutes: number;
+  prices: SeedTransferRoutePrice[];
+}
+
+export const SEED_TRANSFER_ROUTES: SeedTransferRoute[] = [
+  {
+    slug: 'mactan-airport-to-cebu-city',
+    toPlaceName: 'Cebu City',
+    estimatedDurationMinutes: 45,
+    prices: [
+      { vehicleTypeSlug: 'van', oneWayPricePesos: 2_900, dayUsePricePesos: 4_500 },
+      { vehicleTypeSlug: 'suv', oneWayPricePesos: 2_500, dayUsePricePesos: 4_000 },
+      { vehicleTypeSlug: 'mpv', oneWayPricePesos: 2_700, dayUsePricePesos: 4_200 },
+    ],
+  },
+  {
+    slug: 'mactan-airport-to-moalboal',
+    toPlaceName: 'Moalboal',
+    estimatedDurationMinutes: 180,
+    prices: [
+      { vehicleTypeSlug: 'van', oneWayPricePesos: 6_200, dayUsePricePesos: 8_000 },
+      { vehicleTypeSlug: 'suv', oneWayPricePesos: 5_700, dayUsePricePesos: 7_400 },
+    ],
+  },
+  {
+    slug: 'mactan-airport-to-oslob',
+    toPlaceName: 'Oslob',
+    estimatedDurationMinutes: 210,
+    prices: [
+      { vehicleTypeSlug: 'van', oneWayPricePesos: 6_800, dayUsePricePesos: 8_600 },
+      { vehicleTypeSlug: 'suv', oneWayPricePesos: 6_200, dayUsePricePesos: 7_900 },
+    ],
+  },
+  {
+    slug: 'mactan-airport-to-hagnaya-port',
+    toPlaceName: 'Hagnaya Port',
+    estimatedDurationMinutes: 180,
+    prices: [
+      { vehicleTypeSlug: 'van', oneWayPricePesos: 6_200, dayUsePricePesos: 8_000 },
+      { vehicleTypeSlug: 'suv', oneWayPricePesos: 5_700, dayUsePricePesos: 7_400 },
+    ],
+  },
+];
+
+// ---------------------------------------------------------------------------
 // The dispatcher's fleet (Week 5, Task 15)
 // ---------------------------------------------------------------------------
 
@@ -876,13 +998,15 @@ export interface SeedVan {
    * `vehicle_types.slug`, resolved to an id by `upsertFleet` — never a
    * literal id (owner decision 2026-11-08: vehicle types are an
    * admin-managed list, not an enum; see
-   * docs/superpowers/plans/2026-11-08-flexible-routes.md). All four of
-   * these pre-existing tours-era seed vans stay `'van'`, preserving exactly
-   * the behaviour the old `vehicle_type` enum's `.default('van')` gave them
-   * — task 1G is what adds real type diversity (an SUV, an MPV) to the
-   * app-only demo fleet.
+   * docs/superpowers/plans/2026-11-08-flexible-routes.md). The four
+   * pre-existing tours-era seed vans (`SEED-001`..`SEED-004`) stay `'van'`,
+   * preserving exactly the behaviour the old `vehicle_type` enum's
+   * `.default('van')` gave them. Task 1G adds the real type diversity — one
+   * SUV, one MPV — as two new entries below rather than repurposing any of
+   * the four, so their models/capacities stay honest rather than relabelling
+   * a 6-seat HiAce as an "SUV".
    */
-  vehicleTypeSlug: 'van' | 'suv';
+  vehicleTypeSlug: 'van' | 'suv' | 'mpv';
 }
 
 export const SEED_VANS: SeedVan[] = [
@@ -941,6 +1065,39 @@ export const SEED_VANS: SeedVan[] = [
     franchiseExpiryInDays: 365,
     repairNotes: 'Clutch slipping under load. With the shop since Monday.',
     vehicleTypeSlug: 'van',
+  },
+  /*
+   * Task 1G: the demo fleet's real type diversity. Without these two, every
+   * seed van is a `'van'`, and the "guests only see types with at least one
+   * sellable vehicle" rule (design note §4) would hide SUV and MPV on every
+   * route regardless of whether a price row exists for them — there would be
+   * nothing to demonstrate the new per-type pricing with.
+   */
+  {
+    plate: 'DEMO-SUV-01',
+    model: 'Toyota Fortuner',
+    capacity: 4,
+    status: 'available',
+    odometer: 32_000,
+    nextServiceInDays: 150,
+    orcrExpiryInDays: 300,
+    franchiseNo: 'FR-SEED-0005',
+    franchiseExpiryInDays: 420,
+    repairNotes: null,
+    vehicleTypeSlug: 'suv',
+  },
+  {
+    plate: 'DEMO-MPV-01',
+    model: 'Toyota Innova',
+    capacity: 6,
+    status: 'available',
+    odometer: 28_500,
+    nextServiceInDays: 160,
+    orcrExpiryInDays: 320,
+    franchiseNo: 'FR-SEED-0006',
+    franchiseExpiryInDays: 440,
+    repairNotes: null,
+    vehicleTypeSlug: 'mpv',
   },
 ];
 
