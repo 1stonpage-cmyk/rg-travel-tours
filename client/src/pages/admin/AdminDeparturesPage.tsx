@@ -7,20 +7,18 @@
  * very same component. The nav draws this link for those three roles, and the
  * server answers whoever asks regardless of what is drawn.
  */
+import AdminPageHeader from '@/components/admin/AdminPageHeader';
 import DeparturesBoard from '@/components/admin/DeparturesBoard';
 
 export default function AdminDeparturesPage() {
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.08em]">
-          Dispatch
-        </p>
-        <h1 className="text-brand-ink text-2xl font-bold sm:text-3xl">Departures board</h1>
-        <p className="text-brand-error text-sm">
-          Every trip leaving today, with the van, the driver and how far along each one is.
-        </p>
-      </header>
+      {/* No `action`: this page is read-only (the board below has no CTA of its own). */}
+      <AdminPageHeader
+        eyebrow="Dispatch"
+        title="Departures board"
+        description="Every trip leaving today, with the van, the driver and how far along each one is."
+      />
       <DeparturesBoard />
     </div>
   );

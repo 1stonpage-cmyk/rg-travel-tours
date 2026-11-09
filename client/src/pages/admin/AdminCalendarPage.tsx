@@ -39,6 +39,7 @@ import {
 } from '@rg/shared';
 import MonthGrid from '@/components/admin/MonthGrid';
 import AssignPanel from '@/components/admin/AssignPanel';
+import { Button } from '@/components/ui/button';
 import { trpc } from '@/lib/trpc';
 
 const MONTH_YEAR_FORMAT = new Intl.DateTimeFormat('en-PH', {
@@ -398,23 +399,23 @@ export default function AdminCalendarPage() {
         </summary>
         <div className="border-brand-blue-100 border-t p-5">
           <div className="flex items-center justify-between gap-2">
-            <button
+            <Button
               type="button"
-              className="border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 focus-visible:ring-brand-gold-500 tap-target rounded-[10px] border bg-white px-4 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-[3px]"
+              variant="secondary-pill"
               onClick={() => changeMonth(prevMonth(year, month))}
             >
               Previous month
-            </button>
+            </Button>
             <p className="text-brand-ink text-sm font-semibold" aria-hidden="true">
               {monthLabel(year, month)}
             </p>
-            <button
+            <Button
               type="button"
-              className="border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 focus-visible:ring-brand-gold-500 tap-target rounded-[10px] border bg-white px-4 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-[3px]"
+              variant="secondary-pill"
               onClick={() => changeMonth(nextMonth(year, month))}
             >
               Next month
-            </button>
+            </Button>
           </div>
 
           <div className="mt-4">

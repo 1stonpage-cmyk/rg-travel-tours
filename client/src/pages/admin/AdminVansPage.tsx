@@ -61,7 +61,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import AdminPageHeader from '@/components/admin/AdminPageHeader';
 import EntityForm, { type EntityFormField } from '@/components/admin/EntityForm';
+import FormActions from '@/components/admin/FormActions';
 import { firstValidationMessage, splitFieldErrors } from '@/lib/field-errors';
 import { trpc } from '@/lib/trpc';
 
@@ -87,8 +89,6 @@ const NOTICE =
   'border-brand-blue-200 bg-brand-blue-50 text-brand-blue-900 mb-4 rounded-xl border p-3 text-sm font-medium';
 const ALERT =
   'border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-xl border p-3 text-sm font-medium';
-const OUTLINE_BUTTON =
-  'tap-target border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 hover:text-brand-blue-800 rounded-[10px] font-semibold transition-colors';
 
 const STATUS_BADGE_CLASS: Record<string, string> = {
   available: 'border-0 bg-brand-blue-50 text-brand-blue-800',
@@ -453,16 +453,19 @@ export default function AdminVansPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.08em]">
-          Operations
-        </p>
-        <h1 className="text-brand-ink text-2xl font-bold sm:text-3xl">Vans</h1>
-        <p className="text-brand-error text-sm">
-          The fleet. Plate, model and seats are what every other screen needs; service dates, papers
-          and repair notes live behind "More details".
-        </p>
-      </header>
+      {/*
+       * No `action`: the "Add a van" form below is always rendered (never
+       * toggled behind an "Add" button), so its own `EntityForm` Save
+       * button is already this page's one primary pill — a header action
+       * here would be a second one in the same region.
+       */}
+      <AdminPageHeader
+        eyebrow="Operations"
+        title="Vans"
+        description={
+          'The fleet. Plate, model and seats are what every other screen needs; service dates, papers and repair notes live behind "More details".'
+        }
+      />
 
       <Card className={CARD}>
         <CardHeader>
@@ -526,15 +529,15 @@ export default function AdminVansPage() {
                 setEditValues((current) => ({ ...current, [name]: value }))
               }
               onSubmit={submitEdit}
+              hideSubmit
             />
-            <Button
-              type="button"
-              variant="outline"
-              className={`${OUTLINE_BUTTON} mt-3 w-full sm:w-auto`}
-              onClick={() => setEditingVan(null)}
-            >
-              Cancel
-            </Button>
+            <FormActions
+              onCancel={() => setEditingVan(null)}
+              saveLabel="Save changes"
+              pending={update.isPending}
+              submitType="button"
+              onSave={submitEdit}
+            />
           </CardContent>
         </Card>
       ) : null}
@@ -571,14 +574,11 @@ export default function AdminVansPage() {
                     pending={setStatus.isPending}
                   />
                 </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className={`${OUTLINE_BUTTON} mt-3 w-full`}
-                  onClick={() => startEdit(van)}
-                >
-                  Edit
-                </Button>
+                <div className="mt-3">
+                  <Button type="button" variant="row" onClick={() => startEdit(van)}>
+                    Edit
+                  </Button>
+                </div>
               </li>
             ))}
           </ul>
@@ -635,13 +635,7 @@ export default function AdminVansPage() {
                       />
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className={OUTLINE_BUTTON}
-                        onClick={() => startEdit(van)}
-                      >
+                      <Button type="button" variant="row" onClick={() => startEdit(van)}>
                         Edit
                       </Button>
                     </td>

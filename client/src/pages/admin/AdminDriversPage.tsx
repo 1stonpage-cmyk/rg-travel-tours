@@ -116,7 +116,9 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import AdminPageHeader from '@/components/admin/AdminPageHeader';
 import EntityForm, { type EntityFormField } from '@/components/admin/EntityForm';
+import FormActions from '@/components/admin/FormActions';
 import { firstValidationMessage, splitFieldErrors } from '@/lib/field-errors';
 import { trpc } from '@/lib/trpc';
 
@@ -347,10 +349,6 @@ const NOTICE =
   'border-brand-blue-200 bg-brand-blue-50 text-brand-blue-900 rounded-xl border p-3 text-sm font-medium';
 const ALERT =
   'border-brand-warning/30 bg-brand-gold-100 text-brand-gold-800 rounded-xl border p-3 text-sm font-medium';
-const PRIMARY_BUTTON =
-  'tap-target bg-brand-blue-700 hover:bg-brand-blue-800 rounded-[10px] font-semibold text-white transition-colors';
-const OUTLINE_BUTTON =
-  'tap-target border-brand-blue-200 text-brand-blue-700 hover:bg-brand-blue-50 hover:text-brand-blue-800 rounded-[10px] font-semibold transition-colors';
 
 /** Everything about one driver's personal data — RA 10173, this screen only. */
 function DriverPersonalData({ driver }: { driver: DriverRow }) {
@@ -719,15 +717,16 @@ export default function AdminDriversPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <p className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.08em]">
-          Operations
-        </p>
-        <h1 className="text-brand-ink text-2xl font-bold sm:text-3xl">Drivers</h1>
-        <p className="text-brand-error text-sm">
-          Everyone who drives for us. PIN resets and leave come straight from here.
-        </p>
-      </header>
+      {/*
+       * No `action`: the "Add a driver" form below is always rendered
+       * (never toggled behind an "Add" button), so its own `EntityForm`
+       * Save button is already this page's one primary pill.
+       */}
+      <AdminPageHeader
+        eyebrow="Operations"
+        title="Drivers"
+        description="Everyone who drives for us. PIN resets and leave come straight from here."
+      />
 
       {pinPanel ? (
         <div
@@ -749,22 +748,20 @@ export default function AdminDriversPage() {
               ? ' Any sign-in lockout on this driver has also been cleared.'
               : ''}
           </p>
+          {/*
+           * Not a table row — a standalone notice panel. `Copy PIN` is the
+           * action this panel exists for, so it gets the full-size
+           * secondary-pill (never `primary-pill`: the always-rendered "Add
+           * a driver"/"Edit" form's own Save is this page's one primary,
+           * and this panel is a separate region besides). `Dismiss` is a
+           * standalone Cancel-type control outside any form footer, so
+           * `admin-ghost`.
+           */}
           <div className="mt-3 flex flex-wrap gap-2">
-            <Button
-              type="button"
-              size="sm"
-              className={PRIMARY_BUTTON}
-              onClick={() => copyPin(pinPanel.pin)}
-            >
+            <Button type="button" variant="secondary-pill" onClick={() => copyPin(pinPanel.pin)}>
               Copy PIN
             </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className={OUTLINE_BUTTON}
-              onClick={() => setPinPanel(null)}
-            >
+            <Button type="button" variant="admin-ghost" onClick={() => setPinPanel(null)}>
               Dismiss
             </Button>
           </div>
@@ -835,15 +832,15 @@ export default function AdminDriversPage() {
                 setEditValues((current) => ({ ...current, [name]: value }))
               }
               onSubmit={submitEdit}
+              hideSubmit
             />
-            <Button
-              type="button"
-              variant="outline"
-              className={`${OUTLINE_BUTTON} mt-3 w-full sm:w-auto`}
-              onClick={() => setEditingDriver(null)}
-            >
-              Cancel
-            </Button>
+            <FormActions
+              onCancel={() => setEditingDriver(null)}
+              saveLabel="Save changes"
+              pending={update.isPending}
+              submitType="button"
+              onSave={submitEdit}
+            />
           </CardContent>
         </Card>
       ) : null}
@@ -906,13 +903,7 @@ export default function AdminDriversPage() {
                     <DriverPersonalData driver={driver} />
 
                     <div className="mt-3 flex flex-wrap items-center gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className={OUTLINE_BUTTON}
-                        onClick={() => startEdit(driver)}
-                      >
+                      <Button type="button" variant="row" onClick={() => startEdit(driver)}>
                         Edit
                       </Button>
 
@@ -920,8 +911,7 @@ export default function AdminDriversPage() {
                         <>
                           <Button
                             type="button"
-                            size="sm"
-                            className={PRIMARY_BUTTON}
+                            variant="row"
                             disabled={resetPin.isPending}
                             onClick={() => resetPin.mutate({ id: driver.id })}
                           >
@@ -929,9 +919,7 @@ export default function AdminDriversPage() {
                           </Button>
                           <Button
                             type="button"
-                            variant="outline"
-                            size="sm"
-                            className={OUTLINE_BUTTON}
+                            variant="row"
                             disabled={resetPin.isPending}
                             onClick={() => setConfirmResetId(null)}
                           >
@@ -941,9 +929,7 @@ export default function AdminDriversPage() {
                       ) : (
                         <Button
                           type="button"
-                          variant="outline"
-                          size="sm"
-                          className={OUTLINE_BUTTON}
+                          variant="row"
                           onClick={() => setConfirmResetId(driver.id)}
                         >
                           Reset PIN
@@ -961,8 +947,7 @@ export default function AdminDriversPage() {
                           <>
                             <Button
                               type="button"
-                              size="sm"
-                              className={PRIMARY_BUTTON}
+                              variant="row"
                               disabled={unlock.isPending}
                               onClick={() => unlock.mutate({ id: driver.id })}
                             >
@@ -970,9 +955,7 @@ export default function AdminDriversPage() {
                             </Button>
                             <Button
                               type="button"
-                              variant="outline"
-                              size="sm"
-                              className={OUTLINE_BUTTON}
+                              variant="row"
                               disabled={unlock.isPending}
                               onClick={() => setConfirmUnlockId(null)}
                             >
@@ -982,9 +965,7 @@ export default function AdminDriversPage() {
                         ) : (
                           <Button
                             type="button"
-                            variant="outline"
-                            size="sm"
-                            className={OUTLINE_BUTTON}
+                            variant="row"
                             onClick={() => {
                               setActiveNotice(null);
                               setConfirmUnlockId(driver.id);
@@ -998,9 +979,7 @@ export default function AdminDriversPage() {
                       {driver.isActive ? (
                         <Button
                           type="button"
-                          variant="outline"
-                          size="sm"
-                          className={OUTLINE_BUTTON}
+                          variant="row-amber"
                           disabled={setActive.isPending}
                           aria-label={`Deactivate ${driver.name}`}
                           onClick={() => {
@@ -1013,9 +992,7 @@ export default function AdminDriversPage() {
                       ) : (
                         <Button
                           type="button"
-                          variant="outline"
-                          size="sm"
-                          className={OUTLINE_BUTTON}
+                          variant="row"
                           disabled={setActive.isPending}
                           aria-label={`Reactivate ${driver.name}`}
                           onClick={() => setActive.mutate({ id: driver.id, isActive: true })}
@@ -1037,10 +1014,25 @@ export default function AdminDriversPage() {
                           as needing a driver.
                         </p>
                         <div className="mt-3 flex flex-wrap gap-2">
+                          {/*
+                           * BUG FIX (same shape as AdminVehicleTypesPage's
+                           * destructive-confirm fix): this was a SOLID BLUE
+                           * `PRIMARY_BUTTON` for an actual destructive
+                           * confirm, contradicting this file's own module
+                           * note above ("The confirm is amber, never red")
+                           * and owner decision 1 ("Deactivate = amber
+                           * outline pill"). This box is a standalone
+                           * full-size confirm panel (not the compact
+                           * actions row above it — that row's own
+                           * `Deactivate` trigger is `row-amber`), so it
+                           * takes the full-size siblings: `amber-pill` for
+                           * the destructive confirm and `admin-ghost` for
+                           * its standalone Cancel, matching the button
+                           * system's own "Yes, deactivate {name}" example.
+                           */}
                           <Button
                             type="button"
-                            size="sm"
-                            className={PRIMARY_BUTTON}
+                            variant="amber-pill"
                             disabled={setActive.isPending}
                             onClick={() => setActive.mutate({ id: driver.id, isActive: false })}
                           >
@@ -1051,9 +1043,7 @@ export default function AdminDriversPage() {
                           <Button
                             ref={cancelDeactivateRef}
                             type="button"
-                            variant="outline"
-                            size="sm"
-                            className={OUTLINE_BUTTON}
+                            variant="admin-ghost"
                             disabled={setActive.isPending}
                             onClick={() => setConfirmDeactivateId(null)}
                           >
@@ -1082,9 +1072,7 @@ export default function AdminDriversPage() {
                               </span>
                               <Button
                                 type="button"
-                                variant="outline"
-                                size="sm"
-                                className={OUTLINE_BUTTON}
+                                variant="row"
                                 disabled={
                                   removeLeave.isPending && removeLeave.variables?.id === leave.id
                                 }
