@@ -7,7 +7,7 @@ import { Slot } from '@radix-ui/react-slot';
  * Admin button system, "Option A — Clean Pill" (owner decision 1,
  * DEMO POLISH batch, 2026-11-09 — see
  * `.design-preview/admin-buttons.html`, git-excluded, read for the exact
- * values transcribed below). Five self-contained variants — each bakes in
+ * values transcribed below). Six self-contained variants — each bakes in
  * its OWN height/padding/radius/font alongside its color treatment, rather
  * than composing with the `size` prop the way the pre-existing variants do.
  * This is deliberate, not an oversight: CVA concatenates `variant` classes
@@ -23,6 +23,11 @@ import { Slot } from '@radix-ui/react-slot';
  * says public-site buttons are not touched in this run — reusing that key
  * would have silently restyled them.
  *
+ * `amber-pill` is the full 44px amber-outline confirm button — e.g. a
+ * "Yes, deactivate {name}" inline confirm — never a second `primary-pill`
+ * for a destructive action, per owner decision 1 ("Deactivate = amber
+ * outline pill. Never red"). `row-amber` is its compact table-row sibling.
+ *
  * `row`/`row-amber` stay visually compact (32px) for dense admin tables but
  * keep a real 44px tap target via an invisible `::before` pseudo-element
  * (`-inset-x-1 -inset-y-1.5` around an 8-unit/32px box = 44px on every
@@ -33,6 +38,7 @@ const ADMIN_PILL_VARIANTS = [
   'primary-pill',
   'secondary-pill',
   'admin-ghost',
+  'amber-pill',
   'row',
   'row-amber',
 ] as const;
@@ -57,6 +63,8 @@ const buttonVariants = cva(
           'h-11 rounded-full border-[1.5px] border-brand-blue-600 bg-white px-6 text-sm font-semibold text-brand-blue-600 hover:bg-brand-blue-50 active:bg-brand-blue-100',
         'admin-ghost':
           'h-11 rounded-full border-[1.5px] border-transparent bg-transparent px-6 text-sm font-semibold text-brand-blue-800 hover:bg-brand-blue-50 active:bg-brand-blue-100',
+        'amber-pill':
+          'h-11 rounded-full border-[1.5px] border-brand-warning bg-white px-6 text-sm font-semibold text-brand-warning hover:bg-brand-gold-50 active:bg-brand-gold-100',
         row: "relative h-8 rounded-full border-[1.5px] border-brand-blue-600 bg-white px-4 text-[13px] font-semibold text-brand-blue-600 before:absolute before:-inset-x-1 before:-inset-y-1.5 before:content-[''] hover:bg-brand-blue-50 active:bg-brand-blue-100",
         'row-amber':
           "relative h-8 rounded-full border-[1.5px] border-brand-warning bg-white px-4 text-[13px] font-semibold text-brand-warning before:absolute before:-inset-x-1 before:-inset-y-1.5 before:content-[''] hover:bg-brand-gold-50 active:bg-brand-gold-100",

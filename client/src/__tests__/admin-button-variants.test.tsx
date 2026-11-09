@@ -2,7 +2,7 @@
  * B1 (DEMO POLISH batch, 2026-11-09) — the admin "Clean Pill" button system
  * (owner decision 1; Option A in `.design-preview/admin-buttons.html`,
  * git-excluded). Pins the exact values that file specifies, and — the part
- * most likely to silently regress — that a caller who names one of the five
+ * most likely to silently regress — that a caller who names one of the six
  * admin variants WITHOUT also passing a `size` prop still gets the pill's
  * own 44px sizing rather than the default `size`'s `h-9` winning the
  * Tailwind-merge conflict. See `button.tsx`'s own comment on why that is a
@@ -41,6 +41,19 @@ describe('admin pill button variants', () => {
     expect(button.className).toContain('bg-transparent');
     expect(button.className).toContain('text-brand-blue-800');
     expect(button.className).toContain('hover:bg-brand-blue-50');
+  });
+
+  it('amber-pill: 44px tall, full radius, amber outline (not the forbidden color) — for a full-size destructive confirm', () => {
+    render(<Button variant="amber-pill">Yes, deactivate Juan</Button>);
+    const button = screen.getByRole('button', { name: 'Yes, deactivate Juan' });
+    expect(button.className).toContain('h-11');
+    expect(button.className).toContain('rounded-full');
+    expect(button.className).toContain('border-brand-warning');
+    expect(button.className).toContain('text-brand-warning');
+    expect(button.className).toContain('bg-white');
+    expect(button.className).not.toMatch(/\bred\b/);
+    // Never the default size's classes leaking through.
+    expect(button.className).not.toMatch(/(?:^|\s)h-9(?:\s|$)/);
   });
 
   it('row: 32px visible, blue outline, but a 44px invisible hit-area via ::before', () => {
