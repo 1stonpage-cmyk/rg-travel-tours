@@ -163,6 +163,54 @@ export const UNKNOWN_VEHICLE_TYPE_MESSAGE = 'No vehicle type with that id.';
 export const UNKNOWN_TRANSFER_ROUTE_MESSAGE = 'No transfer route with that id.';
 
 /**
+ * The refusal for a route that would make BOTH directions of a place pair
+ * independently bookable through two different rows (owner decision 2,
+ * 2026-11-09 — design note §6 item 4a, previously an open question).
+ *
+ * **The bug this closes.** `UNIQUE(from_place_id, to_place_id)` treats
+ * `(A,B)` and `(B,A)` as different rows, so nothing in the schema stops an
+ * admin creating both — the identical journey listed twice, possibly at
+ * different prices. A `reverseEnabled` row already serves BOTH directions on
+ * its own (that is what the flag means), so a separate row for the opposite
+ * pair is never needed and is always a duplicate of one direction or the
+ * other.
+ *
+ * **The full condition** (worked through as a state-space, not just the
+ * single case the owner's own example names): a pair is "effectively
+ * bookable in both directions through two different rows" exactly when the
+ * OPPOSITE row exists AT ALL and EITHER row has (or would have, with this
+ * save) `reverseEnabled = true`. Two one-directional rows with
+ * `reverseEnabled = false` on both are NOT refused — that is a legitimate,
+ * deliberate case (two one-way routes, each priced independently for its own
+ * direction, neither using the shared-price reverse mechanism). Only once
+ * one side's reverse flag is (or becomes) true does the pair collide, because
+ * that flag alone already covers the other row's entire journey.
+ *
+ * Named with real place names, in both orders, so an owner can see exactly
+ * which pair conflicts — a function rather than a static string (unlike
+ * {@link DUPLICATE_TRANSFER_ROUTE_MESSAGE}) because the two place names vary
+ * per call.
+ *
+ * **The sentence has to name the retired case** (reviewer finding, 2026-11-09),
+ * because the check below deliberately matches an INACTIVE opposite row and
+ * there is no delete mutation on this table at all (see
+ * `routers/admin/transfer-routes.ts`'s header): an earlier wording offered
+ * "or remove the other route", which is an operation that does not exist, and
+ * the nearest thing an admin would reach for (Retire) provably does not clear
+ * the conflict. Same stance {@link DUPLICATE_TRANSFER_ROUTE_MESSAGE} already
+ * spells out in words ("a retired route still holds both"); this one now says
+ * it too rather than assuming the admin has read the other.
+ */
+export function reversePairConflictMessage(fromPlaceName: string, toPlaceName: string): string {
+  return (
+    `${fromPlaceName} → ${toPlaceName} is already sold as the reverse of ` +
+    `${toPlaceName} → ${fromPlaceName}. A route and its reverse pair cannot both be ` +
+    'independently bookable — turn off "also bookable in reverse" on one of them. ' +
+    'A retired route still holds the pair, so retiring one does not free the other.'
+  );
+}
+
+/**
  * The refusal when a route's from/to pair would name the same place twice.
  * The Zod schema (`transferRouteCreateInputSchema`) already refuses this on a
  * `create`, where both ids are always present; `update`'s patch may name only
@@ -277,7 +325,14 @@ function routeValues(params: TransferRouteUpsertParams) {
  * rather than two round trips, so the existence check costs what it did
  * before this restructuring.
  *
- * **The price card's vehicle-type ids are checked third, still before any
+ * **The reverse-pair conflict check comes third, still before any write**
+ * (owner decision 2, 2026-11-09) — reusing the SAME places query's result
+ * for the two place NAMES the refusal message needs, so this costs no extra
+ * round trip beyond the one query it adds (reading whether the opposite pair
+ * exists). See {@link reversePairConflictMessage}'s own doc comment for the
+ * full state-space the condition covers.
+ *
+ * **The price card's vehicle-type ids are checked fourth, still before any
  * write** — every non-null key of `params.prices`, in one more `inArray`
  * query, for the same reason the places are: `transfer_route_vehicle_prices
  * .vehicle_type_id` is a real foreign key too, and catching an unknown id
@@ -294,12 +349,57 @@ export async function upsertTransferRoute(
   }
 
   const places = await tx
-    .select({ id: transferPlaces.id })
+    .select({ id: transferPlaces.id, name: transferPlaces.name })
     .from(transferPlaces)
     .where(inArray(transferPlaces.id, [params.fromPlaceId, params.toPlaceId]));
-  const foundPlaceIds = new Set(places.map((place) => place.id));
-  if (!foundPlaceIds.has(params.fromPlaceId) || !foundPlaceIds.has(params.toPlaceId)) {
+  const placeNameById = new Map(places.map((place) => [place.id, place.name]));
+  if (!placeNameById.has(params.fromPlaceId) || !placeNameById.has(params.toPlaceId)) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: UNKNOWN_TRANSFER_PLACE_MESSAGE });
+  }
+
+  /*
+   * The reverse-pair conflict (owner decision 2, 2026-11-09) — see
+   * `reversePairConflictMessage`'s own doc comment for the full
+   * state-space. Queried UNCONDITIONALLY (not gated on
+   * `params.reverseEnabled`), because the conflict is symmetric: it fires
+   * when EITHER this row's own `reverseEnabled` (as it will be saved) OR the
+   * OPPOSITE row's stored `reverseEnabled` is true — a narrower query gated
+   * on only one side would miss the other.
+   *
+   * `reverseRoute.id !== params.id` is what lets an UPDATE that swaps a
+   * route's own `fromPlaceId`/`toPlaceId` (making it look, for a moment,
+   * like its own opposite) save itself: on an `update`, the opposite-pair
+   * query can otherwise match the very row being saved, still holding its
+   * PRE-update values at read time.
+   *
+   * Matches an INACTIVE opposite row too — deliberately not filtered to
+   * `isActive`, the same stance `DUPLICATE_TRANSFER_ROUTE_MESSAGE` already
+   * takes ("a retired route still holds both"): `setActive` never clears
+   * this conflict, only `update`/`create` can, so a retire-then-recreate
+   * dance cannot be used to sidestep it.
+   */
+  const [reverseRoute] = await tx
+    .select({ id: transferRoutes.id, reverseEnabled: transferRoutes.reverseEnabled })
+    .from(transferRoutes)
+    .where(
+      and(
+        eq(transferRoutes.fromPlaceId, params.toPlaceId),
+        eq(transferRoutes.toPlaceId, params.fromPlaceId),
+      ),
+    )
+    .limit(1);
+  if (
+    reverseRoute !== undefined &&
+    reverseRoute.id !== params.id &&
+    (params.reverseEnabled || reverseRoute.reverseEnabled)
+  ) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: reversePairConflictMessage(
+        placeNameById.get(params.fromPlaceId)!,
+        placeNameById.get(params.toPlaceId)!,
+      ),
+    });
   }
 
   // The complete price card's requested vehicle-type ids — see this

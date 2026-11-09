@@ -34,10 +34,17 @@ function validationError(opts: {
   });
 }
 
+/**
+ * `flightDetailsRequirement` defaults to `'optional'` here, not `'hidden'`
+ * — the tests that call `show()` without a third argument (the general
+ * rendering tests below) predate the three-state prop and are checking
+ * that the flight fields RENDER at all, which `'optional'` still does
+ * (shown, not required) and `'hidden'` would not.
+ */
 function show(
   productType: 'transfer_one_way' | 'transfer_day_use',
   error?: unknown,
-  requiresFlightDetails = false,
+  flightDetailsRequirement: 'required' | 'optional' | 'hidden' = 'optional',
 ) {
   return render(
     <TransferGuestDetailsForm
@@ -45,7 +52,7 @@ function show(
       payMode="deposit"
       onPayModeChange={() => {}}
       amountDueNowCentavos={AMOUNT_DUE_NOW}
-      requiresFlightDetails={requiresFlightDetails}
+      flightDetailsRequirement={flightDetailsRequirement}
       error={error}
     />,
   );
@@ -88,7 +95,7 @@ describe('TransferGuestDetailsForm', () => {
         payMode="deposit"
         onPayModeChange={onPayModeChange}
         amountDueNowCentavos={AMOUNT_DUE_NOW}
-        requiresFlightDetails={false}
+        flightDetailsRequirement="optional"
       />,
     );
     await user.click(screen.getByLabelText(/pay in full/i));
@@ -134,16 +141,20 @@ describe('TransferGuestDetailsForm', () => {
   });
 
   /**
-   * Owner decision 2026-11-08, decision 5 — flight fields are required
-   * client-side when the SELECTED ROUTE touches an airport at either end.
-   * This is UX polish only (the component's own header note); the server
-   * enforces the real rule post-catalog-read. Both states must render
-   * visibly differently, or a guest on an airport route could submit with
-   * no way to tell the fields were ever optional.
+   * **Owner decision 3, 2026-11-09, narrowing decision 5 from 2026-11-08.**
+   * The old rule had TWO states (required / optional-shown); this one has
+   * THREE (required / optional-shown / hidden entirely). The 'required'
+   * and 'optional' tests below are the direct descendants of the old
+   * true/false tests — same assertions, renamed prop and values — and the
+   * 'hidden' test is new: under the superseded rule the fields rendered
+   * (optional) on EVERY one-way transfer regardless of airport-ness, so
+   * there was no "not shown at all" state to test. All three states must
+   * render visibly differently, or a guest could submit with no way to
+   * tell which rule applied to the fields in front of them.
    */
-  describe('requiresFlightDetails (owner decision 2026-11-08)', () => {
-    it('marks flightNumber/airline as required, with no "(optional)" suffix, when true', () => {
-      show('transfer_one_way', undefined, true);
+  describe('flightDetailsRequirement (owner decision 2026-11-09)', () => {
+    it('marks flightNumber/airline as required, with no "(optional)" suffix, when "required"', () => {
+      show('transfer_one_way', undefined, 'required');
       const flightNumber = screen.getByLabelText(/^flight number$/i);
       const airline = screen.getByLabelText(/^airline$/i);
       expect(flightNumber).toBeRequired();
@@ -151,8 +162,8 @@ describe('TransferGuestDetailsForm', () => {
       expect(screen.getByText(/touches the airport/i)).toBeInTheDocument();
     });
 
-    it('leaves flightNumber/airline optional, suffixed "(optional)", when false', () => {
-      show('transfer_one_way', undefined, false);
+    it('leaves flightNumber/airline optional, suffixed "(optional)", when "optional"', () => {
+      show('transfer_one_way', undefined, 'optional');
       const flightNumber = screen.getByLabelText(/flight number \(optional\)/i);
       const airline = screen.getByLabelText(/airline \(optional\)/i);
       expect(flightNumber).not.toBeRequired();
@@ -160,8 +171,20 @@ describe('TransferGuestDetailsForm', () => {
       expect(screen.queryByText(/touches the airport/i)).not.toBeInTheDocument();
     });
 
-    it('still hides flightNumber/airline entirely on a day-use hire, even when requiresFlightDetails is true', () => {
-      show('transfer_day_use', undefined, true);
+    /**
+     * New under decision 3: neither place is an airport, so the whole
+     * block — not just the "required" marker — does not render at all on
+     * a one-way transfer.
+     */
+    it('does not render flightNumber/airline at all when "hidden"', () => {
+      show('transfer_one_way', undefined, 'hidden');
+      expect(screen.queryByLabelText(/flight number/i)).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/airline/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/touches the airport/i)).not.toBeInTheDocument();
+    });
+
+    it('still hides flightNumber/airline entirely on a day-use hire, even when flightDetailsRequirement is "required"', () => {
+      show('transfer_day_use', undefined, 'required');
       expect(screen.queryByLabelText(/flight number/i)).not.toBeInTheDocument();
       expect(screen.queryByLabelText(/airline/i)).not.toBeInTheDocument();
     });

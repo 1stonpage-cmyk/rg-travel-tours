@@ -141,7 +141,8 @@ import { quoteTransfer, vehiclePriceForRouteAndType } from './pricing';
  * explains — each module that needs both sides of a route declares its own
  * pair). Used only by {@link loadRouteShape} below, to answer the two
  * post-catalog-read checks `assertBookableShape` cannot: whether this route
- * may be travelled in reverse, and whether either end is an airport.
+ * may be travelled in reverse, and whether the PICKUP place (resolved by
+ * `direction`) is an airport.
  */
 const fromPlace = alias(transferPlaces, 'fromPlace');
 const toPlace = alias(transferPlaces, 'toPlace');
@@ -243,8 +244,9 @@ export interface CreateTransferBookingInput {
  * transaction opens" framing** (owner decision 2026-11-08; design note §2/§6
  * item 3) — `reverse_not_enabled_for_route` and
  * `flight_details_required_for_airport_route` both need the RESOLVED route
- * (its `reverseEnabled` flag, and whether either end is an airport place),
- * which does not exist until step 3a's catalog read, inside the transaction.
+ * (its `reverseEnabled` flag, and whether the PICKUP place — resolved via
+ * `direction`, owner decision 2026-11-09 — is an airport place), which does
+ * not exist until step 3a's catalog read, inside the transaction.
  * `assertBookableShape` cannot check either one; they are thrown from
  * `createTransferBooking()` itself, right after that read — see the comment
  * there. They still roll the transaction back and still write nothing, same
@@ -274,12 +276,18 @@ export const TRANSFER_BOOKING_SHAPE_PROBLEMS = [
    */
   'reverse_not_enabled_for_route',
   /**
-   * A one-way trip on a route where either end is an airport place, with
+   * A one-way trip whose PICKUP place is an airport, with
    * `flightNumber`/`airline` not BOTH present. Checked post-catalog-read —
-   * see the class doc comment above. Flagged to the owner as an open
-   * question (design note §6, item 4b): this refuses some one-way requests
-   * that were previously bookable, since flight fields used to be always
-   * optional on a one-way trip.
+   * see the class doc comment above.
+   *
+   * **Narrowed 2026-11-09 (owner decision 3)** from the 2026-11-08 rule this
+   * reason originally shipped with, which required the fields when EITHER
+   * end of the route was an airport, regardless of direction. A
+   * drop-off-only airport is now OPTIONAL, not required: the fields may
+   * still be given (and are stored if so — nothing refuses them), just not
+   * demanded. Which place counts as "pickup" depends on `direction`:
+   * `'forward'` reads `fromPlace`, `'reverse'` reads `toPlace` — see the
+   * ternary in `createTransferBooking()` where this is thrown.
    */
   'flight_details_required_for_airport_route',
 ] as const;
@@ -392,7 +400,8 @@ interface RouteShape {
 /**
  * Reads the two facts about a route that `vehiclePriceForRouteAndType()`
  * does not carry — whether it may be travelled in reverse, and whether
- * either end is an airport place — so `createTransferBooking()` can make its
+ * either place is an airport place (the caller resolves which one is PICKUP
+ * from `direction`) — so `createTransferBooking()` can make its
  * two post-catalog-read checks (owner decision 2026-11-08; see
  * `TRANSFER_BOOKING_SHAPE_PROBLEMS`'s doc comment).
  *
@@ -666,14 +675,24 @@ export async function createTransferBooking(
               `route ${input.routeId} does not allow the reverse direction`,
             );
           }
+          /*
+           * Owner decision 3, 2026-11-09: required ⟺ the PICKUP place is an
+           * airport — not "either end" (the 2026-11-08 rule this narrows).
+           * Pickup is `fromPlace` on a 'forward' hold and `toPlace` on a
+           * 'reverse' one; a drop-off-only airport is optional (fields may
+           * still be given and are stored, just not demanded — see
+           * `TRANSFER_BOOKING_SHAPE_PROBLEMS`'s doc comment on this reason).
+           */
+          const pickupIsAirport =
+            input.direction === 'forward' ? routeShape.fromIsAirport : routeShape.toIsAirport;
           if (
             input.productType === 'transfer_one_way' &&
-            (routeShape.fromIsAirport || routeShape.toIsAirport) &&
+            pickupIsAirport &&
             (blank(input.flightNumber) || blank(input.airline))
           ) {
             throw new TransferBookingShapeError(
               'flight_details_required_for_airport_route',
-              `route ${input.routeId} touches an airport; flight number and airline are both required`,
+              `route ${input.routeId} direction ${input.direction} has an airport pickup; flight number and airline are both required`,
             );
           }
         }

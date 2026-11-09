@@ -915,8 +915,21 @@ describeWithDb('createTransferBooking', () => {
     expect(await writtenRowCounts()).toEqual(before);
   });
 
+  /**
+   * **Retargeted from `toIsAirport: true` (owner decision 3, 2026-11-09).**
+   * Under the pre-2026-11-09 "either end" rule this test's `toIsAirport`
+   * fixture still proved acceptance once flight details were given — but it
+   * no longer exercises the REQUIRED path at all under the new,
+   * pickup-only rule: with `toIsAirport: true` and the default forward
+   * direction, the pickup place (`fromPlace`) is not an airport, so flight
+   * details are merely optional there now (see the new
+   * "drop-off is an airport but pickup is not" test below, which is what
+   * now covers that fixture shape). Retargeted to `fromIsAirport: true` so
+   * this test keeps proving what it always meant to: a REQUIRED-and-satisfied
+   * hold succeeds.
+   */
   it('accepts a one-way airport transfer once flight details are given', async () => {
-    const routeId = await makeRoute({ toIsAirport: true });
+    const routeId = await makeRoute({ fromIsAirport: true });
     await makeFleet(2);
 
     const result = await hold(
@@ -928,6 +941,95 @@ describeWithDb('createTransferBooking', () => {
       }),
     );
     expect((await bookingRow(result.bookingId)).status).toBe('pending_payment');
+  });
+
+  // -------------------------------------------------------------------------
+  // Decision 3 (owner, 2026-11-09): required only when PICKUP is an airport,
+  // not "either end" — narrowing the rule above. Which place is pickup
+  // depends on `direction`.
+  // -------------------------------------------------------------------------
+
+  it('does NOT require flight details when only the DROP-OFF is an airport (forward direction)', async () => {
+    // forward: pickup = fromPlace (not an airport), drop-off = toPlace (is).
+    const routeId = await makeRoute({ toIsAirport: true });
+    await makeFleet(2);
+
+    const result = await hold(
+      transferInput({
+        routeId,
+        direction: 'forward',
+        flightNumber: null,
+        airline: null,
+        payMode: 'full',
+      }),
+    );
+    expect((await bookingRow(result.bookingId)).status).toBe('pending_payment');
+  });
+
+  /**
+   * The symmetric reverse-direction case for the same optional rule: the
+   * AIRPORT end is `fromPlace`, but travelling in reverse makes `toPlace`
+   * the pickup — so it is still optional. This is one of the two tests that
+   * actually discriminate the new rule from the old "either end" one: under
+   * the old rule this fixture (an airport route at all) would have required
+   * the fields regardless of direction.
+   */
+  it('does NOT require flight details when only the DROP-OFF is an airport (reverse direction)', async () => {
+    // reverse: pickup = toPlace (not an airport), drop-off = fromPlace (is).
+    const routeId = await makeRoute({ fromIsAirport: true, reverseEnabled: true });
+    await makeFleet(2);
+
+    const result = await hold(
+      transferInput({
+        routeId,
+        direction: 'reverse',
+        flightNumber: null,
+        airline: null,
+        payMode: 'full',
+      }),
+    );
+    expect((await bookingRow(result.bookingId)).status).toBe('pending_payment');
+  });
+
+  /**
+   * Proves `direction` is actually read, not just accepted — the airport is
+   * on `toPlace`, which is only the PICKUP when travelling in reverse. A
+   * ternary that ignored direction (always reading `fromIsAirport`) would
+   * wrongly accept this hold without flight details; a ternary reading the
+   * wrong branch (swapped forward/reverse) would also wrongly accept it.
+   */
+  it('requires flight details when the PICKUP is an airport via REVERSE direction', async () => {
+    const routeId = await makeRoute({ toIsAirport: true, reverseEnabled: true });
+    await makeFleet(2);
+    const before = await writtenRowCounts();
+
+    const error = await createTransferBooking(
+      transferInput({ routeId, direction: 'reverse', flightNumber: null, airline: null }),
+      NOW,
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(TransferBookingShapeError);
+    expect((error as TransferBookingShapeError).reason).toBe(
+      'flight_details_required_for_airport_route',
+    );
+    expect(await writtenRowCounts()).toEqual(before);
+  });
+
+  /** Flight details are stored, even though optional, when the guest volunteers them anyway. */
+  it('stores flight details that were given but not required (drop-off-only airport)', async () => {
+    const routeId = await makeRoute({ toIsAirport: true });
+    await makeFleet(2);
+
+    const result = await hold(
+      transferInput({
+        routeId,
+        direction: 'forward',
+        flightNumber: '5J 999',
+        airline: 'Cebu Pacific',
+        payMode: 'full',
+      }),
+    );
+    expect((await detailsRow(result.bookingId)).flightNumber).toBe('5J 999');
   });
 
   it('does NOT require flight details for a DAY-USE hire, even on an airport route', async () => {

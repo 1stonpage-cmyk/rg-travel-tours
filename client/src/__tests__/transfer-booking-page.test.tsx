@@ -206,10 +206,17 @@ describe('TransferBookingPage — reversible route (owner decision 2026-11-08)',
     await user.clear(within(form).getByLabelText(/^bags$/i));
     await user.type(within(form).getByLabelText(/^bags$/i), '1');
     await user.type(within(form).getByLabelText(/drop-off address/i), 'Mactan Airport');
-    // The reverse leg also touches an airport (same two places), so flight
-    // details are required client-side — see the dedicated describe block
-    // below for the show/hide half; here they are just filled in so the
-    // native `required` attributes do not block this submit.
+    /*
+     * Retargeted comment (owner decision 3, 2026-11-09): under the
+     * superseded "either end" rule this WAS required regardless of
+     * direction. Under the new pickup-only rule, the reverse leg's pickup
+     * is `toPlace` ("Cebu City", not an airport per REVERSIBLE's fixture),
+     * so flight details are merely OPTIONAL here, not required — see the
+     * dedicated "flight details, decision 3" describe block below for the
+     * three-state assertions. They are still filled in here because this
+     * test's own point is the `direction` value on the hold payload, not
+     * the fields' required-ness, and an optional field still accepts input.
+     */
     await user.type(within(form).getByLabelText(/flight number/i), 'PR123');
     await user.type(within(form).getByLabelText(/airline/i), 'Philippine Airlines');
     await user.type(within(form).getByLabelText(/full name/i), 'Juan Dela Cruz');
@@ -249,6 +256,13 @@ describe('TransferBookingPage — reversible route (owner decision 2026-11-08)',
 });
 
 describe('TransferBookingPage — flight details required on an airport route', () => {
+  /**
+   * Still valid, unretargeted: MACTAN's `fromPlace` is an airport, and
+   * `selectTypeAndRoute`'s default regex picks the FORWARD leg — forward
+   * pickup is `fromPlace` — so under decision 3's pickup-only rule this is
+   * still the 'required' case, same as it was under the superseded
+   * either-end rule.
+   */
   it('marks flightNumber/airline as required once a vehicle is selected on an airport-touching route', async () => {
     mockTrpc({
       'transferRoutes.list': [MACTAN],
@@ -263,6 +277,126 @@ describe('TransferBookingPage — flight details required on an airport route', 
     await user.click(vanRadio);
 
     const form = await screen.findByRole('form', { name: /transfer booking form/i });
+    expect(within(form).getByLabelText(/^flight number$/i)).toBeRequired();
+    expect(within(form).getByLabelText(/^airline$/i)).toBeRequired();
+  });
+});
+
+/**
+ * Owner decision 3, 2026-11-09 — narrows decision 5 (2026-11-08) from
+ * "either end is an airport" to "the PICKUP place is an airport", where
+ * pickup depends on `direction`. The describe block above already covers
+ * the REQUIRED case (pickup is an airport, forward direction); these cover
+ * the two states that are NEW relative to the superseded rule: optional
+ * (drop-off-only) and hidden (neither place), plus the direction flip that
+ * makes the SAME two-place route answer differently depending on which way
+ * it is travelled.
+ */
+describe('TransferBookingPage — flight details, decision 3 (pickup-only, direction-dependent)', () => {
+  /** Only the drop-off is an airport; forward direction — pickup is the non-airport place. */
+  const DROPOFF_AIRPORT_ONLY: TransferRoutePublicRow = {
+    ...MACTAN,
+    id: 6,
+    fromPlace: { id: 20, name: 'Talisay City', isAirport: false },
+    toPlace: { id: 10, name: 'Mactan-Cebu International Airport', isAirport: true },
+    reverseEnabled: false,
+    slug: 'talisay-mactan-airport',
+  };
+
+  /** Neither place is an airport at all. */
+  const NEITHER_AIRPORT: TransferRoutePublicRow = {
+    ...MACTAN,
+    id: 7,
+    fromPlace: { id: 21, name: 'Lapu-Lapu City', isAirport: false },
+    toPlace: { id: 22, name: 'Talisay City', isAirport: false },
+    reverseEnabled: false,
+    slug: 'lapu-lapu-talisay',
+  };
+
+  /** The airport is on `toPlace`; reversible, so the reverse leg's pickup (`toPlace`) is the airport. */
+  const AIRPORT_ON_REVERSE_PICKUP: TransferRoutePublicRow = {
+    ...MACTAN,
+    id: 8,
+    fromPlace: { id: 23, name: 'Carcar City', isAirport: false },
+    toPlace: { id: 10, name: 'Mactan-Cebu International Airport', isAirport: true },
+    reverseEnabled: true,
+    slug: 'carcar-mactan-airport',
+  };
+
+  it('marks flightNumber/airline optional (shown, not required, no "touches the airport" banner) when only the drop-off is an airport', async () => {
+    mockTrpc({
+      'transferRoutes.list': [DROPOFF_AIRPORT_ONLY],
+      'checkout.quoteTransfer': quoteByVehicleTypeId,
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('radio', { name: /airport transfer/i }));
+    await user.click(await screen.findByRole('radio', { name: /^talisay city/i }));
+    const vanRadio = await screen.findByRole('radio', { name: /^van/i });
+    await waitFor(() => expect(vanRadio).not.toBeDisabled());
+    await user.click(vanRadio);
+
+    const form = await screen.findByRole('form', { name: /transfer booking form/i });
+    expect(within(form).getByLabelText(/flight number \(optional\)/i)).not.toBeRequired();
+    expect(within(form).getByLabelText(/airline \(optional\)/i)).not.toBeRequired();
+    expect(screen.queryByText(/touches the airport/i)).not.toBeInTheDocument();
+  });
+
+  it('does not render flightNumber/airline at all when neither place is an airport', async () => {
+    mockTrpc({
+      'transferRoutes.list': [NEITHER_AIRPORT],
+      'checkout.quoteTransfer': quoteByVehicleTypeId,
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('radio', { name: /airport transfer/i }));
+    await user.click(await screen.findByRole('radio', { name: /^lapu-lapu city/i }));
+    const vanRadio = await screen.findByRole('radio', { name: /^van/i });
+    await waitFor(() => expect(vanRadio).not.toBeDisabled());
+    await user.click(vanRadio);
+
+    const form = await screen.findByRole('form', { name: /transfer booking form/i });
+    expect(within(form).queryByLabelText(/flight number/i)).not.toBeInTheDocument();
+    expect(within(form).queryByLabelText(/airline/i)).not.toBeInTheDocument();
+  });
+
+  /**
+   * The direction-dependence itself, proven on ONE route whose two legs
+   * answer DIFFERENTLY: the forward leg's pickup (`fromPlace`, Carcar City)
+   * is not an airport, so flight details are optional; picking the SAME
+   * route's reverse leg flips pickup to `toPlace` (the airport), making
+   * them required. A page that read `fromPlace.isAirport` regardless of
+   * `direction` (the bug decision 3 exists to prevent) would show
+   * 'optional' on both legs and never redden this.
+   */
+  it('flips flight details from optional to required when the SAME route is picked in the opposite direction', async () => {
+    mockTrpc({
+      'transferRoutes.list': [AIRPORT_ON_REVERSE_PICKUP],
+      'checkout.quoteTransfer': quoteByVehicleTypeId,
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('radio', { name: /airport transfer/i }));
+    // Forward leg: pickup = Carcar City (not an airport) -> optional.
+    await user.click(await screen.findByRole('radio', { name: /^carcar city/i }));
+    let vanRadio = await screen.findByRole('radio', { name: /^van/i });
+    await waitFor(() => expect(vanRadio).not.toBeDisabled());
+    await user.click(vanRadio);
+
+    let form = await screen.findByRole('form', { name: /transfer booking form/i });
+    expect(within(form).getByLabelText(/flight number \(optional\)/i)).not.toBeRequired();
+
+    // Reverse leg, same route id: pickup = the airport -> required.
+    await user.click(
+      await screen.findByRole('radio', { name: /^mactan-cebu international airport/i }),
+    );
+    vanRadio = await screen.findByRole('radio', { name: /^van/i });
+    await waitFor(() => expect(vanRadio).not.toBeDisabled());
+
+    form = await screen.findByRole('form', { name: /transfer booking form/i });
     expect(within(form).getByLabelText(/^flight number$/i)).toBeRequired();
     expect(within(form).getByLabelText(/^airline$/i)).toBeRequired();
   });

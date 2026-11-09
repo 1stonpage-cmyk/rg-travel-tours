@@ -13,7 +13,9 @@ import CouponField from '@/components/checkout/CouponField';
 import PaymentOptions from '@/components/checkout/PaymentOptions';
 import HoldCountdown from '@/components/checkout/HoldCountdown';
 import RoutePicker, { type TransferRouteSelection } from '@/components/transfer/RoutePicker';
-import TransferGuestDetailsForm from '@/components/transfer/TransferGuestDetailsForm';
+import TransferGuestDetailsForm, {
+  type FlightDetailsRequirement,
+} from '@/components/transfer/TransferGuestDetailsForm';
 import TransferTypePicker from '@/components/transfer/TransferTypePicker';
 import VehicleOptionCard from '@/components/transfer/VehicleOptionCard';
 import { Button } from '@/components/ui/button';
@@ -61,11 +63,16 @@ import { trpc } from '@/lib/trpc';
  *    pair of named `useQuery` calls, because the count of offered types is
  *    not known until the route is chosen and the Rules of Hooks forbid
  *    calling a variable number of `useQuery` hooks directly.
- *  - **Flight fields are required when the chosen route touches an
- *    airport** (`requiresFlightDetails` below, owner decision 2026-11-08,
- *    decision 5) — computed once from the selected route's two places,
- *    direction-independent (direction only swaps which place displays as
- *    pickup vs. drop-off, never which two places are involved).
+ *  - **Flight fields have three states — required, optional-but-shown, or
+ *    hidden** (`flightDetailsRequirement` below, owner decision 3,
+ *    2026-11-09, narrowing owner decision 5 from 2026-11-08). **This IS
+ *    direction-dependent**, unlike the superseded 2026-11-08 rule: which of
+ *    the route's two places is the PICKUP flips with `direction` (forward
+ *    reads `fromPlace`, reverse reads `toPlace`), and only the pickup
+ *    being an airport makes the fields required — a drop-off-only airport
+ *    makes them merely optional, and neither being an airport hides them
+ *    entirely. See `TransferGuestDetailsForm.tsx`'s own header for the full
+ *    three-state contract this page resolves into.
  *
  * **The day-use "from ₱X" decision (brief, flow step 1), generalized.**
  * `RoutePicker` has no `productType` prop and always shows the cheapest
@@ -96,14 +103,14 @@ import { trpc } from '@/lib/trpc';
  * resolves. Each card's `isLoading` therefore reads `isPending ||
  * isPlaceholderData`, not `isPending` alone.
  *
- * **Judgment call, flagged for the task report:** this page does NOT call
- * the public `vehicleTypes.list` procedure. Every vehicle type a guest can
- * see is already resolved onto `route.vehiclePrices` (id, display name,
- * both prices) by `transferRoutes.list` itself, so a second request would
- * duplicate data this page already has and invite the two lists to
- * disagree about what "offered" means. `vehicleTypes.list` exists for a
- * caller that needs every active type independent of any one route (an
- * admin form); this page is never that caller.
+ * This page makes no separate vehicle-type request. Every vehicle type a
+ * guest can see is already resolved onto `route.vehiclePrices` (id, display
+ * name, both prices) by `transferRoutes.list` itself, so a second request
+ * would duplicate data this page already has and invite the two lists to
+ * disagree about what "offered" means. (The standalone public
+ * `vehicleTypes.list` procedure this comment used to name was removed —
+ * owner decision 2026-11-09, decision 4 — as confirmed-unused; the admin
+ * `admin.vehicleTypes.*` router is unrelated.)
  */
 
 function readInitialProductType(raw: string | null): TransferProductType | null {
@@ -213,13 +220,23 @@ export default function TransferBookingPage() {
   );
 
   /**
-   * Owner decision 2026-11-08, decision 5. Direction-independent: a route's
-   * two places are the same regardless of which way it is travelled, only
-   * their pickup/drop-off LABELS swap — see `RoutePicker`'s own note.
+   * Owner decision 3, 2026-11-09, narrowing decision 5 from 2026-11-08.
+   * **Direction-DEPENDENT** — which place is pickup flips with `direction`
+   * (forward: `fromPlace`; reverse: `toPlace`), unlike the superseded rule
+   * this replaces, which read both places regardless of direction. No
+   * route selected yet → `'hidden'`, matching `requiresFlightDetails`'s old
+   * `false` default (fields do not render until a route exists to ask).
    */
-  const requiresFlightDetails = selectedRoute
-    ? selectedRoute.fromPlace.isAirport || selectedRoute.toPlace.isAirport
-    : false;
+  const flightDetailsRequirement: FlightDetailsRequirement = (() => {
+    if (!selectedRoute) return 'hidden';
+    const pickupIsAirport =
+      direction === 'forward' ? selectedRoute.fromPlace.isAirport : selectedRoute.toPlace.isAirport;
+    const dropoffIsAirport =
+      direction === 'forward' ? selectedRoute.toPlace.isAirport : selectedRoute.fromPlace.isAirport;
+    if (pickupIsAirport) return 'required';
+    if (dropoffIsAirport) return 'optional';
+    return 'hidden';
+  })();
 
   const vehicleOptions = selectedRoute?.vehiclePrices ?? [];
   const vehiclePricingEnabled = productType !== null && routeId !== null;
@@ -536,7 +553,7 @@ export default function TransferBookingPage() {
                 payMode={payMode}
                 onPayModeChange={setPayMode}
                 amountDueNowCentavos={selectedQuote.amountDueNowCentavos}
-                requiresFlightDetails={requiresFlightDetails}
+                flightDetailsRequirement={flightDetailsRequirement}
                 error={createHoldTransfer.isError ? createHoldTransfer.error : null}
               />
 

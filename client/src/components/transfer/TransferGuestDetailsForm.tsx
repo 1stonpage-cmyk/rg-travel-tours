@@ -28,20 +28,36 @@ import { cn } from '@/lib/utils';
  * the wrong product type, so showing a box the schema will reject is worse
  * than not showing it.
  *
- * **`flightNumber`/`airline` are REQUIRED when the chosen route touches an
- * airport at either end** (owner decision 2026-11-08, decision 5; see
- * `docs/superpowers/plans/2026-11-08-flexible-routes.md` §2/§6 item 4b) —
- * superseding this component's old rule ("show for every one-way transfer,
- * nothing in the schema marks a route as airport-specific"), now that a
- * route's `fromPlace`/`toPlace` each carry `isAirport`. The two fields still
- * render for every one-way transfer (so a guest on a non-airport route can
- * still volunteer flight details), but only turn `required` — and drop their
- * "(optional)" suffix — when `requiresFlightDetails` is true. **This is UX
- * polish, not the control**: `createTransferBooking()` enforces the same
- * rule authoritatively, server-side, after resolving the route (it needs the
- * resolved route's two places, which this Zod layer does not have) — see
- * that function's own note and `createHoldTransferInput`'s doc comment on
- * why the check cannot live in Zod.
+ * **`flightNumber`/`airline` have THREE states, keyed off `flightDetailsRequirement`
+ * (owner decision 3, 2026-11-09, narrowing owner decision 5 from
+ * 2026-11-08 — see `docs/superpowers/plans/2026-11-08-flexible-routes.md`
+ * §2/§6 item 4b and the 2026-11-09 decision log):**
+ *
+ *  - `'required'` — the guest's PICKUP place is an airport. Fields render,
+ *    `required`, no "(optional)" suffix, and the airport banner shows.
+ *  - `'optional'` — only the DROP-OFF is an airport. Fields still render
+ *    (a guest may still volunteer flight details), but are not `required`
+ *    and keep their "(optional)" suffix; no banner.
+ *  - `'hidden'` — neither place is an airport. The whole flight-details
+ *    block does not render at all on a one-way transfer.
+ *
+ * **This narrows the 2026-11-08 rule**, which required the fields whenever
+ * EITHER end of the route was an airport, regardless of which one was the
+ * pickup, and which always rendered the fields on a one-way transfer
+ * (never `'hidden'`). Which place counts as "pickup" depends on
+ * `direction` — `TransferBookingPage.tsx` resolves that before computing
+ * this prop; this component only ever sees the already-resolved
+ * three-state answer, never `direction` or the route itself.
+ *
+ * **This is UX polish, not the control**: `createTransferBooking()`
+ * enforces the authoritative REQUIRED/optional half of this rule
+ * server-side, after resolving the route (it needs the resolved route's
+ * two places and the pickup's direction, which this Zod layer does not
+ * have) — see that function's own note and `createHoldTransferInput`'s doc
+ * comment on why the check cannot live in Zod. The `'hidden'` half is
+ * UX-only through and through: the server never refuses a submitted
+ * flight number/airline on a non-airport route, it simply has nowhere to
+ * require them from.
  *
  * **Consent.** `ConsentCheckbox` is reused as-is. Unlike `CheckoutPage.tsx`
  * (which renders it as a SIBLING of `GuestDetails` and keeps its own local
@@ -56,6 +72,12 @@ import { cn } from '@/lib/utils';
  * to clear — kept only because `ConsentCheckbox` requires the prop.
  */
 
+/**
+ * Whether flight fields are required, optional-but-shown, or hidden
+ * entirely — see this file's header note. Owner decision 3, 2026-11-09.
+ */
+export type FlightDetailsRequirement = 'required' | 'optional' | 'hidden';
+
 type Props = {
   /** Decides whether `dayUseEndTime` vs `flightNumber`/`airline` render. */
   productType: TransferProductType;
@@ -64,17 +86,13 @@ type Props = {
   /** From the SELECTED vehicle's quote — same contract as `GuestDetails.tsx`. */
   amountDueNowCentavos: { full: number; deposit: number };
   /**
-   * Whether the SELECTED route touches an airport at either end
-   * (`route.fromPlace.isAirport || route.toPlace.isAirport`) — owner
-   * decision 2026-11-08, decision 5. Direction does not change which two
-   * places are involved, only which one displays as pickup vs. drop-off, so
-   * the page computes this once from the selected route regardless of which
-   * direction the guest picked, and passes `false` when no route is chosen
-   * yet. Drives whether `flightNumber`/`airline` are marked `required`
-   * client-side — see this file's header note on why the server, not this
-   * prop, is the actual control.
+   * The already-resolved three-state answer for the SELECTED route and
+   * DIRECTION (owner decision 3, 2026-11-09) — see this file's header
+   * note. `TransferBookingPage.tsx` is where `direction` and the route's
+   * two places actually get turned into one of `'required'`/`'optional'`/
+   * `'hidden'`; this component takes the answer, never the inputs.
    */
-  requiresFlightDetails: boolean;
+  flightDetailsRequirement: FlightDetailsRequirement;
   /** `createHoldTransfer`'s raw rejection, read via `field-errors.ts`. */
   error?: unknown;
 };
@@ -108,7 +126,7 @@ export default function TransferGuestDetailsForm({
   payMode,
   onPayModeChange,
   amountDueNowCentavos,
-  requiresFlightDetails,
+  flightDetailsRequirement,
   error,
 }: Props) {
   const leadNameError = getNestedFieldError(error, 'lead.name');
@@ -271,10 +289,15 @@ export default function TransferGuestDetailsForm({
         <FieldError id={DROPOFF_MAP_ERROR_ID} message={dropoffMapError} />
       </div>
 
-      {/* One-way only — a day-use request is refused if either field is sent. */}
-      {isOneWay && (
+      {/*
+       * One-way only — a day-use request is refused if either field is
+       * sent. On a one-way transfer, the whole block is additionally
+       * hidden when `flightDetailsRequirement === 'hidden'` (neither place
+       * is an airport) — see this file's header note, owner decision 3.
+       */}
+      {isOneWay && flightDetailsRequirement !== 'hidden' && (
         <div className="space-y-2">
-          {requiresFlightDetails && (
+          {flightDetailsRequirement === 'required' && (
             <p className="text-muted-foreground text-xs">
               This trip touches the airport, so please share your flight details.
             </p>
@@ -282,13 +305,13 @@ export default function TransferGuestDetailsForm({
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="transfer-flight-number">
-                Flight number{!requiresFlightDetails && ' (optional)'}
+                Flight number{flightDetailsRequirement === 'optional' && ' (optional)'}
               </Label>
               <Input
                 id="transfer-flight-number"
                 name="flightNumber"
                 maxLength={20}
-                required={requiresFlightDetails}
+                required={flightDetailsRequirement === 'required'}
                 aria-describedby={flightNumberError ? FLIGHT_NUMBER_ERROR_ID : undefined}
                 aria-invalid={flightNumberError ? true : undefined}
                 className="tap-target"
@@ -297,13 +320,13 @@ export default function TransferGuestDetailsForm({
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="transfer-airline">
-                Airline{!requiresFlightDetails && ' (optional)'}
+                Airline{flightDetailsRequirement === 'optional' && ' (optional)'}
               </Label>
               <Input
                 id="transfer-airline"
                 name="airline"
                 maxLength={80}
-                required={requiresFlightDetails}
+                required={flightDetailsRequirement === 'required'}
                 aria-describedby={airlineError ? AIRLINE_ERROR_ID : undefined}
                 aria-invalid={airlineError ? true : undefined}
                 className="tap-target"

@@ -518,6 +518,128 @@ describeWithDb('admin.transferRoutes', () => {
     ).rejects.toMatchObject({ code: 'CONFLICT' });
   });
 
+  /* ------------------------------------------------------------------ *
+   * The reverse-pair conflict (owner decision 2, 2026-11-09).
+   * ------------------------------------------------------------------ */
+
+  it('refuses creating the reverse pair when the existing route already covers it via reverseEnabled', async () => {
+    const placeA = await makePlace();
+    const placeB = await makePlace();
+    // A -> B, reverseEnabled: true — already serves BOTH directions.
+    await createRoute({ fromPlaceId: placeA, toPlaceId: placeB, reverseEnabled: true });
+
+    const error = await ownerApi()
+      .admin.transferRoutes.create(routeInput(placeB, placeA, { reverseEnabled: true }))
+      .catch((e: unknown) => e);
+    expect(error).toMatchObject({ code: 'BAD_REQUEST' });
+    expect((error as Error).message).toMatch(/already sold as the reverse of/i);
+  });
+
+  /**
+   * The symmetric half of the same bug — the one a narrow "only query when
+   * `params.reverseEnabled` is true" implementation would miss. The NEW
+   * route being created has `reverseEnabled: false`; the conflict exists
+   * entirely because the OPPOSITE, already-stored row has it `true`.
+   */
+  it('refuses creating a one-directional route when the opposite row already covers it via reverseEnabled', async () => {
+    const placeA = await makePlace();
+    const placeB = await makePlace();
+    await createRoute({ fromPlaceId: placeA, toPlaceId: placeB, reverseEnabled: true });
+
+    await expect(
+      ownerApi().admin.transferRoutes.create(routeInput(placeB, placeA, { reverseEnabled: false })),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  /**
+   * The other symmetric direction: two one-directional rows already exist
+   * (legitimate — see the negative control below), and the admin now flips
+   * ONE of them to `reverseEnabled: true`. That flag alone would cover the
+   * opposite row's entire journey, so it is refused exactly as a fresh
+   * create would be — same check, no second code path.
+   */
+  it('refuses turning reverseEnabled ON when a separate opposite route already exists', async () => {
+    const placeA = await makePlace();
+    const placeB = await makePlace();
+    const { id: aToB } = await createRoute({
+      fromPlaceId: placeA,
+      toPlaceId: placeB,
+      reverseEnabled: false,
+    });
+    await createRoute({ fromPlaceId: placeB, toPlaceId: placeA, reverseEnabled: false });
+
+    await expect(
+      ownerApi().admin.transferRoutes.update({ id: aToB, patch: { reverseEnabled: true } }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  /**
+   * The negative control: two one-directional routes between the same pair,
+   * NEITHER with reverse on, is a legitimate admin case (different prices
+   * per direction, deliberately not using the shared-price reverse
+   * mechanism) and must NOT be refused.
+   */
+  it('allows two one-directional routes between the same pair when neither is reverseEnabled', async () => {
+    const placeA = await makePlace();
+    const placeB = await makePlace();
+    await createRoute({ fromPlaceId: placeA, toPlaceId: placeB, reverseEnabled: false });
+    await expect(
+      createRoute({ fromPlaceId: placeB, toPlaceId: placeA, reverseEnabled: false }),
+    ).resolves.toMatchObject({ id: expect.any(Number) });
+  });
+
+  /** A retired opposite route still conflicts — `setActive` cannot be used to sidestep this. */
+  it('refuses the reverse pair even when the existing opposite route is retired', async () => {
+    const placeA = await makePlace();
+    const placeB = await makePlace();
+    const { id } = await createRoute({
+      fromPlaceId: placeA,
+      toPlaceId: placeB,
+      reverseEnabled: true,
+    });
+    await ownerApi().admin.transferRoutes.setActive({ id, isActive: false });
+
+    await expect(
+      ownerApi().admin.transferRoutes.create(routeInput(placeB, placeA, { reverseEnabled: true })),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  /**
+   * The `id` exclusion's real purpose: an update that swaps a route's OWN
+   * from/to must not match itself as "the opposite row". Without the
+   * exclusion, this save would be permanently refused.
+   */
+  /**
+   * `reverseEnabled: true` here is load-bearing for this test, not
+   * incidental: with it false on both the stored row and the patch, the
+   * `(params.reverseEnabled || reverseRoute.reverseEnabled)` half of the
+   * condition is already false regardless of the `id` exclusion, so a test
+   * built with `reverseEnabled: false` would pass even if the exclusion
+   * were deleted — proving nothing. `true` here is what makes the opposite
+   * row's own match (itself, mid-swap) the ONLY thing standing between this
+   * save and a false-positive refusal.
+   */
+  it('allows an update that swaps a route’s own fromPlaceId/toPlaceId', async () => {
+    const placeA = await makePlace();
+    const placeB = await makePlace();
+    const { id } = await createRoute({
+      fromPlaceId: placeA,
+      toPlaceId: placeB,
+      reverseEnabled: true,
+    });
+
+    await expect(
+      ownerApi().admin.transferRoutes.update({
+        id,
+        patch: { fromPlaceId: placeB, toPlaceId: placeA },
+      }),
+    ).resolves.toMatchObject({ ok: true });
+
+    const row = (await ownerApi().admin.transferRoutes.list()).find((r) => r.id === id);
+    expect(row?.fromPlace.id).toBe(placeB);
+    expect(row?.toPlace.id).toBe(placeA);
+  });
+
   it('refuses a duplicate slug with CONFLICT, not a raw database error', async () => {
     const input = routeInput(await makePlace(), await makePlace());
     const { id } = await ownerApi().admin.transferRoutes.create(input);
