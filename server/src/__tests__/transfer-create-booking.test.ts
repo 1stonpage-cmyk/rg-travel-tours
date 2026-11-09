@@ -349,6 +349,7 @@ let guestSeq = 0;
 function transferInput(over: {
   routeId?: number | null;
   customRouteDescription?: string | null;
+  customRouteDurationMinutes?: number | null;
   date?: string;
   vehicleTypeId?: number;
   direction?: TransferDirection;
@@ -372,6 +373,8 @@ function transferInput(over: {
     routeId: over.routeId === undefined ? null : over.routeId,
     customRouteDescription:
       over.customRouteDescription === undefined ? null : over.customRouteDescription,
+    customRouteDurationMinutes:
+      over.customRouteDurationMinutes === undefined ? null : over.customRouteDurationMinutes,
     vehicleTypeId: over.vehicleTypeId ?? VAN_ID,
     direction: over.direction ?? 'forward',
     productType,
@@ -1314,18 +1317,18 @@ describeWithDb('createTransferBooking', () => {
   // -------------------------------------------------------------------------
 
   /**
-   * **A one-way custom route THROWS, and that is the documented gap, not a
-   * bug.** No stored duration exists anywhere in the schema for a staff-quoted
-   * trip with no catalog route, and `computeTransferWindow` refuses to guess
-   * one: a guessed window is wrong by an unknown amount in an unknown direction
-   * and would either oversell a vehicle still out on the road or refuse a
-   * booking that fitted, untraceably. Task T19 must supply a real duration.
-   *
-   * The throw is left VERBATIM rather than wrapped, because its message is the
-   * only place that context is written down. What this test pins is that it
-   * writes nothing and that it is the duration it complains about.
+   * **A one-way custom route with no `customRouteDurationMinutes` refuses,
+   * and that is Task T19's own fix for the documented gap, not a bug.** No
+   * stored duration exists anywhere in the schema for a staff-quoted trip
+   * with no catalog route, and `computeTransferWindow` refuses to GUESS one:
+   * a guessed window is wrong by an unknown amount in an unknown direction and
+   * would either oversell a vehicle still out on the road or refuse a booking
+   * that fitted, untraceably. T19 closes it by making the duration an
+   * explicit, required input instead — refused here, BEFORE the transaction
+   * opens, exactly like every other member of
+   * `TRANSFER_BOOKING_SHAPE_PROBLEMS`.
    */
-  it('refuses a one-way CUSTOM route for want of a duration, verbatim, and writes nothing', async () => {
+  it('refuses a one-way CUSTOM route with no duration, and writes nothing', async () => {
     await makeFleet(2);
     const before = await writtenRowCounts();
 
@@ -1333,17 +1336,98 @@ describeWithDb('createTransferBooking', () => {
       transferInput({
         routeId: null,
         customRouteDescription: 'Cebu City to a private farm in Balamban',
+        customRouteDurationMinutes: null,
         priceSource: { kind: 'staff', priceCentavos: 420_000, staffUserId: STAFF_USER_ID },
       }),
       NOW,
     ).catch((e: unknown) => e);
 
-    expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toMatch(/needs a route duration/);
-    expect((error as Error).message, 'the message must still name the task that owes one').toMatch(
-      /T19/,
-    );
+    expect(error).toBeInstanceOf(TransferBookingShapeError);
+    expect((error as TransferBookingShapeError).reason).toBe('custom_one_way_needs_duration');
     expect(await writtenRowCounts()).toEqual(before);
+  });
+
+  /**
+   * The fix itself: an explicit `customRouteDurationMinutes` is exactly what
+   * closes the gap the test above refuses. The duration FROZEN onto
+   * `booking_transfer_details` — and the one the capacity window is computed
+   * from — must be this exact figure, proven by passing a duration that would
+   * itself push the pickup window past midnight if it were, say, one minute
+   * longer: a wrong (too-short) duration read back here would hide an
+   * oversell rather than merely mis-report it.
+   */
+  it('books a one-way CUSTOM route, freezing the staff-supplied duration', async () => {
+    await makeFleet(2);
+    const description = 'Cebu City to a private farm in Balamban';
+
+    const result = await hold(
+      transferInput({
+        routeId: null,
+        customRouteDescription: description,
+        customRouteDurationMinutes: 90,
+        pickupTime: '08:00',
+        payMode: 'full',
+        priceSource: { kind: 'staff', priceCentavos: 420_000, staffUserId: STAFF_USER_ID },
+      }),
+    );
+
+    const row = await bookingRow(result.bookingId);
+    expect(row.routeId).toBeNull();
+    expect(row.productType).toBe('transfer_one_way');
+    expect(row.totalCentavos).toBe(420_000);
+
+    const details = await detailsRow(result.bookingId);
+    expect(details.customRouteDescription).toBe(description);
+    expect(details.routeDurationMinutesUsed).toBe(90);
+
+    const snapshot = transferPriceSnapshotSchema.parse(row.priceSnapshot);
+    expect(snapshot.routeId).toBeNull();
+    expect(snapshot.customRouteDescription).toBe(description);
+  });
+
+  /**
+   * The duration is not just stored — it is what the capacity WINDOW is
+   * computed from. A one-vehicle fleet, two one-way custom trips whose
+   * windows overlap only because of the SECOND booking's duration: a build
+   * that read the duration for storage but not for the capacity check would
+   * let both through.
+   */
+  it('uses the staff-supplied duration for the capacity window, not just storage', async () => {
+    await makeVan({ vehicleTypeId: VAN_ID });
+    await makeDriver({ maxTransferJobsPerDay: 4 });
+
+    // Trip A: pickup 08:00, a 200-minute duration — its window runs
+    // [08:00, 08:00+200min+60min buffer) = [08:00, 12:20). Trip B's 10:00
+    // pickup falls inside that window ONLY because A's duration is long; a
+    // build that ignored `customRouteDurationMinutes` for the capacity check
+    // (freezing it for storage but computing the window some other way)
+    // would give A a short default window that 10:00 falls outside of, and
+    // both would wrongly fit the one van.
+    await hold(
+      transferInput({
+        routeId: null,
+        customRouteDescription: 'Trip A',
+        customRouteDurationMinutes: 200,
+        pickupTime: '08:00',
+        payMode: 'full',
+        priceSource: { kind: 'staff', priceCentavos: 300_000, staffUserId: STAFF_USER_ID },
+      }),
+    );
+
+    const error = await createTransferBooking(
+      transferInput({
+        routeId: null,
+        customRouteDescription: 'Trip B',
+        customRouteDurationMinutes: 30,
+        pickupTime: '10:00',
+        payMode: 'full',
+        priceSource: { kind: 'staff', priceCentavos: 300_000, staffUserId: STAFF_USER_ID },
+      }),
+      NOW,
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(TransferCapacityRefusedError);
+    expect((error as TransferCapacityRefusedError).reason).toBe('no_vehicle_available');
   });
 
   /**

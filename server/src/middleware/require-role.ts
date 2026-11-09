@@ -84,6 +84,18 @@ export const ROLE_MATRIX = {
    * access here, not even to read.
    */
   staffAccounts: ['owner'],
+  /**
+   * Quote & convert custom trips      ✅ ❌ ✅
+   * Owner answer 4 (transfers-launch plan, 2026-10-28; Task T19). Setting a
+   * price on, and converting, a `transfer_custom` inquiry into a real
+   * booking — the one permission split `packagesInquiries` (owner+
+   * dispatcher) cannot express, because a dispatcher may read the same
+   * inquiry under that area but must not price or convert it. A brand-new
+   * area rather than reusing `toursPricing` (also owner-only, but excludes
+   * finance, who DOES set this price) or `verifyPayments`/`cancelRefund`
+   * (owner+finance, but about money already moving, not a quote).
+   */
+  transferQuoting: ['owner', 'finance'],
 } as const satisfies Record<string, readonly AdminRole[]>;
 
 /** The gated areas of §9's table. */

@@ -22,6 +22,7 @@ import { adminSettingsRouter } from './admin/settings';
 import { adminStaffUsersRouter } from './admin/staff-users';
 import { adminToursRouter } from './admin/tours';
 import { adminTransferPlacesRouter } from './admin/transfer-places';
+import { adminTransferQuotesRouter } from './admin/transfer-quotes';
 import { adminTransferRoutesRouter } from './admin/transfer-routes';
 import { adminVehicleTypesRouter } from './admin/vehicle-types';
 import { adminVansRouter } from './admin/vans';
@@ -200,6 +201,14 @@ export const appRouter = router({
      */
     packages: adminPackagesRouter,
     inquiries: adminInquiriesRouter,
+    /*
+     * Setting a price on / converting a `transfer_custom` inquiry into a
+     * real booking (transfers-launch plan, Task T19; owner answer 4). ITS
+     * OWN area, `transferQuoting` — owner and finance, never a dispatcher —
+     * because `packagesInquiries` just above expresses "read this inquiry",
+     * not "price and convert it", and no existing area says both at once.
+     */
+    transferQuotes: adminTransferQuotesRouter,
     /*
      * The newsletter list as a file (Week 7, Task 13). A THIRD key for what
      * is one screen, because §9 gates this one on `usersSettings` — OWNER

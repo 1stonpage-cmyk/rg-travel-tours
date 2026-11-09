@@ -751,10 +751,10 @@ payment method`; the payload deliberately carries **neither ingredient**, so the
   **Two price tiers can never both match a party size:** overlapping tiers are refused and nothing
   is written.
 - **§9's role table in `docs/BUILD_SPEC.md` is PARSED BY A TEST.** `role-isolation.test.ts` reads
-  that markdown table and pins the exact area / allowed / denied counts (12 areas, 23 allowed, 13
-  denied as of `packagesInquiries`). So adding a `ROLE_MATRIX` area means editing the spec's table,
-  the area-label mapping **and** the counts in one commit — the matrix and the spec cannot drift
-  apart quietly, by design.
+  that markdown table and pins the exact area / allowed / denied counts (13 areas, 25 allowed, 14
+  denied as of `transferQuoting`, Task T19). So adding a `ROLE_MATRIX` area means editing the spec's
+  table, the area-label mapping **and** the counts in one commit — the matrix and the spec cannot
+  drift apart quietly, by design.
 - **The staff name is display only.** It rides on the session's own live join, and **never drives
   an access decision** — `navFor()` still takes the role string, pinned by a test that reddens if
   the name is passed instead.

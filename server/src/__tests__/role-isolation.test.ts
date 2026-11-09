@@ -1,12 +1,12 @@
 /**
  * Task 17 of the core-schema plan: role isolation, both directions.
  *
- * CLAUDE.md asks for "a test per role per area". Three roles across §9's twelve
- * areas is 36 cases, and they are GENERATED from `ROLE_MATRIX` rather than
- * hand-written, because the direction that matters is the denial — and the
- * denial is exactly the case a hand-written set forgets. Writing them out by
- * hand also lets a new area arrive with no test at all; generating them means
- * area twelve is covered the moment it is added to the matrix.
+ * CLAUDE.md asks for "a test per role per area". Three roles across §9's
+ * thirteen areas is 39 cases, and they are GENERATED from `ROLE_MATRIX` rather
+ * than hand-written, because the direction that matters is the denial — and
+ * the denial is exactly the case a hand-written set forgets. Writing them out
+ * by hand also lets a new area arrive with no test at all; generating them
+ * means a thirteenth area is covered the moment it is added to the matrix.
  *
  * Three layers, because the generated 36 on their own would prove less than
  * they appear to:
@@ -99,6 +99,7 @@ const adminHarness = router({
   usersSettings: gated('usersSettings'),
   staffAccounts: gated('staffAccounts'),
   packagesInquiries: gated('packagesInquiries'),
+  transferQuoting: gated('transferQuoting'),
 });
 
 /** An authenticated staff session, as the Week 5 session service will build it. */
@@ -156,6 +157,11 @@ const AREA_LABELS: Record<string, AdminArea> = {
   'Reports, CSV export': 'reports',
   'Users, settings': 'usersSettings',
   'Staff accounts': 'staffAccounts',
+  // Task T19 (transfers-launch plan), owner answer 4: setting a price on /
+  // converting a `transfer_custom` inquiry, split from `packagesInquiries`
+  // because a dispatcher may read the same inquiry but not price or convert
+  // it — owner and finance only.
+  'Quote & convert custom trips': 'transferQuoting',
 };
 
 /** The spec's column order: `| Area | Owner | Dispatcher | Finance |`. */
@@ -194,9 +200,9 @@ function parseSpecMatrix(): Record<string, AdminRole[]> {
 describe('ROLE_MATRIX is BUILD_SPEC §9, transcribed', () => {
   const specMatrix = parseSpecMatrix();
 
-  it('covers the twelve areas of §9 and nothing else', () => {
+  it('covers the thirteen areas of §9 and nothing else', () => {
     expect(Object.keys(ROLE_MATRIX).sort()).toEqual(Object.keys(specMatrix).sort());
-    expect(Object.keys(ROLE_MATRIX)).toHaveLength(12);
+    expect(Object.keys(ROLE_MATRIX)).toHaveLength(13);
   });
 
   for (const [area, allowed] of Object.entries(ROLE_MATRIX)) {
@@ -206,10 +212,10 @@ describe('ROLE_MATRIX is BUILD_SPEC §9, transcribed', () => {
     });
   }
 
-  it('splits the 36 role/area cases 23 allowed to 13 denied', () => {
+  it('splits the 39 role/area cases 25 allowed to 14 denied', () => {
     const allow = Object.values(ROLE_MATRIX).reduce((sum, roles) => sum + roles.length, 0);
-    expect(allow).toBe(23);
-    expect(ADMIN_ROLES.length * Object.keys(ROLE_MATRIX).length - allow).toBe(13);
+    expect(allow).toBe(25);
+    expect(ADMIN_ROLES.length * Object.keys(ROLE_MATRIX).length - allow).toBe(14);
   });
 
   it('names no role outside ADMIN_ROLES', () => {

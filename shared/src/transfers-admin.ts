@@ -39,6 +39,8 @@
  * service.
  */
 import { z } from 'zod';
+import { civilDateSchema, phPhoneSchema } from './checkout';
+import { TRANSFER_PRODUCT_TYPES } from './transfers';
 import { MAX_CENTAVOS } from './tours-admin';
 
 /**
@@ -447,3 +449,228 @@ export interface TransferRouteAdminRow {
   /** Every ACTIVE vehicle type, in sort order. `price: null` means "not offered". */
   prices: TransferRouteAdminVehiclePrice[];
 }
+
+// ---------------------------------------------------------------------------
+// Quote & convert — turning a `transfer_custom` inquiry into a real booking
+// ---------------------------------------------------------------------------
+
+/**
+ * A civil `HH:mm` clock label, Asia/Manila — the same pattern
+ * `transfers-checkout.ts`'s own `CLOCK_TIME_PATTERN` uses, character for
+ * character, because both feed the identical `clockTimeToMinutes()` backstop
+ * in `server/src/services/transfers/overlap.ts`. Not imported from there:
+ * that file's own header explains why it sits downstream of `./checkout` and
+ * `./booking` to avoid a module cycle, which would make importing FROM it
+ * into THIS file (which `./checkout` already sits upstream of) a cycle the
+ * other way. Two three-line constants are cheaper than that cycle.
+ */
+const CLOCK_TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
+const clockTimeField = (message: string) => z.string().regex(CLOCK_TIME_PATTERN, message);
+
+/**
+ * `admin.transferQuotes.convert` (transfers-launch plan, Task T19; §6 step 2)
+ * — owner or finance turning a `transfer_custom` inquiry into a real, held
+ * transfer booking. Gated `adminProcedure('transferQuoting')`; a dispatcher
+ * cannot reach this procedure at all (ROLE_MATRIX, not a hidden button).
+ *
+ * **Deliberately NOT the `createHoldTransferInput` (`transfers-checkout.ts`)
+ * extended or reused** — that file's own header states the controller ruling
+ * (2026-11-03) that the custom-description branch belongs to this task and
+ * does not come through the guest input at all. This is its own schema.
+ *
+ * **Two fields §6 step 2 lists as staff-filled are deliberately absent here,
+ * because they already exist on the inquiry row and are not re-typed:**
+ *
+ *  - the route description — `inquiries.routeDescription`. There is no
+ *    `customRouteDescription` field on this input; the service reads the
+ *    inquiry's own text and passes it to `createTransferBooking()` verbatim.
+ *    A stray guest typo in it is a staff phone call away from a fix; it is
+ *    the request, not a value staff restate.
+ *  - notes — `inquiries.message` becomes `bookings.requests`, the same reuse
+ *    `CreateTransferBookingInput.requests` documents for a guest hold.
+ *
+ * Both of those inquiry columns are nullable at the database (Task T17's own
+ * decision not to add a CHECK), so the service re-validates each is actually
+ * present before calling `createTransferBooking()` and refuses with a named
+ * reason if not — the same "throw rather than silently coerce" discipline
+ * `requireVehicleTypeId()`/`requireDirection()` (`reports/money.ts`, Task
+ * T18) already use for this exact class of nullable-column gap.
+ *
+ * **`pax` and `leadPhone` are two fields the §6 step 2 list does NOT name,
+ * added anyway, and both required here.** That list is prefaced "the full
+ * set of transfer-booking fields" — illustrative, not exhaustive — and both
+ * read the same way once `assertBookableShape()` is read closely:
+ *
+ *  - `inquiries.pax` is nullable (Task T17 added no CHECK on it either), and
+ *    `assertBookableShape`'s `pax_not_positive` refusal would otherwise make
+ *    any inquiry where the guest skipped it permanently unconvertible — the
+ *    exact dead-end `leadPhone` below is written to avoid. Staff confirm the
+ *    head count by phone along with everything else; this input is
+ *    pre-filled from `inquiries.pax` when present (Task T20) and typed when
+ *    not.
+ *  - `inquiries.phone` is nullable (a guest may skip it on the public form)
+ *    while `bookings.leadPhone` and `TransferBookingLead.phone` are both
+ *    `NOT NULL` — the asymmetry `inquiries.name`/`inquiries.email` do not
+ *    have, since those two columns are `NOT NULL` already and so need no
+ *    counterpart here. `name`/`email` are therefore read from the inquiry
+ *    row, never re-typed; `leadPhone` is typed (pre-filled from
+ *    `inquiries.phone` by the client when present, Task T20) so a guest who
+ *    gave no number — or typed one wrong — does not block a conversion staff
+ *    have already picked up the phone to confirm.
+ *
+ * **`customRouteDurationMinutes` closes a real gap named in the codebase
+ * itself, not in the plan.** `services/transfers/overlap.ts`'s
+ * `computeTransferWindow()` THROWS for a one-way transfer with no stored
+ * duration, and its own doc comment says so in these words: a custom,
+ * routeless trip "has no stored duration anywhere in the schema… Task T19
+ * must either carry an explicit staff-entered duration… or compute a window
+ * some other way; it must not soften this into a default." This is that
+ * explicit duration. Required for `transfer_one_way`, refused for
+ * `transfer_day_use` by the `superRefine` below (a day-use window ends at
+ * `dayUseEndTime` and needs no duration) — the mirror image of the
+ * `dayUseEndTime` conditional already in this schema. `createTransferBooking()`
+ * refuses a missing one with its own new `custom_one_way_needs_duration`
+ * reason, so the two cannot disagree about when it is required.
+ *
+ * **No `couponCode`, no `payMode`, no `direction`:**
+ *
+ *  - A coupon is a self-serve discount a guest types at checkout; §6 names no
+ *    discount for a staff quote, and `priceCentavos` is already the one
+ *    legitimate staff-entered figure (Architecture §3) — a second discount
+ *    layered on top of it would be a second, undocumented price adjustment.
+ *  - `payMode` is a guest's own choice of paying in full or by deposit now;
+ *    nobody is at checkout yet when staff convert a request, so the service
+ *    passes `'deposit'` — §6 step 5's own description of what happens next
+ *    ("deposit online/QR or wait for cash collection on the day").
+ *  - `direction` describes which way a CATALOG route runs; this booking has
+ *    none (`routeId` is always null on this path), so the service always
+ *    passes `'forward'`, the same normalisation `revenueByRoute()` (Task T18)
+ *    already applies to every routeless transfer for the identical reason.
+ *
+ * The day-use/flight cross-field rules below are copied from
+ * `createHoldTransferInput`'s own `superRefine`, not imported, for the same
+ * reason the clock pattern above is copied rather than imported — and for the
+ * same reason that file states for its own copy of the rule:
+ * `assertBookableShape()` is the backstop both schemas restate in a friendlier
+ * sentence, and the two must never disagree.
+ */
+export const transferQuoteConvertInput = z
+  .object({
+    inquiryId: z.number().int().positive(),
+    vehicleTypeId: z.number().int().positive(),
+    productType: z.enum(TRANSFER_PRODUCT_TYPES),
+    /** The civil PICKUP date in Asia/Manila. */
+    date: civilDateSchema,
+    pickupTime: clockTimeField('Enter a pickup time as HH:mm, like 08:30.'),
+    /** Day-use only — required/refused by the `superRefine` below. */
+    dayUseEndTime: clockTimeField('Enter an end time as HH:mm, like 17:00.').optional(),
+    /**
+     * One-way only — required/refused by the `superRefine` below, the mirror
+     * image of `dayUseEndTime`. See this schema's own header note on the gap
+     * it closes.
+     */
+    customRouteDurationMinutes: z
+      .number()
+      .int('Enter a whole number of minutes.')
+      .min(1, 'Enter how long this trip takes, in minutes.')
+      .max(1440, 'Enter a duration of less than 24 hours.')
+      .optional(),
+    pax: z
+      .number()
+      .int('Enter a whole number of passengers.')
+      .min(1, 'Enter how many passengers are travelling.')
+      .max(30, 'For a party that size, please arrange several vehicles.'),
+    luggageCount: z
+      .number()
+      .int('Enter a whole number of bags.')
+      .min(0, 'Enter how many bags you are bringing (0 if none).')
+      .max(200, 'Enter how many bags you are bringing (up to 200).'),
+    pickup: z
+      .string()
+      .max(400, 'Enter a shorter pickup address (up to 400 characters).')
+      .optional(),
+    pickupMapUrl: z
+      .url('Enter a valid map link for the pickup, or leave it blank.')
+      .max(500, 'That map link is too long — please shorten it or leave it blank.')
+      .optional(),
+    dropoffAddress: z
+      .string()
+      .min(1, 'Enter where this trip is going.')
+      .max(400, 'Enter a shorter drop-off address (up to 400 characters).'),
+    dropoffMapUrl: z
+      .url('Enter a valid map link for the drop-off, or leave it blank.')
+      .max(500, 'That map link is too long — please shorten it or leave it blank.')
+      .optional(),
+    /** One-way only, refused on a day-use hire by the `superRefine` below. */
+    flightNumber: z.string().max(20, 'Enter a shorter flight number.').optional(),
+    airline: z.string().max(80, 'Enter a shorter airline name.').optional(),
+    /**
+     * A phone number staff can call, even when the guest gave none — see this
+     * schema's own header note. Normalises exactly as `createHoldInput.lead`'s
+     * own phone field does.
+     */
+    leadPhone: phPhoneSchema,
+    /**
+     * Pesos, converted to centavos by the client, re-validated as whole,
+     * positive centavos here — the same bound `admin.refunds.refundPayment`'s
+     * `amountCentavos` uses. `createTransferBooking()` still applies the
+     * ₱100 gateway floor itself, under its own lock, exactly as it would for
+     * a catalog price; this boundary only refuses a figure that cannot be a
+     * price at all.
+     */
+    priceCentavos: z.number().int().positive('Enter a quoted price in pesos.'),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.productType === 'transfer_day_use') {
+      if (value.dayUseEndTime === undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['dayUseEndTime'],
+          message: 'Tell us what time you need the vehicle until.',
+        });
+      } else if (
+        CLOCK_TIME_PATTERN.test(value.pickupTime) &&
+        value.dayUseEndTime <= value.pickupTime
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['dayUseEndTime'],
+          message: 'The end time must be later than the pickup time.',
+        });
+      }
+      for (const field of ['flightNumber', 'airline'] as const) {
+        if (value[field] !== undefined) {
+          ctx.addIssue({
+            code: 'custom',
+            path: [field],
+            message: 'A day-use hire carries no flight — please leave the flight details blank.',
+          });
+        }
+      }
+      if (value.customRouteDurationMinutes !== undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['customRouteDurationMinutes'],
+          message: 'A day-use hire has no fixed duration — please leave this blank.',
+        });
+      }
+      return;
+    }
+
+    if (value.dayUseEndTime !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['dayUseEndTime'],
+        message: 'A one-way transfer has no end time — please leave it blank.',
+      });
+    }
+    if (value.customRouteDurationMinutes === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['customRouteDurationMinutes'],
+        message: 'Enter how long this trip takes, in minutes.',
+      });
+    }
+  });
+export type TransferQuoteConvertInput = z.infer<typeof transferQuoteConvertInput>;

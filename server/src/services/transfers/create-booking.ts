@@ -198,6 +198,17 @@ export interface CreateTransferBookingInput {
   vehicleTypeId: number;
   productType: TransferProductType;
   /**
+   * The one-way duration a custom, routeless trip has no catalog row to
+   * supply (Task T19; see `./overlap.ts`'s `computeTransferWindow` doc
+   * comment, which names this task as the one that must close the gap
+   * rather than default it). Required exactly when `routeId` is null AND
+   * `productType` is `'transfer_one_way'` — refused otherwise by
+   * {@link assertBookableShape}'s `custom_one_way_needs_duration` reason — a
+   * day-use hire needs no duration at all (its window ends at
+   * `dayUseEndTime`) and a catalog route already has one.
+   */
+  customRouteDurationMinutes: number | null;
+  /**
    * Which way a reversible route is being travelled (owner decision
    * 2026-11-08). `'forward'` is `route.fromPlaceId → route.toPlaceId` as the
    * route is stored. Checked against the resolved route's own
@@ -270,6 +281,15 @@ export const TRANSFER_BOOKING_SHAPE_PROBLEMS = [
   'luggage_count_negative',
   /** A staff-quoted price that is not whole, non-negative centavos. */
   'staff_price_not_whole_centavos',
+  /**
+   * A routeless (`routeId === null`) one-way trip with no
+   * `customRouteDurationMinutes` — Task T19's own gap, named in
+   * `./overlap.ts`'s `computeTransferWindow` doc comment: a one-way window
+   * needs a duration from somewhere, a catalog route supplies one and a
+   * custom trip must supply it explicitly. Checked here, from the input
+   * alone, rather than left to surface as that function's `Error` throw.
+   */
+  'custom_one_way_needs_duration',
   /**
    * `direction: 'reverse'` against a route whose `reverseEnabled` is false.
    * Checked post-catalog-read — see the class doc comment above.
@@ -499,6 +519,20 @@ export function assertBookableShape(input: CreateTransferBookingInput): ParsedTi
   if (input.priceSource.kind === 'catalog' && input.routeId === null) {
     refuse('catalog_price_source_without_route', 'a catalog price needs a catalog route');
   }
+  /*
+   * The routeless one-way gap `./overlap.ts` names: a catalog route carries
+   * its own duration and a day-use hire needs none, so this is the ONE
+   * combination with nowhere to read a duration from unless the caller
+   * supplies one explicitly. Answerable from the input alone, so it is
+   * checked here rather than left to surface as `computeTransferWindow`'s
+   * `Error` throw deep inside the transaction.
+   */
+  if (input.routeId === null && input.productType === 'transfer_one_way') {
+    const duration = input.customRouteDurationMinutes;
+    if (!Number.isInteger(duration) || (duration ?? 0) < 1) {
+      refuse('custom_one_way_needs_duration', `got ${duration}`);
+    }
+  }
 
   if (input.priceSource.kind === 'staff') {
     const { priceCentavos } = input.priceSource;
@@ -710,15 +744,20 @@ export async function createTransferBooking(
         /*
          * The duration FROZEN onto this booking, and the one the capacity check
          * is made with — the same value, deliberately. NULL for a day-use hire
-         * (which has no duration: its window ends at `dayUseEndTime`) and for a
-         * custom route (which has none to freeze). See
-         * `booking_transfer_details.route_duration_minutes_used`'s own note on
-         * why freezing it matters: a live read let an admin SHORTEN a route
+         * (which has no duration: its window ends at `dayUseEndTime`). For a
+         * one-way trip it is the catalog route's own duration, or — for a
+         * custom, routeless trip (Task T19) — the staff-supplied
+         * `customRouteDurationMinutes`, already proven a positive integer by
+         * `assertBookableShape`'s `custom_one_way_needs_duration` check above.
+         * See `booking_transfer_details.route_duration_minutes_used`'s own note
+         * on why freezing it matters: a live read let an admin SHORTEN a route
          * after a booking was taken and silently shrink that booking's reserved
          * window.
          */
         const routeDurationMinutesUsed =
-          input.productType === 'transfer_day_use' ? null : (catalog?.routeDurationMinutes ?? null);
+          input.productType === 'transfer_day_use'
+            ? null
+            : (catalog?.routeDurationMinutes ?? input.customRouteDurationMinutes);
 
         /*
          * 3b. Capacity — all five of Architecture §2/§2a's conditions with this

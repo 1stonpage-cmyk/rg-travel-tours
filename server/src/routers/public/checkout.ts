@@ -559,6 +559,15 @@ const TRANSFER_SHAPE_MESSAGES: Record<TransferBookingShapeProblem, string> = {
   luggage_count_negative: 'Enter how many bags you are bringing (0 if none).',
   staff_price_not_whole_centavos: 'We could not price that transfer. Please contact us.',
   /**
+   * Cannot arise on this path at all — `createHoldTransferInput` has no
+   * `customRouteDurationMinutes` field and always carries a catalog
+   * `routeId`, which supplies its own duration. Reachable only through
+   * Task T19's staff conversion. Generic "contact us", naming no figure,
+   * the same treatment `staff_price_not_whole_centavos` gets for the same
+   * reason.
+   */
+  custom_one_way_needs_duration: 'We could not price that transfer. Please contact us.',
+  /**
    * Checked post-catalog-read, inside `createTransferBooking()` itself
    * (owner decision 2026-11-08) — unreachable through `createHoldTransferInput`
    * only in the sense that a guest never TYPES a direction the route disallows
@@ -1121,6 +1130,10 @@ export const checkoutRouter = router({
         date: input.date,
         routeId: input.routeId,
         customRouteDescription: null,
+        // Catalog-only on this path (no `customRouteDescription` above, no
+        // routeless booking possible) — a catalog route always carries its
+        // own duration. See `CreateTransferBookingInput`'s own note.
+        customRouteDurationMinutes: null,
         vehicleTypeId: input.vehicleTypeId,
         productType: input.productType,
         direction: input.direction,

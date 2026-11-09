@@ -621,6 +621,7 @@ Check-ins update the admin dashboard within ~15 seconds (polling is fine; no web
 | Reports, CSV export              | ✅    | ❌         | ✅      |
 | Users, settings                  | ✅    | ❌         | ❌      |
 | Staff accounts                   | ✅    | ❌         | ❌      |
+| Quote & convert custom trips     | ✅    | ❌         | ✅      |
 
 ### Dashboard
 
