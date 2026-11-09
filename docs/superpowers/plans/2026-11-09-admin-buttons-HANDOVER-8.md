@@ -3,8 +3,10 @@
 **Status: R1/R2 (crash recovery) done. 0A, 0B, B1, B3 were already committed before this
 session (crashed session, confirmed via its own compacted transcript and git history). This
 session: finished B2 across every remaining admin page and two shared components it surfaced,
-did B4 (this file's sibling section in `CLAUDE.md`), and did B5 (read-only Chrome QA). Batch
-4c is now complete. Not pushed.**
+did B4 (this file's sibling section in `CLAUDE.md`), did B5 (read-only Chrome QA), and then a
+self-review pass that caught and fixed two more real gaps (a 360px width bug on four pages,
+and the missing regression test for this batch's headline bug). Batch 4c is now complete.
+Not pushed.**
 
 `main` was at `dd59773` (B2 part 1 — vehicle types/transfer routes only) when this session
 started, after a Bun segfault crashed the prior session mid-batch. See "Crash recovery" below
@@ -53,9 +55,12 @@ rather than re-invented.
 | B2 (part 7, final) | `7269c1b` | feat(admin): B2 (part 7, final) -- Clean Pill buttons on the pre-auth pages   |
 | B4                 | `6ffd803` | docs(admin): B4 -- CLAUDE.md "Admin buttons" section                          |
 | B2 (part 8)        | `22221a9` | feat(admin): B2 (part 8) -- Clean Pill buttons on CancelRefundPanel           |
+| B5 fix             | `18583df` | fix(admin): B5 finding -- primary-pill was auto-width at 360px on 4 pages     |
+| guard test         | `b367d98` | test(admin): guard against the repeated blue-destructive-confirm bug          |
 
-`git log --oneline -1` on `main` now shows `22221a9`, nine commits ahead of `dd59773` (fifteen
-ahead of `5b4dc88`, Handover 6). **Nothing this session has been pushed.**
+`git log --oneline -1` on `main` now shows `b367d98`, eleven commits ahead of `dd59773`
+(seventeen ahead of `5b4dc88`, Handover 6). **Nothing this session has been pushed.** The last
+two commits above were added after a self-review pass — see "Self-review" below.
 
 Carried from before this session (already committed, not redone): `93736c3` (1G),
 `d3f5acd` (1E), `405334f` (1C), `aad5fa2` (1B), `92894f4` (1A), `41e7287` (1D), `cdd2216`
@@ -155,11 +160,44 @@ a Save/confirm click.
   the one new finding this QA pass surfaced beyond what the B2 dispatch groups' own file lists
   already covered.
 
-No must-fix or should-fix items remain open from this pass.
+This pass's own scope list (vehicle types, transfer routes, drivers, bookings, settings) did
+not include the four pre-auth-style pages the controller hand-edited directly in B2 parts 6–7
+(AdminChangePasswordPage, AdminLoginPage, AdminForgotPasswordPage, AdminResetPasswordPage) — a
+gap a post-task advisor review caught and this session then closed; see "Self-review" below.
 
-## Owner decisions recorded this batch (unchanged from the original prompt, restated here per
+No other must-fix or should-fix items remain open from this pass.
 
-instructions)
+## Self-review, after a first "done" pass
+
+Before calling B5 (and the batch) complete, an advisor review of the session's own work
+surfaced two real gaps, both closed before this handover was finalized:
+
+1. **Four pages outside B5's own scope list, hand-edited by the controller rather than a
+   dispatched agent, had never actually been checked at 360px.** AdminChangePasswordPage,
+   AdminLoginPage, AdminForgotPasswordPage and AdminResetPasswordPage's single primary-pill
+   buttons (B2 parts 6–7) had been converted correctly in color/shape, but with no width
+   wrapper of their own — unlike every other primary-pill on the site, which gets `w-full
+sm:w-auto` for free from `AdminPageHeader`'s action slot or `FormActions`' footer. Measured
+   live in the 360px iframe harness: the Sign in button was 126px wide under a 286px-wide
+   email input — full-bleed-on-mobile is exactly what decision 1's "never full-bleed on
+   DESKTOP" implies is correct there, and this was the opposite. Fixed (commit `18583df`) by
+   adding `w-full sm:w-auto` directly to each of the four buttons; re-verified all four now
+   match their own form's input width at 360px, with no overflow.
+2. **The destructive-confirm-color bug, found and fixed independently in nine separate files
+   this batch, had zero regression coverage** — every B2 group reported "no test edits
+   needed" because the bug was a pure color/variant swap that no existing test asserted
+   against. Added `admin-destructive-confirm-color.test.ts` (commit `b367d98`), a
+   source-scanning guard in the same idiom as `no-red.test.ts`/`schema-conventions.test.ts`:
+   every admin `<Button>` whose own text is phrased "Yes, ..."/"Yes — ..." (the house style
+   for a two-step confirm's second step, confirmed unique to that shape) must carry
+   `amber-pill` or `row-amber`. Proven able to fail via a self-test against synthetic bug-shaped
+   source, per CLAUDE.md's own discipline. This also covers any admin screen built in the
+   upcoming T17–T29 batches, which decision 1 requires to reuse these shared components.
+
+Also re-verified at this point, on request: `git diff --stat dd59773..HEAD -- client/src/pages/public
+client/src/components/public` is empty — owner decision 2 (public-site buttons untouched) holds.
+
+## Owner decisions recorded this batch (unchanged from the original prompt, restated per instructions)
 
 1. **ADMIN BUTTONS = Option A "Clean Pill"**, exactly as in `.design-preview/admin-buttons.html`
    (local, git-excluded): primary = solid blue pill, auto-width, at most one per view;
@@ -173,15 +211,15 @@ instructions)
 
 ## Test counts
 
-Full suite at this batch's final commit (`22221a9`), confirmed via the controller's own direct
+Full suite at this batch's final commit (`b367d98`), confirmed via the controller's own direct
 re-run of the whole suite (not only trusted from any dispatched agent's self-report, each of
 whom ran only their own scoped test files as instructed, to avoid the concurrent-test-DB
 contention that contributed to the crash):
 
 - shared: 8 files, 99 tests
-- client: 83 files, 1028 tests
+- client: 84 files, 1031 tests
 - server: 129 files, 2636 tests
-- **Total: 220 files, 3763 tests, all green.**
+- **Total: 221 files, 3766 tests, all green.**
 
 All five checks pass: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm format:check`
 (the one pre-existing warning on `.design-preview/admin-buttons.html` is expected — that file
