@@ -35,6 +35,7 @@ import BookingStatusPage from '@/pages/public/BookingStatusPage';
 import CheckoutPage from '@/pages/public/CheckoutPage';
 import HomePage from '@/pages/public/HomePage';
 import CookiesPage from '@/pages/public/CookiesPage';
+import NotFoundPage from '@/pages/public/NotFoundPage';
 import PackageDetailPage from '@/pages/public/PackageDetailPage';
 import PrivacyPage from '@/pages/public/PrivacyPage';
 import RefundPolicyPage from '@/pages/public/RefundPolicyPage';
@@ -103,6 +104,32 @@ export default function App() {
         <Route path="terms" element={<TermsPage />} />
         <Route path="refund-policy" element={<RefundPolicyPage />} />
         <Route path="cookies" element={<CookiesPage />} />
+        {/*
+         * Demo polish, task 1C (owner decision 2) — the catch-all for any
+         * unmatched URL. Before this, `App.tsx` had no `path="*"` route at
+         * all: React Router logged "No routes matched location" and
+         * rendered nothing into `#root`, so a mistyped or stale link showed
+         * a blank white page even though the server-side SEO injector
+         * (`server/src/seo/resolvers.ts`'s `notFoundMeta`) already served the
+         * right HTTP status and `<title>Page not found | TravelSugbo</title>`
+         * for the same path. That server-side behaviour is untouched — this
+         * route only supplies the missing client-side body.
+         *
+         * Placed LAST inside `PublicLayout`, so it only catches a path that
+         * matched no earlier sibling here, and renders with the normal
+         * header/footer/WhatsApp-bar chrome ("inside the normal layout" per
+         * the decision) rather than as a bare screen. It is NOT inside
+         * `AdminLayout`, `DriverLayout`, or any of the standalone
+         * `admin/*`, `driver/*`, `portal/*` routes below — those sit in
+         * their own top-level `<Route>` blocks, each matched independently
+         * by React Router against the full pathname, so e.g.
+         * `/admin/this-does-not-exist` matches none of them either and
+         * falls through to THIS catch-all instead, rendering with public
+         * chrome rather than `AdminLayout`'s. See `not-found-page.test.tsx`
+         * for the proof (rendering `<App/>` at an unmatched path) and its
+         * explicit admin-subpath spot-check.
+         */}
+        <Route path="*" element={<NotFoundPage />} />
       </Route>
 
       {/*
