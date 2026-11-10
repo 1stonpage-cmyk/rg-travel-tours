@@ -204,7 +204,11 @@ async function sendQuoteReadyNotice(bookingId: number): Promise<void> {
     // The ONE figure this caller computes (see `NotifyPayload
     // .dueNowCentavos`'s own note) — the same arithmetic
     // `portal.manualPayment`'s `amountDueCentavos` already does from the
-    // same price snapshot, for the same booking shape.
+    // same price snapshot, for the same booking shape. `payMode === 'full'`
+    // is unreachable today — `convertTransferQuote()` always writes
+    // `'deposit'` — kept as a fail-safe guard the same way `driver.startTrip`
+    // keeps its own already-`in_progress` branch for a status this path
+    // can't currently produce.
     const dueNowCentavos =
       row.payMode === 'full'
         ? row.totalCentavos

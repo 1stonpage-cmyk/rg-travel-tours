@@ -534,24 +534,27 @@ export function renderTemplate(event: NotifyEvent, payload: NotifyPayload): Rend
       const tripRowsPlain = tripRows.map(([label, value]) => `${label}: ${value}`).join('\n');
 
       /*
-       * Task T21b: due now vs. the full total vs. the balance left for the
-       * day. `dueNowCentavos` is the one figure the caller computes (see
-       * `NotifyPayload.dueNowCentavos`'s own note); the balance is derived
-       * HERE from two already-trusted server numbers, the same way
-       * `booking_confirmed`'s case derives its own balance line above.
+       * Task T21b: due now vs. the balance left for the day. `dueNowCentavos`
+       * is the one figure the caller computes (see `NotifyPayload
+       * .dueNowCentavos`'s own note); the balance is derived HERE from two
+       * already-trusted server numbers, the same way `booking_confirmed`'s
+       * case derives its own balance line above. No separate "Total" line
+       * here — `details`/`detailsText` immediately above already states the
+       * total; repeating it here would just show the guest the same figure
+       * twice.
        */
       const moneyHtml =
         payload.dueNowCentavos === undefined
           ? ''
-          : `<p style="margin:0;">Total: <strong>${escapeHtml(price)}</strong>. ` +
-            `Due now: <strong>${escapeHtml(formatPeso(payload.dueNowCentavos))}</strong>. ` +
-            `Balance on the day: <strong>${escapeHtml(
+          : `<p style="margin:0;">Due now: <strong>${escapeHtml(
+              formatPeso(payload.dueNowCentavos),
+            )}</strong>. Balance on the day: <strong>${escapeHtml(
               formatPeso(payload.totalCentavos - payload.dueNowCentavos),
             )}</strong>.</p>`;
       const moneyPlain =
         payload.dueNowCentavos === undefined
           ? ''
-          : `Total: ${price}\nDue now: ${formatPeso(payload.dueNowCentavos)}\n` +
+          : `Due now: ${formatPeso(payload.dueNowCentavos)}\n` +
             `Balance on the day: ${formatPeso(payload.totalCentavos - payload.dueNowCentavos)}\n`;
 
       return {
