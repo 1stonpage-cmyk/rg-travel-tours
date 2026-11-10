@@ -969,14 +969,18 @@ export const SEED_TRANSFER_ROUTES: SeedTransferRoute[] = [
  * real to show in a demo.
  *
  * This is a RECIPE, not a row: `upsertDemoTransferBookings` (`seed.ts`)
- * resolves `routeSlug`/`vehicleTypeSlug` to real ids, computes the actual
- * pickup date/time relative to "now" at seed time (so "today" and
- * "tomorrow" are genuinely today and tomorrow whenever this runs), and
- * drives the real `createTransferBooking()` / `recordPayment()` /
- * `assignVanAndDriver()` services — never a hand-set `amount_paid_centavos`
- * (CLAUDE.md; `schema-conventions.test.ts` would refuse a direct write
- * outside `record-payment.ts` in application source, same rule a test
- * fixture is exempt from and this file, being application source, is not).
+ * resolves `routeSlug`/`vehicleTypeSlug` to real ids, resolves the actual
+ * pickup date/time relative to "now" at seed time (so "tomorrow" and
+ * "later this week" are genuinely that whenever this runs, and "today"
+ * picks the latest of a FIXED set of daytime slots that clears both
+ * `minNoticeHours` and the midnight-crossing capacity refusal, rolling to
+ * tomorrow instead on a run late enough that no same-day slot can — see
+ * `upsertDemoTransferBookings`'s own doc comment), and drives the real
+ * `createTransferBooking()` / `recordPayment()` / `assignVanAndDriver()`
+ * services — never a hand-set `amount_paid_centavos` (CLAUDE.md;
+ * `schema-conventions.test.ts` would refuse a direct write outside
+ * `record-payment.ts` in application source, same rule a test fixture is
+ * exempt from and this file, being application source, is not).
  *
  * **`leadEmail` is the re-run key.** `createTransferBooking()` mints a
  * fresh random ref every call — unlike `SEED_UNASSIGNED_TRIPS`'s fixed
@@ -1004,9 +1008,22 @@ export interface SeedDemoTransferBooking {
    * drop-off) — no flight required, since the pickup is not the airport.
    */
   direction: 'forward' | 'reverse';
-  /** Days from "today" (seed-run time, Asia/Manila) this trip departs. */
+  /**
+   * Days from "today" (seed-run time, Asia/Manila) this trip departs, UNLESS
+   * `upsertDemoTransferBookings` has to roll a `daysFromToday: 0` recipe
+   * forward to tomorrow — see that function's own doc comment.
+   */
   daysFromToday: number;
-  /** `"HH:mm"`. For `daysFromToday: 0` this is a FLOOR — see `upsertDemoTransferBookings`'s own note on clearing `minNoticeHours`. */
+  /**
+   * `"HH:mm"`. For `daysFromToday: 0` this value is IGNORED:
+   * `upsertDemoTransferBookings` picks a pickup time from its own fixed
+   * `TODAY_PICKUP_SLOT_CANDIDATES` instead (never derived from the clock,
+   * only selected by it), because a fixed clock-time recipe cannot
+   * simultaneously clear `minNoticeHours` and stay clear of the
+   * midnight-crossing capacity refusal at every possible seed-run time of
+   * day. Kept here, set to the earliest candidate, purely so the field
+   * reads as a sensible value if anything else ever looks at it.
+   */
   pickupTime: string;
   /** `transfer_day_use` only. */
   dayUseEndTime: string | null;
@@ -1031,7 +1048,7 @@ export const SEED_DEMO_TRANSFER_BOOKINGS: SeedDemoTransferBooking[] = [
     // Departing guest, Cebu City hotel -> airport. No flight required.
     direction: 'reverse',
     daysFromToday: 0,
-    pickupTime: '05:30',
+    pickupTime: '06:30', // ignored for daysFromToday: 0 — see the interface doc comment
     dayUseEndTime: null,
     pax: 3,
     luggageCount: 3,
@@ -1049,7 +1066,7 @@ export const SEED_DEMO_TRANSFER_BOOKINGS: SeedDemoTransferBooking[] = [
     productType: 'transfer_one_way',
     direction: 'reverse',
     daysFromToday: 0,
-    pickupTime: '16:00',
+    pickupTime: '06:30', // ignored for daysFromToday: 0 — see the interface doc comment
     dayUseEndTime: null,
     pax: 2,
     luggageCount: 2,

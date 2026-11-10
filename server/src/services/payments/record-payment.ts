@@ -216,8 +216,21 @@ function expectedAmountCentavos(booking: {
  * amount is not what the booking expects, when it would overpay, when a
  * refund would exceed what was paid, or when something other than an admin
  * tries to start a refund.
+ *
+ * `now` defaults to `new Date()` — every existing caller's behaviour is
+ * unchanged, since none passes a second argument. It exists so the
+ * `hold_expires_at` check inside {@link lateMoneyReason} can be driven by
+ * an explicit clock, the same discipline `createTransferBooking(input,
+ * now)` already follows, rather than always reading the real wall clock —
+ * which is otherwise untestable at the hold-expiry boundary without faking
+ * timers globally, and which a caller that itself took an explicit `now`
+ * (a demo seed backdating "today") would otherwise silently disagree with
+ * one statement later.
  */
-export async function recordPayment(input: RecordPaymentInput): Promise<RecordPaymentResult> {
+export async function recordPayment(
+  input: RecordPaymentInput,
+  now: Date = new Date(),
+): Promise<RecordPaymentResult> {
   const parsed = recordPaymentInputSchema.parse(input);
 
   /*
@@ -304,7 +317,7 @@ export async function recordPayment(input: RecordPaymentInput): Promise<RecordPa
        * lands, which is precisely the race between this webhook and the
        * hold-expiry cron.
        */
-      reviewReason = lateMoneyReason(booking, new Date());
+      reviewReason = lateMoneyReason(booking, now);
       /*
        * §6 step 3 for a live booking: "insert payments row (paid), update
        * booking to confirmed, write audit log". A deposit confirms the

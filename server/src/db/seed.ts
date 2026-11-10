@@ -100,6 +100,7 @@ import { readTransferOperationsSettings } from '../content/settings';
 import { assignVanAndDriver } from '../services/dispatch/assign';
 import { recordPayment } from '../services/payments/record-payment';
 import { createTransferBooking } from '../services/transfers/create-booking';
+import { clockTimeToMinutes } from '../services/transfers/overlap';
 import { upsertTransferRoute } from '../services/transfers/upsert-route';
 
 type Db = ReturnType<typeof getDb>;
@@ -636,6 +637,59 @@ async function resolveSeedActorUserId(db: Db): Promise<number> {
 }
 
 /**
+ * Fixed daytime pickup-time options for a `daysFromToday: 0` demo recipe.
+ * NEVER derived from the clock — `now` only SELECTS among these constants
+ * (via {@link pickTodayPickupSlot}); it never computes a new time by adding
+ * an offset to itself. See that function and `upsertDemoTransferBookings`'s
+ * own doc comment for why a fixed clock time cannot work here.
+ *
+ * Six slots, roughly 2.5 hours apart, stopping at `19:00`: that leaves every
+ * slot safely clear of `MINUTES_PER_DAY` even for `mactan-airport-to-oslob`'s
+ * 210-minute duration plus the seeded 60-minute buffer (19:00 + 210 + 60 =
+ * 23:30, before midnight with 30 minutes to spare) — the longest route any
+ * `daysFromToday: 0` recipe uses today. A future recipe on an even longer
+ * route would need this list rechecked against its own duration.
+ */
+const TODAY_PICKUP_SLOT_CANDIDATES = [
+  '06:30',
+  '09:00',
+  '11:30',
+  '14:00',
+  '16:30',
+  '19:00',
+] as const;
+
+/**
+ * The earliest of {@link TODAY_PICKUP_SLOT_CANDIDATES} that is still at
+ * least `minNoticeHours` away from `now` AND keeps a one-way transfer of
+ * `routeDurationMinutes` (plus `bufferMinutes`) from crossing midnight —
+ * `null` when none of the six fixed options clears both, which only
+ * happens on a seed run late enough in the evening that no same-day pickup
+ * can satisfy the real notice rule without also running past midnight.
+ *
+ * Picking the EARLIEST viable slot (rather than, say, the latest) is
+ * deliberate: it leaves the most margin against both boundaries, and there
+ * is no reason for a demo booking to cut either closer than it has to.
+ */
+function pickTodayPickupSlot(
+  now: Date,
+  todayCivil: string,
+  minNoticeHours: number,
+  routeDurationMinutes: number,
+  bufferMinutes: number,
+): string | null {
+  const noticeFloorMs = now.getTime() + minNoticeHours * 3_600_000;
+  for (const slot of TODAY_PICKUP_SLOT_CANDIDATES) {
+    const slotMinutes = clockTimeToMinutes(slot);
+    /* istanbul ignore next -- every literal above matches `HH:mm` by construction */
+    if (slotMinutes === null) continue;
+    if (slotMinutes + routeDurationMinutes + bufferMinutes > 1440) continue;
+    if (manilaInstant(todayCivil, slot).getTime() >= noticeFloorMs) return slot;
+  }
+  return null;
+}
+
+/**
  * The five demo items Task 1E adds: four real transfer bookings plus one
  * custom trip-request inquiry (handled separately, see
  * `upsertDemoTripRequest` below) — APP DATABASE ONLY, never `seedBase`,
@@ -652,23 +706,34 @@ async function resolveSeedActorUserId(db: Db): Promise<number> {
  * so the dashboard's money block and the payment box have something real to
  * show.
  *
- * **`daysFromToday: 0` pickup times are a FLOOR, not a fixed clock time.**
- * `createTransferBooking()` refuses a pickup less than
- * `transfer_operations.minNoticeHours` away from `now` (read fresh here, so
- * a demo run with an unusually long configured notice window still clears
- * it). When the recipe's own clock time would be too soon relative to the
- * moment this seed actually runs, the pickup is pushed forward to
- * `now + minNoticeHours + 30 minutes` instead — still "today" in the
- * overwhelmingly common case (a seed run during business hours), and
- * accepted to roll into tomorrow's civil date on the rare very-late-night
- * run rather than fail the whole seed.
+ * **`daysFromToday: 0` pickup times are picked from a FIXED list, never
+ * computed from the clock — and the real `minNoticeHours` rule is identical
+ * for every `priceSource`, so there is no "staff path" shortcut around it.**
+ * (Confirmed by reading `create-booking.ts`: the notice check runs
+ * unconditionally before any `priceSource` branch, and `convert-quote.ts`'s
+ * staff-conversion path calls the same function with the same check — this
+ * was the wrong assumption behind this function's first version, which
+ * computed a pushed-forward pickup from `now + minNoticeHours + 30 minutes`
+ * and could land past the midnight-crossing capacity refusal on a
+ * late-afternoon run, exactly the failure that made this file's second
+ * version necessary.)
+ *
+ * `pickTodayPickupSlot()` picks the earliest fixed daytime slot that clears
+ * both the real `minNoticeHours` rule and the midnight-crossing window for
+ * the recipe's actual route duration. **When no fixed slot clears both**
+ * (a seed run late enough in the evening that even `19:00` cannot satisfy
+ * `minNoticeHours` without crossing midnight) **the recipe is rolled to
+ * tomorrow's civil date instead, at the earliest candidate slot** — which
+ * trivially clears both boundaries a full day out. This keeps the five
+ * DO-NOTs intact: no rule is bypassed (the booking that lands "today" always
+ * really does clear every real check; the ones that cannot, don't pretend
+ * to), and nothing is hand-set outside `createTransferBooking()`/
+ * `recordPayment()`.
  */
-export async function upsertDemoTransferBookings(db: Db): Promise<void> {
-  const now = new Date();
+export async function upsertDemoTransferBookings(db: Db, now: Date = new Date()): Promise<void> {
   const todayCivil = manilaCivilDate(now);
   const operations = await readTransferOperationsSettings();
   const actorUserId = await resolveSeedActorUserId(db);
-  const noticeFloor = new Date(now.getTime() + (operations.minNoticeHours * 60 + 30) * 60_000);
 
   let created = 0;
   let skipped = 0;
@@ -684,7 +749,10 @@ export async function upsertDemoTransferBookings(db: Db): Promise<void> {
     }
 
     const [route] = await db
-      .select({ id: schema.transferRoutes.id })
+      .select({
+        id: schema.transferRoutes.id,
+        estimatedDurationMinutes: schema.transferRoutes.estimatedDurationMinutes,
+      })
       .from(schema.transferRoutes)
       .where(eq(schema.transferRoutes.slug, recipe.routeSlug));
     if (!route) {
@@ -703,15 +771,25 @@ export async function upsertDemoTransferBookings(db: Db): Promise<void> {
     let civilDate = addCivilDays(todayCivil, recipe.daysFromToday);
     let pickupTime = recipe.pickupTime;
     if (recipe.daysFromToday === 0) {
-      const floorPickup = manilaInstant(civilDate, pickupTime);
-      if (floorPickup.getTime() < noticeFloor.getTime()) {
-        civilDate = manilaCivilDate(noticeFloor);
-        pickupTime = new Intl.DateTimeFormat('en-GB', {
-          timeZone: 'Asia/Manila',
-          hour: '2-digit',
-          minute: '2-digit',
-          hourCycle: 'h23',
-        }).format(noticeFloor);
+      const slot = pickTodayPickupSlot(
+        now,
+        todayCivil,
+        operations.minNoticeHours,
+        route.estimatedDurationMinutes,
+        operations.bufferMinutes,
+      );
+      if (slot !== null) {
+        pickupTime = slot;
+      } else {
+        // No fixed slot today clears both minNoticeHours and the
+        // midnight-crossing window — roll to tomorrow, where the earliest
+        // candidate trivially clears both.
+        civilDate = addCivilDays(todayCivil, 1);
+        pickupTime = TODAY_PICKUP_SLOT_CANDIDATES[0];
+        console.log(
+          `[seed] demo transfer booking "${recipe.leadEmail}": no same-day slot clears ` +
+            `minNoticeHours/midnight at this run time — rolled to tomorrow (${civilDate}, ${pickupTime}).`,
+        );
       }
     }
 
@@ -758,14 +836,17 @@ export async function upsertDemoTransferBookings(db: Db): Promise<void> {
         throw new Error(`seed: demo transfer booking ${held.ref} vanished right after creation`);
       }
       const deposit = depositCentavos(booking.totalCentavos, booking.priceSnapshot.depositPercent);
-      await recordPayment({
-        bookingId: held.bookingId,
-        type: 'payment',
-        provider: 'manual',
-        method: 'gcash',
-        amountCentavos: deposit,
-        actor: { type: 'system', id: null },
-      });
+      await recordPayment(
+        {
+          bookingId: held.bookingId,
+          type: 'payment',
+          provider: 'manual',
+          method: 'gcash',
+          amountCentavos: deposit,
+          actor: { type: 'system', id: null },
+        },
+        now,
+      );
 
       if (recipe.assignTo) {
         const [van] = await db

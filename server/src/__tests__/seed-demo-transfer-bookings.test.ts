@@ -29,7 +29,7 @@ import {
   SEED_DEMO_TRIP_REQUEST,
   type SeedDemoTransferBooking,
 } from '../db/seed-data';
-import { addCivilDays, civilDateFromDate, manilaCivilDate } from '@rg/shared';
+import { addCivilDays, civilDateFromDate, manilaCivilDate, manilaInstant } from '@rg/shared';
 import { getDb, getPool } from '../db/client';
 import {
   bookingTransferDetails,
@@ -70,17 +70,30 @@ const TOUCHED_CIVIL_DATES = [
 
 /**
  * The two `daysFromToday: 0` recipes exist so the dashboard and Departures
- * board have something to show for "today" in a demo. The notice-floor
- * adjustment in `upsertDemoTransferBookings` (pushing a too-soon fixed
- * pickup time to `now + minNoticeHours + 30m`) is what makes them
- * CREATABLE, but nothing before this assertion proved they still land on
- * TODAY's Manila civil date rather than rolling into tomorrow — which a
- * late-evening seed run can do, and which would make the demo show an
- * empty "today" with no error anywhere. This is the assertion that would
- * catch that regression; see HANDOVER-17 for the owner-facing run-time
- * caveat this same risk requires.
+ * board have something to show for "today" in a demo. This is the civil
+ * date they must land on whenever the real rules allow it at all — see
+ * `TEST_RUN_NOW` below for why the main creation test pins an explicit,
+ * safe `now` rather than trusting the real wall clock at whatever hour this
+ * suite happens to run.
  */
 const TODAY_CIVIL_DATE = manilaCivilDate(new Date());
+
+/**
+ * A fixed, deterministic `now` for the main creation test — `06:00` Manila
+ * on the real "today". Not the real wall clock: `pickTodayPickupSlot`'s
+ * candidates stop at `19:00`, so whether a `daysFromToday: 0` recipe can
+ * still land on TODAY at all depends on what time of day this suite
+ * happens to run (default `minNoticeHours` is 6, so any real run past
+ * ~13:00 Manila would roll both today-recipes to tomorrow and this test's
+ * "lands on today" assertions would fail for a reason that has nothing to
+ * do with a regression). `06:00` guarantees a same-day slot exists
+ * (`now + 6h = 12:00`, and `14:00` clears both minNoticeHours and the
+ * midnight-crossing window for every route a `daysFromToday: 0` recipe
+ * uses today) without this particular test needing to know which exact
+ * slot gets picked — that exact-slot assertion is its own test, below
+ * ("creates today's two recipes at 14:00 when run at 06:00 Manila").
+ */
+const TEST_RUN_NOW = manilaInstant(TODAY_CIVIL_DATE, '06:00');
 
 const created = {
   placeIds: [] as number[],
@@ -106,6 +119,27 @@ async function vehicleTypeId(slug: 'van' | 'suv'): Promise<number> {
 async function bookingByEmail(email: string) {
   const [row] = await getDb().select().from(bookings).where(eq(bookings.leadEmail, email));
   return row ?? null;
+}
+
+/**
+ * Deletes one demo booking and every row that references it — shared by
+ * `afterAll` (the suite's own teardown) and the two notice-boundary tests
+ * below, which each delete and recreate the two `daysFromToday: 0` recipes
+ * under a different injected `now` to exercise `pickTodayPickupSlot`
+ * without tripping the real function's own idempotency (keyed on
+ * `leadEmail`) against a row a PRIOR test in this file already created.
+ */
+async function deleteBookingAndDependents(email: string): Promise<void> {
+  const pool = getPool();
+  const booking = await bookingByEmail(email);
+  if (!booking) return;
+  await pool.query('DELETE FROM payments WHERE booking_id = ?', [booking.id]);
+  await pool.query('DELETE FROM booking_transfer_details WHERE booking_id = ?', [booking.id]);
+  await pool.query('DELETE FROM audit_log WHERE entity = ? AND entity_id = ?', [
+    'bookings',
+    booking.id,
+  ]);
+  await pool.query('DELETE FROM bookings WHERE id = ?', [booking.id]);
 }
 
 describeWithDb('db/seed.ts — upsertDemoTransferBookings / upsertDemoTripRequest (Task 1E)', () => {
@@ -175,13 +209,13 @@ describeWithDb('db/seed.ts — upsertDemoTransferBookings / upsertDemoTripReques
     created.vanIds.push(van.insertId);
 
     // A SECOND van-type vehicle, matching the real app database (which has
-    // four, `SEED-001`..`SEED-004`). Needed here because both `daysFromToday:
-    // 0` recipes can land on the SAME computed pickup instant when the real
-    // clock has already passed both floor times by the moment this test
-    // runs (both then get pushed to the identical `now + minNotice + 30m`
-    // floor) — two simultaneous van requests against a one-van fixture
-    // fleet is a genuine, if test-only, capacity collision, not a bug in
-    // `upsertDemoTransferBookings` itself.
+    // four, `SEED-001`..`SEED-004`). Needed here because both
+    // `daysFromToday: 0` recipes are `van`-type and share the exact same
+    // fixed candidate-slot list and selection rule (`pickTodayPickupSlot`),
+    // so at `TEST_RUN_NOW` (06:00) they both independently resolve to the
+    // same `14:00` slot on the same civil date — two simultaneous van
+    // requests against a one-van fixture fleet is a genuine, if test-only,
+    // capacity collision, not a bug in `upsertDemoTransferBookings` itself.
     const [secondVan] = await db.insert(vans).values({
       plate: 'SEED-002',
       model: 'Seed Demo Fixture Van 2',
@@ -213,25 +247,27 @@ describeWithDb('db/seed.ts — upsertDemoTransferBookings / upsertDemoTripReques
       isActive: true,
     });
     created.driverIds.push(driver.insertId);
+
+    // A SECOND driver (default cap 2/day each, from `transfer_operations`'s
+    // seeded `maxTransferJobsPerDriverPerDay`). The notice-boundary tests
+    // below exercise a day that already carries the flight recipe
+    // (`daysFromToday: 1`) plus BOTH `daysFromToday: 0` recipes rolled onto
+    // the same civil date by a late-enough `now` — three transfers wanting
+    // a driver on one day, which a one-driver pool (cap 2) cannot cover.
+    const [secondDriver] = await db.insert(drivers).values({
+      name: 'Seed Demo Fixture Driver 2',
+      code: 'D02',
+      phone: '09170000096',
+      pinHash: '__seeddemo_fixture_not_a_pin_hash__',
+      isActive: true,
+    });
+    created.driverIds.push(secondDriver.insertId);
   });
 
   afterAll(async () => {
     const pool = getPool();
-    const emails = [
-      ...SEED_DEMO_TRANSFER_BOOKINGS.map((b: SeedDemoTransferBooking) => b.leadEmail),
-      SEED_DEMO_TRIP_REQUEST.email,
-    ];
-    for (const email of emails) {
-      const booking = await bookingByEmail(email);
-      if (booking) {
-        await pool.query('DELETE FROM payments WHERE booking_id = ?', [booking.id]);
-        await pool.query('DELETE FROM booking_transfer_details WHERE booking_id = ?', [booking.id]);
-        await pool.query('DELETE FROM audit_log WHERE entity = ? AND entity_id = ?', [
-          'bookings',
-          booking.id,
-        ]);
-        await pool.query('DELETE FROM bookings WHERE id = ?', [booking.id]);
-      }
+    for (const booking of SEED_DEMO_TRANSFER_BOOKINGS) {
+      await deleteBookingAndDependents(booking.leadEmail);
     }
     await getDb().delete(inquiries).where(eq(inquiries.email, SEED_DEMO_TRIP_REQUEST.email));
 
@@ -269,7 +305,7 @@ describeWithDb('db/seed.ts — upsertDemoTransferBookings / upsertDemoTripReques
   });
 
   it('creates all four demo bookings with the right statuses, and the fifth item as an inquiry', async () => {
-    await upsertDemoTransferBookings(getDb());
+    await upsertDemoTransferBookings(getDb(), TEST_RUN_NOW);
     await upsertDemoTripRequest(getDb());
 
     const assigned = await bookingByEmail('demo.transfer.assigned@example.test');
@@ -277,10 +313,10 @@ describeWithDb('db/seed.ts — upsertDemoTransferBookings / upsertDemoTripReques
     expect(assigned?.vanId).not.toBeNull();
     expect(assigned?.driverId).not.toBeNull();
     expect(assigned?.amountPaidCentavos).toBeGreaterThan(0);
-    // Both `daysFromToday: 0` recipes must still land on TODAY's Manila
-    // civil date after the notice-floor adjustment — a late-night seed run
-    // that rolls one past midnight would make the dashboard's "today" empty
-    // with no error anywhere else.
+    // Both `daysFromToday: 0` recipes land on TODAY's Manila civil date at
+    // `TEST_RUN_NOW` (06:00, a time a fixed slot genuinely clears both real
+    // rules) — the two tests below pin the boundary where that stops being
+    // true and the function correctly rolls to tomorrow instead.
     expect(civilDateFromDate(assigned!.tourDate)).toBe(TODAY_CIVIL_DATE);
 
     const unassigned = await bookingByEmail('demo.transfer.unassigned@example.test');
@@ -320,7 +356,7 @@ describeWithDb('db/seed.ts — upsertDemoTransferBookings / upsertDemoTripReques
     );
     expect(before.every((b: Awaited<ReturnType<typeof bookingByEmail>>) => b !== null)).toBe(true);
 
-    await upsertDemoTransferBookings(getDb());
+    await upsertDemoTransferBookings(getDb(), TEST_RUN_NOW);
     await upsertDemoTripRequest(getDb());
 
     for (let i = 0; i < SEED_DEMO_TRANSFER_BOOKINGS.length; i += 1) {
@@ -336,6 +372,62 @@ describeWithDb('db/seed.ts — upsertDemoTransferBookings / upsertDemoTripReques
       .from(inquiries)
       .where(eq(inquiries.email, SEED_DEMO_TRIP_REQUEST.email));
     expect(inquiryRows).toHaveLength(1);
+  });
+
+  /**
+   * The two boundary tests the owner asked for directly: `upsertDemoTransferBookings`
+   * must behave correctly no matter what time of day it is run, which is
+   * exactly the thing `now` being an explicit, overridable parameter
+   * (rather than read from the clock inside the function) makes testable
+   * without waiting for the real clock to reach either hour. Each deletes
+   * and recreates the two `daysFromToday: 0` recipes first, so this test's
+   * own call is not skipped by the idempotency check against whatever the
+   * tests above already created.
+   */
+  it('rolls both today-recipes to tomorrow when run at 23:30 Manila — no fixed slot can clear 6h notice without crossing midnight', async () => {
+    await deleteBookingAndDependents('demo.transfer.assigned@example.test');
+    await deleteBookingAndDependents('demo.transfer.unassigned@example.test');
+
+    const lateNow = manilaInstant(TODAY_CIVIL_DATE, '23:30');
+    await upsertDemoTransferBookings(getDb(), lateNow);
+
+    const tomorrow = addCivilDays(TODAY_CIVIL_DATE, 1);
+    const assigned = await bookingByEmail('demo.transfer.assigned@example.test');
+    expect(civilDateFromDate(assigned!.tourDate)).toBe(tomorrow);
+    const unassigned = await bookingByEmail('demo.transfer.unassigned@example.test');
+    expect(civilDateFromDate(unassigned!.tourDate)).toBe(tomorrow);
+
+    // The earliest candidate — trivially safe a full day out — not a
+    // leftover near-midnight value from the old push-forward mechanism.
+    const [assignedDetails] = await getDb()
+      .select()
+      .from(bookingTransferDetails)
+      .where(eq(bookingTransferDetails.bookingId, assigned!.id));
+    expect(assignedDetails?.pickupTime).toBe('06:30');
+  });
+
+  it("creates today's two recipes at 14:00 when run at 06:00 Manila — the earliest fixed slot clearing 6h notice", async () => {
+    await deleteBookingAndDependents('demo.transfer.assigned@example.test');
+    await deleteBookingAndDependents('demo.transfer.unassigned@example.test');
+
+    const earlyNow = manilaInstant(TODAY_CIVIL_DATE, '06:00');
+    await upsertDemoTransferBookings(getDb(), earlyNow);
+
+    const assigned = await bookingByEmail('demo.transfer.assigned@example.test');
+    expect(civilDateFromDate(assigned!.tourDate)).toBe(TODAY_CIVIL_DATE);
+    const [assignedDetails] = await getDb()
+      .select()
+      .from(bookingTransferDetails)
+      .where(eq(bookingTransferDetails.bookingId, assigned!.id));
+    expect(assignedDetails?.pickupTime).toBe('14:00');
+
+    const unassigned = await bookingByEmail('demo.transfer.unassigned@example.test');
+    expect(civilDateFromDate(unassigned!.tourDate)).toBe(TODAY_CIVIL_DATE);
+    const [unassignedDetails] = await getDb()
+      .select()
+      .from(bookingTransferDetails)
+      .where(eq(bookingTransferDetails.bookingId, unassigned!.id));
+    expect(unassignedDetails?.pickupTime).toBe('14:00');
   });
 });
 
