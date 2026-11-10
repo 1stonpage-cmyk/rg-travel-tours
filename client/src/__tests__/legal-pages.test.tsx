@@ -6,6 +6,7 @@ import SiteFooter from '@/components/layout/SiteFooter';
 import { ConsentProvider } from '@/lib/consent/ConsentContext';
 import { TrpcProviders } from '@/lib/trpc';
 import CookiesPage from '@/pages/public/CookiesPage';
+import PhotoCreditsPage from '@/pages/public/PhotoCreditsPage';
 import PrivacyPage from '@/pages/public/PrivacyPage';
 import RefundPolicyPage from '@/pages/public/RefundPolicyPage';
 import TermsPage from '@/pages/public/TermsPage';
@@ -190,5 +191,39 @@ describe('SiteFooter — legal links', () => {
     // The existing WhatsApp/Viber chat pills must survive this change untouched.
     expect(await screen.findByRole('link', { name: 'Chat on WhatsApp' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /chat on viber/i })).toBeInTheDocument();
+  });
+
+  it('links to /photo-credits beside the other legal links (Task 1D)', () => {
+    mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
+    renderFooter(<SiteFooter />);
+
+    const legalNav = screen.getByRole('navigation', { name: 'Legal' });
+    expect(within(legalNav).getByRole('link', { name: 'Photo Credits' })).toHaveAttribute(
+      'href',
+      '/photo-credits',
+    );
+  });
+});
+
+describe('PhotoCreditsPage', () => {
+  it('credits all four stock photographers by name, linked to their profile and the photo page', () => {
+    renderPage(<PhotoCreditsPage />);
+
+    expect(screen.getByRole('heading', { level: 1, name: 'Photo credits' })).toBeInTheDocument();
+
+    for (const [name, profileHref] of [
+      ['Yazid N', 'https://www.pexels.com/@mzynasx/'],
+      ['Kern Morris', 'https://unsplash.com/@kernsway'],
+      ['Jeremy Li', 'https://www.pexels.com/@picswithjer/'],
+      ['Mehrajul Karim', 'https://www.pexels.com/@mehrajul-karim-114876029/'],
+    ] as const) {
+      expect(screen.getByRole('link', { name })).toHaveAttribute('href', profileHref);
+    }
+  });
+
+  it('sets a single h1 per page', () => {
+    renderPage(<PhotoCreditsPage />);
+    const h1s = screen.getAllByRole('heading', { level: 1 });
+    expect(h1s).toHaveLength(1);
   });
 });

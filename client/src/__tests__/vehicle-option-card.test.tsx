@@ -124,7 +124,50 @@ describe('VehicleOptionCard', () => {
     );
     const message = screen.getByText('Choose a vehicle.');
     expect(message).toHaveAttribute('role', 'alert');
-    expect(screen.getByRole('radio')).toHaveAttribute('aria-describedby', message.id);
+    // The radio also always points at its price/status block (see the
+    // "accessible name" test below) — the error id is appended, not swapped in.
+    const describedBy = screen.getByRole('radio').getAttribute('aria-describedby');
+    expect(describedBy?.split(' ')).toContain(message.id);
+  });
+
+  it("gives the radio a stable accessible NAME (the vehicle type alone), never the card photo's alt text", () => {
+    render(
+      <VehicleOptionCard
+        vehicleTypeId={1}
+        vehicleTypeName="Van"
+        vehicleTypeSlug="van"
+        quote={QUOTE}
+        isLoading={false}
+        isSelected={false}
+        onSelect={() => {}}
+        payMode="deposit"
+      />,
+    );
+    // Before the real photo's alt text existed, the radio's accessible name
+    // came implicitly from the surrounding <label>'s text content. An <img>
+    // with meaningful alt text sitting in that same label would otherwise
+    // leak into the name too (verified by temporarily removing the explicit
+    // aria-label while building this test — the name then started with
+    // "Sample vehicle — a white passenger van…" instead of "Van").
+    expect(screen.getByRole('radio', { name: 'Van' })).toBeInTheDocument();
+  });
+
+  it('describes the radio with its price/status block, so the "due now" figure is still reachable by assistive tech', () => {
+    render(
+      <VehicleOptionCard
+        vehicleTypeId={1}
+        vehicleTypeName="Van"
+        quote={QUOTE}
+        isLoading={false}
+        isSelected={false}
+        onSelect={() => {}}
+        payMode="deposit"
+      />,
+    );
+    const radio = screen.getByRole('radio');
+    const [firstDescribedById] = (radio.getAttribute('aria-describedby') ?? '').split(' ');
+    const detailsEl = document.getElementById(firstDescribedById ?? '');
+    expect(detailsEl).toHaveTextContent('₱450 due now');
   });
 
   it('renders a THIRD, arbitrary vehicle type with no code change — never a hard-coded van/suv pair', () => {
@@ -142,7 +185,7 @@ describe('VehicleOptionCard', () => {
     expect(screen.getByText('Coaster')).toBeInTheDocument();
   });
 
-  it('uses the matching placeholder image for a known vehicle-type slug', () => {
+  it('uses the matching sample photo for a known vehicle-type slug', () => {
     render(
       <VehicleOptionCard
         vehicleTypeId={1}
@@ -155,9 +198,11 @@ describe('VehicleOptionCard', () => {
         payMode="deposit"
       />,
     );
-    expect(screen.getByTestId('vehicle-option-1-image')).toHaveAttribute(
-      'src',
-      '/placeholders/vehicle-van.svg',
+    const image = screen.getByTestId('vehicle-option-1-image');
+    expect(image).toHaveAttribute('src', '/images/transfers/van-800.jpg');
+    expect(image).toHaveAttribute(
+      'srcset',
+      '/images/transfers/van-480.jpg 480w, /images/transfers/van-800.jpg 800w',
     );
   });
 
@@ -176,7 +221,7 @@ describe('VehicleOptionCard', () => {
     );
     expect(screen.getByTestId('vehicle-option-7-image')).toHaveAttribute(
       'src',
-      '/placeholders/vehicle-generic.svg',
+      '/images/transfers/generic-800.jpg',
     );
   });
 
@@ -194,7 +239,58 @@ describe('VehicleOptionCard', () => {
     );
     expect(screen.getByTestId('vehicle-option-1-image')).toHaveAttribute(
       'src',
-      '/placeholders/vehicle-generic.svg',
+      '/images/transfers/generic-800.jpg',
     );
+  });
+
+  it('gives every vehicle image real alt text that says "Sample vehicle"', () => {
+    render(
+      <VehicleOptionCard
+        vehicleTypeId={1}
+        vehicleTypeName="Van"
+        vehicleTypeSlug="van"
+        quote={QUOTE}
+        isLoading={false}
+        isSelected={false}
+        onSelect={() => {}}
+        payMode="deposit"
+      />,
+    );
+    const image = screen.getByTestId('vehicle-option-1-image');
+    expect(image.getAttribute('alt')).toMatch(/^Sample vehicle/);
+  });
+
+  it('shows a visible "Sample vehicle" caption on the card', () => {
+    render(
+      <VehicleOptionCard
+        vehicleTypeId={1}
+        vehicleTypeName="Van"
+        vehicleTypeSlug="van"
+        quote={QUOTE}
+        isLoading={false}
+        isSelected={false}
+        onSelect={() => {}}
+        payMode="deposit"
+      />,
+    );
+    expect(screen.getByText('Sample vehicle')).toBeInTheDocument();
+  });
+
+  it('lazy-loads the vehicle image (it is always below the fold)', () => {
+    render(
+      <VehicleOptionCard
+        vehicleTypeId={1}
+        vehicleTypeName="Van"
+        vehicleTypeSlug="van"
+        quote={QUOTE}
+        isLoading={false}
+        isSelected={false}
+        onSelect={() => {}}
+        payMode="deposit"
+      />,
+    );
+    const image = screen.getByTestId('vehicle-option-1-image');
+    expect(image).toHaveAttribute('loading', 'lazy');
+    expect(image).toHaveAttribute('decoding', 'async');
   });
 });

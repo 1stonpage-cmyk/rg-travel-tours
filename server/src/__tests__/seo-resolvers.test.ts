@@ -163,6 +163,44 @@ describeWithDb('page resolution', () => {
     expect(cookies.title).toContain('Cookie Policy');
   });
 
+  /**
+   * Task 1D (owner decision 2026-11-10). Unlike the four legal pages above,
+   * `/photo-credits` must answer 200 with its own title (the BUG-116/QA-1
+   * defect this file already guards against for `/checkout` et al.) but
+   * stay `noindex,nofollow` — it is thin, non-marketing content, not a
+   * legal page, and deliberately not in `sitemap.ts`'s static list.
+   */
+  it('resolves /photo-credits as a real 200 page with its own title', async () => {
+    const credits = await resolvePage('/photo-credits');
+    expect(credits.status).toBe(200);
+    expect(credits.canonical).toBe('http://localhost:5180/photo-credits');
+    expect(credits.title).toContain('Photo Credits');
+  });
+
+  /**
+   * `content_unverified` has to be false for this, same reasoning as the
+   * `/tours/:slug` D5 test above: the seeded default is true, and the
+   * site-wide gate forces every route to `noindex,nofollow` regardless —
+   * which would make a bare `robots === 'noindex,nofollow'` assertion pass
+   * even if `resolvePhotoCredits` itself answered `index,follow`.
+   */
+  it('keeps /photo-credits noindex even once content is verified — it is not a legal page', async () => {
+    await getDb()
+      .update(settings)
+      .set({ value: false })
+      .where(eq(settings.key, 'content_unverified'));
+    resetContentUnverifiedCache();
+    try {
+      expect((await resolvePage('/photo-credits')).robots).toBe('noindex,nofollow');
+    } finally {
+      await getDb()
+        .update(settings)
+        .set({ value: true })
+        .where(eq(settings.key, 'content_unverified'));
+      resetContentUnverifiedCache();
+    }
+  });
+
   it('falls back to a generated title when a tour has no seo_title', async () => {
     // Title pattern: "<title> — <destination> day tour from ₱X | TravelSugbo"
     const meta = await resolvePage('/tours/oslob-whale-shark-tumalog-falls');
