@@ -275,17 +275,19 @@ Per `CLAUDE.md`'s "flag, don't fix" rule — none fixed here:
   pre-existing "IS drawn for an owner and for finance" test calls `render()`
   twice in one `it` without unmounting between them. `@testing-library/react`'s
   auto-cleanup runs between tests, not between `render()` calls inside one, so
-  the first (owner) tree's DOM node is never removed — the second
-  `screen.findByTestId` call resolves against that STALE first-tree node
-  rather than ever reading the finance-role render. Measured directly
-  (instrumented both renders with distinguishing content; the first tree's
-  content was still present after the second `render()` call). The test
-  therefore does not actually prove the card renders for finance — it would
-  pass identically if that were broken. Found while writing 1C's own
-  per-role tests and recognising the same shape would repeat the hazard
-  (avoided there by giving each role its own `it`). Not fixed: pre-existing,
-  outside 1C's scope, and `role-isolation.test.ts` independently covers the
-  server-side gate this client test only appears to.
+  the first (owner) tree's DOM node is never removed, and
+  `screen.findByTestId` (global, matches anywhere in `document.body`) can
+  resolve the second iteration's assertion against that stale first-tree
+  node without ever reading the second (finance) tree. **Decisively proven**:
+  re-running the test's own shape with finance's mocked alert data changed to
+  OMIT `payments_to_verify` entirely — simulating the card being genuinely
+  absent for finance — the test still passed. Separately confirmed the real
+  dashboard is NOT broken: finance's card renders correctly when queried
+  against its own tree specifically. The defect is narrowly in the test's
+  blindness, not in app behaviour. Found while writing 1C's own per-role
+  tests and recognising the same multi-render-in-one-`it` shape would repeat
+  the hazard (avoided there by giving each role its own `it`). Not fixed:
+  pre-existing, outside 1C's scope.
 - BUG-124 is now Fixed (this session, Task 1D) — moved off the open list.
 - BUG-125–128, 130 are unchanged carry-forwards from HANDOVER-16, not touched
   this session.
