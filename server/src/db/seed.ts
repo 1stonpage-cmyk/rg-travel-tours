@@ -1274,7 +1274,7 @@ export async function upsertItineraryStops(
  * module doc-comment): it is what keeps a standalone `seedDemo()` CLI
  * invocation guarded even though nothing calls `seedBase()` first.
  */
-async function guardAndConnect(context: DatabaseContext): Promise<Db> {
+export async function guardAndConnect(context: DatabaseContext): Promise<Db> {
   const url = context === 'test' ? env.TEST_DATABASE_URL : env.DATABASE_URL;
   if (!url) {
     throw new Error(

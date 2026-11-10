@@ -16,6 +16,7 @@
     "db:push": "node scripts/db-preflight.mjs && drizzle-kit push",
     "db:seed": "node scripts/db-preflight.mjs && tsx src/db/seed.ts",
     "db:seed:demo": "node scripts/db-preflight.mjs && tsx src/db/seed-demo.ts",
+    "db:clear-demo-transfers": "node scripts/db-preflight.mjs && tsx src/db/clear-demo-transfer-bookings.ts",
     "dev:reset-password": "tsx scripts/dev-reset-staff-password.ts"
   },
   "dependencies": {
