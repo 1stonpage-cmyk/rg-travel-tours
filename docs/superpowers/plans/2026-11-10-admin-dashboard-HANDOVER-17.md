@@ -1,10 +1,12 @@
-# HANDOVER-17: admin Dashboard "Direction B: Control Room" + grouped sidebar + demo transfer bookings
+# HANDOVER-17 (FINAL): admin Dashboard "Direction B: Control Room" + grouped sidebar + demo transfer bookings
 
 Continues HANDOVER-16 (T26–T29, transfers-launch plan closed). This is a new,
 separate task: the admin dashboard rebuild, grouped sidebar, and dev-only demo
-transfer bookings, per the owner's 2026-11-10 brief. Tasks 1A–1F are complete
-and committed; **Task 1G (the read-only Chrome check) is pending the owner
-re-running the demo seed** — see "What's left" below.
+transfer bookings, per the owner's 2026-11-10 brief. **All tasks 1A–1G are now
+complete.** This handover was first written with 1G pending the owner's seed
+re-run; three follow-up commits closed it out — see "Post-handover follow-up"
+at the end for the seed-timing fix the owner's first re-run surfaced, the new
+`db:clear-demo-transfers` safety tool, and the 360px bug 1G itself caught.
 
 Process per the brief: controller (Sonnet) with Opus advisor, consulted before
 each task and before marking done. Implementer Sonnet, one at a time, no
@@ -244,15 +246,18 @@ committed separately from any content change, per `CLAUDE.md`'s rule.
 | `278dacc` | 1C: rebuild AdminDashboardPage per Direction B's Control Room layout        |
 | `1ab1f15` | formatting: prettier sweep on dashboard-summary.test.ts (1B)                |
 
-## What's left — Task 1G
+## Task 1G — read-only Chrome check, done
 
-A read-only Chrome check of the dashboard and sidebar at 360px and 1440px,
-using the owner's existing admin session, saving nothing. **Blocked on the
-owner re-running the demo seed** (command above) — without it the dashboard
-has nothing demo-shaped to show, and a stale earlier run's "today" bookings
-would read as yesterday's. Per the brief's own instruction: ask and wait,
-rather than proceed. **Please run the seed command above (during the day,
-Manila time) and say so when it's done — 1G runs immediately after.**
+Logged in as the owner (Gary Cotiangco), read-only, nothing saved. Confirmed
+at **1440px**: stats row (5 cells, correct per-role gating), two-column body
+(`DeparturesBoard` left, alert grid + trip-request queue right, Quote button),
+full grouped sidebar through Admin, footer identity block. Confirmed at
+**360px** (iframe-harness workaround for BUG-074 — Chrome's own window-resize
+tool does not change the rendered viewport here, per that bug's prior
+finding): mobile drawer menu opens/closes correctly with all seven groups,
+alert cards and the trip-request card stack cleanly with no horizontal
+overflow, **after fixing one real bug the check caught** — see
+"Post-handover follow-up" at the end of this document.
 
 ---
 
@@ -292,4 +297,75 @@ Per `CLAUDE.md`'s "flag, don't fix" rule — none fixed here:
 - BUG-125–128, 130 are unchanged carry-forwards from HANDOVER-16, not touched
   this session.
 
-✅ TASKS 1A–1F COMPLETE. 1G pending the owner's seed re-run.
+## Post-handover follow-up (after this handover's first version)
+
+Three more commits, triggered by the owner's first re-run of the demo seed
+and by 1G itself:
+
+**`f8f843f` — the seed-timing bug the owner's run exposed.** The owner's
+first `db:seed:demo` re-run, at ~17:26 Manila, failed with
+`Transfer capacity refused: pickup_crosses_midnight`. Root cause: the
+notice-floor mechanism above (`now + minNoticeHours + 30m`) pushed a
+`daysFromToday: 0` recipe's pickup late enough to trip the SEPARATE
+midnight-crossing capacity check — exactly the risk this handover's own
+`TODAY_CIVIL_DATE` test flagged but didn't fully close. Fixed by replacing
+the floor with a FIXED set of daytime pickup slots (06:30–19:00);
+`pickTodayPickupSlot()` picks the earliest one clearing both
+`minNoticeHours` and the midnight window for the recipe's real route
+duration, rolling to tomorrow's civil date when none does. Confirmed by
+reading `create-booking.ts`/`convert-quote.ts` directly: `priceSource:
+'staff'` does **not** exempt a booking from `minNoticeHours` — it is
+identical for both paths — so there is no bypass to reach for here; "roll to
+tomorrow" is the only honest answer when a run is late enough. Also gave
+`recordPayment()` an optional `now` parameter (defaults to `new Date()`,
+every real caller unchanged) so its hold-expiry check agrees with a caller
+that itself took an explicit `now` — without it, a deterministic test
+(`now` injected) saw its own hold as already-expired a statement later. Two
+new tests, `now` injected at 23:30 and 06:00 Manila, both passing, both
+proven able to fail.
+
+**`28a4bc6` — `pnpm --filter @rg/server db:clear-demo-transfers`.** A safe,
+dev-only way to refresh just the five Task 1E demo items before a demo:
+deletes the four transfer bookings' own `payments`/
+`booking_transfer_details`/`audit_log` rows and the bookings themselves,
+plus the one trip-request inquiry, matched by their known emails. Touches
+nothing else — no real guest data, no fleet, no `fleet_date_slots` (shared
+lock bookkeeping real bookings also write). Same `ALLOW_DEMO_SEED`/
+`NODE_ENV` gate as `seedDemo()`, plus the existing `db-preflight.mjs` name
+check. Run it, then re-run the demo seed:
+
+```
+set "ALLOW_DEMO_SEED=1" && pnpm --filter @rg/server db:clear-demo-transfers
+set "ALLOW_DEMO_SEED=1" && pnpm --filter @rg/server db:seed:demo
+```
+
+**`c43b2dc` — the 360px bug 1G itself caught.** The stats row's five cells,
+laid out side by side with no responsive fallback, clipped horizontally at
+360px — "Collected today" and "Pending verification" were cut off the right
+edge entirely, not merely cramped. Fixed: below `sm` the row stacks into
+full-width label-left/value-right rows (Direction B's own mobile
+`m-stack-stat` pattern); unchanged at `sm` and up. CSS-only, same DOM — no
+test changes needed, the 41 existing component tests still cover it.
+
+**The four demo transfer bookings already in the database were inspected
+(read-only) before any of the above shipped**, and turned out to be
+correctly dated, not a pre-fix artifact as first suspected: the owner's seed
+run landed at 18:21 Manila, and the (already-fixed, by then) code correctly
+rolled both `daysFromToday: 0` recipes to tomorrow (`2026-11-11`, pickup
+`06:30`) rather than failing — `minNoticeHours` (6h) plus the latest fixed
+slot (19:00) cannot clear "today" for a run past roughly 13:00 Manila. The
+other two recipes (`10:30` tomorrow, `09:00`/`18:00` four days out) were
+exactly as seeded. Nothing was actually broken; the owner's note that these
+were "the first (pre-fix) run" doesn't match the timestamps, but it costs
+nothing to refresh them with `db:clear-demo-transfers` before the next demo,
+run earlier in the day.
+
+All five checks (lint, typecheck, test, format:check, build) re-run clean
+after each of these three commits; full counts unchanged except the two new
+`seed-demo-transfer-bookings.test.ts` cases (now 6 in that file).
+
+**Reviewer-edit check (requested alongside this follow-up):** `git status`/
+`git diff` clean before and after this work, no subagent with write access
+was dispatched this session, no stray edits found.
+
+✅ DASHBOARD COMPLETE
