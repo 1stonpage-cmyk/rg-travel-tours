@@ -50,6 +50,7 @@ dedicated file (`webhook-signed-end-to-end.test.ts`); re-deriving a second real 
 here would test that seam twice while testing this lifecycle not at all.
 
 ### Dedicated Opus review (required for T21 per the merged-run rules) — ran, no blockers,
+
 6 should-fix + 7 nitpicks, all should-fix and the actionable nitpicks fixed in `c25fd08`, each
 with a new or extended assertion proven able to fail:
 
@@ -112,7 +113,7 @@ one) should decide whether this warrants a new field now or waits.
   naming so nobody mistakes it for a real anomaly if they go looking.
 - `sendAssignmentNotice()` (`routers/admin/dispatch.ts:140-145`) has the identical missing-
   booking-id gap `sendQuoteReadyNotice` had before should-fix #5 — same `[dispatch] could not
-  send the assignment notice (${kind})` shape, no identifier. Outside this diff; listed in
+send the assignment notice (${kind})` shape, no identifier. Outside this diff; listed in
   Unrelated bugs below.
 
 ## Migrations owed on the server

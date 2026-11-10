@@ -3,6 +3,7 @@
 ## T22: driver portal carries transfer fields (`TripDetail` / `DriverTripRow`)
 
 Commits:
+
 - `e7f3fc9` — T22: TripDetail and DriverTripRow carry transfer fields; zero-stop check-in confirmed
 - `591caa4` — T22 follow-up: address dedicated Opus review findings
 
@@ -17,6 +18,7 @@ Dedicated Opus review ran against `e7f3fc9` and returned 7 should-fix items, all
 7. Test-fixture type-safety gap (untyped mock payloads can silently drift from the widened interface) — added explicit `: TripDetail` / `: DriverTripRow[]` annotations, which surfaced and fixed a real `??`-discards-`null` bug in the `trip()` test helper.
 
 Every fix mutation-proved. Full five-check pass (typecheck/lint/format/test/build) green on all three packages before each commit:
+
 - server: 132 files / 2683 tests
 - client: 84 files / 1051 tests
 - shared: 9 files / 109 tests

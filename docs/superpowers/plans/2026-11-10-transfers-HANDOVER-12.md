@@ -3,6 +3,7 @@
 ## T23: admin screens show a transfer booking's product
 
 Commits:
+
 - `93c7a9a` — T23: todayDepartures shows a transfer's route and pickup time; board stops reading "1 of 1" as finished
 - `929a9a4` — T23: bookings list/detail and the dispatch calendar show a transfer's product
 - `1fb0016` / `6c70805` — follow-up: tighten two `vehicleTypeLabel` assertions (`.not.toBeNull()` → compare against the real vehicle type name) and drop a dead fixture array, found during this task's own mutation-proof pass.
@@ -10,11 +11,13 @@ Commits:
 Two independent commits, matching the two surfaces touched:
 
 **Commit A (`93c7a9a`)** — `admin.departures.today` / `todayDepartures()` and `DeparturesBoard.tsx`:
+
 - `routeDisplayName()`/`transferTitle()` extracted from `services/reports/money.ts` into a new module, `services/transfers/display.ts`. `money.ts`'s own doc comment named this as the point to decide once a third caller's shape was known; T23 brought the count to five callers (`money.ts` itself, `routers/public/driver.ts` from T22, and three new admin-side callers), which settled it. `driver.ts` and `driver-transfer-trip.test.ts`'s imports were repointed to the new module; `money.ts` now imports from it instead of owning the functions.
 - `TodayDeparture` gains `transferRouteLabel`, `pickupTime`, `vehicleTypeLabel` — all `null` for a tour, the same `tourId === null` guard every other surface in this feature uses. `todayDepartures()` adds the same four LEFT JOINs (`bookingTransferDetails`, `transferRoutes`, two `transferPlaces` aliases, `vehicleTypes`) that `routers/public/driver.ts`'s `loadDriverTrip` already carries, with the identical 1:1-or-absent cardinality argument.
 - **Closes the divergence T22's review named for T23**: `DeparturesBoard.tsx` used to render `{done} of {total} stops` and a percent bar unconditionally, so a transfer (`total` always `1`, since it has no itinerary stops) read "1 of 1 stops" at 100% full the instant it started — the board said the trip was finished while the van was still at the pickup. It now special-cases `total === 1` with status-aware text ("Not started yet" / "Trip started" / "Trip completed"), mirroring `StopList.tsx`'s own branch from T22, and drops the bar entirely for that case rather than drawing one that is always 0% or 100%.
 
 **Commit B (`929a9a4`)** — `admin.bookings.list`/`.detail` and `admin.calendar.month`:
+
 - Same join quartet added to both `bookings.ts` queries and `calendar.ts`'s `month` query, same `transferTitle()` guard pattern.
 - `AdminBookingsPage.tsx`: the list's "Tour" column is renamed "Trip" (a transfer's route now renders there too, and a column header naming "Tour" over a transfer row would be a false label). Both the mobile card and the table row show `transferRouteLabel` + `pickupTime` + `vehicleTypeLabel`.
 - `AdminBookingDetailPage.tsx`: new "Transfer" section (absent for a tour booking) carrying the full guest-field set — vehicle, pickup time, day-use end time, drop-off address with a Maps link, luggage count, flight/airline.
@@ -53,7 +56,7 @@ This mirrors T22's own list-vs-detail precedent (`DriverTripRow` carries less th
 - **T17 finding, still open:** `shared/src/schemas/public.ts`'s `inquiryInput` missing `.strict()`.
 - **Owner decision (T21, HANDOVER-10):** the quote-ready email is missing pickup time and deposit-vs-total info.
 - **Not fixed, named (T21, HANDOVER-10):** `sendAssignmentNotice()`'s missing-booking-id log gap in `dispatch.ts`.
-- **Noted, not actioned (T22, HANDOVER-11):** `DriverTripsPage.tsx`'s unlabelled list-row pickup-time text node; the four non-route detail fields' unenforced cross-table invariant; `money.ts`'s no-write-invariant test naming (now stale in a new way — the guard moved to `services/transfers/display.ts`'s own file, which carries no such invariant comment yet; worth a one-line note if T24 or a later task touches that module again); `driver-transfer-trip.test.ts`'s `cleanup()` array-reset asymmetry; dead `TRANSFER_BOOKING_LABEL` code on the two driver screens (now *also* true on the three admin list surfaces T23 touched, for the same reason — every transfer booking resolves a real `transferRouteLabel`).
+- **Noted, not actioned (T22, HANDOVER-11):** `DriverTripsPage.tsx`'s unlabelled list-row pickup-time text node; the four non-route detail fields' unenforced cross-table invariant; `money.ts`'s no-write-invariant test naming (now stale in a new way — the guard moved to `services/transfers/display.ts`'s own file, which carries no such invariant comment yet; worth a one-line note if T24 or a later task touches that module again); `driver-transfer-trip.test.ts`'s `cleanup()` array-reset asymmetry; dead `TRANSFER_BOOKING_LABEL` code on the two driver screens (now _also_ true on the three admin list surfaces T23 touched, for the same reason — every transfer booking resolves a real `transferRouteLabel`).
 
 ## Migrations owed
 

@@ -9,6 +9,7 @@ Continues HANDOVER-14 (T25). All three tasks below are Sonnet/combined review pe
 **Scope decision — deliberately narrower than T24's field set.** The owner's own list named five things: route + direction, vehicle type, pickup time, pickup/drop-off, flight if set. That's what shipped — `transferRouteLabel`, `vehicleTypeLabel`, `pickupTime`, `dropoffAddress`, `flightNumber`/`airline`. T24's My Booking page additionally shows `dayUseEndTime`, `luggageCount`, and `dropoffMapsUrl`; none of those were in the owner's list for this task, so none were added here. If the owner wants parity with My Booking's full set on these guest-facing pages too, that's a one-line follow-up (the same four-join query already selects enough; it would just mean widening the return type and the two page components).
 
 **Where it landed:**
+
 - `server/src/routers/public/checkout.ts` — both `bookingStatus` and `bookingLookup` widened with the same four-join pattern already used elsewhere (`bookingTransferDetails` + `transferRoutes` + two `transferPlaces` aliases + `vehicleTypes`), guarded by the `tourId === null` check.
 - `server/src/routers/public/portal.ts` — `manualPayment` widened identically.
 - `client/src/pages/public/BookingStatusPage.tsx`, `client/src/pages/portal/ManualQrPage.tsx` — new conditional "Your transfer" section; heading falls back to the route label before `TRANSFER_BOOKING_LABEL`.
@@ -19,6 +20,7 @@ Continues HANDOVER-14 (T25). All three tasks below are Sonnet/combined review pe
 **Commit `e7ab102`.** Owner ask: no dual-control approval needed, but every price edit (tour tier, package, route/vehicle-type price) must write an `audit_log` row naming who, when, and old → new. Add a test for each gap.
 
 **The three write paths, confirmed by grep across the server tree, none missed:**
+
 1. `services/tours/upsert.ts` (reached by `admin.tours.update`) — added a pre-write read of the existing tier rows (`previousPriceTiers`), returned alongside the new ones; `routers/admin/tours.ts`'s `auditDataFor()` now includes both.
 2. `routers/admin/packages.ts` `update` — added a pre-write `SELECT oldPriceCentavos, newPriceCentavos` read; audit row now carries `previousOldPriceCentavos`/`previousNewPriceCentavos` alongside the package's own (differently-named) marketing columns — the naming collision is called out inline in the code so a future reader doesn't confuse "previous price" with the package's own `oldPriceCentavos` field.
 3. `routers/admin/transfer-routes.ts` `update` — zero new reads needed; the existing merge logic already reads `storedPrices` before writing, so the audit `data` was simply widened to nest `{ patch, previousPrices: storedPrices }`.
@@ -35,6 +37,7 @@ Tests: `admin-tours.test.ts`, `admin-packages.test.ts`, `admin-transfer-routes.t
 **Pickup date was already shown** via the existing `tourDate` field; **hold expiry in Manila time** was already shown via `manilaDateTimeLabel()` (pre-existing, also used by `holdExpiresAt`). What was actually missing, and is what this task added: pickup **time**, vehicle type, and the due-now/balance breakdown.
 
 **Where it landed:**
+
 - `server/src/services/notify/templates.ts` — `NotifyPayload` gained `pickupTime?`, `vehicleTypeLabel?`, `dueNowCentavos?` (all `custom_quote_ready`-only). New conditional trip-detail rows and a money line.
 - `server/src/routers/admin/transfer-quotes.ts` — `sendQuoteReadyNotice` widened its query (two new joins: `bookingTransferDetails`, `vehicleTypes`) and computes `dueNowCentavos` the same way `portal.manualPayment`'s `amountDueCentavos` already does from the same price snapshot.
 - Tests: `server/src/__tests__/notify.test.ts` (4 new template tests), `server/src/__tests__/admin-transfer-quotes.test.ts` (extended the existing conversion test with 5 assertions against the real mail, not template fallback).

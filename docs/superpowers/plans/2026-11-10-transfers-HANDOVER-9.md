@@ -142,7 +142,7 @@ its own doc comment warns against a second pooled connection being held open acr
    commits independently.
 3. A small transaction, wrapped in the same `withDeadlockRetry()` the shared writer uses, that
    links `inquiries.convertedBookingId` via a compare-and-swap `UPDATE ... WHERE
-   converted_booking_id IS NULL` (the same pattern `admin.auth.resetPassword` already uses on
+converted_booking_id IS NULL` (the same pattern `admin.auth.resetPassword` already uses on
    `password_reset_tokens.used_at`) and writes the dedicated `transfer.custom_quote_converted`
    audit row the plan names (actor, inquiry id, price — no PII).
 
@@ -186,7 +186,7 @@ applicable:
 5. Step 3 wrapped in `withDeadlockRetry()` — a transient failure there used to roll back the
    link while leaving the already-created booking live, the same orphan the documented race
    produces, reached a different way.
-6–9 (nitpicks): a stale comment claiming `inquiries.message` is nullable, a doc comment
+   6–9 (nitpicks): a stale comment claiming `inquiries.message` is nullable, a doc comment
    overclaiming a stray duration is refused rather than ignored, a bare `Error` in the
    double-race fallback now a `TransferQuoteLinkUnconfirmedError` naming the orphaned booking,
    and an operational note for T20's form (don't offer a placeholder phone for "no number
