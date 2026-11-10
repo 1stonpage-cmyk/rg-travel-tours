@@ -4,4 +4,8 @@ coverage
 pnpm-lock.yaml
 client/public/placeholders
 demo
+# Local-only design preview (owner decision 2026-11-10) — excluded from git
+# via .git/info/exclude, never committed. ESLint's `files` globs are all
+# .ts/.tsx/.mjs, so it never scans this .html directory and needs no entry.
+.design-preview
 .claude/settings.local.json
