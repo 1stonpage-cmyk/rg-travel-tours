@@ -29,7 +29,7 @@ import {
   SEED_DEMO_TRIP_REQUEST,
   type SeedDemoTransferBooking,
 } from '../db/seed-data';
-import { addCivilDays, manilaCivilDate } from '@rg/shared';
+import { addCivilDays, civilDateFromDate, manilaCivilDate } from '@rg/shared';
 import { getDb, getPool } from '../db/client';
 import {
   bookingTransferDetails,
@@ -67,6 +67,20 @@ const SUV_PLATE = 'SEED-SUV-01';
 const TOUCHED_CIVIL_DATES = [
   ...new Set(SEED_DEMO_TRANSFER_BOOKINGS.map((b) => b.daysFromToday)),
 ].map((days) => addCivilDays(manilaCivilDate(new Date()), days));
+
+/**
+ * The two `daysFromToday: 0` recipes exist so the dashboard and Departures
+ * board have something to show for "today" in a demo. The notice-floor
+ * adjustment in `upsertDemoTransferBookings` (pushing a too-soon fixed
+ * pickup time to `now + minNoticeHours + 30m`) is what makes them
+ * CREATABLE, but nothing before this assertion proved they still land on
+ * TODAY's Manila civil date rather than rolling into tomorrow — which a
+ * late-evening seed run can do, and which would make the demo show an
+ * empty "today" with no error anywhere. This is the assertion that would
+ * catch that regression; see HANDOVER-17 for the owner-facing run-time
+ * caveat this same risk requires.
+ */
+const TODAY_CIVIL_DATE = manilaCivilDate(new Date());
 
 const created = {
   placeIds: [] as number[],
@@ -109,13 +123,11 @@ describeWithDb('db/seed.ts — upsertDemoTransferBookings / upsertDemoTripReques
     created.userIds.push(owner.insertId);
 
     // The airport plus the three destinations the three routes need.
-    const [airport] = await db
-      .insert(transferPlaces)
-      .values({
-        name: 'Mactan-Cebu International Airport',
-        nameKey: '__seeddemo__airport',
-        isAirport: true,
-      });
+    const [airport] = await db.insert(transferPlaces).values({
+      name: 'Mactan-Cebu International Airport',
+      nameKey: '__seeddemo__airport',
+      isAirport: true,
+    });
     created.placeIds.push(airport.insertId);
 
     const destNames: Record<string, string> = {
@@ -265,11 +277,17 @@ describeWithDb('db/seed.ts — upsertDemoTransferBookings / upsertDemoTripReques
     expect(assigned?.vanId).not.toBeNull();
     expect(assigned?.driverId).not.toBeNull();
     expect(assigned?.amountPaidCentavos).toBeGreaterThan(0);
+    // Both `daysFromToday: 0` recipes must still land on TODAY's Manila
+    // civil date after the notice-floor adjustment — a late-night seed run
+    // that rolls one past midnight would make the dashboard's "today" empty
+    // with no error anywhere else.
+    expect(civilDateFromDate(assigned!.tourDate)).toBe(TODAY_CIVIL_DATE);
 
     const unassigned = await bookingByEmail('demo.transfer.unassigned@example.test');
     expect(unassigned?.status).toBe('confirmed');
     expect(unassigned?.vanId).toBeNull();
     expect(unassigned?.amountPaidCentavos).toBeGreaterThan(0);
+    expect(civilDateFromDate(unassigned!.tourDate)).toBe(TODAY_CIVIL_DATE);
 
     const held = await bookingByEmail('demo.transfer.flight@example.test');
     expect(held?.status).toBe('pending_payment');
