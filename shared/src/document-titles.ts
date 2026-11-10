@@ -85,6 +85,14 @@ export const STATIC_PUBLIC_TITLES = {
   '/terms': 'Terms of Service',
   '/refund-policy': 'Cancellation & Refund Policy',
   '/cookies': 'Cookie Policy',
+  /*
+   * Task 1D (owner decision 2026-11-10). Not a legal page — see
+   * `resolvePhotoCredits` (server/src/seo/resolvers.ts) for why it is
+   * `noindex,nofollow` and absent from `sitemap.ts`'s legal-pages list
+   * while still living in this same map: the title still needs registering
+   * here, same BUG-116/QA-1 reasoning as every other entry.
+   */
+  '/photo-credits': 'Photo Credits',
 } as const;
 
 export type StaticPublicPath = keyof typeof STATIC_PUBLIC_TITLES;

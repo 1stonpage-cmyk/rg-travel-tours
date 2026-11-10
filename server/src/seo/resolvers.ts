@@ -605,6 +605,35 @@ function resolveLegal(page: keyof typeof LEGAL_PAGES): Resolver {
   };
 }
 
+/**
+ * `/photo-credits` (Task 1D, "Real photos for transfers from free, legal
+ * stock", owner decision 2026-11-10). A real, public, unauthenticated SPA
+ * route with no entry here would hit the exact BUG-116/QA-1 defect this file
+ * already fixed twice — `resolvePage` falls through to `notFoundMeta` for
+ * any path `ROUTES` doesn't match, serving the real page as HTTP 404 with
+ * the title "Page not found".
+ *
+ * **Deliberately `noindex,nofollow`, unlike the four legal pages.** It is
+ * thin, non-marketing content (a short photographer credit list) that adds
+ * nothing to the index, so it is not added to `sitemap.ts`'s static list
+ * either — same treatment `/checkout` and `/booking` get, for the same
+ * "real page, nothing worth indexing" reason (see `APP_SURFACE_COPY`'s own
+ * note). Pure and synchronous in spirit (no settings/database read needed:
+ * the credits are static, not `settings`-driven), wrapped `async` only to
+ * satisfy `Resolver`'s shared signature.
+ */
+const resolvePhotoCredits: Resolver = async () => ({
+  title: `${STATIC_PUBLIC_TITLES['/photo-credits']} | ${BRAND}`,
+  description: `Photographer credits for the free stock photos used on ${BRAND}'s transfer booking page.`,
+  canonical: absoluteUrl('/photo-credits'),
+  ogImage: null,
+  ogType: 'website',
+  jsonLd: [],
+  preload: null,
+  status: 200,
+  robots: 'noindex,nofollow',
+});
+
 const resolveTour: Resolver = async (params) => {
   const slug = params.slug ?? '';
   // The `show_tours` gate (Task T15), checked before the tour and settings
@@ -725,6 +754,7 @@ export const ROUTES: RouteEntry[] = [
   { pattern: '/terms', resolve: resolveLegal('terms') },
   { pattern: '/refund-policy', resolve: resolveLegal('refund') },
   { pattern: '/cookies', resolve: resolveLegal('cookies') },
+  { pattern: '/photo-credits', resolve: resolvePhotoCredits },
 ];
 
 export interface RouteMatch {

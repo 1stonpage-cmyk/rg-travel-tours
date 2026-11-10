@@ -296,6 +296,13 @@ export default function SiteFooter() {
               <Link to="/cookies" className="flex min-h-11 items-center hover:underline">
                 Cookie Policy
               </Link>
+              {/* Not required by the stock-photo licences, but good practice
+                  (Task 1D, owner decision 2026-11-10) — credits the free
+                  Unsplash/Pexels photos standing in for transfer vehicle
+                  photos until R&G supplies its own. See docs/IMAGE_CREDITS.md. */}
+              <Link to="/photo-credits" className="flex min-h-11 items-center hover:underline">
+                Photo Credits
+              </Link>
               <button
                 type="button"
                 onClick={reopenCookieSettings}

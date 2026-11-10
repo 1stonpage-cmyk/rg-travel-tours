@@ -38,6 +38,7 @@ import HomePage from '@/pages/public/HomePage';
 import CookiesPage from '@/pages/public/CookiesPage';
 import NotFoundPage from '@/pages/public/NotFoundPage';
 import PackageDetailPage from '@/pages/public/PackageDetailPage';
+import PhotoCreditsPage from '@/pages/public/PhotoCreditsPage';
 import PrivacyPage from '@/pages/public/PrivacyPage';
 import RefundPolicyPage from '@/pages/public/RefundPolicyPage';
 import TermsPage from '@/pages/public/TermsPage';
@@ -105,6 +106,8 @@ export default function App() {
         <Route path="terms" element={<TermsPage />} />
         <Route path="refund-policy" element={<RefundPolicyPage />} />
         <Route path="cookies" element={<CookiesPage />} />
+        {/* Task 1D, owner decision 2026-11-10 — see docs/IMAGE_CREDITS.md. */}
+        <Route path="photo-credits" element={<PhotoCreditsPage />} />
         {/*
          * Demo polish, task 1C (owner decision 2) — the catch-all for any
          * unmatched URL. Before this, `App.tsx` had no `path="*"` route at
