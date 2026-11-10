@@ -108,6 +108,10 @@ const SAMPLE: Record<NotifyEvent, Parameters<typeof notify>[1]> = {
     paidCentavos: 0,
     tripLabel: 'Mactan airport to a private resort in Argao',
     holdExpiresAt: '2026-11-22T10:00:00.000Z',
+    // Task T21b (owner-added 2026-11-10).
+    pickupTime: '08:30',
+    vehicleTypeLabel: 'Van',
+    dueNowCentavos: 135000, // a 30% deposit of 450000, whole pesos
   },
 };
 
@@ -467,5 +471,62 @@ describe('renderTemplate', () => {
     expect(html).not.toContain('<script>');
     expect(html).toContain('&lt;script&gt;');
     expect(html).toContain('&amp;');
+  });
+
+  /**
+   * Task T21b (owner-added 2026-11-10): the quote-ready email also names
+   * the pickup time, the vehicle type, and the deposit-vs-total-vs-balance
+   * breakdown. `SAMPLE.custom_quote_ready` carries a 30% deposit of
+   * ₱4,500 — ₱1,350 due now, ₱3,150 left for the day.
+   */
+  it('names the pickup time and vehicle type', () => {
+    const { html, text } = renderTemplate('custom_quote_ready', SAMPLE.custom_quote_ready);
+    for (const body of [html, text]) {
+      expect(body).toContain('08:30');
+      expect(body).toContain('Van');
+    }
+  });
+
+  it('shows the deposit due now, the total and the balance left for the day', () => {
+    const { html, text } = renderTemplate('custom_quote_ready', SAMPLE.custom_quote_ready);
+    for (const body of [html, text]) {
+      expect(body).toContain('1,350');
+      expect(body).toContain('4,500');
+      expect(body).toContain('3,150');
+    }
+  });
+
+  it('shows the full total as due now, and no balance line figure, for a "pay in full" booking', () => {
+    const { html, text } = renderTemplate('custom_quote_ready', {
+      ...SAMPLE.custom_quote_ready,
+      dueNowCentavos: 450000,
+    });
+    for (const body of [html, text]) {
+      expect(body).toContain('Due now');
+      expect(body).toContain('4,500');
+      // Total equals due-now, so the balance is zero — still shown, honestly.
+      expect(body).toMatch(/Balance on the day.*0/s);
+    }
+  });
+
+  /**
+   * Every new optional field falls back to showing nothing extra, the same
+   * discipline `tripLabel`/`holdExpiresAt` already follow — a quote-ready
+   * email with none of the three new fields must still read as a complete,
+   * true sentence rather than printing `undefined`.
+   */
+  it('omits the pickup/vehicle row and the money breakdown when none are given', () => {
+    const { html, text } = renderTemplate('custom_quote_ready', {
+      ...SAMPLE.custom_quote_ready,
+      pickupTime: undefined,
+      vehicleTypeLabel: undefined,
+      dueNowCentavos: undefined,
+    });
+    for (const body of [html, text]) {
+      expect(body).not.toContain('Pickup time');
+      expect(body).not.toContain('Vehicle');
+      expect(body).not.toContain('Due now');
+      expect(body).not.toMatch(/undefined/);
+    }
   });
 });

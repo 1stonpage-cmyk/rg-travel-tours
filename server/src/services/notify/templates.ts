@@ -135,6 +135,33 @@ export interface NotifyPayload {
    */
   tripLabel?: string;
   holdExpiresAt?: string;
+  /**
+   * Task T21b (owner-added 2026-11-10): the guest quote-ready email also
+   * names the pickup time, the vehicle type, and what is due now versus
+   * what is left for the day. Three more `custom_quote_ready`-only fields,
+   * the same arrangement as `tripLabel`/`holdExpiresAt` above — optional on
+   * the type, always supplied by this event's one caller.
+   *
+   * `pickupTime` is the "HH:mm" civil label already stored on
+   * `booking_transfer_details` (the same column `portal.booking`/
+   * `admin.bookings.detail` read) — no new computation, a plain read.
+   *
+   * `vehicleTypeLabel` is `vehicle_types.name` for the booking's requested
+   * type — again a plain read via the join every other transfer surface
+   * already uses.
+   *
+   * `dueNowCentavos` is the ONE figure the caller computes rather than
+   * reads: `depositCentavos(totalCentavos, depositPercent)` for a
+   * `'deposit'` booking, or `totalCentavos` itself for a `'full'` one — the
+   * exact same arithmetic `portal.manualPayment`'s `amountDueCentavos`
+   * already does from the same price snapshot. The template derives the
+   * balance from it (`totalCentavos - dueNowCentavos`), the same way
+   * `booking_confirmed`'s case already derives its own balance line —
+   * never a second, independent calculation.
+   */
+  pickupTime?: string;
+  vehicleTypeLabel?: string;
+  dueNowCentavos?: number;
 }
 
 export interface RenderedMail {
@@ -475,6 +502,58 @@ export function renderTemplate(event: NotifyEvent, payload: NotifyPayload): Rend
         payload.holdExpiresAt === undefined
           ? ''
           : `Please respond by ${manilaDateTimeLabel(payload.holdExpiresAt)} to keep this quote.\n`;
+
+      /*
+       * Task T21b: pickup time and vehicle type, as their own rows — the
+       * same "say nothing untrue, omit what is missing" discipline every
+       * optional field on this payload already follows. Appended to the
+       * shared `details`/`detailsPlain` table rather than folded into it,
+       * since `detailsHtml`/`detailsText` are shared by all eight events
+       * and these two fields exist on none of the others.
+       */
+      const tripRows: Array<[string, string]> = [
+        ...(payload.pickupTime === undefined
+          ? []
+          : ([['Pickup time', payload.pickupTime]] as Array<[string, string]>)),
+        ...(payload.vehicleTypeLabel === undefined
+          ? []
+          : ([['Vehicle', payload.vehicleTypeLabel]] as Array<[string, string]>)),
+      ];
+      const tripRowsHtml =
+        tripRows.length === 0
+          ? ''
+          : [
+              `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 16px 0;width:100%;font-size:15px;color:${INK};">`,
+              ...tripRows.map(
+                ([label, value]) =>
+                  `<tr><td style="padding:4px 0;color:${MUTED};width:40%;">${escapeHtml(label)}</td>` +
+                  `<td style="padding:4px 0;font-weight:bold;">${escapeHtml(value)}</td></tr>`,
+              ),
+              '</table>',
+            ].join('');
+      const tripRowsPlain = tripRows.map(([label, value]) => `${label}: ${value}`).join('\n');
+
+      /*
+       * Task T21b: due now vs. the full total vs. the balance left for the
+       * day. `dueNowCentavos` is the one figure the caller computes (see
+       * `NotifyPayload.dueNowCentavos`'s own note); the balance is derived
+       * HERE from two already-trusted server numbers, the same way
+       * `booking_confirmed`'s case derives its own balance line above.
+       */
+      const moneyHtml =
+        payload.dueNowCentavos === undefined
+          ? ''
+          : `<p style="margin:0;">Total: <strong>${escapeHtml(price)}</strong>. ` +
+            `Due now: <strong>${escapeHtml(formatPeso(payload.dueNowCentavos))}</strong>. ` +
+            `Balance on the day: <strong>${escapeHtml(
+              formatPeso(payload.totalCentavos - payload.dueNowCentavos),
+            )}</strong>.</p>`;
+      const moneyPlain =
+        payload.dueNowCentavos === undefined
+          ? ''
+          : `Total: ${price}\nDue now: ${formatPeso(payload.dueNowCentavos)}\n` +
+            `Balance on the day: ${formatPeso(payload.totalCentavos - payload.dueNowCentavos)}\n`;
+
       return {
         subject: `Your trip quote is ready — ${payload.ref}`,
         html: document_(
@@ -482,6 +561,8 @@ export function renderTemplate(event: NotifyEvent, payload: NotifyPayload): Rend
           `<p style="margin:0;">We have priced ${escapeHtml(trip)} at ` +
             `<strong>${escapeHtml(price)}</strong> and reserved a vehicle for it.</p>` +
             details +
+            tripRowsHtml +
+            moneyHtml +
             deadlineHtml +
             '<p style="margin:0;">Pay the deposit online now, or settle the balance in cash ' +
             'on the day.</p>' +
@@ -489,6 +570,8 @@ export function renderTemplate(event: NotifyEvent, payload: NotifyPayload): Rend
         ),
         text:
           `We have priced ${trip} at ${price} and reserved a vehicle for it.\n\n${detailsPlain}\n` +
+          (tripRowsPlain === '' ? '' : `${tripRowsPlain}\n`) +
+          (moneyPlain === '' ? '' : `${moneyPlain}\n`) +
           `${deadlinePlain}\n` +
           `Pay the deposit online now, or settle the balance in cash on the day.\n\n` +
           `View my booking: ${url}\n`,

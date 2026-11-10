@@ -411,6 +411,22 @@ describeWithDb('admin.transferQuotes.convert', () => {
      * into the body, proving `customRouteDescription` was read correctly.
      */
     expect(mail[0]!.text).toContain('Mactan airport to a private resort in Argao');
+
+    /*
+     * Task T21b (owner-added 2026-11-10): the same email now also names the
+     * pickup time, the vehicle type, and the deposit-vs-total-vs-balance
+     * breakdown. Same discipline as the route-description assertion above —
+     * a broken join would still pass the two assertions before this one, so
+     * assert the REAL values this specific convert produced
+     * (`convertInput`'s own `pickupTime: '08:00'`, `vehicleTypeId: VAN_ID`
+     * "Van", `priceCentavos: 450_000` at the seeded 30% deposit), not just
+     * that SOME text is present.
+     */
+    expect(mail[0]!.text).toContain('08:00');
+    expect(mail[0]!.text).toContain('Van');
+    expect(mail[0]!.text).toContain('Due now: ₱1,350');
+    expect(mail[0]!.text).toContain('Total: ₱4,500');
+    expect(mail[0]!.text).toContain('Balance on the day: ₱3,150');
   });
 
   it('ALLOWS finance to convert', async () => {

@@ -20,9 +20,9 @@
  */
 import { TRPCError } from '@trpc/server';
 import { eq } from 'drizzle-orm';
-import { manilaCivilDate, transferQuoteConvertInput } from '@rg/shared';
+import { depositCentavos, manilaCivilDate, transferQuoteConvertInput } from '@rg/shared';
 import { getDb } from '../../db/client';
-import { bookingTransferDetails, bookings } from '../../db/schema';
+import { bookingTransferDetails, bookings, vehicleTypes } from '../../db/schema';
 import {
   GatewayMinimumNotMetError,
   HoldContentionError,
@@ -186,12 +186,29 @@ async function sendQuoteReadyNotice(bookingId: number): Promise<void> {
         paidCentavos: bookings.amountPaidCentavos,
         holdExpiresAt: bookings.holdExpiresAt,
         customRouteDescription: bookingTransferDetails.customRouteDescription,
+        // Task T21b (owner-added 2026-11-10): pickup time, vehicle type and
+        // the deposit-vs-total-vs-balance breakdown, named in the owner's
+        // own list for this email.
+        pickupTime: bookingTransferDetails.pickupTime,
+        vehicleTypeLabel: vehicleTypes.name,
+        payMode: bookings.payMode,
+        priceSnapshot: bookings.priceSnapshot,
       })
       .from(bookings)
       .leftJoin(bookingTransferDetails, eq(bookingTransferDetails.bookingId, bookings.id))
+      .leftJoin(vehicleTypes, eq(vehicleTypes.id, bookings.vehicleTypeId))
       .where(eq(bookings.id, bookingId))
       .limit(1);
     if (!row) return;
+
+    // The ONE figure this caller computes (see `NotifyPayload
+    // .dueNowCentavos`'s own note) — the same arithmetic
+    // `portal.manualPayment`'s `amountDueCentavos` already does from the
+    // same price snapshot, for the same booking shape.
+    const dueNowCentavos =
+      row.payMode === 'full'
+        ? row.totalCentavos
+        : depositCentavos(row.totalCentavos, row.priceSnapshot.depositPercent);
 
     await notify('custom_quote_ready', {
       to: row.leadEmail,
@@ -207,6 +224,9 @@ async function sendQuoteReadyNotice(bookingId: number): Promise<void> {
       // spelling, defined once, in the one place that owns the copy.
       tripLabel: row.customRouteDescription ?? undefined,
       holdExpiresAt: row.holdExpiresAt?.toISOString(),
+      pickupTime: row.pickupTime ?? undefined,
+      vehicleTypeLabel: row.vehicleTypeLabel ?? undefined,
+      dueNowCentavos,
     });
   } catch (error) {
     // The error's TYPE and the booking id — never the error's MESSAGE
