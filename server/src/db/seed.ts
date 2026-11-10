@@ -66,6 +66,8 @@ import { closeDb, getDb, type Transaction } from './client';
 import { hashPassword } from '../services/password';
 import * as schema from './schema';
 import {
+  SEED_DEMO_TRANSFER_BOOKINGS,
+  SEED_DEMO_TRIP_REQUEST,
   SEED_DESTINATIONS,
   SEED_DRIVERS,
   SEED_PACKAGES,
@@ -83,9 +85,21 @@ import {
   type SeedReview,
   type SeedTour,
 } from './seed-data';
-import { bookingRefSchema, manilaCivilDate, type TransferRoutePricesInput } from '@rg/shared';
+import {
+  addCivilDays,
+  bookingRefSchema,
+  depositCentavos,
+  manilaCivilDate,
+  manilaInstant,
+  type TransferRoutePricesInput,
+} from '@rg/shared';
 import { REF_ALPHABET } from '../services/booking-ref';
 import { randomInt } from 'node:crypto';
+import { withDeadlockRetry } from './deadlock';
+import { readTransferOperationsSettings } from '../content/settings';
+import { assignVanAndDriver } from '../services/dispatch/assign';
+import { recordPayment } from '../services/payments/record-payment';
+import { createTransferBooking } from '../services/transfers/create-booking';
 import { upsertTransferRoute } from '../services/transfers/upsert-route';
 
 type Db = ReturnType<typeof getDb>;
@@ -589,6 +603,246 @@ export async function upsertDemoTransferRoutes(
   console.log(
     `[seed] transfer routes: ${SEED_TRANSFER_ROUTES.length} (from "${SEED_TRANSFER_AIRPORT_NAME}")`,
   );
+}
+
+/**
+ * The first active owner, or failing that any active staff account — just
+ * an id to attribute a seed-driven payment/assignment to. Demo bookings are
+ * app-only and this is always called after `seedBase` has had the chance to
+ * create the first owner, but a fresh database where `OWNER_EMAIL`/
+ * `OWNER_PASSWORD` were never set would have none — caught here with a
+ * clear instruction rather than a foreign-key-shaped crash deep inside
+ * `recordPayment`/`assignVanAndDriver`.
+ */
+async function resolveSeedActorUserId(db: Db): Promise<number> {
+  const [owner] = await db
+    .select({ id: schema.users.id })
+    .from(schema.users)
+    .where(and(eq(schema.users.role, 'owner'), eq(schema.users.isActive, true)))
+    .limit(1);
+  if (owner) return owner.id;
+
+  const [anyStaff] = await db
+    .select({ id: schema.users.id })
+    .from(schema.users)
+    .where(eq(schema.users.isActive, true))
+    .limit(1);
+  if (anyStaff) return anyStaff.id;
+
+  throw new Error(
+    'seed: demo transfer bookings need at least one active staff account to attribute the ' +
+      'payment/assignment to — run db:seed (base) with OWNER_EMAIL/OWNER_PASSWORD set first.',
+  );
+}
+
+/**
+ * The five demo items Task 1E adds: four real transfer bookings plus one
+ * custom trip-request inquiry (handled separately, see
+ * `upsertDemoTripRequest` below) — APP DATABASE ONLY, never `seedBase`,
+ * never `rg_travel_test`, same gate every other demo-content helper in this
+ * file uses.
+ *
+ * **Driven by the real services, not raw inserts** (owner decision 4 /
+ * this task's own DO-NOT list, which explicitly authorizes this —
+ * `createTransferBooking()` for the hold, `recordPayment()` for a deposit,
+ * `assignVanAndDriver()` for dispatch — the opposite choice from
+ * `SEED_UNASSIGNED_TRIPS` above, which deliberately avoids `recordPayment()`
+ * for TOUR demo data. The difference is the brief: that trip only needed a
+ * STATUS and a missing van/driver; this one needs a genuinely paid deposit
+ * so the dashboard's money block and the payment box have something real to
+ * show.
+ *
+ * **`daysFromToday: 0` pickup times are a FLOOR, not a fixed clock time.**
+ * `createTransferBooking()` refuses a pickup less than
+ * `transfer_operations.minNoticeHours` away from `now` (read fresh here, so
+ * a demo run with an unusually long configured notice window still clears
+ * it). When the recipe's own clock time would be too soon relative to the
+ * moment this seed actually runs, the pickup is pushed forward to
+ * `now + minNoticeHours + 30 minutes` instead — still "today" in the
+ * overwhelmingly common case (a seed run during business hours), and
+ * accepted to roll into tomorrow's civil date on the rare very-late-night
+ * run rather than fail the whole seed.
+ */
+export async function upsertDemoTransferBookings(db: Db): Promise<void> {
+  const now = new Date();
+  const todayCivil = manilaCivilDate(now);
+  const operations = await readTransferOperationsSettings();
+  const actorUserId = await resolveSeedActorUserId(db);
+  const noticeFloor = new Date(now.getTime() + (operations.minNoticeHours * 60 + 30) * 60_000);
+
+  let created = 0;
+  let skipped = 0;
+
+  for (const recipe of SEED_DEMO_TRANSFER_BOOKINGS) {
+    const [existing] = await db
+      .select({ id: schema.bookings.id })
+      .from(schema.bookings)
+      .where(eq(schema.bookings.leadEmail, recipe.leadEmail));
+    if (existing) {
+      skipped += 1;
+      continue;
+    }
+
+    const [route] = await db
+      .select({ id: schema.transferRoutes.id })
+      .from(schema.transferRoutes)
+      .where(eq(schema.transferRoutes.slug, recipe.routeSlug));
+    if (!route) {
+      throw new Error(`seed: demo transfer booking references unknown route "${recipe.routeSlug}"`);
+    }
+    const [vehicleType] = await db
+      .select({ id: schema.vehicleTypes.id })
+      .from(schema.vehicleTypes)
+      .where(eq(schema.vehicleTypes.slug, recipe.vehicleTypeSlug));
+    if (!vehicleType) {
+      throw new Error(
+        `seed: demo transfer booking references unknown vehicle type "${recipe.vehicleTypeSlug}"`,
+      );
+    }
+
+    let civilDate = addCivilDays(todayCivil, recipe.daysFromToday);
+    let pickupTime = recipe.pickupTime;
+    if (recipe.daysFromToday === 0) {
+      const floorPickup = manilaInstant(civilDate, pickupTime);
+      if (floorPickup.getTime() < noticeFloor.getTime()) {
+        civilDate = manilaCivilDate(noticeFloor);
+        pickupTime = new Intl.DateTimeFormat('en-GB', {
+          timeZone: 'Asia/Manila',
+          hour: '2-digit',
+          minute: '2-digit',
+          hourCycle: 'h23',
+        }).format(noticeFloor);
+      }
+    }
+
+    const held = await createTransferBooking(
+      {
+        date: civilDate,
+        routeId: route.id,
+        customRouteDescription: null,
+        vehicleTypeId: vehicleType.id,
+        productType: recipe.productType,
+        customRouteDurationMinutes: null,
+        direction: recipe.direction,
+        pickupTime,
+        dayUseEndTime: recipe.dayUseEndTime,
+        pax: recipe.pax,
+        luggageCount: recipe.luggageCount,
+        pickup: null,
+        pickupMapUrl: null,
+        dropoffAddress: recipe.dropoffAddress,
+        dropoffMapUrl: null,
+        flightNumber: recipe.flightNumber,
+        airline: recipe.airline,
+        requests: null,
+        payMode: 'deposit',
+        lead: {
+          name: recipe.leadName,
+          email: recipe.leadEmail,
+          phone: '+639170000098',
+        },
+        priceSource: { kind: 'catalog' },
+      },
+      now,
+    );
+
+    if (recipe.payDeposit) {
+      const [booking] = await db
+        .select({
+          totalCentavos: schema.bookings.totalCentavos,
+          priceSnapshot: schema.bookings.priceSnapshot,
+        })
+        .from(schema.bookings)
+        .where(eq(schema.bookings.id, held.bookingId));
+      if (!booking) {
+        throw new Error(`seed: demo transfer booking ${held.ref} vanished right after creation`);
+      }
+      const deposit = depositCentavos(booking.totalCentavos, booking.priceSnapshot.depositPercent);
+      await recordPayment({
+        bookingId: held.bookingId,
+        type: 'payment',
+        provider: 'manual',
+        method: 'gcash',
+        amountCentavos: deposit,
+        actor: { type: 'system', id: null },
+      });
+
+      if (recipe.assignTo) {
+        const [van] = await db
+          .select({ id: schema.vans.id })
+          .from(schema.vans)
+          .where(eq(schema.vans.plate, recipe.assignTo.vanPlate));
+        const [driver] = await db
+          .select({ id: schema.drivers.id })
+          .from(schema.drivers)
+          .where(eq(schema.drivers.code, recipe.assignTo.driverCode));
+        if (!van || !driver) {
+          throw new Error(
+            `seed: demo transfer booking ${held.ref} wants van "${recipe.assignTo.vanPlate}"/driver ` +
+              `"${recipe.assignTo.driverCode}", neither of which should be missing from the seeded fleet`,
+          );
+        }
+        const verdict = await withDeadlockRetry(() =>
+          db.transaction((tx) =>
+            assignVanAndDriver(tx, {
+              bookingId: held.bookingId,
+              vanId: van.id,
+              driverId: driver.id,
+              actorUserId,
+            }),
+          ),
+        );
+        if (!verdict.ok) {
+          throw new Error(
+            `seed: demo transfer booking ${held.ref} could not be assigned (${verdict.reason}) — ` +
+              "check the recipe's pickup time against the fleet fixtures for an overlap.",
+          );
+        }
+      }
+    }
+
+    created += 1;
+  }
+
+  console.log(
+    `[seed] demo transfer bookings: ${created} new, ${skipped} already present (left untouched)`,
+  );
+}
+
+/**
+ * The fifth demo item: a custom trip-request inquiry. App-only, same gate.
+ * Direct insert, matching this file's own house style for demo content with
+ * no existing public-mutation seed helper (`inquiries.create` needs a full
+ * tRPC context this script does not build) — `status: 'new'` is set exactly
+ * as the real mutation sets it.
+ */
+export async function upsertDemoTripRequest(db: Db): Promise<void> {
+  const [existing] = await db
+    .select({ id: schema.inquiries.id })
+    .from(schema.inquiries)
+    .where(eq(schema.inquiries.email, SEED_DEMO_TRIP_REQUEST.email));
+  if (existing) {
+    console.log('[seed] demo trip request: already present (left untouched)');
+    return;
+  }
+
+  const requestedDate = addCivilDays(
+    manilaCivilDate(new Date()),
+    SEED_DEMO_TRIP_REQUEST.requestedDateDaysFromToday,
+  );
+
+  await db.insert(schema.inquiries).values({
+    type: 'transfer_custom',
+    name: SEED_DEMO_TRIP_REQUEST.name,
+    email: SEED_DEMO_TRIP_REQUEST.email,
+    phone: SEED_DEMO_TRIP_REQUEST.phone,
+    message: SEED_DEMO_TRIP_REQUEST.message,
+    status: 'new',
+    requestedDate,
+    pax: SEED_DEMO_TRIP_REQUEST.pax,
+    routeDescription: SEED_DEMO_TRIP_REQUEST.routeDescription,
+  });
+  console.log('[seed] demo trip request: 1 new');
 }
 
 /**
@@ -1157,6 +1411,22 @@ export async function seedDemo(context: DatabaseContext = 'app'): Promise<void> 
     await upsertItineraryStops(db, tourIdBySlug);
   } else {
     console.log('[seed] itinerary stops: skipped (test database ships none by design)');
+  }
+
+  /*
+   * Demo transfer bookings are APP-ONLY (Task 1E, admin dashboard batch,
+   * owner decision 2026-11-10, decision 4) — after the fleet, the routes
+   * and the vehicle types, all of which this needs to already exist.
+   * `rg_travel_test` gets none: `capacity.test.ts` counts the whole fleet
+   * and `dashboard-summary.test.ts`/`dashboard-alerts.test.ts` build their
+   * own isolated fixtures, so seed content here would only change their
+   * answers for no benefit, the same reasoning the fleet itself is gated on.
+   */
+  if (context === 'app') {
+    await upsertDemoTransferBookings(db);
+    await upsertDemoTripRequest(db);
+  } else {
+    console.log('[seed] demo transfer bookings/trip request: skipped (app-only demo content)');
   }
 
   console.log('[seed] done.');

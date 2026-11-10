@@ -959,6 +959,164 @@ export const SEED_TRANSFER_ROUTES: SeedTransferRoute[] = [
   },
 ];
 
+/**
+ * Demo transfer bookings (Task 1E, admin dashboard batch — owner decision
+ * 2026-11-10, decision 4). **App-only, dev-only, never `seedBase` and never
+ * `rg_travel_test`** — same gate as the fleet and the routes above. Five
+ * items total: four real bookings plus one custom trip-request INQUIRY
+ * (separate, see `SEED_DEMO_TRIP_REQUEST` below) — so the dashboard,
+ * Dispatch, Departures, Booking Status and My Booking all have something
+ * real to show in a demo.
+ *
+ * This is a RECIPE, not a row: `upsertDemoTransferBookings` (`seed.ts`)
+ * resolves `routeSlug`/`vehicleTypeSlug` to real ids, computes the actual
+ * pickup date/time relative to "now" at seed time (so "today" and
+ * "tomorrow" are genuinely today and tomorrow whenever this runs), and
+ * drives the real `createTransferBooking()` / `recordPayment()` /
+ * `assignVanAndDriver()` services — never a hand-set `amount_paid_centavos`
+ * (CLAUDE.md; `schema-conventions.test.ts` would refuse a direct write
+ * outside `record-payment.ts` in application source, same rule a test
+ * fixture is exempt from and this file, being application source, is not).
+ *
+ * **`leadEmail` is the re-run key.** `createTransferBooking()` mints a
+ * fresh random ref every call — unlike `SEED_UNASSIGNED_TRIPS`'s fixed
+ * `RG-SEED` ref, there is no ref to match an existing row against before
+ * calling it. `upsertDemoTransferBookings` checks for an existing booking
+ * with this exact `leadEmail` FIRST and skips the whole create/pay/assign
+ * sequence when one is already there, so re-running `db:seed:demo` leaves
+ * exactly four demo transfer bookings, never eight. The accepted tradeoff:
+ * the dates on an existing demo booking do NOT refresh on a later re-run —
+ * a demo run on Monday that is reused on Thursday still shows Monday's
+ * "today" as a few days in the past. That is what the owner re-running the
+ * seed before each demo is for (see HANDOVER-17's exact command).
+ */
+export interface SeedDemoTransferBooking {
+  /** The re-run key — see this array's own doc comment. */
+  leadEmail: string;
+  leadName: string;
+  routeSlug: string;
+  vehicleTypeSlug: 'van' | 'suv' | 'mpv';
+  productType: 'transfer_one_way' | 'transfer_day_use';
+  /**
+   * `'forward'` reads the route as stored (airport -> destination, an
+   * ARRIVING guest — pickup is the airport, so a one-way trip needs a
+   * flight). `'reverse'` is a DEPARTING guest (destination -> airport
+   * drop-off) — no flight required, since the pickup is not the airport.
+   */
+  direction: 'forward' | 'reverse';
+  /** Days from "today" (seed-run time, Asia/Manila) this trip departs. */
+  daysFromToday: number;
+  /** `"HH:mm"`. For `daysFromToday: 0` this is a FLOOR — see `upsertDemoTransferBookings`'s own note on clearing `minNoticeHours`. */
+  pickupTime: string;
+  /** `transfer_day_use` only. */
+  dayUseEndTime: string | null;
+  pax: number;
+  luggageCount: number;
+  dropoffAddress: string;
+  flightNumber: string | null;
+  airline: string | null;
+  /** Recorded as a `manual` deposit payment after the hold, moving the booking to `confirmed`. Null leaves it `pending_payment` ("held"). */
+  payDeposit: boolean;
+  /** Assigned to the fleet below after payment — requires `payDeposit: true`. Null leaves it unassigned. */
+  assignTo: { vanPlate: string; driverCode: string } | null;
+}
+
+export const SEED_DEMO_TRANSFER_BOOKINGS: SeedDemoTransferBooking[] = [
+  {
+    leadEmail: 'demo.transfer.assigned@example.test',
+    leadName: 'Carlo Mendoza',
+    routeSlug: 'mactan-airport-to-cebu-city',
+    vehicleTypeSlug: 'van',
+    productType: 'transfer_one_way',
+    // Departing guest, Cebu City hotel -> airport. No flight required.
+    direction: 'reverse',
+    daysFromToday: 0,
+    pickupTime: '05:30',
+    dayUseEndTime: null,
+    pax: 3,
+    luggageCount: 3,
+    dropoffAddress: 'Mactan-Cebu International Airport, Terminal 2 Departures',
+    flightNumber: null,
+    airline: null,
+    payDeposit: true,
+    assignTo: { vanPlate: 'SEED-001', driverCode: 'D01' },
+  },
+  {
+    leadEmail: 'demo.transfer.unassigned@example.test',
+    leadName: 'Jenny Alvarez',
+    routeSlug: 'mactan-airport-to-oslob',
+    vehicleTypeSlug: 'van',
+    productType: 'transfer_one_way',
+    direction: 'reverse',
+    daysFromToday: 0,
+    pickupTime: '16:00',
+    dayUseEndTime: null,
+    pax: 2,
+    luggageCount: 2,
+    dropoffAddress: 'Mactan-Cebu International Airport, Terminal 2 Departures',
+    flightNumber: null,
+    airline: null,
+    payDeposit: true,
+    assignTo: null,
+  },
+  {
+    leadEmail: 'demo.transfer.flight@example.test',
+    leadName: 'Thomas Weber',
+    routeSlug: 'mactan-airport-to-moalboal',
+    vehicleTypeSlug: 'suv',
+    productType: 'transfer_one_way',
+    // Arriving guest, airport -> Moalboal resort. Flight required.
+    direction: 'forward',
+    daysFromToday: 1,
+    pickupTime: '10:30',
+    dayUseEndTime: null,
+    pax: 2,
+    luggageCount: 3,
+    dropoffAddress: 'White Beach Resort, Panagsama Beach, Moalboal',
+    flightNumber: 'PR1831',
+    airline: 'Philippine Airlines',
+    // "Held" — a hold with nothing paid yet (owner decision 4's status spread).
+    payDeposit: false,
+    assignTo: null,
+  },
+  {
+    leadEmail: 'demo.transfer.dayuse@example.test',
+    leadName: 'Grace Tan',
+    routeSlug: 'mactan-airport-to-cebu-city',
+    vehicleTypeSlug: 'van',
+    productType: 'transfer_day_use',
+    direction: 'forward',
+    daysFromToday: 4,
+    pickupTime: '09:00',
+    dayUseEndTime: '18:00',
+    pax: 4,
+    luggageCount: 2,
+    dropoffAddress: 'Ayala Center Cebu, Cebu City (day-use itinerary)',
+    flightNumber: null,
+    airline: null,
+    payDeposit: true,
+    assignTo: null,
+  },
+];
+
+/**
+ * The fifth demo item: a custom trip request — an INQUIRY, never a booking
+ * (Task 1E). `status: 'new'` is what makes it show up in the dashboard's
+ * trip-request mini-queue (Task 1B) and in `/admin/packages`'s Enquiries
+ * section. Keyed on `email` the same re-run way as the bookings above.
+ */
+export const SEED_DEMO_TRIP_REQUEST = {
+  email: 'demo.triprequest@example.test',
+  name: 'Patricia Reyes',
+  phone: '+639170000099',
+  pax: 8,
+  routeDescription:
+    'Hotel pickup in Cebu City to Camotes Islands, round trip, ferry transfers both ways',
+  requestedDateDaysFromToday: 10,
+  message:
+    'We are a group of 8 wanting a van to the Danao City ferry terminal and back for a Camotes day trip. Can you quote a round-trip van?',
+};
+
 // ---------------------------------------------------------------------------
 // The dispatcher's fleet (Week 5, Task 15)
 // ---------------------------------------------------------------------------
