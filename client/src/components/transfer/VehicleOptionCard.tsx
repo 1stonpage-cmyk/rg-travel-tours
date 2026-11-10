@@ -5,6 +5,24 @@ import { Skeleton } from '@/components/common/Skeleton';
 import { cn } from '@/lib/utils';
 
 /**
+ * Placeholder vehicle-card imagery (Task T26). Keyed by `vehicleTypeSlug` —
+ * today's seeded types (`SEED_VEHICLE_TYPES`, server/src/db/seed-data.ts).
+ * An admin-added type's slug is never in this map by construction, and that
+ * is deliberate: it falls through to `vehicle-generic` rather than a path
+ * this script never generated, preserving this component's own documented
+ * promise (see file header) that an unknown type degrades, never breaks.
+ */
+const VEHICLE_IMAGE_SLUGS: ReadonlySet<string> = new Set(['van', 'suv', 'mpv']);
+const GENERIC_VEHICLE_IMAGE = '/placeholders/vehicle-generic.svg';
+
+function vehicleImageSrc(vehicleTypeSlug: string | undefined): string {
+  if (vehicleTypeSlug && VEHICLE_IMAGE_SLUGS.has(vehicleTypeSlug)) {
+    return `/placeholders/vehicle-${vehicleTypeSlug}.svg`;
+  }
+  return GENERIC_VEHICLE_IMAGE;
+}
+
+/**
  * Task T13, rebuilt 2026-11-08 for the admin-managed vehicle-types model
  * (owner decision 2026-11-08; see
  * `docs/superpowers/plans/2026-11-08-flexible-routes.md` §4). Vehicle types
@@ -35,6 +53,13 @@ type Props = {
   /** The catalog's own display name (`TransferRoutePublicVehiclePrice.vehicleTypeName`) — never a hard-coded label. */
   vehicleTypeName: string;
   /**
+   * The catalog's own slug (`TransferRoutePublicVehiclePrice.slug`), used
+   * only to pick a placeholder thumbnail — optional because a caller that
+   * omits it (or passes a slug this component doesn't recognise) still
+   * renders correctly via the generic fallback image.
+   */
+  vehicleTypeSlug?: string;
+  /**
    * `undefined` while loading, OR when unavailable: a vehicle type below the
    * ₱100 gateway floor, or with no price row at all for this route, makes
    * `quoteTransfer` throw — the page passes `quote: undefined, isLoading:
@@ -60,6 +85,7 @@ type Props = {
 export default function VehicleOptionCard({
   vehicleTypeId,
   vehicleTypeName,
+  vehicleTypeSlug,
   quote,
   isLoading,
   isSelected,
@@ -79,6 +105,12 @@ export default function VehicleOptionCard({
           (isLoading || unavailable) && 'cursor-not-allowed opacity-60',
         )}
       >
+        <img
+          src={vehicleImageSrc(vehicleTypeSlug)}
+          alt=""
+          data-testid={`vehicle-option-${vehicleTypeId}-image`}
+          className="h-20 w-full rounded-lg object-cover"
+        />
         <span className="flex items-center justify-between gap-2">
           <span className="text-brand-blue-900 flex items-center gap-2 text-sm font-semibold">
             <Car className="text-brand-blue-700 size-5 shrink-0" aria-hidden="true" />

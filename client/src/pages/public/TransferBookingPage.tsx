@@ -571,6 +571,7 @@ export default function TransferBookingPage() {
                         key={option.vehicleTypeId}
                         vehicleTypeId={option.vehicleTypeId}
                         vehicleTypeName={option.vehicleTypeName}
+                        vehicleTypeSlug={option.slug}
                         quote={quoteFor(option.vehicleTypeId)}
                         isLoading={Boolean(result?.isPending || result?.isPlaceholderData)}
                         isSelected={vehicleTypeId === option.vehicleTypeId}

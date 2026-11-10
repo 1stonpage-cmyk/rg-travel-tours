@@ -141,4 +141,60 @@ describe('VehicleOptionCard', () => {
     );
     expect(screen.getByText('Coaster')).toBeInTheDocument();
   });
+
+  it('uses the matching placeholder image for a known vehicle-type slug', () => {
+    render(
+      <VehicleOptionCard
+        vehicleTypeId={1}
+        vehicleTypeName="Van"
+        vehicleTypeSlug="van"
+        quote={QUOTE}
+        isLoading={false}
+        isSelected={false}
+        onSelect={() => {}}
+        payMode="deposit"
+      />,
+    );
+    expect(screen.getByTestId('vehicle-option-1-image')).toHaveAttribute(
+      'src',
+      '/placeholders/vehicle-van.svg',
+    );
+  });
+
+  it('falls back to the generic image for an unrecognised slug, never a broken image', () => {
+    render(
+      <VehicleOptionCard
+        vehicleTypeId={7}
+        vehicleTypeName="Coaster"
+        vehicleTypeSlug="coaster"
+        quote={QUOTE}
+        isLoading={false}
+        isSelected={false}
+        onSelect={() => {}}
+        payMode="deposit"
+      />,
+    );
+    expect(screen.getByTestId('vehicle-option-7-image')).toHaveAttribute(
+      'src',
+      '/placeholders/vehicle-generic.svg',
+    );
+  });
+
+  it('falls back to the generic image when no slug is given at all', () => {
+    render(
+      <VehicleOptionCard
+        vehicleTypeId={1}
+        vehicleTypeName="Van"
+        quote={QUOTE}
+        isLoading={false}
+        isSelected={false}
+        onSelect={() => {}}
+        payMode="deposit"
+      />,
+    );
+    expect(screen.getByTestId('vehicle-option-1-image')).toHaveAttribute(
+      'src',
+      '/placeholders/vehicle-generic.svg',
+    );
+  });
 });
