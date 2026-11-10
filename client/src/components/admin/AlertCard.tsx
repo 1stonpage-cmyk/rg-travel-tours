@@ -202,8 +202,18 @@ export default function AlertCard({ alert }: { alert: DashboardAlert }) {
           {copy.detail ? <p className="text-brand-error mt-1 text-sm">{copy.detail}</p> : null}
           {alert.examples.length > 0 ? (
             <ul className="text-brand-error mt-2 space-y-0.5 text-xs">
-              {alert.examples.map((example) => (
-                <li key={`${alert.kind}-${example.id}`}>
+              {/*
+               * Keyed by position, not `example.id`: `papers_expiring` mixes
+               * two different source tables in one list (a driver's licence,
+               * a van's franchise) and their ids share one numeric space, so
+               * `example.id` alone is not unique within this array — two
+               * examples landing on the same id is a real, observed
+               * collision (driver id 2, van id 2), not a hypothetical one.
+               * This list never reorders and carries no per-item state, so a
+               * positional key loses nothing.
+               */}
+              {alert.examples.map((example, index) => (
+                <li key={`${alert.kind}-${index}`}>
                   {example.label}
                   {example.date === null ? '' : ` · ${example.date}`}
                 </li>

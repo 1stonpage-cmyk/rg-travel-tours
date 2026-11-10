@@ -14,7 +14,7 @@
  */
 import { render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
   DashboardAlert,
   DashboardMoneySummary,
@@ -229,6 +229,34 @@ describe('AdminDashboardPage', () => {
       alert('vans_in_repair', 1, [{ id: 3, label: 'ABC 123 — Clutch', date: null }]),
     ]);
     expect(await screen.findByText(/ABC 123 — Clutch/)).toBeTruthy();
+  });
+
+  /**
+   * `papers_expiring` mixes two source tables (a driver's licence, a van's
+   * franchise) in one `examples` array, and their ids share one numeric
+   * space — a driver and a van landing on the same id is a real, observed
+   * collision (id 2 for both, seen live), not a hypothetical one. Before
+   * this test's fix, `AlertCard` keyed each `<li>` by `${kind}-${example.id}`
+   * alone, which React warns about ("two children with the same key") and
+   * which risks exactly what React's own warning names: a duplicated or
+   * silently omitted row.
+   */
+  it('renders every example even when two of them share the same id', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    renderDashboard([
+      alert('papers_expiring', 2, [
+        { id: 2, label: 'Jun Alcantara — licence', date: '2026-11-28' },
+        { id: 2, label: 'SEED-002 — franchise', date: '2026-12-02' },
+      ]),
+    ]);
+    expect(await screen.findByText(/Jun Alcantara — licence/)).toBeTruthy();
+    expect(screen.getByText(/SEED-002 — franchise/)).toBeTruthy();
+    // The React-level proof, not just "both labels are somewhere in the DOM":
+    // a duplicate key logs through console.error, so a regression here is
+    // caught even if a future change happened to still render both labels.
+    const duplicateKeyWarning = spy.mock.calls.some((call) => String(call[0]).includes('same key'));
+    expect(duplicateKeyWarning).toBe(false);
+    spy.mockRestore();
   });
 
   describe('the orphaned-van alert', () => {
