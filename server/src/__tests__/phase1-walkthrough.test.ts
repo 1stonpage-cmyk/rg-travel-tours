@@ -43,8 +43,10 @@ import {
   reviews,
   settings,
   tourAddons,
+  tourItineraryStops,
   tourPriceTiers,
   tours,
+  tripCheckpoints,
   users,
   vans,
   vehicleTypes,
@@ -321,6 +323,7 @@ afterAll(async () => {
       .where(inArray(bookings.ref, created.bookingRefs));
     for (const { id } of rows) {
       await db.delete(reviews).where(eq(reviews.bookingId, id));
+      await db.delete(tripCheckpoints).where(eq(tripCheckpoints.bookingId, id));
       await pool.query('DELETE FROM booking_addons WHERE booking_id = ?', [id]);
       await pool.query('DELETE FROM coupon_redemptions WHERE booking_id = ?', [id]);
       await pool.query('DELETE FROM payments WHERE booking_id = ?', [id]);
@@ -335,7 +338,7 @@ afterAll(async () => {
   await db
     .delete(auditLog)
     .where(
-      sql`${auditLog.action} IN ('booking.held', 'booking.expired', 'payment.receipt_submitted', 'payment.verified', 'payment.rejected', 'review.submitted', 'auth.login', 'auth.login_failed', 'auth.logout')`,
+      sql`${auditLog.action} IN ('booking.held', 'booking.expired', 'payment.receipt_submitted', 'payment.verified', 'payment.rejected', 'review.submitted', 'auth.login', 'auth.login_failed', 'auth.logout', 'booking_assigned', 'booking_reassigned_in_progress', 'trip.started', 'trip.checked_in', 'trip.completed')`,
     );
 
   for (const date of usedDates) {
@@ -343,6 +346,7 @@ afterAll(async () => {
   }
 
   for (const id of created.tourIds) {
+    await db.delete(tourItineraryStops).where(eq(tourItineraryStops.tourId, id));
     await db.delete(tourAddons).where(eq(tourAddons.tourId, id));
     await db.delete(tourPriceTiers).where(eq(tourPriceTiers.tourId, id));
     await pool.query('DELETE FROM tour_date_slots WHERE tour_id = ?', [id]);
@@ -867,5 +871,160 @@ describeWithDb('Phase 1, step 5 — an unpaid hold is swept', () => {
     created.bookingRefs.push(
       (replacement.body as { result: { data: { ref: string } } }).result.data.ref,
     );
+  }, 180_000);
+});
+
+/* ================================================================== *
+ * Step 6 — Task T25: dispatch assignment and check-in, for real.
+ *
+ * Every step up to "confirmed" above was already proven real — the manual
+ * QR path, the staff approval, the tracker. What was NEVER real in this
+ * file is what happens after: `show_tours = true` (the test-harness
+ * baseline — `__tests__/helpers/test-db.ts` — not a toggle this step needs
+ * to set) only mattered up to confirmation, and every later step a tour's
+ * My Booking page shows (`assigned`, `in_progress`, `completed`) was
+ * produced by a direct `UPDATE bookings SET status = …`, never by
+ * `admin.dispatch.assign` or the driver's own check-in calls. This step is
+ * the one that actually drives both through the real Express stack, the
+ * same real-route composition `transfer-walkthrough.test.ts` (Task T25)
+ * proves for a transfer — so the two products are proven by the same kind
+ * of evidence, not one real and one simulated.
+ *
+ * Its own tour, destination and ONE itinerary stop, rather than the
+ * shared walkthrough tour every earlier step uses: `createInsertAndTour`'s
+ * fixtures are read and asserted against by many other tests in this file
+ * and carry no itinerary stop at all, and giving it one here would change
+ * what every one of those tests is walking. A dedicated van and driver
+ * (with a REAL hashed PIN — the shared fleet's drivers carry a literal
+ * placeholder hash that `driver.login` cannot verify against) for the
+ * same reason: self-contained, and provably not borrowing another test's
+ * fixture state.
+ * ================================================================== */
+
+describeWithDb('Phase 1, step 6 — dispatch and check-in, through the real app (Task T25)', () => {
+  it('assigns a van and driver, runs the trip to completion, and the tracker shows it', async () => {
+    const db = getDb();
+    const slug = `__phase1_t25__${unique()}`;
+    const [dest] = await db.insert(destinations).values({ name: slug, slug });
+    created.destIds.push(dest.insertId);
+    const [tour] = await db.insert(tours).values({
+      slug,
+      title: 'T25 Walkthrough Tour',
+      destinationId: dest.insertId,
+      groupsPerDay: 2,
+      freeCancelHours: 48,
+      isActive: true,
+    });
+    created.tourIds.push(tour.insertId);
+    await db
+      .insert(tourPriceTiers)
+      .values({ tourId: tour.insertId, minPax: 1, maxPax: 12, pricePerPersonCentavos: 250_000 });
+    const [stop] = await db
+      .insert(tourItineraryStops)
+      .values({ tourId: tour.insertId, sortOrder: 1, name: 'The one stop this tour has' });
+
+    const [van] = await db.insert(vans).values({
+      plate: `T25T${unique()}`.slice(0, 20),
+      model: 'T25 Tour Fixture Van',
+      capacity: 12,
+      vehicleTypeId: await vanVehicleTypeId(),
+      status: 'available',
+      isActive: true,
+    });
+    created.vanIds.push(van.insertId);
+
+    const pin = '246810';
+    const driverCode = `T25D${unique()}`.slice(0, 20);
+    const [driver] = await db.insert(drivers).values({
+      name: 'T25 Walkthrough Driver',
+      code: driverCode,
+      phone: '09170009999',
+      pinHash: await hashPassword(pin),
+      isActive: true,
+    });
+    created.driverIds.push(driver.insertId);
+
+    const date = nextDate();
+    const quote = (await query('checkout.quote', { tourSlug: slug, date, pax: 2 })
+      .expect(200)
+      .then(unwrap)) as { quoteId: string };
+    const email = `phase1_t25_${unique()}@example.test`;
+    const held = (await mutate('checkout.createHold', {
+      tourSlug: slug,
+      date,
+      pax: 2,
+      addonIds: [],
+      payMode: 'deposit',
+      quoteId: quote.quoteId,
+      lead: { name: 'T25 Walkthrough Guest', email, phone: uniquePhone() },
+      consent: true,
+    })
+      .expect(200)
+      .then(unwrap)) as { ref: string };
+    created.bookingRefs.push(held.ref);
+
+    const login = await mutate('portal.login', { ref: held.ref, email });
+    const guestCookie = sessionCookie(login);
+
+    const payment = (await query('portal.manualPayment', undefined, guestCookie)
+      .expect(200)
+      .then(unwrap)) as { amountDueCentavos: number };
+    expect(payment.amountDueCentavos).toBeGreaterThan(0);
+
+    const upload = await uploadReceipt(guestCookie, `T25T${held.ref}`);
+    expect(upload.status, JSON.stringify(upload.body)).toBe(200);
+    created.files.push(...(await receiptNamesFor(held.ref)));
+
+    const staffCookie = await staffSignIn();
+    const detail = (await query('admin.bookings.detail', { ref: held.ref }, staffCookie)
+      .expect(200)
+      .then(unwrap)) as { payments: Array<{ id: number; receiptPath: string | null }>; id: number };
+    const pending = detail.payments.find((p) => p.receiptPath !== null)!;
+    const approved = await mutate(
+      'admin.bookings.approveReceipt',
+      { paymentId: pending.id },
+      staffCookie,
+    );
+    expect(approved.status, JSON.stringify(approved.body)).toBe(200);
+
+    const bookingId = detail.id;
+    const assigned = await mutate(
+      'admin.dispatch.assign',
+      { bookingId, vanId: van.insertId, driverId: driver.insertId },
+      staffCookie,
+    );
+    expect(unwrap(assigned)).toEqual({ ok: true });
+
+    const driverLogin = await mutate('driver.login', { code: driverCode, pin });
+    expect(driverLogin.status, JSON.stringify(driverLogin.body)).toBe(200);
+    const driverCookie = sessionCookie(driverLogin);
+
+    const started = await mutate('driver.startTrip', { bookingId }, driverCookie);
+    expect(unwrap(started)).toMatchObject({
+      ok: true,
+      progress: { done: 1, total: 2, status: 'in_progress' },
+    });
+
+    // The only stop on this tour. Checking it in is the LAST stop, so it
+    // completes the trip in the same call — real dispatch, real driver
+    // session, real transaction, through the real Express app.
+    const checkedIn = await mutate(
+      'driver.checkIn',
+      { bookingId, stopId: stop!.insertId },
+      driverCookie,
+    );
+    expect(unwrap(checkedIn)).toMatchObject({
+      ok: true,
+      progress: { done: 2, total: 2, status: 'completed' },
+    });
+
+    // Review-eligible: the tracker's fifth step, through the guest's own
+    // session — the same fact this file's own "shows the tracker at each
+    // status" test proves for a DB-faked completion, now for a REAL one.
+    const final = (await query('portal.booking', undefined, guestCookie)
+      .expect(200)
+      .then(unwrap)) as { status: string; tracker: Array<{ done: boolean }> };
+    expect(final.status).toBe('completed');
+    expect(final.tracker.map((s) => s.done)).toEqual([true, true, true, true, true]);
   }, 180_000);
 });
