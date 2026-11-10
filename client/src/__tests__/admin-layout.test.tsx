@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import AdminLayout from '@/components/layout/AdminLayout';
 import { TrpcProviders } from '@/lib/trpc';
 import { mockTrpc, mockTrpcError } from './helpers/mock-trpc';
+import { SETTINGS_FIXTURE } from './helpers/fixtures';
 
 /**
  * `AdminLayout` calls `trpc.staffAuth.me`/`.logout` directly (fix round 1:
@@ -15,7 +16,13 @@ import { mockTrpc, mockTrpcError } from './helpers/mock-trpc';
  * workarounds instead of being fixed here, where the gap actually was).
  */
 beforeEach(() => {
-  mockTrpc({ 'staffAuth.me': { userId: 1, role: 'owner' } });
+  // `settings.get` defaults to `SETTINGS_FIXTURE` (showTours: true) so the
+  // "which links are drawn" tests below see the UNFADED "Tours" label by
+  // default — the Hidden-tag describe block below overrides this per test.
+  mockTrpc({
+    'staffAuth.me': { userId: 1, role: 'owner' },
+    'settings.get': SETTINGS_FIXTURE,
+  });
 });
 
 function renderAt(path: string) {
@@ -136,38 +143,31 @@ describe('AdminLayout', () => {
         .map((a) => a.textContent ?? '');
     }
 
-    it('draws Vans, Drivers and Staff for an owner', async () => {
+    it('draws Vans, Drivers and Staff for an owner, grouped per Direction B (owner decision 2026-11-10, group 2)', async () => {
       renderAt('/admin');
       await screen.findByRole('link', { name: 'Staff' });
+      // Same 17 destinations as before the 1A regroup (admin-nav.test.ts
+      // pins the exact set); this test pins the GROUPED on-screen order,
+      // which did change: Reports moved up beside Dashboard (Overview),
+      // and Transfer routes/Places/Vehicle types now read in the owner's
+      // own stated order instead of the old data-dependency order.
       expect(names()).toEqual([
         'Dashboard',
+        'Reports',
         'Bookings',
         'Payment checks',
         'Dispatch',
         'Departures',
         'Vans',
         'Drivers',
-        'Tours',
-        // Owner-only too (flexible-routes plan, Task 1D): same `toursPricing`
-        // area as tours/pricing, placed beside Transfer routes.
-        'Vehicle types',
-        'Places',
-        // Owner-only too (transfers-launch plan, Task T4): `admin.transferRoutes.*`
-        // is the same `toursPricing` area as tours and pricing.
         'Transfer routes',
-        // Coupons is owner-only too (Week 7 Task 8): `admin.coupons.*` is the
-        // same `toursPricing` area as tours and pricing.
-        'Coupons',
-        // Owner + dispatcher (Week 7 Task 13): §9's `packagesInquiries` row.
+        'Places',
+        'Vehicle types',
+        'Tours',
         'Packages',
-        // Owner + dispatcher (Week 7 Task 11): `admin.reviews.*` is the
-        // `reviewsModeration` area.
+        'Coupons',
         'Reviews',
-        // Owner + finance (Week 7 Task 12): §9's `reports` row.
-        'Reports',
         'Staff',
-        // Settings is owner-only too (Week 7 Task 9): §9's `usersSettings`
-        // row, which holds the deposit percentage and the payment QR.
         'Settings',
       ]);
     });
@@ -192,19 +192,22 @@ describe('AdminLayout', () => {
       ]);
     });
 
-    it('draws neither Vans, Drivers nor Staff for finance', async () => {
+    it('draws neither Vans, Drivers nor Staff for finance, and no empty groups', async () => {
       mockTrpc({ 'staffAuth.me': { userId: 3, role: 'finance', mustChangePassword: false } });
       renderAt('/admin');
       await screen.findByText('Finance');
       expect(names()).toEqual([
+        // Reports is owner + finance (Week 7 Task 12) and sits in Overview
+        // (Direction B grouping) beside Dashboard — not at the end.
         'Dashboard',
+        'Reports',
         'Bookings',
         'Payment checks',
         'Dispatch',
         'Departures',
-        // Reports is owner + finance (Week 7 Task 12), so finance keeps it
-        // while Vans, Drivers and Staff stay out of reach.
-        'Reports',
+        // Vans, Drivers, Staff, and every Transfers setup/Tours setup/
+        // Marketing/Admin item stay out of reach — those four groups are
+        // entirely empty for finance and draw no heading at all.
       ]);
     });
 
@@ -252,6 +255,63 @@ describe('AdminLayout', () => {
         'Packages',
         'Reviews',
       ]);
+    });
+  });
+
+  describe('sidebar group headings (Direction B, owner decision 2026-11-10, group 2)', () => {
+    function headingNames(nav: HTMLElement): string[] {
+      return within(nav)
+        .getAllByTestId('nav-group-heading')
+        .map((el) => el.textContent ?? '');
+    }
+
+    it('shows all seven group headings for an owner, in GROUP_ORDER', async () => {
+      renderAt('/admin');
+      await screen.findByRole('link', { name: 'Staff' });
+      const nav = screen.getByRole('navigation', { name: /^admin$/i });
+      expect(headingNames(nav)).toEqual([
+        'Overview',
+        'Bookings',
+        'Operations',
+        'Transfers setup',
+        'Tours setup',
+        'Marketing',
+        'Admin',
+      ]);
+    });
+
+    it('draws no heading for a group with nothing visible — finance sees none of Transfers setup, Tours setup, Marketing or Admin', async () => {
+      mockTrpc({ 'staffAuth.me': { userId: 3, role: 'finance', mustChangePassword: false } });
+      renderAt('/admin');
+      await screen.findByText('Finance');
+      const nav = screen.getByRole('navigation', { name: /^admin$/i });
+      expect(headingNames(nav)).toEqual(['Overview', 'Bookings', 'Operations']);
+    });
+  });
+
+  describe('the Tours "Hidden" tag (owner decision 2026-11-10, group 2)', () => {
+    it('fades Tours and shows a Hidden tag while show_tours is off', async () => {
+      mockTrpc({ 'settings.get': { ...SETTINGS_FIXTURE, showTours: false } });
+      renderAt('/admin');
+      const tours = await screen.findByRole('link', { name: /tours/i });
+      expect(tours.textContent).toBe('ToursHidden');
+      expect(tours.className).toMatch(/opacity-55/);
+    });
+
+    it('never fades Packages, even while show_tours is off — show_tours does not gate it anywhere in the public app', async () => {
+      mockTrpc({ 'settings.get': { ...SETTINGS_FIXTURE, showTours: false } });
+      renderAt('/admin');
+      const packages = await screen.findByRole('link', { name: /^packages$/i });
+      expect(packages.textContent).toBe('Packages');
+      expect(packages.className).not.toMatch(/opacity-55/);
+    });
+
+    it('draws Tours with no Hidden tag while show_tours is on', async () => {
+      mockTrpc({ 'settings.get': { ...SETTINGS_FIXTURE, showTours: true } });
+      renderAt('/admin');
+      const tours = await screen.findByRole('link', { name: /^tours$/i });
+      expect(tours.textContent).toBe('Tours');
+      expect(tours.className).not.toMatch(/opacity-55/);
     });
   });
 

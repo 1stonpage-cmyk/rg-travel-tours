@@ -1,11 +1,39 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { LogOut, Menu, X } from 'lucide-react';
+import {
+  Compass,
+  Gauge,
+  LogOut,
+  MapPin,
+  Megaphone,
+  Menu,
+  Shield,
+  Ticket,
+  Truck,
+  X,
+  type LucideIcon,
+} from 'lucide-react';
 import { useState } from 'react';
 import { Link, Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { APP_SURFACE_TITLES } from '@rg/shared';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { trpc } from '@/lib/trpc';
-import { navFor } from './admin-nav';
+import { type AdminNavGroup, groupedNavFor, navFor } from './admin-nav';
+
+/**
+ * One icon per sidebar group (Direction B, owner decision 2026-11-10,
+ * group 2 — `.design-preview/admin-dashboard.html`'s gauge/ticket/van/pin/
+ * compass/mega/shield symbols). Decorative only: every group also has its
+ * own text label, so the icon is `aria-hidden`.
+ */
+const GROUP_ICON: Record<AdminNavGroup, LucideIcon> = {
+  Overview: Gauge,
+  Bookings: Ticket,
+  Operations: Truck,
+  'Transfers setup': MapPin,
+  'Tours setup': Compass,
+  Marketing: Megaphone,
+  Admin: Shield,
+};
 
 /**
  * The shell every admin/dispatch screen hangs off: a dark sidebar from `lg`
@@ -118,6 +146,18 @@ export default function AdminLayout() {
   const mustChange = me.data?.mustChangePassword === true;
   const role = me.data?.role;
   const nav = navFor(role);
+  const groups = groupedNavFor(role);
+
+  /*
+   * The "Hidden" tag on Tours (Direction B, owner decision 2026-11-10,
+   * group 2) — the same public `settings.get` query the home page, header
+   * and footer already read for this flag (`HomePage.tsx`,
+   * `SiteHeader.tsx`). Not gated by role or `mustChange`: it is harmless,
+   * public information, and asking for it costs nothing extra once the
+   * query is cached from the first page that reads it.
+   */
+  const settings = trpc.settings.get.useQuery();
+  const showTours = settings.data?.showTours ?? false;
 
   // The payment-checks count beside its link. It is the dashboard's own alert
   // (no new data), asked for only by the roles who can open that screen, and
@@ -211,34 +251,63 @@ export default function AdminLayout() {
         </Link>
 
         {mustChange ? null : (
-          <nav aria-label="Admin" className="flex flex-col gap-1">
-            {nav.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.end}
-                className={({ isActive }) =>
-                  [
-                    SIDE_LINK,
-                    // `NavLink` sets `aria-current="page"` on the active link
-                    // by itself. For a sighted operator, including anyone with
-                    // a colour vision deficiency, the weight change and the
-                    // filled bar are shape differences that survive greyscale.
-                    isActive
-                      ? 'bg-brand-blue-700 font-semibold text-white'
-                      : 'text-brand-blue-100 hover:bg-brand-blue-900 font-medium hover:text-white',
-                  ].join(' ')
-                }
-              >
-                {item.label}
-                {item.badge === 'payments_to_verify' && paymentsWaiting > 0 ? (
-                  <span className="bg-brand-gold-500 text-brand-ink rounded-full px-2 py-0.5 text-xs font-bold tabular-nums">
-                    {paymentsWaiting}
-                    <span className="sr-only"> waiting</span>
-                  </span>
-                ) : null}
-              </NavLink>
-            ))}
+          <nav aria-label="Admin" className="flex flex-col gap-4">
+            {groups.map(({ group, items }) => {
+              const GroupIcon = GROUP_ICON[group];
+              return (
+                <div key={group} className="flex flex-col gap-1">
+                  <div
+                    data-testid="nav-group-heading"
+                    className="text-brand-blue-300 mb-1 flex items-center gap-1.5 px-3 text-[10.5px] font-extrabold uppercase tracking-wider"
+                  >
+                    <GroupIcon className="size-3.5" aria-hidden="true" />
+                    {group}
+                  </div>
+                  {items.map((item) => {
+                    // "Hidden" tag — Tours only, while settings.show_tours is
+                    // off (see `hiddenWhileToursOff`'s own doc comment in
+                    // admin-nav.ts for why Packages does NOT get this).
+                    const faded = item.hiddenWhileToursOff === true && !showTours;
+                    return (
+                      <NavLink
+                        key={item.to}
+                        to={item.to}
+                        end={item.end}
+                        className={({ isActive }) =>
+                          [
+                            SIDE_LINK,
+                            faded ? 'opacity-55' : '',
+                            // `NavLink` sets `aria-current="page"` on the active
+                            // link by itself. For a sighted operator, including
+                            // anyone with a colour vision deficiency, the weight
+                            // change and the filled bar are shape differences
+                            // that survive greyscale.
+                            isActive
+                              ? 'bg-brand-blue-700 font-semibold text-white'
+                              : 'text-brand-blue-100 hover:bg-brand-blue-900 font-medium hover:text-white',
+                          ].join(' ')
+                        }
+                      >
+                        {item.label}
+                        <span className="flex items-center gap-1.5">
+                          {faded ? (
+                            <span className="text-brand-blue-200 rounded-full bg-white/10 px-1.5 py-0.5 text-[10px] font-bold">
+                              Hidden
+                            </span>
+                          ) : null}
+                          {item.badge === 'payments_to_verify' && paymentsWaiting > 0 ? (
+                            <span className="bg-brand-gold-500 text-brand-ink rounded-full px-2 py-0.5 text-xs font-bold tabular-nums">
+                              {paymentsWaiting}
+                              <span className="sr-only"> waiting</span>
+                            </span>
+                          ) : null}
+                        </span>
+                      </NavLink>
+                    );
+                  })}
+                </div>
+              );
+            })}
           </nav>
         )}
 
