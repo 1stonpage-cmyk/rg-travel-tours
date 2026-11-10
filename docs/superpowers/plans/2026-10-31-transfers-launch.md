@@ -525,3 +525,56 @@ Batches of 4, plus a trailing controller-only close-out task. **Schema tasks (T2
 - A driver with an override of `0` is read as "do not give this driver any transfer jobs today" (not an error) — useful for a driver the owner wants reserved for tours only. Worth confirming with the owner during T7 rather than guessing silently if it comes up, but not blocking.
 
 **Approved by the owner, 2026-10-31.** This addendum (driver capacity) is logged and folded into T7/T8 as instructed, as its own commit, before any task execution begins. Execution proceeds via `superpowers:subagent-driven-development`, starting at T1.
+
+---
+
+## Execution status — CLOSED (2026-11-10)
+
+**All 29 tasks (T1–T29) are complete.** Batch-by-batch detail, including every
+commit hash, review outcome, and finding, lives in the dated HANDOVER files under
+this directory (`2026-11-03-transfers-HANDOVER.md` through
+`2026-11-10-transfers-HANDOVER-16.md`) rather than being re-derived here — this
+section records only the closing state of Batch 7, the last batch, and points
+elsewhere for the rest.
+
+**Batch 7 (this batch), task by task:**
+
+- **T25** — end-to-end regression proof. Dedicated Opus review. Complete per
+  HANDOVER-14 (`bc566d8`).
+- **T25b** — guest-facing pages (BookingStatusPage, Manual QR, checkout lookup)
+  show a transfer's fields. Complete per HANDOVER-15 (`4bfd8db`).
+- **T20b** — audit old→new on every price edit. Complete per HANDOVER-15
+  (`e7ab102`).
+- **T21b** — quote-ready email names pickup time, vehicle, money breakdown.
+  Complete per HANDOVER-15 (`1618ea5`, polish folded into `af55ec2`).
+- **T26** — placeholder vehicle-card imagery (the demo-routes half of T26 was
+  delivered early by the flexible-routes batch's Task 1G — see the note above
+  the Batch 7 table). Complete this session (`c1fe9fe`): four tiles
+  (`vehicle-van`/`suv`/`mpv`/`generic`) added to `generate-placeholders.mjs`,
+  `VehicleOptionCard` resolves a known `vehicle_types.slug` to its tile and
+  anything else to the generic fallback, verified live in Chrome at both
+  360px and desktop.
+- **T27** — `frontend-design`/`ui-ux-pro-max` pass on the transfer flow at
+  360px and 1440px. Complete this session. **No code changes required** — the
+  flow was already polished by prior DEMO POLISH batches; read-only Chrome
+  check (360px via a same-origin iframe harness, per BUG-074's documented
+  workaround) found no layout, spacing, or copy defects through to the
+  payment step. BookingStatusPage/My Booking's transfer rendering could not
+  be live-checked — dev seed data has zero transfer bookings — so T25b's
+  existing passing component tests stand in for that surface.
+- **T28** — legal/content checklist for the owner. Complete this session
+  (`1284a76`): `docs/TRANSFER_LEGAL_CHECKLIST.md`, eight items (the plan's six
+  plus child seats/laps and ferry/entrance fees, per the resume brief), each
+  naming what R&G must supply, where it surfaces, and who decides — no legal
+  text drafted, no accreditation numbers invented.
+- **T29** — this closing sweep. Five checks run clean (lint, typecheck, test —
+  2709 server + 1074 client + 109 shared, guards included — format:check,
+  `ALLOW_PLACEHOLDER_BUILD=1` build). `docs/BUGS_LOG.md` updated (BUG-125
+  through BUG-129, carrying forward HANDOVER-15's four open items plus the
+  pre-existing format drift this sweep also fixed). This section closes the
+  plan. `docs/superpowers/plans/2026-11-10-transfers-HANDOVER-16.md` is the
+  final handover, with the full list of migrations owed on the server.
+
+**Nothing in this batch touched money, auth, roles, or the schema.** T26–T28
+were placeholder imagery, a read-only design pass, and a docs-only checklist;
+T29 is verification and record-keeping.
