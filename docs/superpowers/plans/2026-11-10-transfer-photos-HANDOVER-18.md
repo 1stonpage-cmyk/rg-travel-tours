@@ -33,11 +33,11 @@ not touched either.
 Four slots, all inside `VehicleOptionCard.tsx` (`h-20 w-full object-cover`,
 landscape source, ≥1600px-wide original per 1B):
 
-| Slot | Subject | Caption |
-|---|---|---|
-| `vehicle-van` | Generic white passenger van (windowed, not cargo) | "Sample vehicle" |
-| `vehicle-suv` | Generic white/neutral crossover SUV | "Sample vehicle" |
-| `vehicle-mpv` | Generic people-carrier minivan | "Sample vehicle" |
+| Slot              | Subject                                                                               | Caption          |
+| ----------------- | ------------------------------------------------------------------------------------- | ---------------- |
+| `vehicle-van`     | Generic white passenger van (windowed, not cargo)                                     | "Sample vehicle" |
+| `vehicle-suv`     | Generic white/neutral crossover SUV                                                   | "Sample vehicle" |
+| `vehicle-mpv`     | Generic people-carrier minivan                                                        | "Sample vehicle" |
 | `vehicle-generic` | A fourth, distinct generic vehicle — fallback for any future admin-added vehicle type | "Sample vehicle" |
 
 ## 1B — Sourcing
@@ -46,12 +46,12 @@ All four photos, their photographers, photo-page URLs, licences and the
 no-plates/logos/faces check are recorded in **`docs/IMAGE_CREDITS.md`**.
 Summary:
 
-| Slot | Source | Photographer | Licence |
-|---|---|---|---|
-| van | Pexels | Yazid N | Pexels License |
-| suv | Unsplash | Kern Morris | Unsplash License |
-| mpv | Pexels | Jeremy Li | Pexels License |
-| generic | Pexels | Mehrajul Karim | Pexels License |
+| Slot    | Source   | Photographer   | Licence          |
+| ------- | -------- | -------------- | ---------------- |
+| van     | Pexels   | Yazid N        | Pexels License   |
+| suv     | Unsplash | Kern Morris    | Unsplash License |
+| mpv     | Pexels   | Jeremy Li      | Pexels License   |
+| generic | Pexels   | Mehrajul Karim | Pexels License   |
 
 Every candidate was checked on its own photo page for the free licence
 badge (rejecting anything Unsplash+/premium/sponsored/iStock-linked), zoomed
@@ -239,6 +239,7 @@ Replacing them with real photos is a drop-in file swap — put the new
 JPEGs at the same paths under `client/public/images/transfers/`
 (`{slug}-480.jpg` / `{slug}-800.jpg`, 480/800px wide) and nothing else needs
 to change. At that point:
+
 - `docs/IMAGE_CREDITS.md` and `PhotoCreditsPage.tsx` should be updated to
   drop the retired photo's entry (or the whole page/footer link removed,
   once no stock photo remains).
