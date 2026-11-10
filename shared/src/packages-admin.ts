@@ -289,6 +289,35 @@ export interface InquiryAdminRow {
   createdAt: string;
 }
 
+/**
+ * The admin dashboard's trip-request mini-queue (Task 1B, Direction B —
+ * owner decision 2026-11-10). `transfer_custom` inquiries, `status = 'new'`
+ * ONLY — once an inquiry is read/replied/closed it is no longer something
+ * the dashboard needs to surface; the full queue (every status) is still
+ * `admin.inquiries.list` on `/admin/packages`'s Enquiries section.
+ *
+ * **Deliberately narrower than `InquiryAdminRow`**: no email, no phone, no
+ * message — the dashboard card renders none of them, and not putting
+ * personal contact details on this wire is free (RA 10173, same reasoning
+ * `admin.inquiries.list`'s own gate already carries).
+ *
+ * Gated `packagesInquiries` (owner + dispatcher — the same `ROLE_MATRIX` row
+ * `admin.inquiries.list` uses; finance is refused, same as that procedure) —
+ * see `admin.dashboard.tripRequests`.
+ */
+export interface TripRequestSummary {
+  /** Every `transfer_custom`/`new` inquiry, not just the ones in `items`. */
+  count: number;
+  /** The newest few, newest first — capped the same way dashboard alerts cap their examples. */
+  items: Array<{
+    id: number;
+    name: string;
+    pax: number | null;
+    routeDescription: string | null;
+    requestedDate: string | null;
+  }>;
+}
+
 /* -------------------------------------------- The newsletter export (owner) */
 
 /**

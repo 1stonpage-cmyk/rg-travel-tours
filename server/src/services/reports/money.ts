@@ -42,7 +42,9 @@ import {
   REPORT_NON_COLLECTABLE_STATUSES,
   addCivilDays,
   civilDateFromDate,
+  manilaCivilDate,
   manilaInstant,
+  type DashboardMoneySummary,
   type DateRangeInput,
   type OutstandingRow,
   type ReportSummary,
@@ -215,6 +217,49 @@ export async function reportSummary(range: DateRangeInput): Promise<ReportSummar
     // `amount_paid_centavos`, which knows nothing about money going back out.
     netReceivedCentavos: moved.receivedCentavos - moved.refundedCentavos,
     ...booked,
+  };
+}
+
+/**
+ * **"Pending verification."** `SUM(amount_centavos)` over the exact same
+ * population `paymentsToVerify()` (`services/dispatch/alerts.ts`) already
+ * COUNTS — `type='payment' AND provider='manual' AND status='pending'` —
+ * just summed instead of counted. Deliberately NOT date-scoped: a manual
+ * receipt uploaded yesterday and still unverified is still pending today,
+ * and scoping this to a window would hide it from the one screen built to
+ * surface it (Task 1B, `DashboardMoneySummary`'s own doc comment).
+ *
+ * A fresh predicate, not `alerts.ts`'s own query reused: that file is
+ * explicitly frozen (owner instruction, Task 1B) and this needs a `SUM`,
+ * not the `SELECT DISTINCT bookings…` shape `paymentsToVerify()` returns —
+ * but the WHERE clause is the same population by construction, and the two
+ * must never drift (a payment `type` other than `'payment'` here would
+ * double-count a refund waiting on the same manual-review status, which
+ * cannot happen today but would be silent if it ever did).
+ */
+const PENDING_VERIFICATION_CENTAVOS = sql<number>`COALESCE(SUM(CASE WHEN ${payments.type} = 'payment' AND ${payments.provider} = 'manual' AND ${payments.status} = 'pending' THEN ${payments.amountCentavos} ELSE 0 END), 0)`;
+
+/**
+ * The admin dashboard's money block (Task 1B, Direction B). Two statements,
+ * sequential — same reasoning as `reportSummary`'s own pair. `now` is a
+ * parameter, never read internally, so "today" is exactly assertable at a
+ * Manila-midnight boundary (the same discipline every `now`-taking function
+ * in `services/dispatch/alerts.ts` uses).
+ */
+export async function dashboardMoneySummary(now: Date): Promise<DashboardMoneySummary> {
+  const today = manilaCivilDate(now);
+  const db = getDb();
+
+  const [collected] = await db
+    .select({ received: RECEIVED_CENTAVOS })
+    .from(payments)
+    .where(createdInWindow({ from: today, to: today }));
+
+  const [pending] = await db.select({ pending: PENDING_VERIFICATION_CENTAVOS }).from(payments);
+
+  return {
+    collectedTodayCentavos: Number(collected?.received ?? 0),
+    pendingVerificationCentavos: Number(pending?.pending ?? 0),
   };
 }
 

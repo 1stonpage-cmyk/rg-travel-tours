@@ -137,6 +137,26 @@ export interface ReportSummary {
 }
 
 /**
+ * The admin dashboard's money block (Task 1B, Direction B — owner decision
+ * 2026-11-10). Two figures, two DIFFERENT windows, deliberately:
+ *
+ *  - `collectedTodayCentavos` is `RECEIVED_CENTAVOS` scoped to TODAY's Manila
+ *    civil date, by the `payments` row's own `created_at` — the same
+ *    predicate `ReportSummary.receivedCentavos` uses, just a one-day window.
+ *  - `pendingVerificationCentavos` is the SUM over the same population
+ *    `paymentsToVerify()` (`services/dispatch/alerts.ts`) already COUNTS —
+ *    `provider='manual' AND status='pending'` — and is **NOT date-scoped**.
+ *    A pending receipt from yesterday is still pending today; scoping it to
+ *    "today" would hide it from the one screen meant to surface it.
+ *
+ * Gated `reports` (owner + finance) — see `admin.dashboard.money`.
+ */
+export interface DashboardMoneySummary {
+  collectedTodayCentavos: number;
+  pendingVerificationCentavos: number;
+}
+
+/**
  * One tour's row of the same five figures.
  *
  * A tour appears when it has EITHER money movement in the window (by payment
