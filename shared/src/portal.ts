@@ -12,11 +12,12 @@ import { manilaCivilDate } from './time';
 import type { BookingStatus } from './booking';
 
 /**
- * §7's five steps, in order, by their table's own names — except the
- * fifth, renamed from the table's literal "Tour day" to "Trip day" (Task
- * T24's tour-only-language sweep): this step renders on My Booking for
- * every booking, transfer bookings included, and has done so since the
- * page could show one at all (Task T6).
+ * §7's five steps, in order, by their table's own names. The fifth was
+ * renamed from "Tour day" to "Trip day" (Task T24's tour-only-language
+ * sweep, confirmed by the owner 2026-11-10 and applied to BUILD_SPEC §7's
+ * own table in the same commit): this step renders on My Booking for every
+ * booking, transfer bookings included, and has done so since the page
+ * could show one at all (Task T6).
  */
 export const TRACKER_STEPS = [
   'Booked',

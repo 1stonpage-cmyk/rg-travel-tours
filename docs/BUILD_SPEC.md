@@ -509,7 +509,7 @@ two paths allowed to mark a booking paid.
 | Payment sent      | Online payment received, or receipt uploaded |
 | Verified by admin | Payment `paid` (auto for PayMongo)           |
 | Driver assigned   | Booking `assigned`                           |
-| Tour day          | Booking `in_progress` or `completed`         |
+| Trip day          | Booking `in_progress` or `completed`         |
 
 ### Features
 
