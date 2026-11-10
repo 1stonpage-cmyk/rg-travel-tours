@@ -126,11 +126,20 @@ function manilaGreeting(): string {
   return 'Good evening';
 }
 
-/** One cell of the stats row: a mono numeral over an uppercase label. */
+/**
+ * One cell of the stats row: a mono numeral over an uppercase label at
+ * `sm` and up (Direction B's own layout). Below `sm` the row stacks into
+ * single-column rows instead — label left, value right, like Direction B's
+ * own mobile `m-stack-stat` treatment — because five cells side by side at
+ * 360px clip horizontally rather than shrinking legibly (caught in the 1G
+ * Chrome check; see HANDOVER-17). `flex-row-reverse` puts the (DOM-first)
+ * value on the visual right on mobile without reordering the markup;
+ * `sm:flex-col` drops the reverse and restores value-above-label.
+ */
 function StatCell({ value, label }: { value: string; label: string }) {
   return (
-    <div className="border-brand-blue-100 flex-1 border-l px-4 py-3 first:border-l-0">
-      <span className="text-brand-ink block font-mono text-2xl font-bold">{value}</span>
+    <div className="border-brand-blue-100 flex flex-row-reverse items-center justify-between gap-2 border-t px-4 py-3 first:border-t-0 sm:flex-1 sm:flex-col sm:items-start sm:justify-start sm:border-l sm:border-t-0 sm:first:border-l-0">
+      <span className="text-brand-ink font-mono text-2xl font-bold">{value}</span>
       <span className="text-brand-error text-[11px] font-bold uppercase tracking-wide">
         {label}
       </span>
@@ -193,7 +202,7 @@ export default function AdminDashboardPage() {
 
       <div
         data-testid="dashboard-stats"
-        className="border-brand-blue-100 flex overflow-hidden rounded-xl border bg-white"
+        className="border-brand-blue-100 flex flex-col overflow-hidden rounded-xl border bg-white sm:flex-row"
       >
         <StatCell value={departuresQuery.isPending ? '—' : String(onRoad)} label="On the road" />
         <StatCell
