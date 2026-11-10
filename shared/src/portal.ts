@@ -11,13 +11,19 @@
 import { manilaCivilDate } from './time';
 import type { BookingStatus } from './booking';
 
-/** §7's five steps, in order, by their table's own names. */
+/**
+ * §7's five steps, in order, by their table's own names — except the
+ * fifth, renamed from the table's literal "Tour day" to "Trip day" (Task
+ * T24's tour-only-language sweep): this step renders on My Booking for
+ * every booking, transfer bookings included, and has done so since the
+ * page could show one at all (Task T6).
+ */
 export const TRACKER_STEPS = [
   'Booked',
   'Payment sent',
   'Verified by admin',
   'Driver assigned',
-  'Tour day',
+  'Trip day',
 ] as const;
 export type TrackerStep = (typeof TRACKER_STEPS)[number];
 
@@ -45,7 +51,7 @@ export interface TrackerState {
  * | Payment sent      | Online payment received, or receipt uploaded  |
  * | Verified by admin | Payment `paid` (auto for PayMongo)           |
  * | Driver assigned   | Booking `assigned`                           |
- * | Tour day          | Booking `in_progress` or `completed`         |
+ * | Trip day          | Booking `in_progress` or `completed`         |
  *
  * Read as five independent predicates rather than a single "furthest step
  * reached", because they are not strictly nested in real life: a guest can
@@ -69,7 +75,7 @@ export function portalTracker(facts: TrackerFacts): TrackerState[] {
     { step: 'Payment sent', done: verified || hasReceipt },
     { step: 'Verified by admin', done: verified },
     { step: 'Driver assigned', done: afterAssignment },
-    { step: 'Tour day', done: status === 'in_progress' || status === 'completed' },
+    { step: 'Trip day', done: status === 'in_progress' || status === 'completed' },
   ];
 }
 

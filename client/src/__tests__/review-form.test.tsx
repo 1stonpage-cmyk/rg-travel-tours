@@ -36,6 +36,16 @@ const COMPLETED = {
   status: 'completed' as const,
   leadName: 'Maria Santos',
   tourTitle: 'Oslob Whale Shark Watching',
+  // Task T24 — null on every tour booking, same as the server sends.
+  transferRouteLabel: null,
+  pickupTime: null,
+  dayUseEndTime: null,
+  dropoffAddress: null,
+  dropoffMapsUrl: null,
+  luggageCount: null,
+  flightNumber: null,
+  airline: null,
+  vehicleTypeLabel: null,
   tourDate: '2026-06-10',
   pax: 2,
   totalCentavos: 500_000,
@@ -203,7 +213,7 @@ describe('the portal page and the review form', () => {
   it('offers the form when the server says canReview', async () => {
     mockTrpc({ 'portal.booking': COMPLETED });
     renderPage();
-    expect(await screen.findByRole('heading', { name: /how was your tour/i })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: /how was your trip/i })).toBeInTheDocument();
   });
 
   /** Mid-tour, or once a review exists: no form at all. */
@@ -211,8 +221,8 @@ describe('the portal page and the review form', () => {
     mockTrpc({ 'portal.booking': { ...COMPLETED, canReview: false } });
     renderPage();
 
-    await screen.findByText(/your tour is complete/i);
-    expect(screen.queryByRole('heading', { name: /how was your tour/i })).not.toBeInTheDocument();
+    await screen.findByText(/your trip is complete/i);
+    expect(screen.queryByRole('heading', { name: /how was your trip/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /send review/i })).not.toBeInTheDocument();
   });
 });

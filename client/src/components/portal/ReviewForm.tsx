@@ -172,7 +172,7 @@ export default function ReviewForm({ onSubmitted }: Props) {
     <form onSubmit={onSubmit} aria-labelledby="review-heading" className="space-y-5">
       <div>
         <h2 id="review-heading" className="text-brand-blue-900 text-base font-semibold">
-          How was your tour?
+          How was your trip?
         </h2>
         <p className="text-muted-foreground mt-1 text-sm">
           Your review appears on the site once our team has checked it.

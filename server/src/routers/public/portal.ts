@@ -32,6 +32,7 @@
  */
 import { TRPCError } from '@trpc/server';
 import { and, desc, eq, isNotNull } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/mysql-core';
 import { z } from 'zod';
 import {
   RECEIPT_UPLOAD_MAX_PER_BOOKING,
@@ -44,7 +45,18 @@ import {
 } from '@rg/shared';
 import { readSettingBlock } from '../../content/settings';
 import { getDb, type Transaction } from '../../db/client';
-import { bookings, drivers, payments, reviews, tours, vans } from '../../db/schema';
+import {
+  bookingTransferDetails,
+  bookings,
+  drivers,
+  payments,
+  reviews,
+  tours,
+  transferPlaces,
+  transferRoutes,
+  vans,
+  vehicleTypes,
+} from '../../db/schema';
 import {
   SESSION_COOKIE_BY_SUBJECT,
   clearSessionCookie,
@@ -52,8 +64,13 @@ import {
 } from '../../middleware/session-cookie';
 import { findBookingByCredentials } from '../../services/portal-auth';
 import { createSession, revokeSession } from '../../services/sessions';
+import { transferTitle } from '../../services/transfers/display';
 import { writeAudit } from '../../services/audit';
 import { customerProcedure, publicProcedure, router } from '../../trpc';
+
+/** Two aliases onto `transfer_places`, the same pattern `routers/public/driver.ts` uses. */
+const portalFromPlace = alias(transferPlaces, 'portalFromPlace');
+const portalToPlace = alias(transferPlaces, 'portalToPlace');
 
 /**
  * The one refusal. Built fresh per call rather than held as a module
@@ -247,12 +264,28 @@ export const portalRouter = router({
    * the same as "the guest cannot read it in the network tab".
    */
   booking: customerProcedure.query(async ({ ctx }) => {
-    const [row] = await getDb()
+    const [bookingRow] = await getDb()
       .select({
         ref: bookings.ref,
         status: bookings.status,
         payMode: bookings.payMode,
+        tourId: bookings.tourId,
         tourTitle: tours.title,
+        // Task T24 — the same guest-field set `TripDetail` (the driver's own
+        // payload, Task T22) and `admin.bookings.detail` (Task T23) carry,
+        // through the same join quartet and `tourId === null` guard.
+        pickupTime: bookingTransferDetails.pickupTime,
+        dayUseEndTime: bookingTransferDetails.dayUseEndTime,
+        dropoffAddress: bookingTransferDetails.dropoffAddress,
+        dropoffMapsUrl: bookingTransferDetails.dropoffMapUrl,
+        luggageCount: bookingTransferDetails.luggageCount,
+        flightNumber: bookingTransferDetails.flightNumber,
+        airline: bookingTransferDetails.airline,
+        customRouteDescription: bookingTransferDetails.customRouteDescription,
+        direction: bookingTransferDetails.direction,
+        fromPlaceName: portalFromPlace.name,
+        toPlaceName: portalToPlace.name,
+        vehicleTypeLabel: vehicleTypes.name,
         tourDate: bookings.tourDate,
         pax: bookings.pax,
         leadName: bookings.leadName,
@@ -268,13 +301,38 @@ export const portalRouter = router({
       // LEFT on `tours` (Task T6) — same reason as `manualPayment` above: an
       // inner join made My Booking itself answer `NOT_FOUND` for a transfer
       // guest who had just signed in with the right ref and email.
+      //
+      // The four joins below (Task T24) are the same 1:1-or-absent pattern
+      // as every other surface in this feature — see
+      // `routers/public/driver.ts`'s `loadDriverTrip` for the cardinality
+      // argument in full.
       .leftJoin(tours, eq(tours.id, bookings.tourId))
+      .leftJoin(bookingTransferDetails, eq(bookingTransferDetails.bookingId, bookings.id))
+      .leftJoin(transferRoutes, eq(transferRoutes.id, bookings.routeId))
+      .leftJoin(portalFromPlace, eq(portalFromPlace.id, transferRoutes.fromPlaceId))
+      .leftJoin(portalToPlace, eq(portalToPlace.id, transferRoutes.toPlaceId))
+      .leftJoin(vehicleTypes, eq(vehicleTypes.id, bookings.vehicleTypeId))
       .where(eq(bookings.id, ctx.customerSession.subjectId))
       .limit(1);
 
-    if (!row) {
+    if (!bookingRow) {
       throw new TRPCError({ code: 'NOT_FOUND', message: 'We could not find that booking.' });
     }
+
+    // The raw join columns the label is computed from — destructured out
+    // here so they never reach the client, same as `admin.bookings.detail`.
+    const { fromPlaceName, toPlaceName, direction, customRouteDescription, ...row } = bookingRow;
+    // Same guard as `driverTripDetail`/`admin.bookings.detail` —
+    // `transferTitle()` cannot tell a tour from a routeless transfer.
+    const transferRouteLabel =
+      row.tourId === null
+        ? transferTitle({
+            fromName: fromPlaceName,
+            toName: toPlaceName,
+            direction,
+            customRouteDescription,
+          })
+        : null;
 
     /*
      * Every receipt this booking has, newest first. The newest is the one
@@ -358,6 +416,15 @@ export const portalRouter = router({
       status: row.status,
       leadName: row.leadName,
       tourTitle: row.tourTitle,
+      transferRouteLabel,
+      pickupTime: row.pickupTime,
+      dayUseEndTime: row.dayUseEndTime,
+      dropoffAddress: row.dropoffAddress,
+      dropoffMapsUrl: row.dropoffMapsUrl,
+      luggageCount: row.luggageCount,
+      flightNumber: row.flightNumber,
+      airline: row.airline,
+      vehicleTypeLabel: row.vehicleTypeLabel,
       tourDate,
       pax: row.pax,
       totalCentavos: row.totalCentavos,

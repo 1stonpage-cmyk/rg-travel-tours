@@ -295,7 +295,7 @@ describeWithDb('portal.booking — the tracker', () => {
       'Payment sent',
       'Verified by admin',
       'Driver assigned',
-      'Tour day',
+      'Trip day',
     ]);
     expect(result.tracker.map((s) => s.done)).toEqual([true, false, false, false, false]);
   });
@@ -471,14 +471,21 @@ describeWithDb('portal.booking — the rest of the page', () => {
     const serialised = JSON.stringify(result);
 
     expect(Object.keys(result).sort()).toEqual([
+      'airline',
       'amountDueCentavos',
       'balanceCentavos',
       'canReview',
+      'dayUseEndTime',
       'driver',
+      'dropoffAddress',
+      'dropoffMapsUrl',
+      'flightNumber',
       'holdExpiresAt',
       'leadName',
+      'luggageCount',
       'paidCentavos',
       'pax',
+      'pickupTime',
       'receipt',
       'ref',
       'status',
@@ -486,8 +493,14 @@ describeWithDb('portal.booking — the rest of the page', () => {
       'tourDate',
       'tourTitle',
       'tracker',
+      'transferRouteLabel',
       'uploadsRemaining',
+      'vehicleTypeLabel',
     ]);
+    // Task T24 — null for a tour, same guard every other surface uses.
+    // `transfer-booking-surfaces.test.ts`/`portal-transfer-booking.test.ts`
+    // prove the non-null transfer shape.
+    expect(result.transferRouteLabel).toBeNull();
     // The things a booking row carries that are nobody's business here.
     expect(serialised).not.toContain('priceSnapshot');
     expect(serialised).not.toContain('paymentReviewRequired');

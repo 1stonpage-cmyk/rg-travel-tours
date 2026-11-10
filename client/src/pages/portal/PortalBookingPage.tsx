@@ -28,7 +28,7 @@
  * not a failure, and red is forbidden anyway.
  */
 import { Link } from 'react-router-dom';
-import { Loader2, RefreshCw } from 'lucide-react';
+import { ExternalLink, Loader2, RefreshCw } from 'lucide-react';
 import { APP_SURFACE_TITLES, TRANSFER_BOOKING_LABEL, formatPeso, portalPollMs } from '@rg/shared';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import DriverCard from '@/components/portal/DriverCard';
@@ -38,14 +38,20 @@ import Tracker from '@/components/portal/Tracker';
 import { Button } from '@/components/ui/button';
 import { trpc } from '@/lib/trpc';
 
-/** What the page says about where the booking stands, in one sentence. */
+/**
+ * What the page says about where the booking stands, in one sentence.
+ *
+ * Product-neutral wording (Task T24) — `in_progress`/`completed` used to say
+ * "tour", which is false for a transfer booking and was already being shown
+ * to one (`portal.booking` has carried a transfer booking since Task T6).
+ */
 const STATUS_SENTENCE: Record<string, string> = {
   pending_payment: 'We are holding your spot. Send your payment to confirm it.',
   pending_verification: 'We have your receipt and are checking it now.',
   confirmed: 'Your booking is confirmed. We will assign your driver closer to the day.',
   assigned: 'Your driver is assigned. See their details below.',
-  in_progress: 'Your tour is under way. Enjoy!',
-  completed: 'Your tour is complete. Thank you for travelling with us.',
+  in_progress: 'Your trip is under way. Enjoy!',
+  completed: 'Your trip is complete. Thank you for travelling with us.',
   cancelled: 'This booking has been cancelled. Message us if that looks wrong.',
   expired: 'This booking expired before payment, so the seats were released.',
 };
@@ -106,9 +112,9 @@ export default function PortalBookingPage() {
         <span className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.18em]">
           Booking {booking.ref}
         </span>
-        {/* Null on a transfer booking (T6); T24 writes the guest-facing copy. */}
+        {/* Null on a transfer booking (T6); shown in its place from T24 on. */}
         <h1 className="text-brand-blue-900 text-2xl font-bold">
-          {booking.tourTitle ?? TRANSFER_BOOKING_LABEL}
+          {booking.tourTitle ?? booking.transferRouteLabel ?? TRANSFER_BOOKING_LABEL}
         </h1>
         <p className="text-muted-foreground text-sm">
           {booking.tourDate} · {booking.pax} {booking.pax === 1 ? 'guest' : 'guests'} ·{' '}
@@ -119,6 +125,82 @@ export default function PortalBookingPage() {
       <p role="status" className="text-brand-blue-900 mt-4 text-sm font-medium">
         {STATUS_SENTENCE[booking.status] ?? 'Your booking is being processed.'}
       </p>
+
+      {/*
+       * Task T24 — the transfer-only fields `TripDetail` (the driver's own
+       * payload) and `admin.bookings.detail` already carry. Absent for a
+       * tour booking, which has no `booking_transfer_details` row and so
+       * every one of these is null.
+       */}
+      {booking.transferRouteLabel === null ? null : (
+        <section
+          aria-labelledby="transfer-heading"
+          className="border-border bg-background mt-6 rounded-2xl border p-5"
+        >
+          <h2 id="transfer-heading" className="text-brand-blue-900 text-base font-semibold">
+            Your transfer
+          </h2>
+          <dl className="mt-3 space-y-2 text-sm">
+            {booking.vehicleTypeLabel === null ? null : (
+              <div className="flex justify-between gap-4">
+                <dt className="text-muted-foreground">Vehicle</dt>
+                <dd className="text-brand-blue-900 font-semibold">{booking.vehicleTypeLabel}</dd>
+              </div>
+            )}
+            {booking.pickupTime === null ? null : (
+              <div className="flex justify-between gap-4">
+                <dt className="text-muted-foreground">Pickup time</dt>
+                <dd className="text-brand-blue-900 font-semibold">{booking.pickupTime}</dd>
+              </div>
+            )}
+            {booking.dayUseEndTime === null ? null : (
+              <div className="flex justify-between gap-4">
+                <dt className="text-muted-foreground">Day use until</dt>
+                <dd className="text-brand-blue-900 font-semibold">{booking.dayUseEndTime}</dd>
+              </div>
+            )}
+            {booking.dropoffAddress === null ? null : (
+              <div className="flex justify-between gap-4">
+                <dt className="text-muted-foreground">Drop-off</dt>
+                <dd className="text-brand-blue-900 text-right font-semibold">
+                  {booking.dropoffAddress}
+                  {booking.dropoffMapsUrl === null ? null : (
+                    <>
+                      {' '}
+                      <a
+                        href={booking.dropoffMapsUrl}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className="text-brand-blue-700 hover:text-brand-blue-900 tap-target inline-flex items-center gap-1 underline"
+                      >
+                        <ExternalLink className="size-3.5" aria-hidden="true" />
+                        Open in Maps
+                      </a>
+                    </>
+                  )}
+                </dd>
+              </div>
+            )}
+            {booking.luggageCount === null ? null : (
+              <div className="flex justify-between gap-4">
+                <dt className="text-muted-foreground">Luggage</dt>
+                <dd className="text-brand-blue-900 font-semibold">
+                  {booking.luggageCount === 1 ? '1 bag' : `${booking.luggageCount} bags`}
+                </dd>
+              </div>
+            )}
+            {booking.flightNumber === null && booking.airline === null ? null : (
+              <div className="flex justify-between gap-4">
+                <dt className="text-muted-foreground">Flight</dt>
+                <dd className="text-brand-blue-900 font-semibold">
+                  {booking.flightNumber ?? '(number not given)'}
+                  {booking.airline === null ? null : ` (${booking.airline})`}
+                </dd>
+              </div>
+            )}
+          </dl>
+        </section>
+      )}
 
       <section
         aria-labelledby="tracker-heading"
@@ -146,7 +228,7 @@ export default function PortalBookingPage() {
         </h2>
         <dl className="mt-3 space-y-2 text-sm">
           <div className="flex justify-between gap-4">
-            <dt className="text-muted-foreground">Tour total</dt>
+            <dt className="text-muted-foreground">Total</dt>
             <dd className="text-brand-blue-900 font-semibold tabular-nums">
               {formatPeso(booking.totalCentavos)}
             </dd>
@@ -158,7 +240,7 @@ export default function PortalBookingPage() {
             </dd>
           </div>
           <div className="border-brand-blue-200 flex justify-between gap-4 border-t pt-2">
-            <dt className="text-brand-blue-900 font-semibold">Balance on tour day</dt>
+            <dt className="text-brand-blue-900 font-semibold">Balance on trip day</dt>
             <dd className="text-brand-blue-900 font-bold tabular-nums">
               {formatPeso(booking.balanceCentavos)}
             </dd>

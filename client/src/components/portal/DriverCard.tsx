@@ -81,7 +81,7 @@ export default function DriverCard({ driver }: Props) {
       </div>
 
       <p className="text-muted-foreground mt-4 text-xs">
-        Your driver&apos;s details stay here until the end of your tour day.
+        Your driver&apos;s details stay here until the end of your trip day.
       </p>
     </section>
   );

@@ -8,7 +8,7 @@
  * driver's two ways to be reached, and a sign-in prompt with nothing on it
  * when there is no session.
  */
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
 import { portalTracker } from '@rg/shared';
@@ -26,6 +26,16 @@ const BASE = {
   status: 'pending_payment' as const,
   leadName: 'Maria Santos',
   tourTitle: 'Oslob Whale Shark Watching',
+  // Task T24 — null on every tour booking, same as the server sends.
+  transferRouteLabel: null as string | null,
+  pickupTime: null as string | null,
+  dayUseEndTime: null as string | null,
+  dropoffAddress: null as string | null,
+  dropoffMapsUrl: null as string | null,
+  luggageCount: null as number | null,
+  flightNumber: null as string | null,
+  airline: null as string | null,
+  vehicleTypeLabel: null as string | null,
   tourDate: '2026-12-25',
   pax: 4,
   totalCentavos: 1_000_000,
@@ -93,7 +103,7 @@ describe('PortalBookingPage — the booking', () => {
     expect(items[1]).toHaveTextContent('Payment sent — done');
     expect(items[2]).toHaveTextContent('Verified by admin — done');
     expect(items[3]).toHaveTextContent('Driver assigned — not done yet');
-    expect(items[4]).toHaveTextContent('Tour day — not done yet');
+    expect(items[4]).toHaveTextContent('Trip day — not done yet');
     // The step a guest is waiting on is the one marked current.
     expect(items[3]).toHaveAttribute('aria-current', 'step');
   });
@@ -112,7 +122,7 @@ describe('PortalBookingPage — the booking', () => {
     expect(await screen.findByText('₱10,000')).toBeInTheDocument();
     expect(screen.getByText('₱3,000')).toBeInTheDocument();
     expect(screen.getByText('₱7,000')).toBeInTheDocument();
-    expect(screen.getByText(/balance on tour day/i)).toBeInTheDocument();
+    expect(screen.getByText(/balance on trip day/i)).toBeInTheDocument();
   });
 
   it('offers the payment screen while something is still due', async () => {
@@ -142,6 +152,79 @@ describe('PortalBookingPage — the booking', () => {
     mockTrpc({ 'portal.booking': { ...BASE, status: 'cancelled' } });
     renderPage();
     expect(await screen.findByText(/this booking has been cancelled/i)).toBeInTheDocument();
+  });
+
+  /**
+   * Task T24 — the tour-only-language sweep. These two statuses used to say
+   * "tour", which `portal.booking` has carried for a transfer booking since
+   * Task T6.
+   */
+  it('says "trip", never "tour", once the trip is under way or complete', async () => {
+    mockTrpc({ 'portal.booking': { ...BASE, status: 'in_progress' } });
+    renderPage();
+    expect(await screen.findByText(/your trip is under way/i)).toBeInTheDocument();
+    expect(screen.queryByText(/your tour/i)).not.toBeInTheDocument();
+  });
+
+  it('says "trip", never "tour", once the trip is complete', async () => {
+    mockTrpc({ 'portal.booking': { ...BASE, status: 'completed' } });
+    renderPage();
+    expect(await screen.findByText(/your trip is complete/i)).toBeInTheDocument();
+    expect(screen.queryByText(/your tour/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('PortalBookingPage — a transfer booking', () => {
+  const TRANSFER = {
+    ...BASE,
+    tourTitle: null as string | null,
+    transferRouteLabel: 'Mactan Airport → Oslob',
+    pickupTime: '04:30',
+    dayUseEndTime: null as string | null,
+    dropoffAddress: 'A resort in Oslob',
+    dropoffMapsUrl: 'https://maps.example.test/oslob-resort',
+    luggageCount: 2,
+    flightNumber: '5J123',
+    airline: 'Cebu Pacific',
+    vehicleTypeLabel: 'Sedan',
+  };
+
+  it('shows the route in the heading, instead of the generic label', async () => {
+    mockTrpc({ 'portal.booking': TRANSFER });
+    renderPage();
+    expect(
+      await screen.findByRole('heading', { name: 'Mactan Airport → Oslob' }),
+    ).toBeInTheDocument();
+  });
+
+  it('falls back to the generic transfer label when there is no route either', async () => {
+    mockTrpc({ 'portal.booking': { ...TRANSFER, transferRouteLabel: null } });
+    renderPage();
+    expect(await screen.findByRole('heading', { name: 'Transfer booking' })).toBeInTheDocument();
+  });
+
+  it('shows a "Your transfer" section with the vehicle, pickup, drop-off, luggage and flight', async () => {
+    mockTrpc({ 'portal.booking': TRANSFER });
+    renderPage();
+
+    const section = await screen.findByRole('region', { name: 'Your transfer' });
+    expect(within(section).getByText('Sedan')).toBeInTheDocument();
+    expect(within(section).getByText('04:30')).toBeInTheDocument();
+    expect(within(section).getByText(/A resort in Oslob/)).toBeInTheDocument();
+    expect(within(section).getByRole('link', { name: /open in maps/i })).toHaveAttribute(
+      'href',
+      'https://maps.example.test/oslob-resort',
+    );
+    expect(within(section).getByText('2 bags')).toBeInTheDocument();
+    expect(within(section).getByText('5J123 (Cebu Pacific)')).toBeInTheDocument();
+  });
+
+  it('draws no transfer section for a tour booking', async () => {
+    mockTrpc({ 'portal.booking': BASE });
+    renderPage();
+
+    await screen.findByRole('heading', { name: /oslob whale shark/i });
+    expect(screen.queryByRole('region', { name: 'Your transfer' })).not.toBeInTheDocument();
   });
 });
 

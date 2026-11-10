@@ -26,13 +26,13 @@ function pattern(facts: Parameters<typeof portalTracker>[0]): string {
 }
 
 describe('portalTracker', () => {
-  it('names §7s five steps, in §7s order', () => {
+  it('names §7s five steps, in §7s order (the fifth renamed "Trip day", Task T24)', () => {
     expect([...TRACKER_STEPS]).toEqual([
       'Booked',
       'Payment sent',
       'Verified by admin',
       'Driver assigned',
-      'Tour day',
+      'Trip day',
     ]);
     expect(
       portalTracker({ status: 'pending_payment', paidCentavos: 0, hasReceipt: false }),
