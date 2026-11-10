@@ -77,6 +77,7 @@
  */
 import { TRPCError } from '@trpc/server';
 import { and, eq, lt, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/mysql-core';
 import { z } from 'zod';
 import {
   bookableDateRange,
@@ -108,9 +109,18 @@ import {
   resolvePaymentMethods,
 } from '../../content/settings';
 import { getDb } from '../../db/client';
-import { bookings, tourBlockedDates, tours } from '../../db/schema';
+import {
+  bookings,
+  bookingTransferDetails,
+  tourBlockedDates,
+  tours,
+  transferPlaces,
+  transferRoutes,
+  vehicleTypes,
+} from '../../db/schema';
 import { env } from '../../env';
 import { writeAudit } from '../../services/audit';
+import { transferTitle } from '../../services/transfers/display';
 import { getProvider } from '../../services/payments/registry';
 import type { CreateCheckoutResult, PaymentMethod } from '../../services/payments/types';
 import {
@@ -154,6 +164,15 @@ import {
   type TransferBookingShapeProblem,
 } from '../../services/transfers/create-booking';
 import { publicProcedure, router } from '../../trpc';
+
+/**
+ * Two aliases onto `transfer_places` — the same pattern
+ * `routers/public/portal.ts`/`routers/public/driver.ts` use, for the same
+ * reason: one route id joins the SAME table twice (its `from` and `to`
+ * place), and MySQL needs two names for the two instances.
+ */
+const checkoutFromPlace = alias(transferPlaces, 'checkoutFromPlace');
+const checkoutToPlace = alias(transferPlaces, 'checkoutToPlace');
 
 /**
  * What `checkout.availability` answers with: every capacity reason, plus the
@@ -246,6 +265,25 @@ function bookingNotFound(): TRPCError {
  * repo-wide scan) is scoped to `client/` for exactly this reason: nothing
  * under `client/` may compute money, and this file is not under `client/`.
  */
+/**
+ * Task T25b's own guest field subset — the same one named in the owner's
+ * answer: route + direction, vehicle type, pickup time, drop-off, flight
+ * if set. `bookingStatus` and `bookingLookup` both carry it, through the
+ * same join quartet and `tourId === null` guard `portal.booking` (T24)
+ * established; NULL throughout for a tour booking. Deliberately narrower
+ * than My Booking's own field set (no `dayUseEndTime`, `luggageCount`, or
+ * `dropoffMapsUrl` here) — these two pages are a status/lookup read, not
+ * the full booking detail screen.
+ */
+type TransferGuestFields = {
+  transferRouteLabel: string | null;
+  pickupTime: string | null;
+  dropoffAddress: string | null;
+  flightNumber: string | null;
+  airline: string | null;
+  vehicleTypeLabel: string | null;
+};
+
 type BookingStatusResult = {
   ref: string;
   status: BookingStatus;
@@ -256,29 +294,30 @@ type BookingStatusResult = {
    * that booking" about a booking they had just paid for.
    */
   tourTitle: string | null;
-  /** Civil date (Asia/Manila), e.g. `'2026-12-25'` — see `bookings.tourDate`. */
-  date: string;
-  pax: number;
-  payMode: PayMode;
-  totalCentavos: number;
-  /**
-   * `bookings.amount_paid_centavos`, read-only, renamed on the wire to
-   * `paidCentavos`. Not a cosmetic choice: `schema-conventions.test.ts`'s
-   * A5b guard greps the whole server tree for the literal text
-   * `amountPaidCentavos:` to prove only `record-payment.ts` ever WRITES
-   * that column, and its regex cannot tell a `.select()` alias or a
-   * returned-object key apart from a `.set()` — a plain READ spelled with
-   * the DB column's own camelCase name would false-positive as a second
-   * writer. Renaming the field this file hands back is cheaper and more
-   * honest than teaching that guard to parse call expressions, and it costs
-   * nothing: this type is this procedure's own wire shape, not reused
-   * anywhere `amountPaidCentavos` is already the public contract.
-   */
-  paidCentavos: number;
-  balanceCentavos: number;
-  /** owner decision 2026-10-11, task 16b-3 — see `bookings.paymentReviewRequired`. */
-  paymentReviewRequired: boolean;
-};
+} & TransferGuestFields & {
+    /** Civil date (Asia/Manila), e.g. `'2026-12-25'` — see `bookings.tourDate`. */
+    date: string;
+    pax: number;
+    payMode: PayMode;
+    totalCentavos: number;
+    /**
+     * `bookings.amount_paid_centavos`, read-only, renamed on the wire to
+     * `paidCentavos`. Not a cosmetic choice: `schema-conventions.test.ts`'s
+     * A5b guard greps the whole server tree for the literal text
+     * `amountPaidCentavos:` to prove only `record-payment.ts` ever WRITES
+     * that column, and its regex cannot tell a `.select()` alias or a
+     * returned-object key apart from a `.set()` — a plain READ spelled with
+     * the DB column's own camelCase name would false-positive as a second
+     * writer. Renaming the field this file hands back is cheaper and more
+     * honest than teaching that guard to parse call expressions, and it costs
+     * nothing: this type is this procedure's own wire shape, not reused
+     * anywhere `amountPaidCentavos` is already the public contract.
+     */
+    paidCentavos: number;
+    balanceCentavos: number;
+    /** owner decision 2026-10-11, task 16b-3 — see `bookings.paymentReviewRequired`. */
+    paymentReviewRequired: boolean;
+  };
 
 /**
  * What `checkout.bookingLookup` (Task 10) answers with — §7's guest
@@ -299,13 +338,14 @@ type BookingLookupResult = {
   status: BookingStatus;
   /** NULL on a transfer booking (Task T6) — see `BookingStatusResult`. */
   tourTitle: string | null;
-  date: string;
-  pax: number;
-  payMode: PayMode;
-  totalCentavos: number;
-  paidCentavos: number;
-  paymentReviewRequired: boolean;
-};
+} & TransferGuestFields & {
+    date: string;
+    pax: number;
+    payMode: PayMode;
+    totalCentavos: number;
+    paidCentavos: number;
+    paymentReviewRequired: boolean;
+  };
 
 /**
  * The instruments offered at a PayMongo checkout (owner Ruling 7 / Q6).
@@ -1415,13 +1455,29 @@ export const checkoutRouter = router({
             // note on why.
             paidCentavos: bookings.amountPaidCentavos,
             paymentReviewRequired: bookings.paymentReviewRequired,
+            tourId: bookings.tourId,
             tourTitle: tours.title,
+            // Task T25b — see `TransferGuestFields`'s own note.
+            pickupTime: bookingTransferDetails.pickupTime,
+            dropoffAddress: bookingTransferDetails.dropoffAddress,
+            flightNumber: bookingTransferDetails.flightNumber,
+            airline: bookingTransferDetails.airline,
+            customRouteDescription: bookingTransferDetails.customRouteDescription,
+            direction: bookingTransferDetails.direction,
+            fromPlaceName: checkoutFromPlace.name,
+            toPlaceName: checkoutToPlace.name,
+            vehicleTypeLabel: vehicleTypes.name,
           })
           .from(bookings)
           // LEFT on `tours` (Task T6) — see `startPayment` above. An inner
           // join made the post-payment landing page say "we could not find
           // that booking" about a transfer booking that had just been paid.
           .leftJoin(tours, eq(tours.id, bookings.tourId))
+          .leftJoin(bookingTransferDetails, eq(bookingTransferDetails.bookingId, bookings.id))
+          .leftJoin(transferRoutes, eq(transferRoutes.id, bookings.routeId))
+          .leftJoin(checkoutFromPlace, eq(checkoutFromPlace.id, transferRoutes.fromPlaceId))
+          .leftJoin(checkoutToPlace, eq(checkoutToPlace.id, transferRoutes.toPlaceId))
+          .leftJoin(vehicleTypes, eq(vehicleTypes.id, bookings.vehicleTypeId))
           .where(eq(bookings.ref, input.ref))
           .limit(1);
 
@@ -1429,10 +1485,28 @@ export const checkoutRouter = router({
         // `bookingNotFound()`'s own note on why the two must agree.
         if (!booking) throw bookingNotFound();
 
+        // Same guard `portal.booking`/`admin.bookings.detail` use —
+        // `transferTitle()` cannot tell a tour from a routeless transfer.
+        const transferRouteLabel =
+          booking.tourId === null
+            ? transferTitle({
+                fromName: booking.fromPlaceName,
+                toName: booking.toPlaceName,
+                direction: booking.direction,
+                customRouteDescription: booking.customRouteDescription,
+              })
+            : null;
+
         return {
           ref: booking.ref,
           status: booking.status,
           tourTitle: booking.tourTitle,
+          transferRouteLabel,
+          pickupTime: booking.pickupTime,
+          dropoffAddress: booking.dropoffAddress,
+          flightNumber: booking.flightNumber,
+          airline: booking.airline,
+          vehicleTypeLabel: booking.vehicleTypeLabel,
           // `bookings.tour_date` reads back as a `Date` at UTC midnight of
           // the civil date (`create-hold.ts`'s own note: the pool runs at
           // `timezone: 'Z'`, so this stores the day the guest picked, in
@@ -1511,7 +1585,18 @@ export const checkoutRouter = router({
             totalCentavos: bookings.totalCentavos,
             paidCentavos: bookings.amountPaidCentavos,
             paymentReviewRequired: bookings.paymentReviewRequired,
+            tourId: bookings.tourId,
             tourTitle: tours.title,
+            // Task T25b — see `TransferGuestFields`'s own note.
+            pickupTime: bookingTransferDetails.pickupTime,
+            dropoffAddress: bookingTransferDetails.dropoffAddress,
+            flightNumber: bookingTransferDetails.flightNumber,
+            airline: bookingTransferDetails.airline,
+            customRouteDescription: bookingTransferDetails.customRouteDescription,
+            direction: bookingTransferDetails.direction,
+            fromPlaceName: checkoutFromPlace.name,
+            toPlaceName: checkoutToPlace.name,
+            vehicleTypeLabel: vehicleTypes.name,
           })
           .from(bookings)
           /*
@@ -1522,15 +1607,38 @@ export const checkoutRouter = router({
            * they would have no way to tell the difference.
            */
           .leftJoin(tours, eq(tours.id, bookings.tourId))
+          .leftJoin(bookingTransferDetails, eq(bookingTransferDetails.bookingId, bookings.id))
+          .leftJoin(transferRoutes, eq(transferRoutes.id, bookings.routeId))
+          .leftJoin(checkoutFromPlace, eq(checkoutFromPlace.id, transferRoutes.fromPlaceId))
+          .leftJoin(checkoutToPlace, eq(checkoutToPlace.id, transferRoutes.toPlaceId))
+          .leftJoin(vehicleTypes, eq(vehicleTypes.id, bookings.vehicleTypeId))
           .where(eq(bookings.id, match.id))
           .limit(1);
 
         if (!booking) throw bookingNotFound();
 
+        // Same guard `portal.booking`/`admin.bookings.detail` use —
+        // `transferTitle()` cannot tell a tour from a routeless transfer.
+        const transferRouteLabel =
+          booking.tourId === null
+            ? transferTitle({
+                fromName: booking.fromPlaceName,
+                toName: booking.toPlaceName,
+                direction: booking.direction,
+                customRouteDescription: booking.customRouteDescription,
+              })
+            : null;
+
         return {
           ref: booking.ref,
           status: booking.status,
           tourTitle: booking.tourTitle,
+          transferRouteLabel,
+          pickupTime: booking.pickupTime,
+          dropoffAddress: booking.dropoffAddress,
+          flightNumber: booking.flightNumber,
+          airline: booking.airline,
+          vehicleTypeLabel: booking.vehicleTypeLabel,
           date: manilaCivilDate(booking.tourDate),
           pax: booking.pax,
           payMode: booking.payMode,

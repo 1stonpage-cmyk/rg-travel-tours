@@ -160,6 +160,7 @@ export const portalRouter = router({
         ref: bookings.ref,
         status: bookings.status,
         payMode: bookings.payMode,
+        tourId: bookings.tourId,
         tourTitle: tours.title,
         tourDate: bookings.tourDate,
         pax: bookings.pax,
@@ -171,6 +172,18 @@ export const portalRouter = router({
         paidCentavos: bookings.amountPaidCentavos,
         priceSnapshot: bookings.priceSnapshot,
         holdExpiresAt: bookings.holdExpiresAt,
+        // Task T25b — the same guest field subset `checkout.bookingStatus`
+        // and `checkout.bookingLookup` carry, through the same join
+        // quartet and `tourId === null` guard `portal.booking` (T24) uses.
+        pickupTime: bookingTransferDetails.pickupTime,
+        dropoffAddress: bookingTransferDetails.dropoffAddress,
+        flightNumber: bookingTransferDetails.flightNumber,
+        airline: bookingTransferDetails.airline,
+        customRouteDescription: bookingTransferDetails.customRouteDescription,
+        direction: bookingTransferDetails.direction,
+        fromPlaceName: portalFromPlace.name,
+        toPlaceName: portalToPlace.name,
+        vehicleTypeLabel: vehicleTypes.name,
       })
       .from(bookings)
       /*
@@ -181,6 +194,11 @@ export const portalRouter = router({
        * shows them where to send the money. `tourTitle` is nullable.
        */
       .leftJoin(tours, eq(tours.id, bookings.tourId))
+      .leftJoin(bookingTransferDetails, eq(bookingTransferDetails.bookingId, bookings.id))
+      .leftJoin(transferRoutes, eq(transferRoutes.id, bookings.routeId))
+      .leftJoin(portalFromPlace, eq(portalFromPlace.id, transferRoutes.fromPlaceId))
+      .leftJoin(portalToPlace, eq(portalToPlace.id, transferRoutes.toPlaceId))
+      .leftJoin(vehicleTypes, eq(vehicleTypes.id, bookings.vehicleTypeId))
       .where(eq(bookings.id, ctx.customerSession.subjectId))
       .limit(1);
 
@@ -192,6 +210,18 @@ export const portalRouter = router({
     if (!booking) {
       throw new TRPCError({ code: 'NOT_FOUND', message: 'We could not find that booking.' });
     }
+
+    // Same guard `portal.booking`/`admin.bookings.detail` use —
+    // `transferTitle()` cannot tell a tour from a routeless transfer.
+    const transferRouteLabel =
+      booking.tourId === null
+        ? transferTitle({
+            fromName: booking.fromPlaceName,
+            toName: booking.toPlaceName,
+            direction: booking.direction,
+            customRouteDescription: booking.customRouteDescription,
+          })
+        : null;
 
     const expected =
       booking.payMode === 'full'
@@ -209,6 +239,12 @@ export const portalRouter = router({
       ref: booking.ref,
       status: booking.status,
       tourTitle: booking.tourTitle,
+      transferRouteLabel,
+      pickupTime: booking.pickupTime,
+      dropoffAddress: booking.dropoffAddress,
+      flightNumber: booking.flightNumber,
+      airline: booking.airline,
+      vehicleTypeLabel: booking.vehicleTypeLabel,
       /** A civil date, as every tour date is — never a UTC timestamp. */
       tourDate: manilaCivilDate(booking.tourDate),
       pax: booking.pax,

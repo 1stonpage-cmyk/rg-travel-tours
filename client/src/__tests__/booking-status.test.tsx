@@ -9,7 +9,7 @@
  * `checkout.startPayment` was ever called while that happened — not merely
  * that the right text appeared.
  */
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -30,6 +30,12 @@ afterEach(() => {
 const BASE_STATUS = {
   ref: 'RG-7KQ4M9',
   tourTitle: 'Oslob Whale Shark Watching',
+  transferRouteLabel: null as string | null,
+  pickupTime: null as string | null,
+  dropoffAddress: null as string | null,
+  flightNumber: null as string | null,
+  airline: null as string | null,
+  vehicleTypeLabel: null as string | null,
   date: '2026-12-25',
   pax: 3,
   payMode: 'deposit' as const,
@@ -285,5 +291,50 @@ describe('BookingStatusPage — bottom CTA follows show_tours (DEMO POLISH task 
     const link = screen.getByRole('link', { name: /^book a transfer$/i });
     expect(link).toHaveAttribute('href', '/transfer');
     expect(screen.queryByRole('link', { name: /^browse tours$/i })).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Task T25b (owner-added 2026-11-10) — the same guest field subset
+ * `portal.booking` (T24) shows on My Booking, named by the owner: route +
+ * direction, vehicle type, pickup time, drop-off, flight if set.
+ */
+describe('BookingStatusPage — a transfer booking (Task T25b)', () => {
+  const TRANSFER_STATUS = {
+    ...BASE_STATUS,
+    tourTitle: null,
+    transferRouteLabel: 'Mactan Airport → Moalboal',
+    pickupTime: '06:30',
+    dropoffAddress: 'A resort in Moalboal',
+    flightNumber: '5J456',
+    airline: 'Cebu Pacific',
+    vehicleTypeLabel: 'Van',
+  };
+
+  it('shows the route in the heading, and the full transfer section', async () => {
+    mockTrpc({ 'checkout.bookingStatus': { ...TRANSFER_STATUS, status: 'confirmed' } });
+    renderStatusPage();
+
+    expect(await screen.findByText('Mactan Airport → Moalboal')).toBeInTheDocument();
+    const section = screen.getByText('Your transfer').closest('div')!;
+    expect(within(section).getByText('Van')).toBeInTheDocument();
+    expect(within(section).getByText('06:30')).toBeInTheDocument();
+    expect(within(section).getByText('A resort in Moalboal')).toBeInTheDocument();
+    expect(within(section).getByText('5J456 (Cebu Pacific)')).toBeInTheDocument();
+  });
+
+  it('shows no "Your transfer" section for a tour booking', async () => {
+    mockTrpc({ 'checkout.bookingStatus': { ...BASE_STATUS, status: 'confirmed' } });
+    renderStatusPage();
+
+    await screen.findByText(/booking confirmed/i);
+    expect(screen.queryByText('Your transfer')).not.toBeInTheDocument();
+  });
+
+  it('says "trip", never "tour", for an in-progress or completed transfer', async () => {
+    mockTrpc({ 'checkout.bookingStatus': { ...TRANSFER_STATUS, status: 'in_progress' } });
+    renderStatusPage();
+    expect(await screen.findByText(/your trip is underway/i)).toBeInTheDocument();
+    expect(screen.queryByText(/your tour/i)).not.toBeInTheDocument();
   });
 });

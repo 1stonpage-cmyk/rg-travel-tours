@@ -15,7 +15,7 @@
  *  3. **Nothing is invented.** While `payment_qr` is unconfigured the page
  *     shows an amber pending notice, no QR, and no upload form.
  */
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
 import ManualQrPage from '@/pages/portal/ManualQrPage';
@@ -32,6 +32,12 @@ const CONFIGURED = {
   ref: 'RG-7KQ4M9',
   status: 'pending_payment' as const,
   tourTitle: 'Oslob Whale Shark Watching',
+  transferRouteLabel: null as string | null,
+  pickupTime: null as string | null,
+  dropoffAddress: null as string | null,
+  flightNumber: null as string | null,
+  airline: null as string | null,
+  vehicleTypeLabel: null as string | null,
   tourDate: '2026-12-25',
   pax: 3,
   totalCentavos: 450_000,
@@ -214,6 +220,44 @@ describe('ManualQrPage — the hold has run out', () => {
     expect(await screen.findByText('₱1,350')).toBeInTheDocument();
     expect(screen.queryByText(/this hold has run out/i)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /send receipt/i })).toBeInTheDocument();
+  });
+});
+
+/**
+ * Task T25b (owner-added 2026-11-10) — the same guest field subset
+ * `portal.booking` (T24) shows on My Booking, named by the owner: route +
+ * direction, vehicle type, pickup time, drop-off, flight if set.
+ */
+describe('ManualQrPage — a transfer booking (Task T25b)', () => {
+  const TRANSFER_CONFIGURED = {
+    ...CONFIGURED,
+    tourTitle: null,
+    transferRouteLabel: 'Mactan Airport → Moalboal',
+    pickupTime: '06:30',
+    dropoffAddress: 'A resort in Moalboal',
+    flightNumber: '5J456',
+    airline: 'Cebu Pacific',
+    vehicleTypeLabel: 'Van',
+  };
+
+  it('shows the route in the heading, and the full transfer section', async () => {
+    mockTrpc({ 'portal.manualPayment': TRANSFER_CONFIGURED });
+    renderPage();
+
+    expect(await screen.findByText('Mactan Airport → Moalboal')).toBeInTheDocument();
+    const section = screen.getByRole('heading', { name: 'Your transfer' }).closest('section')!;
+    expect(within(section).getByText('Van')).toBeInTheDocument();
+    expect(within(section).getByText('06:30')).toBeInTheDocument();
+    expect(within(section).getByText('A resort in Moalboal')).toBeInTheDocument();
+    expect(within(section).getByText('5J456 (Cebu Pacific)')).toBeInTheDocument();
+  });
+
+  it('shows no "Your transfer" section for a tour booking', async () => {
+    mockTrpc({ 'portal.manualPayment': CONFIGURED });
+    renderPage();
+
+    await screen.findByText('₱1,350');
+    expect(screen.queryByRole('heading', { name: 'Your transfer' })).not.toBeInTheDocument();
   });
 });
 

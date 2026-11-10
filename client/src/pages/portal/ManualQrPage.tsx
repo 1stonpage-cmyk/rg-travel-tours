@@ -155,14 +155,61 @@ export default function ManualQrPage() {
         <span className="text-brand-gold-700 text-xs font-semibold uppercase tracking-[0.18em]">
           Pay by transfer
         </span>
-        {/* Null on a transfer booking (T6); T24 writes the guest-facing copy. */}
+        {/* Null on a transfer booking (T6); T24/T25b write the guest-facing copy. */}
         <h1 className="text-brand-blue-900 text-2xl font-bold">
-          {booking.tourTitle ?? TRANSFER_BOOKING_LABEL}
+          {booking.tourTitle ?? booking.transferRouteLabel ?? TRANSFER_BOOKING_LABEL}
         </h1>
         <p className="text-muted-foreground text-sm">
           {booking.tourDate} · {booking.pax} {booking.pax === 1 ? 'guest' : 'guests'}
         </p>
       </header>
+
+      {/*
+       * Task T25b — a transfer's guest field subset: route + direction,
+       * vehicle type, pickup time, drop-off, flight if set. Only rendered
+       * when this is actually a transfer booking.
+       */}
+      {booking.transferRouteLabel !== null && (
+        <section
+          aria-labelledby="transfer-heading"
+          className="border-border bg-background mt-4 space-y-3 rounded-2xl border p-5"
+        >
+          <h2 id="transfer-heading" className="text-brand-blue-900 text-base font-semibold">
+            Your transfer
+          </h2>
+          <dl className="space-y-2 text-sm">
+            {booking.vehicleTypeLabel !== null && (
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-muted-foreground">Vehicle</dt>
+                <dd className="text-brand-blue-900 font-medium">{booking.vehicleTypeLabel}</dd>
+              </div>
+            )}
+            {booking.pickupTime !== null && (
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-muted-foreground">Pickup time</dt>
+                <dd className="text-brand-blue-900 font-medium">{booking.pickupTime}</dd>
+              </div>
+            )}
+            {booking.dropoffAddress !== null && (
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-muted-foreground">Drop-off</dt>
+                <dd className="text-brand-blue-900 max-w-[60%] text-right font-medium">
+                  {booking.dropoffAddress}
+                </dd>
+              </div>
+            )}
+            {booking.flightNumber !== null && (
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-muted-foreground">Flight</dt>
+                <dd className="text-brand-blue-900 font-medium">
+                  {booking.flightNumber}
+                  {booking.airline !== null ? ` (${booking.airline})` : ''}
+                </dd>
+              </div>
+            )}
+          </dl>
+        </section>
+      )}
 
       {/*
        * The amount, first and largest. `formatPeso` only — no arithmetic

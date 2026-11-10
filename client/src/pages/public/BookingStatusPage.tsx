@@ -99,12 +99,12 @@ const STATUS_COPY: Record<BookingStatus, { heading: string; body: string; tone: 
     tone: 'calm',
   },
   in_progress: {
-    heading: 'Your tour is underway',
+    heading: 'Your trip is underway',
     body: 'Enjoy your trip!',
     tone: 'calm',
   },
   completed: {
-    heading: 'Tour completed',
+    heading: 'Trip completed',
     body: 'Thanks for travelling with us — we hope you had a great time.',
     tone: 'calm',
   },
@@ -234,8 +234,8 @@ export default function BookingStatusPage() {
                 <Card className="bg-background">
                   <CardContent className="space-y-3 p-5">
                     <h2 className="text-brand-blue-900 text-base font-semibold">
-                      {/* Null on a transfer booking (T6); T24 writes the copy. */}
-                      {data.tourTitle ?? TRANSFER_BOOKING_LABEL}
+                      {/* Null on a transfer booking (T6); T24/T25b write the copy. */}
+                      {data.tourTitle ?? data.transferRouteLabel ?? TRANSFER_BOOKING_LABEL}
                     </h2>
                     <dl className="space-y-2 text-sm">
                       <div className="flex items-center justify-between gap-3">
@@ -271,6 +271,54 @@ export default function BookingStatusPage() {
                     </dl>
                   </CardContent>
                 </Card>
+
+                {/*
+                 * Task T25b — a transfer's guest field subset: route +
+                 * direction, vehicle type, pickup time, drop-off, flight if
+                 * set. Only rendered when this is actually a transfer
+                 * booking (`transferRouteLabel !== null`); a tour booking
+                 * shows nothing extra here.
+                 */}
+                {data.transferRouteLabel !== null && (
+                  <Card className="bg-background">
+                    <CardContent className="space-y-3 p-5">
+                      <h2 className="text-brand-blue-900 text-base font-semibold">Your transfer</h2>
+                      <dl className="space-y-2 text-sm">
+                        {data.vehicleTypeLabel !== null && (
+                          <div className="flex items-center justify-between gap-3">
+                            <dt className="text-muted-foreground">Vehicle</dt>
+                            <dd className="text-brand-blue-900 font-medium">
+                              {data.vehicleTypeLabel}
+                            </dd>
+                          </div>
+                        )}
+                        {data.pickupTime !== null && (
+                          <div className="flex items-center justify-between gap-3">
+                            <dt className="text-muted-foreground">Pickup time</dt>
+                            <dd className="text-brand-blue-900 font-medium">{data.pickupTime}</dd>
+                          </div>
+                        )}
+                        {data.dropoffAddress !== null && (
+                          <div className="flex items-center justify-between gap-3">
+                            <dt className="text-muted-foreground">Drop-off</dt>
+                            <dd className="text-brand-blue-900 max-w-[60%] text-right font-medium">
+                              {data.dropoffAddress}
+                            </dd>
+                          </div>
+                        )}
+                        {data.flightNumber !== null && (
+                          <div className="flex items-center justify-between gap-3">
+                            <dt className="text-muted-foreground">Flight</dt>
+                            <dd className="text-brand-blue-900 font-medium">
+                              {data.flightNumber}
+                              {data.airline !== null ? ` (${data.airline})` : ''}
+                            </dd>
+                          </div>
+                        )}
+                      </dl>
+                    </CardContent>
+                  </Card>
+                )}
 
                 <Button asChild variant="outline" className="tap-target w-full">
                   {showTours ? (
