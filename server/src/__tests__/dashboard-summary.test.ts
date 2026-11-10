@@ -166,14 +166,12 @@ describeWithDb('admin.dashboard.tripRequests and admin.dashboard.money (Task 1B)
     const slug = `__dashsum__${unique()}`;
     const [destination] = await getDb().insert(destinations).values({ name: slug, slug });
     created.destIds.push(destination.insertId);
-    const [tour] = await getDb()
-      .insert(tours)
-      .values({
-        slug,
-        title: 'Dashboard Summary Fixture Tour',
-        destinationId: destination.insertId,
-        isActive: true,
-      });
+    const [tour] = await getDb().insert(tours).values({
+      slug,
+      title: 'Dashboard Summary Fixture Tour',
+      destinationId: destination.insertId,
+      isActive: true,
+    });
     tourId = tour.insertId;
     created.tourIds.push(tourId);
   });
