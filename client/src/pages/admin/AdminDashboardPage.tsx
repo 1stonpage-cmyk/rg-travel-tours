@@ -36,15 +36,35 @@
  * are untouched: they answer "what needs a decision", the board answers
  * "what is happening right now", and they are deliberately not merged into
  * one query.
+ *
+ * ## Task 1C (owner decision 2026-11-10): Direction B's "Control Room" layout
+ *
+ * A slim inline stats row, then a two-column body — `DeparturesBoard`
+ * (unchanged) on the left, the alert set and the trip-request queue stacked
+ * on the right. **The alert cards themselves are UNCHANGED** (`AlertCard`,
+ * its copy maps, its "All clear" zero-state): Direction B's mockup draws
+ * them as dense one-line ledger rows instead, but that row has no slot for
+ * `copy.detail` (the `orphaned_on_trip` consequence sentence, the
+ * `driver_locked` ordering) and renders a zero as a bare `—` rather than the
+ * DO-NOT's required "visibly stated as clear" — both owner decisions, both
+ * pinned by this file's own tests. Named deviation; HANDOVER-17.
+ *
+ * The stats row's money cell deviates from the mockup's own label too: the
+ * mockup shows "To collect today" (an outstanding-balance figure 1B never
+ * built), and this reads the two figures 1B actually built instead —
+ * "Collected today" and "Pending verification" — both from
+ * `admin.dashboard.money`, owner/finance only.
  */
 import { Loader2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { DashboardAlert } from '@rg/shared';
+import { formatPeso } from '@rg/shared';
 import AlertCard from '@/components/admin/AlertCard';
 import DeparturesBoard from '@/components/admin/DeparturesBoard';
+import TripRequestQueue from '@/components/admin/TripRequestQueue';
 import AdminPageHeader from '@/components/admin/AdminPageHeader';
 import { Button } from '@/components/ui/button';
-import { MONEY_ROLES, roleMay } from '@/lib/roles';
+import { MONEY_ROLES, TRIP_REQUEST_ROLES, roleMay } from '@/lib/roles';
 import { trpc } from '@/lib/trpc';
 
 /**
@@ -106,6 +126,18 @@ function manilaGreeting(): string {
   return 'Good evening';
 }
 
+/** One cell of the stats row: a mono numeral over an uppercase label. */
+function StatCell({ value, label }: { value: string; label: string }) {
+  return (
+    <div className="border-brand-blue-100 flex-1 border-l px-4 py-3 first:border-l-0">
+      <span className="text-brand-ink block font-mono text-2xl font-bold">{value}</span>
+      <span className="text-brand-error text-[11px] font-bold uppercase tracking-wide">
+        {label}
+      </span>
+    </div>
+  );
+}
+
 export default function AdminDashboardPage() {
   const query = trpc.admin.dashboard.alerts.useQuery(undefined, { retry: false });
   /*
@@ -117,11 +149,35 @@ export default function AdminDashboardPage() {
    */
   const me = trpc.staffAuth.me.useQuery(undefined, { retry: false });
   const mayVerifyPayments = roleMay(me.data?.role, MONEY_ROLES);
+  const mayViewTripRequests = roleMay(me.data?.role, TRIP_REQUEST_ROLES);
 
   const alerts = query.data ?? [];
   const ordered = ORDER.filter((kind) => kind !== 'payments_to_verify' || mayVerifyPayments)
     .map((kind) => alerts.find((a) => a.kind === kind))
     .filter((a): a is DashboardAlert => a !== undefined);
+
+  /*
+   * Shares its cache entry with `DeparturesBoard`'s own identical query
+   * (same procedure, same input) — this hook does not set `refetchInterval`,
+   * so the board's own 15-second poll is what keeps the shared data fresh;
+   * this is a second observer on it, not a second network query.
+   */
+  const departuresQuery = trpc.admin.departures.today.useQuery(undefined, { retry: false });
+  const departures = departuresQuery.data ?? [];
+  const onRoad = departures.filter((d) => d.status === 'in_progress').length;
+  const awaitingDispatch = departures.filter(
+    (d) => d.status !== 'in_progress' && d.status !== 'completed',
+  ).length;
+
+  const tripRequestsQuery = trpc.admin.dashboard.tripRequests.useQuery(undefined, {
+    enabled: mayViewTripRequests,
+    retry: false,
+  });
+
+  const moneyQuery = trpc.admin.dashboard.money.useQuery(undefined, {
+    enabled: mayVerifyPayments,
+    retry: false,
+  });
 
   return (
     <div className="flex flex-col gap-6">
@@ -135,42 +191,85 @@ export default function AdminDashboardPage() {
         }
       />
 
-      <section aria-labelledby="needs-attention-heading" className="flex flex-col gap-3">
-        <h2 id="needs-attention-heading" className="text-brand-ink text-lg font-bold">
-          Needs attention
-        </h2>
-
-        {query.isPending ? (
-          <p className="text-brand-error flex items-center gap-2 text-sm">
-            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-            Loading alerts…
-          </p>
+      <div
+        data-testid="dashboard-stats"
+        className="border-brand-blue-100 flex overflow-hidden rounded-xl border bg-white"
+      >
+        <StatCell value={departuresQuery.isPending ? '—' : String(onRoad)} label="On the road" />
+        <StatCell
+          value={departuresQuery.isPending ? '—' : String(awaitingDispatch)}
+          label="Awaiting dispatch"
+        />
+        {mayViewTripRequests ? (
+          <StatCell
+            value={tripRequestsQuery.isPending ? '—' : String(tripRequestsQuery.data?.count ?? 0)}
+            label="Trip requests"
+          />
         ) : null}
-
-        {query.isError ? (
-          <p role="alert" className="text-brand-error text-sm">
-            The alerts could not load. Reload the page to try again.
-          </p>
-        ) : null}
-
-        {ordered.length > 0 ? (
+        {mayVerifyPayments ? (
           <>
-            {/* ONE status region for the set, announced as a sentence. */}
-            <p role="status" aria-atomic="true" className="text-brand-error text-sm">
-              {summarise(ordered)}
-            </p>
-
-            <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(220px,1fr))]">
-              {ordered.map((alert) => (
-                <AlertCard key={alert.kind} alert={alert} />
-              ))}
-            </div>
+            <StatCell
+              value={
+                moneyQuery.isPending
+                  ? '—'
+                  : formatPeso(moneyQuery.data?.collectedTodayCentavos ?? 0)
+              }
+              label="Collected today"
+            />
+            <StatCell
+              value={
+                moneyQuery.isPending
+                  ? '—'
+                  : formatPeso(moneyQuery.data?.pendingVerificationCentavos ?? 0)
+              }
+              label="Pending verification"
+            />
           </>
         ) : null}
-      </section>
+      </div>
 
-      {/* §9's lead panel. Its own query, its own poll - see the module note. */}
-      <DeparturesBoard showBoardLink />
+      <div className="grid gap-5 lg:grid-cols-[1.6fr_1fr]">
+        {/* §9's lead panel. Its own query, its own poll - see the module note. */}
+        <DeparturesBoard showBoardLink />
+
+        <div className="flex flex-col gap-5">
+          <section aria-labelledby="needs-attention-heading" className="flex flex-col gap-3">
+            <h2 id="needs-attention-heading" className="text-brand-ink text-lg font-bold">
+              Needs attention
+            </h2>
+
+            {query.isPending ? (
+              <p className="text-brand-error flex items-center gap-2 text-sm">
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                Loading alerts…
+              </p>
+            ) : null}
+
+            {query.isError ? (
+              <p role="alert" className="text-brand-error text-sm">
+                The alerts could not load. Reload the page to try again.
+              </p>
+            ) : null}
+
+            {ordered.length > 0 ? (
+              <>
+                {/* ONE status region for the set, announced as a sentence. */}
+                <p role="status" aria-atomic="true" className="text-brand-error text-sm">
+                  {summarise(ordered)}
+                </p>
+
+                <div className="grid grid-cols-1 gap-3">
+                  {ordered.map((alert) => (
+                    <AlertCard key={alert.kind} alert={alert} />
+                  ))}
+                </div>
+              </>
+            ) : null}
+          </section>
+
+          <TripRequestQueue role={me.data?.role} />
+        </div>
+      </div>
     </div>
   );
 }

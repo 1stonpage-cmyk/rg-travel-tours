@@ -65,6 +65,16 @@ export const BOOKING_VIEW_ROLES: readonly AdminRole[] = ADMIN_ROLES;
 export const TRANSFER_QUOTING_ROLES: readonly AdminRole[] = ['owner', 'finance'];
 
 /**
+ * §9's `packagesInquiries` row — owner and dispatcher, never finance — which
+ * the dashboard's trip-request mini-queue (Task 1C) and `admin.dashboard.tripRequests`
+ * (Task 1B) both gate on. Not folded into `TRANSFER_QUOTING_ROLES`: that
+ * constant is `transferQuoting`'s own answer (owner+finance today), a
+ * different §9 area with a different pair of roles, and the two must stay
+ * free to diverge without one accidentally renaming the other.
+ */
+export const TRIP_REQUEST_ROLES: readonly AdminRole[] = ['owner', 'dispatcher'];
+
+/**
  * True when `role` — as `staffAuth.me` reports it, which may be `undefined`
  * while that query is pending or has failed — is in `allowed`.
  *

@@ -294,7 +294,7 @@ export default function DeparturesBoard({
 
       {!query.isPending && !query.isError && departures.length === 0 ? (
         <p className="text-brand-error px-5 py-4 text-sm">
-          No departures today. Trips appear here on their tour date.
+          No departures today. Trips appear here on their trip day.
         </p>
       ) : null}
 

@@ -12,10 +12,15 @@
  * `MemoryRouter`, because each non-zero card links to the screen that
  * resolves it.
  */
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { DashboardAlert } from '@rg/shared';
+import type {
+  DashboardAlert,
+  DashboardMoneySummary,
+  TodayDeparture,
+  TripRequestSummary,
+} from '@rg/shared';
 import AdminDashboardPage from '@/pages/admin/AdminDashboardPage';
 import { TrpcProviders } from '@/lib/trpc';
 import { mockTrpc, mockTrpcError, resetTrpcMock } from './helpers/mock-trpc';
@@ -41,6 +46,12 @@ const ALL_SEVEN_NONZERO: DashboardAlert[] = [
 /** What `staffAuth.me` answers unless a test says otherwise. */
 const OWNER_ME = { userId: 1, role: 'owner', mustChangePassword: false, name: 'Olivia Owner' };
 
+const EMPTY_TRIP_REQUESTS: TripRequestSummary = { count: 0, items: [] };
+const ZERO_MONEY: DashboardMoneySummary = {
+  collectedTodayCentavos: 0,
+  pendingVerificationCentavos: 0,
+};
+
 /**
  * `me` reaches the page through `staffAuth.me`, and its ROLE now decides one
  * thing: whether the "payments to verify" card is drawn at all (owner
@@ -51,8 +62,22 @@ const OWNER_ME = { userId: 1, role: 'owner', mustChangePassword: false, name: 'O
  * Pass `null` to leave `staffAuth.me` to whatever the test registered
  * itself — which is how the "the name never arrives" test keeps its
  * `mockTrpcError` from being overwritten here.
+ *
+ * Task 1C added two more page-level queries, gated the same way
+ * `payments_to_verify` already was — `tripRequests` and `money` default to
+ * empty/zero here so a test that does not care about them (most of this
+ * file) renders a settled page rather than one stuck on an unmocked-procedure
+ * error. A test that DOES care passes its own via `extra`.
  */
-function renderDashboard(alerts: DashboardAlert[], me: object | null = OWNER_ME) {
+function renderDashboard(
+  alerts: DashboardAlert[],
+  me: object | null = OWNER_ME,
+  extra: {
+    departures?: TodayDeparture[];
+    tripRequests?: TripRequestSummary;
+    money?: DashboardMoneySummary;
+  } = {},
+) {
   /*
    * The departures board (Week 6, Task 12) owns its own query on this
    * page, so every render here has to answer it too — an unmocked
@@ -63,7 +88,9 @@ function renderDashboard(alerts: DashboardAlert[], me: object | null = OWNER_ME)
    */
   mockTrpc({
     'admin.dashboard.alerts': alerts,
-    'admin.departures.today': [],
+    'admin.departures.today': extra.departures ?? [],
+    'admin.dashboard.tripRequests': extra.tripRequests ?? EMPTY_TRIP_REQUESTS,
+    'admin.dashboard.money': extra.money ?? ZERO_MONEY,
     ...(me === null ? {} : { 'staffAuth.me': me }),
   });
   return render(
@@ -76,6 +103,11 @@ function renderDashboard(alerts: DashboardAlert[], me: object | null = OWNER_ME)
 }
 
 afterEach(resetTrpcMock);
+
+/** The StatCell's numeral is the label's previous sibling — see `StatCell`. */
+function statValue(container: HTMLElement, label: string): string | null {
+  return within(container).getByText(label).previousElementSibling?.textContent ?? null;
+}
 
 describe('AdminDashboardPage', () => {
   it('links the departures panel to the departures board screen', async () => {
@@ -449,5 +481,222 @@ describe('AdminDashboardPage', () => {
     await screen.findByTestId('alert-payments_to_verify');
     expect(screen.getByTestId('departures-board')).toBeTruthy();
     expect(screen.getAllByRole('status')).toHaveLength(1);
+  });
+
+  /**
+   * Task 1C (admin dashboard batch, owner decision 2026-11-10): the inline
+   * stats row. "On the road" / "Awaiting dispatch" are derived client-side
+   * from `admin.departures.today` — the SAME query `DeparturesBoard` reads,
+   * not a second source of truth — so this file builds `TodayDeparture`
+   * fixtures rather than a bespoke stats payload.
+   */
+  describe('the inline stats row', () => {
+    const stop = (checkedAt: string | null) => ({
+      stopId: null,
+      name: 'Pickup',
+      sortOrder: 0,
+      checkedAt,
+      undone: false,
+    });
+
+    let nextBookingId = 1;
+
+    function departure(status: TodayDeparture['status'], ref: string): TodayDeparture {
+      const bookingId = nextBookingId++;
+      return {
+        bookingId,
+        ref,
+        tourTitle: null,
+        transferRouteLabel: 'Mactan Airport → Oslob',
+        pickupTime: '05:30',
+        vehicleTypeLabel: 'Van',
+        driverName: 'Mario Dela Cruz',
+        vanPlate: 'SEED-001',
+        status,
+        progress: {
+          bookingId,
+          status,
+          stops: [
+            stop(
+              status === 'in_progress' || status === 'completed' ? '2026-11-10T00:00:00Z' : null,
+            ),
+          ],
+          done: status === 'in_progress' || status === 'completed' ? 1 : 0,
+          total: 1,
+        },
+      };
+    }
+
+    it('counts one in_progress trip as "on the road" and the rest as "awaiting dispatch"', async () => {
+      renderDashboard([], OWNER_ME, {
+        departures: [
+          departure('in_progress', 'RG-AAAA11'),
+          departure('confirmed', 'RG-BBBB22'),
+          departure('assigned', 'RG-CCCC33'),
+        ],
+      });
+      const stats = await screen.findByTestId('dashboard-stats');
+      // The cell renders synchronously with `—` on first paint, then the
+      // real count once `admin.departures.today` resolves — `waitFor`
+      // rather than a one-shot read, which would race the mocked fetch.
+      await waitFor(() => expect(statValue(stats, 'On the road')).toBe('1'));
+      expect(statValue(stats, 'Awaiting dispatch')).toBe('2');
+    });
+
+    it('does not count a completed trip as awaiting dispatch', async () => {
+      renderDashboard([], OWNER_ME, {
+        departures: [departure('completed', 'RG-AAAA11'), departure('confirmed', 'RG-BBBB22')],
+      });
+      const stats = await screen.findByTestId('dashboard-stats');
+      // On the road stays 0 (completed is not in_progress); awaiting dispatch
+      // is 1, not 2 — a finished trip must not read as still-to-dispatch.
+      await waitFor(() => expect(statValue(stats, 'Awaiting dispatch')).toBe('1'));
+      expect(statValue(stats, 'On the road')).toBe('0');
+    });
+
+    it('shows a dash rather than a false zero while departures are still loading', () => {
+      // No `await` / `findBy` here on purpose: this reads the FIRST paint,
+      // before the mocked fetch resolves, which is the only moment a
+      // premature "0" could appear.
+      renderDashboard([], OWNER_ME, { departures: [] });
+      const stats = screen.getByTestId('dashboard-stats');
+      expect(within(stats).getAllByText('—').length).toBeGreaterThan(0);
+    });
+  });
+
+  /**
+   * Task 1C: the money cells, gated to `MONEY_ROLES` exactly like the
+   * `payments_to_verify` card above — and the new `tripRequests` stat,
+   * gated to `TRIP_REQUEST_ROLES` (owner, dispatcher).
+   */
+  describe('the money stats and trip-requests stat by role', () => {
+    const money: DashboardMoneySummary = {
+      collectedTodayCentavos: 1_420_000,
+      pendingVerificationCentavos: 360_000,
+    };
+    const requests: TripRequestSummary = {
+      count: 2,
+      items: [
+        {
+          id: 1,
+          name: 'Liza Fernandez',
+          pax: 6,
+          routeDescription: 'Hotel → Moalboal',
+          requestedDate: '2026-11-15',
+        },
+      ],
+    };
+
+    it('shows collected today and pending verification for an owner', async () => {
+      renderDashboard([], OWNER_ME, { money });
+      const stats = await screen.findByTestId('dashboard-stats');
+      // The cells themselves are gated on `staffAuth.me` resolving (role is
+      // `undefined` on the first synchronous paint) — `findByText` waits for
+      // both the role and the money data rather than racing either.
+      expect(await within(stats).findByText('Collected today')).toBeTruthy();
+      expect(within(stats).getByText('Pending verification')).toBeTruthy();
+      expect(await within(stats).findByText('₱14,200')).toBeTruthy();
+      expect(within(stats).getByText('₱3,600')).toBeTruthy();
+    });
+
+    it('shows collected today and pending verification for finance', async () => {
+      renderDashboard([], { ...OWNER_ME, role: 'finance' }, { money });
+      const stats = await screen.findByTestId('dashboard-stats');
+      expect(await within(stats).findByText('₱14,200')).toBeTruthy();
+    });
+
+    it('shows no money cell at all for a dispatcher, not even a placeholder', async () => {
+      renderDashboard([], { ...OWNER_ME, role: 'dispatcher' }, { money });
+      const stats = await screen.findByTestId('dashboard-stats');
+      expect(within(stats).queryByText('Collected today')).toBeNull();
+      expect(within(stats).queryByText('Pending verification')).toBeNull();
+    });
+
+    /*
+     * Three separate `it`s, not a loop of `renderDashboard` calls in one —
+     * `render()` leaves its previous tree mounted unless unmounted, and
+     * `screen.findByTestId` happily resolves against an EARLIER tree's
+     * still-present node, which would prove nothing about the second
+     * render. (This is a real, pre-existing hazard in this file's own
+     * "IS drawn for an owner and for finance" test above, which this
+     * shape would have repeated — flagged as an unrelated bug, not fixed
+     * here per CLAUDE.md's own instruction.)
+     */
+    it('shows the trip-requests count for an owner', async () => {
+      renderDashboard([], OWNER_ME, { tripRequests: requests });
+      const stats = await screen.findByTestId('dashboard-stats');
+      await waitFor(() => expect(statValue(stats, 'Trip requests')).toBe('2'));
+    });
+
+    it('shows the trip-requests count for a dispatcher', async () => {
+      renderDashboard([], { ...OWNER_ME, role: 'dispatcher' }, { tripRequests: requests });
+      const stats = await screen.findByTestId('dashboard-stats');
+      await waitFor(() => expect(statValue(stats, 'Trip requests')).toBe('2'));
+    });
+
+    it('shows no trip-requests cell at all for finance', async () => {
+      renderDashboard([], { ...OWNER_ME, role: 'finance' }, { tripRequests: requests });
+      await screen.findByTestId('dashboard-stats');
+      expect(screen.queryByText('Trip requests')).toBeNull();
+    });
+  });
+
+  /**
+   * Task 1C: the trip-request mini-queue. "Quote" for an owner (the only
+   * role among the two that can see this queue AND price a custom trip —
+   * `transferQuoting` is owner+finance, `packagesInquiries` is
+   * owner+dispatcher); "View only" for a dispatcher, never a button whose
+   * only server-side outcome is FORBIDDEN.
+   */
+  describe('the trip-request mini-queue', () => {
+    const requests: TripRequestSummary = {
+      count: 1,
+      items: [
+        {
+          id: 42,
+          name: 'Liza Fernandez',
+          pax: 6,
+          routeDescription: 'Hotel, Cebu City → Panagsama Beach, Moalboal',
+          requestedDate: '2026-11-15',
+        },
+      ],
+    };
+
+    it('names the requester, pax and route for an owner, with a Quote button to /admin/packages', async () => {
+      renderDashboard([], OWNER_ME, { tripRequests: requests });
+      const queue = await screen.findByTestId('trip-request-queue');
+      // The queue section renders synchronously (gated only by role); its
+      // ROWS arrive once `admin.dashboard.tripRequests` resolves, so the
+      // first assertion waits and the rest read the now-settled DOM.
+      expect(await within(queue).findByText('Liza Fernandez')).toBeTruthy();
+      expect(within(queue).getByText(/6 pax/)).toBeTruthy();
+      expect(within(queue).getByText(/Panagsama Beach, Moalboal/)).toBeTruthy();
+      const quote = within(queue).getByRole('link', { name: 'Quote' });
+      expect(quote.getAttribute('href')).toBe('/admin/packages');
+    });
+
+    it('shows "View only" for a dispatcher, with no actionable button', async () => {
+      renderDashboard([], { ...OWNER_ME, role: 'dispatcher' }, { tripRequests: requests });
+      const queue = await screen.findByTestId('trip-request-queue');
+      expect(await within(queue).findByText('View only')).toBeTruthy();
+      expect(within(queue).queryByRole('link', { name: 'Quote' })).toBeNull();
+      expect(within(queue).queryByRole('button', { name: 'Quote' })).toBeNull();
+    });
+
+    it('is not rendered at all for finance', async () => {
+      renderDashboard(
+        ALL_SEVEN_NONZERO,
+        { ...OWNER_ME, role: 'finance' },
+        { tripRequests: requests },
+      );
+      await screen.findByTestId('alert-payments_to_verify');
+      expect(screen.queryByTestId('trip-request-queue')).toBeNull();
+    });
+
+    it('states the empty queue rather than omitting it, when there is nothing new', async () => {
+      renderDashboard([], OWNER_ME, { tripRequests: EMPTY_TRIP_REQUESTS });
+      const queue = await screen.findByTestId('trip-request-queue');
+      expect(await within(queue).findByText(/no new trip requests/i)).toBeTruthy();
+    });
   });
 });
