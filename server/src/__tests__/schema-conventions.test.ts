@@ -293,13 +293,46 @@ describe('schema conventions, read from the real source', () => {
     ).toEqual([]);
   });
 
+  /**
+   * Owner decision 2026-11-10 (transfer-photos task, "fix both unrelated
+   * failures now"): exactly ONE file may hard-delete a `bookings` or
+   * `payments` row — `clear-demo-transfer-bookings.ts`, the dev-only tool
+   * that resets Task 1E's five fixed demo items so `db:seed:demo` can
+   * recreate them with today's actual date. This is a documented
+   * exemption, not a loosened guard: the file fails closed
+   * (`ALLOW_DEMO_SEED=1`, never `NODE_ENV=production`, both checked before
+   * any query), matches only the seed's own five fixed demo identifiers
+   * (never by date or status), refuses outright if any matched booking's
+   * payment was not created by the seed itself, and runs in one
+   * transaction. See its own module doc comment. Any OTHER file that
+   * hard-deletes a booking or a payment still fails this guard — the
+   * exemption is this one path, by name, not a pattern.
+   */
+  const HARD_DELETE_EXEMPT_FILES = ['src/db/clear-demo-transfer-bookings.ts'];
+
   it('never hard-deletes a booking or a payment anywhere in the server source', () => {
     // Drizzle form, scanned across the whole server tree.
     const drizzleDelete = /\.delete\(\s*(?:schema\.)?(?:bookings|payments)\s*\)/;
     expectPatternIsLive(drizzleDelete, 'await db.delete(bookings)', 'Drizzle hard-delete');
     expect(allServerFiles.length).toBeGreaterThan(50);
 
-    const drizzleOffenders = allServerFiles.filter((f) => drizzleDelete.test(readStripped(f)));
+    // The exemption itself must still be live: if the exempted file ever
+    // stops hard-deleting (a rewrite, a rename), the exemption is stale and
+    // must be removed rather than silently kept around for nothing.
+    expect(
+      allServerFiles,
+      `exempted file "${HARD_DELETE_EXEMPT_FILES[0]}" is missing from the server tree`,
+    ).toContain(HARD_DELETE_EXEMPT_FILES[0]);
+    for (const exempt of HARD_DELETE_EXEMPT_FILES) {
+      expect(
+        drizzleDelete.test(readStripped(exempt)),
+        `"${exempt}" is exempted from the hard-delete guard but no longer hard-deletes anything — remove the exemption`,
+      ).toBe(true);
+    }
+
+    const drizzleOffenders = allServerFiles
+      .filter((f) => !HARD_DELETE_EXEMPT_FILES.includes(f))
+      .filter((f) => drizzleDelete.test(readStripped(f)));
     expect(drizzleOffenders, 'bookings and payments are never hard-deleted (CLAUDE.md)').toEqual(
       [],
     );
