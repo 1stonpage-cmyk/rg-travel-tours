@@ -2,25 +2,8 @@ import { Car, CheckCircle2 } from 'lucide-react';
 import { formatPeso, type PayMode, type QuoteTransferResult } from '@rg/shared';
 import FieldError from '@/components/common/FieldError';
 import { Skeleton } from '@/components/common/Skeleton';
+import { vehicleImageFor } from '@/lib/transfer-images';
 import { cn } from '@/lib/utils';
-
-/**
- * Placeholder vehicle-card imagery (Task T26). Keyed by `vehicleTypeSlug` —
- * today's seeded types (`SEED_VEHICLE_TYPES`, server/src/db/seed-data.ts).
- * An admin-added type's slug is never in this map by construction, and that
- * is deliberate: it falls through to `vehicle-generic` rather than a path
- * this script never generated, preserving this component's own documented
- * promise (see file header) that an unknown type degrades, never breaks.
- */
-const VEHICLE_IMAGE_SLUGS: ReadonlySet<string> = new Set(['van', 'suv', 'mpv']);
-const GENERIC_VEHICLE_IMAGE = '/placeholders/vehicle-generic.svg';
-
-function vehicleImageSrc(vehicleTypeSlug: string | undefined): string {
-  if (vehicleTypeSlug && VEHICLE_IMAGE_SLUGS.has(vehicleTypeSlug)) {
-    return `/placeholders/vehicle-${vehicleTypeSlug}.svg`;
-  }
-  return GENERIC_VEHICLE_IMAGE;
-}
 
 /**
  * Task T13, rebuilt 2026-11-08 for the admin-managed vehicle-types model
@@ -32,9 +15,11 @@ function vehicleImageSrc(vehicleTypeSlug: string | undefined): string {
  * (`TransferRoutePublicVehiclePrice`, `@rg/shared`'s `transfers.ts`) — which
  * already carries the type's id and its display NAME — rather than looking
  * either up in a fixed table. There is nothing left here to hard-code: one
- * generic vehicle icon stands for every type, because a type the admin adds
- * tomorrow (a "Coaster", say) has no icon this component could have known to
- * draw.
+ * generic vehicle icon stands for every type's LABEL, because a type the
+ * admin adds tomorrow (a "Coaster", say) has no icon this component could
+ * have known to draw. Its card IMAGE comes from `transfer-images.ts`
+ * (Task 1C, owner decision 2026-11-10) the same way — a type with no photo
+ * of its own falls back to one generic sample photo, never a broken image.
  *
  * **The component that must never compute money.** The parent page fetches
  * one `quoteTransfer` per OFFERED vehicle type (the route's own `vehiclePrices`
@@ -54,9 +39,9 @@ type Props = {
   vehicleTypeName: string;
   /**
    * The catalog's own slug (`TransferRoutePublicVehiclePrice.slug`), used
-   * only to pick a placeholder thumbnail — optional because a caller that
-   * omits it (or passes a slug this component doesn't recognise) still
-   * renders correctly via the generic fallback image.
+   * only to pick a sample photo (`transfer-images.ts`) — optional because a
+   * caller that omits it (or passes a slug this component doesn't
+   * recognise) still renders correctly via the generic fallback image.
    */
   vehicleTypeSlug?: string;
   /**
@@ -95,6 +80,8 @@ export default function VehicleOptionCard({
 }: Props) {
   const unavailable = !isLoading && quote === undefined;
   const errorId = `transfer-vehicle-${vehicleTypeId}-error`;
+  const detailsId = `transfer-vehicle-${vehicleTypeId}-details`;
+  const image = vehicleImageFor(vehicleTypeSlug);
 
   return (
     <div className="space-y-1.5">
@@ -105,12 +92,26 @@ export default function VehicleOptionCard({
           (isLoading || unavailable) && 'cursor-not-allowed opacity-60',
         )}
       >
-        <img
-          src={vehicleImageSrc(vehicleTypeSlug)}
-          alt=""
-          data-testid={`vehicle-option-${vehicleTypeId}-image`}
-          className="h-20 w-full rounded-lg object-cover"
-        />
+        <div className="relative">
+          <img
+            src={image.src800}
+            srcSet={`${image.src480} 480w, ${image.src800} 800w`}
+            sizes="(min-width: 640px) 320px, 90vw"
+            alt={image.alt}
+            loading="lazy"
+            decoding="async"
+            data-testid={`vehicle-option-${vehicleTypeId}-image`}
+            className="h-20 w-full rounded-lg object-cover"
+          />
+          {/* Decorative: the "sample" fact is already in the alt text above,
+              so a screen reader is not told it twice. */}
+          <span
+            aria-hidden="true"
+            className="absolute bottom-1 right-1 rounded bg-slate-900/70 px-1.5 py-0.5 text-[10px] font-medium text-white"
+          >
+            Sample vehicle
+          </span>
+        </div>
         <span className="flex items-center justify-between gap-2">
           <span className="text-brand-blue-900 flex items-center gap-2 text-sm font-semibold">
             <Car className="text-brand-blue-700 size-5 shrink-0" aria-hidden="true" />
@@ -126,20 +127,36 @@ export default function VehicleOptionCard({
             checked={isSelected}
             disabled={isLoading || unavailable}
             onChange={() => onSelect()}
-            aria-describedby={error ? errorId : undefined}
+            /*
+             * Explicit, so the card's photo — now real, descriptive alt
+             * text (Task 1C) sitting inside this same `<label>` — never
+             * leaks into the radio's accessible NAME the way an implicit
+             * label-content computation would. The price/status line is
+             * not lost; it moves to `aria-describedby` below, which is the
+             * more correct mapping anyway (supplementary detail, not the
+             * choice's identifying name).
+             */
+            aria-label={vehicleTypeName}
+            aria-describedby={[detailsId, error ? errorId : null].filter(Boolean).join(' ')}
             className="accent-brand-blue-600 size-5 shrink-0"
           />
         </span>
 
         {isLoading ? (
-          <div className="space-y-1.5" data-testid={`vehicle-option-${vehicleTypeId}-skeleton`}>
+          <div
+            id={detailsId}
+            className="space-y-1.5"
+            data-testid={`vehicle-option-${vehicleTypeId}-skeleton`}
+          >
             <Skeleton className="h-6 w-24" />
             <Skeleton className="h-3.5 w-32" />
           </div>
         ) : unavailable ? (
-          <p className="text-muted-foreground text-sm">Not available for this route</p>
+          <p id={detailsId} className="text-muted-foreground text-sm">
+            Not available for this route
+          </p>
         ) : (
-          <div>
+          <div id={detailsId}>
             <p className="text-brand-blue-900 text-lg font-bold">
               {formatPeso(quote!.totalCentavos)}
             </p>

@@ -24,16 +24,14 @@ const TILES = [
   // No hero tile: the home hero now renders the real client photograph from
   // client/public/hero/ (generated from assets-source/), so a placeholder for
   // it would only rot.
-  // Vehicle-card tiles (Task T26). Slugs match `SEED_VEHICLE_TYPES`
-  // (server/src/db/seed-data.ts) — van/suv/mpv are today's seeded types, and
-  // `vehicle-generic` is the fallback for any admin-added type this script
-  // was never told about (VehicleOptionCard.tsx's own documented promise:
-  // an unknown type degrades to a generic image/icon, never a broken one).
-  // Compact 16:9 thumbnail, not the 1200x800 destination/package tiles.
-  { slug: 'vehicle-van', label: 'VAN', width: 640, height: 360 },
-  { slug: 'vehicle-suv', label: 'SUV', width: 640, height: 360 },
-  { slug: 'vehicle-mpv', label: 'MPV', width: 640, height: 360 },
-  { slug: 'vehicle-generic', label: 'VEHICLE', width: 640, height: 360 },
+  // No vehicle-card tiles either, as of Task 1C (owner decision 2026-11-10,
+  // "Real photos for transfers from free, legal stock"): van/suv/mpv and the
+  // generic fallback all now render free-licensed stock photos from
+  // client/public/images/transfers/, wired through
+  // client/src/lib/transfer-images.ts (see docs/IMAGE_CREDITS.md). This
+  // script is plain .mjs and cannot import that .ts module, so the slug set
+  // lives there now, as the ONE source of truth (resolves BUG-130) — nothing
+  // here needs a vehicle-* entry to stay in sync with.
 ];
 
 const escapeXml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
