@@ -210,8 +210,14 @@ automation's own resize tool doesn't change the rendered viewport here).
   body (not sky/ground), the "Sample vehicle" caption is legible in the
   bottom-right corner, no overflow at 360px.
 - `/photo-credits`: all four credits render, links work, no overflow at
-  360px; the server-injected `<title>Photo Credits | TravelSugbo</title>`
-  was confirmed by the tab title changing on navigation.
+  360px. The tab title changing on navigation does **not** by itself prove
+  the server-side injection works — `PublicLayout` re-asserts the title
+  client-side from `STATIC_PUBLIC_TITLES` regardless of whether a `ROUTES`
+  entry exists, so it would read correctly even with no resolver at all.
+  The server-side injection was confirmed separately:
+  `curl -H "Accept: text/html" http://localhost:5180/photo-credits` →
+  HTTP 200, `<title>Photo Credits | TravelSugbo</title>`,
+  `<meta name="robots" content="noindex,nofollow">`.
 
 Dev servers (5180/3100) were already running before this task started —
 neither was started nor stopped.
