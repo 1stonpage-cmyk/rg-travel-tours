@@ -349,6 +349,40 @@ describeWithDb('admin.packages.create and .update', () => {
     expect(audit[1]!.data).toMatchObject({ newPriceCentavos: 1_150_000, oldPriceCentavos: null });
   });
 
+  /**
+   * Task T20b (owner-added 2026-11-10): no dual-control approval for price
+   * edits, but every one must audit old -> new. The test above already
+   * proves the NEW price lands in the row; this proves the OLD price —
+   * what the save actually changed — lands in the SAME audit row.
+   */
+  it('audits the OLD price alongside the new one (Task T20b)', async () => {
+    const { id, input } = await createPackage();
+    const created = await auditRowsFor(PACKAGE_ENTITY, id);
+    // No previous row on a create.
+    expect(created[0]!.data).toMatchObject({
+      previousOldPriceCentavos: null,
+      previousNewPriceCentavos: null,
+    });
+
+    await ownerApi().admin.packages.update({
+      ...packageInput({ slug: input.slug }),
+      id,
+      oldPriceCentavos: null,
+      newPriceCentavos: 1_150_000,
+    } as never);
+
+    const audit = await auditRowsFor(PACKAGE_ENTITY, id);
+    expect(audit[1]!.data).toMatchObject({
+      // What the save produced — already proven above, repeated here only
+      // to show both halves live in the one row.
+      newPriceCentavos: 1_150_000,
+      oldPriceCentavos: null,
+      // What the row held immediately BEFORE this save.
+      previousOldPriceCentavos: 1_250_000,
+      previousNewPriceCentavos: 980_000,
+    });
+  });
+
   it('REFUSES a price that is not integer centavos', async () => {
     for (const newPriceCentavos of [9_800.5, -100, '980000']) {
       await expect(

@@ -672,6 +672,34 @@ describeWithDb('admin.tours', () => {
     expect(JSON.stringify(rows)).not.toContain('A fixture tour for the admin editing surface.');
   });
 
+  /**
+   * Task T20b (owner-added 2026-11-10): no dual-control approval for price
+   * edits, but every one must audit old -> new. `priceTiers` above was
+   * already the NEW value; this is the OLD half, which nothing previously
+   * carried.
+   */
+  it('audits the OLD price tiers alongside the new ones (Task T20b)', async () => {
+    const { id, input } = await createTour();
+    // The create itself has no "before" — nothing was stored yet.
+    const created = await auditRowsForTour(id);
+    expect(created[0]!.data).toMatchObject({ previousPriceTiers: [] });
+
+    await ownerApi().admin.tours.update({
+      ...input,
+      id,
+      priceTiers: [{ minPax: 1, maxPax: 12, pricePerPersonCentavos: 111_100 }],
+    } as never);
+
+    const rows = await auditRowsForTour(id);
+    expect(rows.at(-1)!.data).toMatchObject({
+      previousPriceTiers: [
+        { minPax: 1, maxPax: 2, pricePerPersonCentavos: 350_000 },
+        { minPax: 3, maxPax: 6, pricePerPersonCentavos: 250_000 },
+      ],
+      priceTiers: [{ minPax: 1, maxPax: 12, pricePerPersonCentavos: 111_100 }],
+    });
+  });
+
   it('audits NOTHING when a mutation is refused', async () => {
     const { id } = await createTour();
     const before = await auditRowsForTour(id);

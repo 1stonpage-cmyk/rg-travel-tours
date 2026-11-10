@@ -31,7 +31,7 @@
  * be priced genuinely drops it (that is the new contract, not a bug).
  */
 import { afterAll, beforeAll, expect, it } from 'vitest';
-import { and, asc, eq, inArray, or } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, or } from 'drizzle-orm';
 import type { TransferPriceSnapshot, TransferRouteCreateInput } from '@rg/shared';
 import { appRouter } from '../routers/_app';
 import { getDb, getPool } from '../db/client';
@@ -717,6 +717,37 @@ describeWithDb('admin.transferRoutes', () => {
     const row = (await ownerApi().admin.transferRoutes.list()).find((r) => r.id === id);
     expect(row?.prices.find((p) => p.vehicleTypeId === VAN_ID)?.price).toEqual(repricedVan);
     expect(row?.prices.find((p) => p.vehicleTypeId === SUV_ID)?.price).toEqual(VALID_PRICES.suv);
+  });
+
+  /**
+   * Task T20b (owner-added 2026-11-10): no dual-control approval for price
+   * edits, but every one must audit old -> new. `storedPrices` (the OLD
+   * card) was already read inside `update` for the merge itself — this
+   * proves it also reaches the SAME audit row as the patch that changed it,
+   * not merely the database.
+   */
+  it('audits the OLD price card alongside the patch that changed it (Task T20b)', async () => {
+    const { id } = await createRoute();
+    const repricedVan = { oneWayPriceCentavos: 275_000, dayUsePriceCentavos: 480_000 };
+
+    await ownerApi().admin.transferRoutes.update({
+      id,
+      patch: { prices: { [String(VAN_ID)]: repricedVan } },
+    });
+
+    const [row] = await getDb()
+      .select({ data: auditLog.data })
+      .from(auditLog)
+      .where(and(eq(auditLog.entity, 'transfer_route'), eq(auditLog.entityId, id)))
+      .orderBy(desc(auditLog.id))
+      .limit(1);
+    expect(row!.data).toMatchObject({
+      patch: { prices: { [String(VAN_ID)]: repricedVan } },
+      previousPrices: {
+        [String(VAN_ID)]: VALID_PRICES.van,
+        [String(SUV_ID)]: VALID_PRICES.suv,
+      },
+    });
   });
 
   /**

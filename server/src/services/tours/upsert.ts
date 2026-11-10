@@ -254,6 +254,19 @@ export interface UpsertTourResult {
   addonsDeactivated: number;
   /** Stops the input dropped, which no trip had reached, so they were deleted. */
   stopsRemoved: number;
+  /**
+   * Task T20b (owner-added 2026-11-10): every price edit must audit the OLD
+   * value alongside the new one. Price tiers are replaced wholesale (see the
+   * module note), so this is the only point in the function that ever has
+   * the "before" shape in hand — read here, in the READ PHASE, so capturing
+   * it changes no write and no money math. `[]` on a CREATE (nothing stored
+   * yet) and on an UPDATE whose tour had no tiers.
+   */
+  previousPriceTiers: readonly {
+    minPax: number;
+    maxPax: number;
+    pricePerPersonCentavos: number;
+  }[];
 }
 
 /**
@@ -322,6 +335,21 @@ export async function upsertTourContent(
           .select({ id: tourAddons.id })
           .from(tourAddons)
           .where(eq(tourAddons.tourId, existingTourId));
+
+  // Task T20b: the "before" price tiers, for the audit row — read here,
+  // never written, so this changes no money math.
+  const previousPriceTiers =
+    existingTourId === null
+      ? []
+      : await tx
+          .select({
+            minPax: tourPriceTiers.minPax,
+            maxPax: tourPriceTiers.maxPax,
+            pricePerPersonCentavos: tourPriceTiers.pricePerPersonCentavos,
+          })
+          .from(tourPriceTiers)
+          .where(eq(tourPriceTiers.tourId, existingTourId))
+          .orderBy(asc(tourPriceTiers.minPax));
 
   const stopPlan = planChildUpsert(
     storedStops.map((row) => row.id),
@@ -467,5 +495,6 @@ export async function upsertTourContent(
     id: tourId,
     addonsDeactivated: addonPlan.dropped.length,
     stopsRemoved: stopPlan.dropped.length,
+    previousPriceTiers,
   };
 }

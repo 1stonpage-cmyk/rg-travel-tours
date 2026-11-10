@@ -293,7 +293,18 @@ export const adminTransferRoutesRouter = router({
           action: 'transfer_route_updated',
           entity: 'transfer_route',
           entityId: input.id,
-          data: input.patch,
+          data: {
+            // What changed — unchanged from before.
+            patch: input.patch,
+            /*
+             * Task T20b (owner-added 2026-11-10): every price edit must
+             * audit old -> new. `storedPrices` above is already read, in
+             * scope, before `upsertTransferRoute` writes anything — this
+             * adds it to the SAME audit row rather than reading anything
+             * new, so it changes no money math.
+             */
+            previousPrices: storedPrices,
+          },
         });
       });
       return { ok: true as const };

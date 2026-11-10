@@ -134,13 +134,28 @@ function packageColumns(input: {
  * highlights) is not, because a dump of the whole package would bury them.
  * Nothing sensitive can reach it — a package row holds no personal datum.
  */
-function auditDataFor(columns: ReturnType<typeof packageColumns>) {
+function auditDataFor(
+  columns: ReturnType<typeof packageColumns>,
+  // Task T20b: the row's two price columns as they stood immediately
+  // before this save — `undefined` only if the row vanished between the
+  // read and the write, in which case the write itself refuses and this
+  // value is never used.
+  previous: { oldPriceCentavos: number | null; newPriceCentavos: number } | undefined,
+) {
   return {
     slug: columns.slug,
     title: columns.title,
     days: columns.days,
+    // `oldPriceCentavos`/`newPriceCentavos` here are the PACKAGE'S OWN two
+    // marketing columns (a struck-through price beside the sale price) —
+    // not an edit history. `previousOldPriceCentavos`/`previousNewPriceCentavos`
+    // below are that history: what those same two columns held before THIS
+    // save, so an admin can see what actually changed, not just what it
+    // changed TO.
     oldPriceCentavos: columns.oldPriceCentavos,
     newPriceCentavos: columns.newPriceCentavos,
+    previousOldPriceCentavos: previous?.oldPriceCentavos ?? null,
+    previousNewPriceCentavos: previous?.newPriceCentavos ?? null,
     sortOrder: columns.sortOrder,
   };
 }
@@ -245,7 +260,8 @@ export const adminPackagesRouter = router({
             action: 'package.created',
             entity: PACKAGE_ENTITY,
             entityId: result.insertId,
-            data: auditDataFor(columns),
+            // No previous row on a create.
+            data: auditDataFor(columns, undefined),
           });
           return result.insertId;
         });
@@ -269,6 +285,19 @@ export const adminPackagesRouter = router({
       const columns = packageColumns(input);
       try {
         await getDb().transaction(async (tx) => {
+          // Task T20b: the price BEFORE this save, for the audit row — a
+          // plain read, before the write, so it changes no money math.
+          // `undefined` if the package is gone by the time of the write
+          // below, which then fails `affectedRows` and this is never used.
+          const [previous] = await tx
+            .select({
+              oldPriceCentavos: packages.oldPriceCentavos,
+              newPriceCentavos: packages.newPriceCentavos,
+            })
+            .from(packages)
+            .where(eq(packages.id, input.id))
+            .limit(1);
+
           const [result] = await tx.update(packages).set(columns).where(eq(packages.id, input.id));
           /*
            * `affectedRows === 0` is an exact "no such package" here: mysql2
@@ -287,7 +316,7 @@ export const adminPackagesRouter = router({
             action: 'package.updated',
             entity: PACKAGE_ENTITY,
             entityId: input.id,
-            data: auditDataFor(columns),
+            data: auditDataFor(columns, previous),
           });
         });
         return { ok: true as const };

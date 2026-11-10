@@ -108,6 +108,9 @@ function auditDataFor(
     stopCount: input.itinerary.length,
     addonsDeactivated: result.addonsDeactivated,
     stopsRemoved: result.stopsRemoved,
+    // Task T20b: the price BEFORE this save, read in `upsertTourContent`'s
+    // own read phase — `[]` on a create or a tour with no prior tiers.
+    previousPriceTiers: result.previousPriceTiers,
   };
 }
 
