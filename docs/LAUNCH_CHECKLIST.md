@@ -140,18 +140,18 @@ log line, nothing to notice until it's exploited or until something leaks. Set a
 before the app ever takes real traffic, and re-check them any time the PM2 or nginx
 config changes.
 
-- [ ] **Express `trust proxy` is set**, because the app sits behind nginx (see the
-      `proxy_pass` blocks above). The rate limiter keys on request IP. Without
-      `trust proxy`, Express reads nginx's own address for every request, so every
-      visitor collectively shares one IP's worth of rate limit — one abusive visitor
-      exhausts the login/coupon/review limiter for everyone else behind the same
-      proxy, not just themselves. **This is measured, not only reasoned:** the
-      "THREE IPs each keep their own budget" test in
-      `server/src/__tests__/driver-lockout.test.ts` sends fifteen driver-login attempts
-      from three client addresses and passes with `trust proxy` set; with the setting
-      removed from the test app it fails with 429s, because the three addresses collapse
-      onto nginx's single key. `app.ts` does not set it today, so this item is the only
-      thing that does.
+- [ ] **`TRUST_PROXY=1` is set** in the deployed `.env`, because the app sits behind nginx (see the
+      `proxy_pass` blocks above). `app.ts` reads this into `createApp(..., trustProxy)`, which calls
+      `app.set('trust proxy', 1)` — exactly one hop, never `true`. The rate limiter keys on request
+      IP. Without it, Express reads nginx's own address for every request, so every visitor
+      collectively shares one IP's worth of rate limit — one abusive visitor exhausts the
+      login/coupon/review limiter for everyone else behind the same proxy, not just themselves, and
+      (measured on staging, 2026-11-10) the generic `/trpc` backstop can exhaust fast enough that
+      ordinary admin traffic starts seeing 429s, which the admin UI shows as "Could not confirm your
+      session". **This is measured, not only reasoned:** `server/src/__tests__/trust-proxy.test.ts`
+      sends attempts from two distinct `X-Forwarded-For` addresses through a real `createApp()` and
+      passes with `TRUST_PROXY` on; with it left unset, the exact same two addresses collapse onto
+      one shared budget.
 - [ ] **`NODE_ENV=production` is set** in the PM2 environment. tRPC's default error
       formatter includes the `stack` field when `NODE_ENV` is not `production`, so a
       malformed or hostile request gets a stack trace — file paths, call sites — back

@@ -64,6 +64,23 @@ const schema = z.object({
    * See `middleware/origin-check.ts`.
    */
   APP_ORIGIN: z.string().default('http://localhost:5180'),
+  /*
+   * Exactly ONE proxy hop (owner decision 2026-11-10, staging-fixes batch,
+   * Decision 1). The app sits behind nginx in every real deployment
+   * (`docs/LAUNCH_CHECKLIST.md`), which terminates TLS and proxies to
+   * 127.0.0.1 — without telling Express to trust that one hop, `req.ip` is
+   * nginx's own address for every request, and every per-IP rate limiter in
+   * `middleware/rate-limit.ts` collapses onto one shared counter (measured
+   * on staging as the admin-session bug this decision fixes).
+   *
+   * No default, optional, exact string '1' required — mirroring
+   * `ALLOW_DEMO_SEED`'s shape: unset means "do not trust any proxy", which
+   * is the correct, safe default for local dev (no proxy in front of
+   * `pnpm dev`) and for any environment nobody has deliberately configured.
+   * `app.set('trust proxy', 1)` — never `true`, which would trust an
+   * attacker-controlled X-Forwarded-For chain of any length.
+   */
+  TRUST_PROXY: z.string().optional(),
   // PayMongo (plan Task 16). BOTH OPTIONAL, deliberately: the app must still
   // boot without payment credentials — that is how it runs today and how it
   // runs during content work — so a missing key is not a startup failure.

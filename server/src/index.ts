@@ -21,9 +21,12 @@ const clientDistDir = env.NODE_ENV === 'production' ? CLIENT_DIST_DIR : undefine
 
 // SITE_ENV (not NODE_ENV) decides the crawl directives: a preview deploy runs
 // a production build but must never be indexed. See middleware/robots-header.ts.
-createApp(env.PUBLIC_BASE_URL, clientDistDir, env.SITE_ENV).listen(env.PORT, () => {
-  console.log(`[rg-travel-tours] server listening on http://localhost:${env.PORT}`);
-});
+createApp(env.PUBLIC_BASE_URL, clientDistDir, env.SITE_ENV, env.TRUST_PROXY === '1').listen(
+  env.PORT,
+  () => {
+    console.log(`[rg-travel-tours] server listening on http://localhost:${env.PORT}`);
+  },
+);
 
 /*
  * One line, once, if the one-time bootstrap credential is still sitting in

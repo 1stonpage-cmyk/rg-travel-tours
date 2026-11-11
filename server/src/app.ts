@@ -49,13 +49,31 @@ const DEFAULT_ALLOWED_ORIGIN = 'http://localhost:5180';
  *   `settings.content_unverified` cleared. Passed in rather than read from
  *   ./env for the reason given above DEFAULT_ALLOWED_ORIGIN; src/index.ts
  *   supplies `env.SITE_ENV`.
+ * @param trustProxy  Whether to trust exactly ONE proxy hop in front of this
+ *   process (owner decision 2026-11-10, Decision 1; `env.TRUST_PROXY === '1'`
+ *   in src/index.ts). Defaults to `false`, which is what every test in this
+ *   repo wants: supertest talks to the app directly, with no proxy in front
+ *   of it, so trusting a hop that does not exist would let a test's own
+ *   `X-Forwarded-For` header spoof `req.ip` for free. `app.set('trust proxy',
+ *   1)` — ONE hop, never `true` (which trusts an arbitrarily long, caller-
+ *   supplied X-Forwarded-For chain) — is what makes every per-IP rate limiter
+ *   below key on nginx's own `X-Forwarded-For`, rather than on nginx's own
+ *   loopback address shared by every visitor.
  */
 export function createApp(
   allowedOrigin: string = DEFAULT_ALLOWED_ORIGIN,
   clientDistDir?: string,
   siteEnv: SiteEnv = 'development',
+  trustProxy: boolean = false,
 ) {
   const app = express();
+
+  // Owner decision 2026-11-10, Decision 1. MUST be set before anything below
+  // reads `req.ip` — every limiter in this file does, via express-rate-limit's
+  // default key generator. Exactly one hop: `1`, never `true`.
+  if (trustProxy) {
+    app.set('trust proxy', 1);
+  }
 
   // Pinned to the known client origin, not `origin: true` (which reflects
   // any requesting origin). Reflecting + credentials:true lets any website
