@@ -199,10 +199,6 @@ export default function HeroSection() {
               // without a real permit number — `trust.dotAccredited` alone
               // is an admin toggle, not proof; `permits.dot` is the actual
               // number, "— pending —" (null) until one exists.
-              // Decision 4 (2026-11-10): never claim DOT accreditation
-              // without a real permit number — `trust.dotAccredited` alone
-              // is an admin toggle, not proof; `permits.dot` is the actual
-              // number, "— pending —" (null) until one exists.
               if (trust.dotAccredited && permits.dot !== null) {
                 trustItems.push(<li key="dot">DOT accredited</li>);
               }
