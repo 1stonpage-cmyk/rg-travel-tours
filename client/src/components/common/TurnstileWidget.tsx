@@ -32,7 +32,14 @@ function loadTurnstileScript(): Promise<void> {
       script.async = true;
       script.defer = true;
       script.onload = () => resolve();
-      script.onerror = () => reject(new Error('Turnstile script failed to load'));
+      script.onerror = () => {
+        // Don't cache a rejected promise forever — a future mount attempt
+        // (e.g. after the caller bumps `key` to retry) should load the
+        // script again rather than replay this same rejection for the life
+        // of the page.
+        scriptLoadPromise = null;
+        reject(new Error('Turnstile script failed to load'));
+      };
       document.head.appendChild(script);
     });
   }

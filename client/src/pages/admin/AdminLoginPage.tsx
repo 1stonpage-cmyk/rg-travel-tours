@@ -75,7 +75,10 @@ export default function AdminLoginPage() {
       queryClient.clear();
       navigate(result.mustChangePassword ? '/admin/change-password' : '/admin', { replace: true });
     },
-    onError: () => setTurnstileResetKey((key) => key + 1),
+    onError: () => {
+      setTurnstileToken(undefined);
+      setTurnstileResetKey((key) => key + 1);
+    },
   });
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
@@ -213,7 +216,14 @@ export default function AdminLoginPage() {
            * feature being off (`verifyTurnstile`). Remounted via `key` after
            * any failed attempt, since a token is single-use.
            */}
-          <TurnstileWidget key={turnstileResetKey} onVerify={setTurnstileToken} />
+          <TurnstileWidget
+            key={turnstileResetKey}
+            onVerify={setTurnstileToken}
+            onError={() => {
+              setTurnstileToken(undefined);
+              setTurnstileResetKey((key) => key + 1);
+            }}
+          />
 
           <Button
             type="submit"

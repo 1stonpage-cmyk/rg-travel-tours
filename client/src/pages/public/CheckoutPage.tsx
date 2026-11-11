@@ -215,7 +215,10 @@ export default function CheckoutPage() {
     { enabled: hasSelection, retry: false, placeholderData: keepPreviousData },
   );
   const createHold = trpc.checkout.createHold.useMutation({
-    onError: () => setTurnstileResetKey((key) => key + 1),
+    onError: () => {
+      setTurnstileToken(undefined);
+      setTurnstileResetKey((key) => key + 1);
+    },
   });
   /*
    * `settings.get` moved OUT of this page for the payment-method question
@@ -488,7 +491,14 @@ export default function CheckoutPage() {
                    * Remounted via `key` after any failed submit, since a
                    * token is single-use.
                    */}
-                  <TurnstileWidget key={turnstileResetKey} onVerify={setTurnstileToken} />
+                  <TurnstileWidget
+                    key={turnstileResetKey}
+                    onVerify={setTurnstileToken}
+                    onError={() => {
+                      setTurnstileToken(undefined);
+                      setTurnstileResetKey((key) => key + 1);
+                    }}
+                  />
 
                   <Button
                     type="submit"

@@ -419,7 +419,10 @@ export default function TransferBookingPage() {
   }, [routeId, productType]);
 
   const createHoldTransfer = trpc.checkout.createHoldTransfer.useMutation({
-    onError: () => setTurnstileResetKey((key) => key + 1),
+    onError: () => {
+      setTurnstileToken(undefined);
+      setTurnstileResetKey((key) => key + 1);
+    },
   });
 
   const holdFieldErrors = createHoldTransfer.isError
@@ -623,7 +626,14 @@ export default function TransferBookingPage() {
                * via `key` after any failed submit, since a token is
                * single-use.
                */}
-              <TurnstileWidget key={turnstileResetKey} onVerify={setTurnstileToken} />
+              <TurnstileWidget
+                key={turnstileResetKey}
+                onVerify={setTurnstileToken}
+                onError={() => {
+                  setTurnstileToken(undefined);
+                  setTurnstileResetKey((key) => key + 1);
+                }}
+              />
 
               <Button
                 type="submit"

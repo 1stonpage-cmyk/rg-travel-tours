@@ -82,8 +82,18 @@ export default function AdminForgotPasswordPage() {
     onSuccess: () => {
       setFieldError(null);
       setBanner(null);
+      /*
+       * A Turnstile-refused attempt returns this SAME success-shaped
+       * `REQUESTED` result as a real request, by design (anti-enumeration —
+       * see CLAUDE.md). So the widget has to reset here too, not only in
+       * `onError` below: otherwise a refused attempt replays its now-dead
+       * token into every subsequent submit, silently, forever.
+       */
+      setTurnstileToken(undefined);
+      setTurnstileResetKey((key) => key + 1);
     },
     onError: (error) => {
+      setTurnstileToken(undefined);
       setTurnstileResetKey((key) => key + 1);
       /*
        * The shared reader (`lib/field-errors.ts`), never `error.message` for
@@ -205,7 +215,14 @@ export default function AdminForgotPasswordPage() {
              * or switched off) — see AdminLoginPage's own note on this
              * component for why that is safe.
              */}
-            <TurnstileWidget key={turnstileResetKey} onVerify={setTurnstileToken} />
+            <TurnstileWidget
+              key={turnstileResetKey}
+              onVerify={setTurnstileToken}
+              onError={() => {
+                setTurnstileToken(undefined);
+                setTurnstileResetKey((key) => key + 1);
+              }}
+            />
 
             <Button
               type="submit"

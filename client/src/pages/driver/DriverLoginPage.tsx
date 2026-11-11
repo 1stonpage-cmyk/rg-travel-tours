@@ -159,6 +159,7 @@ export default function DriverLoginPage() {
     onSuccess: () => navigate('/driver', { replace: true }),
     onError: (error) => {
       setRefusal(describeRefusal(error));
+      setTurnstileToken(undefined);
       setTurnstileResetKey((k) => k + 1); // tokens are single-use
     },
   });
@@ -260,7 +261,14 @@ export default function DriverLoginPage() {
            * switched off) — see the component's own note. Remounted via
            * `key` after any failed submit, since a token is single-use.
            */}
-          <TurnstileWidget key={turnstileResetKey} onVerify={setTurnstileToken} />
+          <TurnstileWidget
+            key={turnstileResetKey}
+            onVerify={setTurnstileToken}
+            onError={() => {
+              setTurnstileToken(undefined);
+              setTurnstileResetKey((k) => k + 1);
+            }}
+          />
 
           <Button
             type="submit"

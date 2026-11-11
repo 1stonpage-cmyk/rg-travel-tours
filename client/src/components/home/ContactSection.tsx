@@ -74,7 +74,10 @@ export default function ContactSection() {
   // get a fresh one) after any failed attempt, not only a Turnstile refusal.
   const [turnstileResetKey, setTurnstileResetKey] = useState(0);
   const sendInquiry = trpc.inquiries.create.useMutation({
-    onError: () => setTurnstileResetKey((key) => key + 1),
+    onError: () => {
+      setTurnstileToken(undefined);
+      setTurnstileResetKey((key) => key + 1);
+    },
   });
 
   function handleSubmit(e: FormEvent<HTMLFormElement>) {
@@ -420,7 +423,14 @@ export default function ContactSection() {
                  * submit, since a token is single-use.
                  */}
                 <div className="sm:col-span-2">
-                  <TurnstileWidget key={turnstileResetKey} onVerify={setTurnstileToken} />
+                  <TurnstileWidget
+                    key={turnstileResetKey}
+                    onVerify={setTurnstileToken}
+                    onError={() => {
+                      setTurnstileToken(undefined);
+                      setTurnstileResetKey((key) => key + 1);
+                    }}
+                  />
                 </div>
               </div>
             ) : null}
