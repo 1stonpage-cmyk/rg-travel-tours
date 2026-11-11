@@ -690,7 +690,7 @@ describe('AdminDashboardPage', () => {
       ],
     };
 
-    it('names the requester, pax and route for an owner, with a Quote button to /admin/packages', async () => {
+    it('names the requester, pax and route for an owner, with a Quote button to /admin/trip-requests', async () => {
       renderDashboard([], OWNER_ME, { tripRequests: requests });
       const queue = await screen.findByTestId('trip-request-queue');
       // The queue section renders synchronously (gated only by role); its
@@ -700,7 +700,10 @@ describe('AdminDashboardPage', () => {
       expect(within(queue).getByText(/6 pax/)).toBeTruthy();
       expect(within(queue).getByText(/Panagsama Beach, Moalboal/)).toBeTruthy();
       const quote = within(queue).getByRole('link', { name: 'Quote' });
-      expect(quote.getAttribute('href')).toBe('/admin/packages');
+      // Task 1 (Demo Polish Round 2, "1A", 2026-11-11): the dedicated
+      // `/admin/trip-requests` inbox now exists, so "Quote" points there
+      // instead of `/admin/packages`'s Enquiries section.
+      expect(quote.getAttribute('href')).toBe('/admin/trip-requests');
     });
 
     it('shows "View only" for a dispatcher, with no actionable button', async () => {

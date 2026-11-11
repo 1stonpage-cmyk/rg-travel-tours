@@ -91,6 +91,18 @@ export const ADMIN_NAV: readonly AdminNavItem[] = [
     quick: { label: 'Bookings' },
     group: 'Bookings',
   },
+  // Owner + dispatcher (Demo Polish Round 2, owner decision 2026-11-11,
+  // Task 1 / "1A"): the same `admin.inquiries.*` gate
+  // (`packagesInquiries`) `/admin/packages` has always had, now also
+  // reachable at its own URL. NOT finance — an enquiry carries no money
+  // (`require-role.ts`'s own comment on `packagesInquiries`).
+  {
+    to: '/admin/trip-requests',
+    label: 'Trip requests',
+    end: false,
+    roles: ['owner', 'dispatcher'],
+    group: 'Bookings',
+  },
   {
     to: '/admin/payments',
     label: 'Payment checks',

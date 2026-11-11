@@ -14,6 +14,7 @@ import AdminDeparturesPage from '@/pages/admin/AdminDeparturesPage';
 import AdminDriversPage from '@/pages/admin/AdminDriversPage';
 import AdminStaffPage from '@/pages/admin/AdminStaffPage';
 import AdminToursPage from '@/pages/admin/AdminToursPage';
+import AdminTripRequestsPage from '@/pages/admin/AdminTripRequestsPage';
 import AdminTransferPlacesPage from '@/pages/admin/AdminTransferPlacesPage';
 import AdminTransferRoutesPage from '@/pages/admin/AdminTransferRoutesPage';
 import AdminVehicleTypesPage from '@/pages/admin/AdminVehicleTypesPage';
@@ -175,6 +176,16 @@ export default function App() {
         <Route index element={<AdminDashboardPage />} />
         <Route path="bookings" element={<AdminBookingsPage />} />
         <Route path="bookings/:ref" element={<AdminBookingDetailPage />} />
+        {/*
+         * Task 1 (Demo Polish Round 2, owner decision 2026-11-11, "1A"): a
+         * standalone inbox for the same inquiries `AdminPackagesPage` has
+         * always shown — no new server procedure, same `packagesInquiries`
+         * gate. Sidebar order is Bookings, Trip requests, Payment checks
+         * (`admin-nav.ts`); this route's position among its siblings has no
+         * bearing on that — React Router does not care about sibling order
+         * beyond the catch-all staying last.
+         */}
+        <Route path="trip-requests" element={<AdminTripRequestsPage />} />
         <Route path="payments" element={<AdminPaymentsPage />} />
         <Route path="calendar" element={<AdminCalendarPage />} />
         <Route path="departures" element={<AdminDeparturesPage />} />

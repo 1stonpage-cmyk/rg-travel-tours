@@ -17,11 +17,14 @@
  * "View only" label instead of a button whose only outcome on the server
  * would be a refusal.
  *
- * **"Quote" links to `/admin/packages`'s existing Enquiries section, not a
- * new screen.** There is no per-request deep link in that page today (no
- * hash, no id param) and building one is outside this task's scope — the
- * owner opens the Enquiries list and finds the named request there. Named
- * deviation from the brief's literal "Quote" wording, recorded in HANDOVER-17.
+ * **"Quote" links to `/admin/trip-requests`** (Demo Polish Round 2, Task 1 /
+ * "1A", 2026-11-11) — the dedicated inquiries inbox, not `/admin/packages`'s
+ * Enquiries section it used to point at (recorded in HANDOVER-17 as a named
+ * deviation; the dedicated page now exists, so that deviation is resolved).
+ * **Still no per-request deep link**, though: neither page accepts a hash
+ * or an id param, so the owner still opens the inbox and finds the named
+ * request there rather than landing on it directly. That narrower gap is
+ * unchanged by this task.
  *
  * ## No guest contact details on the wire
  *
@@ -62,7 +65,7 @@ function TripRequestRow({
       </p>
       {canQuote ? (
         <Button asChild variant="row" className="mt-1 self-start">
-          <Link to="/admin/packages">Quote</Link>
+          <Link to="/admin/trip-requests">Quote</Link>
         </Button>
       ) : (
         <span className="text-brand-error mt-1 self-start text-xs font-semibold opacity-70">
