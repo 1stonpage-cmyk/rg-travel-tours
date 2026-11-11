@@ -689,8 +689,21 @@ describeWithDb('driver.login / driver.logout (resolvers)', () => {
     expect(wrongPinRefusal.headers['set-cookie']).toBeUndefined();
   }, 30_000);
 
+  /**
+   * **Review fix (round 1).** The PIN here must be WRONG, not correct.
+   * With a correct PIN, `attemptDriverLogin` itself would answer `ok: true`
+   * and touch `failedAttempts` not at all — so `before.failedAttempts === 0`
+   * and `after.failedAttempts === 0` under EITHER ordering, correct or
+   * regressed. A wrong PIN is what makes this test able to catch the actual
+   * regression it exists for (the Turnstile check moved to AFTER
+   * `attemptDriverLogin`): under that regression, `attemptDriverLogin` runs
+   * first, increments the counter to 1, and only THEN does Turnstile throw —
+   * so `after.failedAttempts` reads 1, not 0, and this test goes red. Proven
+   * by mutation test, see this task's own report.
+   */
   it('does not count a Turnstile refusal against the per-driver PIN lockout counter', async () => {
     const { code, pin, driverId } = await makeDriverWithPin();
+    const wrongPin = pin === '000000' ? '111111' : '000000';
     const { res } = captureResponse();
     const api = appRouter.createCaller({
       req: { cookies: {} },
@@ -704,7 +717,7 @@ describeWithDb('driver.login / driver.logout (resolvers)', () => {
     const original = env.TURNSTILE_ENABLED;
     (env as { TURNSTILE_ENABLED?: string }).TURNSTILE_ENABLED = '1';
     try {
-      await expect(api.driver.login({ code, pin })).rejects.toMatchObject({
+      await expect(api.driver.login({ code, pin: wrongPin })).rejects.toMatchObject({
         code: 'UNAUTHORIZED',
         message: 'wrong_credentials',
       });
@@ -713,12 +726,15 @@ describeWithDb('driver.login / driver.logout (resolvers)', () => {
     }
 
     const after = await driverRow(driverId);
+    // The whole row, not just `failedAttempts`: `driverRow()` already reads
+    // all four policy columns, so pin `lockoutCount` / `lockedUntil` /
+    // `lockoutWindowStartedAt` too rather than leaving them unchecked.
     expect(
-      after.failedAttempts,
+      after,
       'a Turnstile refusal must not count against the per-driver PIN lockout — only ' +
-        'attemptDriverLogin may touch that counter, and the ordering decision keeps it ' +
+        'attemptDriverLogin may touch these columns, and the ordering decision keeps it ' +
         'from ever being called here',
-    ).toBe(before.failedAttempts);
+    ).toEqual(before);
   }, 30_000);
 
   /**
