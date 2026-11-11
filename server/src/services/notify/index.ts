@@ -50,6 +50,23 @@ export type { MailTransport } from './transport';
  * is advertised in one place.
  */
 export { sendStaffPasswordResetEmail, renderStaffPasswordResetMail } from './staff-password-reset';
+/*
+ * §1C's contact-form inquiry mail (owner decision 2026-11-11, Task 3). Its
+ * own senders rather than another `NotifyEvent`, for the same reason the
+ * staff password reset mail above has its own — see `./inquiry.ts`.
+ */
+export {
+  sendInquiryOfficeMail,
+  sendInquiryAckMail,
+  renderInquiryOfficeMail,
+  renderInquiryAckMail,
+  isInquiryAckThrottled,
+  recordInquiryAckSent,
+  resetInquiryAckThrottleForTests,
+  INQUIRY_ACK_MAX_PER_EMAIL,
+  INQUIRY_ACK_WINDOW_MS,
+  type InquiryMailFields,
+} from './inquiry';
 
 /**
  * Sends one notification, or logs why it could not. Never throws, never
