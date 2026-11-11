@@ -228,7 +228,7 @@ export default function ContactSection() {
                 </ChatIcon>
                 <span>
                   <span className="text-brand-blue-900 block font-semibold">WhatsApp</span>
-                  <span className="text-muted-foreground">{SITE.contact.phone.display}</span>
+                  <span className="text-muted-foreground">{SITE.contact.altPhone.display}</span>
                 </span>
               </a>
             </li>
@@ -242,7 +242,7 @@ export default function ContactSection() {
                 </ChatIcon>
                 <span>
                   <span className="text-brand-blue-900 block font-semibold">Viber</span>
-                  <span className="text-muted-foreground">{SITE.contact.phone.display}</span>
+                  <span className="text-muted-foreground">{SITE.contact.altPhone.display}</span>
                 </span>
               </a>
             </li>

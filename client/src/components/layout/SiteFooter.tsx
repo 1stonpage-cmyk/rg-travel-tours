@@ -119,7 +119,22 @@ export default function SiteFooter() {
           <p className="text-brand-blue-200 mt-2 max-w-sm text-base sm:text-sm">{SITE.tagline}</p>
 
           <ul className="mt-6 space-y-2 text-base sm:text-sm">
-            {/* Primary line: WhatsApp, Viber and voice calls all land here.
+            {/* Primary line: calls only (owner decision 2026-11-11, 1B —
+                WhatsApp/Viber moved to the alternate line below). */}
+            <li className="flex items-start gap-2">
+              <Phone className="mt-3.5 size-4 shrink-0" aria-hidden="true" />
+              <div>
+                <a
+                  href={telLink(SITE.contact.phone.tel)}
+                  className="flex min-h-11 items-center gap-2 hover:underline"
+                >
+                  {SITE.contact.phone.display}
+                  <span className="text-brand-blue-300 text-xs">{SITE.contact.phone.network}</span>
+                </a>
+                <p className="text-brand-blue-300 -mt-2 text-xs">Calls only</p>
+              </div>
+            </li>
+            {/* Alternate line: WhatsApp, Viber, calls and SMS all land here now.
                 The apps are named as text rather than as extra links so the
                 footer keeps one unambiguous "call this number" target. */}
             <li className="flex items-start gap-2">
@@ -127,12 +142,12 @@ export default function SiteFooter() {
               <div>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                   <a
-                    href={telLink(SITE.contact.phone.tel)}
+                    href={telLink(SITE.contact.altPhone.tel)}
                     className="flex min-h-11 items-center gap-2 hover:underline"
                   >
-                    {SITE.contact.phone.display}
+                    {SITE.contact.altPhone.display}
                     <span className="text-brand-blue-300 text-xs">
-                      {SITE.contact.phone.network}
+                      {SITE.contact.altPhone.network}
                     </span>
                   </a>
                   <span className="flex items-center gap-2">
@@ -149,22 +164,7 @@ export default function SiteFooter() {
                     </ChatButton>
                   </span>
                 </div>
-                <p className="text-brand-blue-300 mt-1 text-xs">WhatsApp, Viber and calls</p>
-              </div>
-            </li>
-            <li className="flex items-start gap-2">
-              <Phone className="mt-3.5 size-4 shrink-0" aria-hidden="true" />
-              <div>
-                <a
-                  href={telLink(SITE.contact.altPhone.tel)}
-                  className="flex min-h-11 items-center gap-2 hover:underline"
-                >
-                  {SITE.contact.altPhone.display}
-                  <span className="text-brand-blue-300 text-xs">
-                    {SITE.contact.altPhone.network}
-                  </span>
-                </a>
-                <p className="text-brand-blue-300 -mt-2 text-xs">Calls and SMS</p>
+                <p className="text-brand-blue-300 mt-1 text-xs">WhatsApp, Viber, calls and SMS</p>
               </div>
             </li>
             <li className="flex items-center gap-2">

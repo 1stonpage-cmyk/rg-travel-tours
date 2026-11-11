@@ -44,8 +44,9 @@ export const SITE = {
      * cannot read Vite env, and the two surfaces must never drift apart.
      * scripts/check-contact-parity.mjs fails the build if they do.
      *
-     * `phone` is the primary line — WhatsApp, Viber and voice calls all land
-     * on it. `altPhone` is a second network for calls and SMS only.
+     * `altPhone` is the WhatsApp/Viber line as well as calls and SMS
+     * (owner decision 2026-11-11, 1B — moved off `phone`). `phone` is now
+     * calls only.
      */
     phone: {
       display: '0908 469 6246',
@@ -58,6 +59,8 @@ export const SITE = {
       display: '0927 737 8431',
       network: 'Globe',
       tel: '+639277378431',
+      /** wa.me wants the international number with no "+" or spaces. */
+      whatsapp: '639277378431',
     },
     email: (env.VITE_CONTACT_EMAIL as string) ?? 'hello@travelsugbo.com',
     facebook: 'https://www.facebook.com/profile.php?id=61574390071362',
@@ -116,7 +119,7 @@ export function visibleNav(showTours: boolean) {
 
 /** Builds a wa.me deep link with an optional prefilled message. */
 export function whatsappLink(message?: string) {
-  const base = `https://wa.me/${SITE.contact.phone.whatsapp}`;
+  const base = `https://wa.me/${SITE.contact.altPhone.whatsapp}`;
   return message ? `${base}?text=${encodeURIComponent(message)}` : base;
 }
 
@@ -125,7 +128,7 @@ export function whatsappLink(message?: string) {
  * Viber reads it as a space and the chat opens on an empty recipient.
  */
 export function viberLink() {
-  return `viber://chat?number=${encodeURIComponent(SITE.contact.phone.tel)}`;
+  return `viber://chat?number=${encodeURIComponent(SITE.contact.altPhone.tel)}`;
 }
 
 /** `tel:` href for either line. */

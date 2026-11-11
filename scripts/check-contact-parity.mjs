@@ -44,11 +44,16 @@ const expected = {
   motto: value('motto'),
 };
 
-// `display`/`tel` appear twice (primary, then alternate); take the second pair.
+// `display`/`tel`/`whatsapp` each appear twice (primary, then alternate);
+// take the second of each. WhatsApp/Viber now link off the ALTERNATE number
+// (owner decision 2026-11-11, 1B), so `altPhoneWhatsapp` is what the wa.me/
+// viber checks below must compare against — not the primary `whatsapp`.
 const displays = [...site.matchAll(/display:\s*'([^']*)'/g)].map((m) => m[1]);
 const tels = [...site.matchAll(/tel:\s*'([^']*)'/g)].map((m) => m[1]);
+const whatsapps = [...site.matchAll(/whatsapp:\s*'([^']*)'/g)].map((m) => m[1]);
 expected.altPhoneDisplay = displays[1] ?? null;
 expected.altPhoneTel = tels[1] ?? null;
+expected.altPhoneWhatsapp = whatsapps[1] ?? null;
 
 // Email keeps its env fallback: `(env.VITE_CONTACT_EMAIL as string) ?? '...'`.
 expected.email = /VITE_CONTACT_EMAIL as string\) \?\? '([^']*)'/.exec(site)?.[1] ?? null;
@@ -74,10 +79,14 @@ const pageText = page
   .trim();
 
 const must = [
-  ['WhatsApp link', `https://wa.me/${expected.whatsapp}`, page],
+  ['WhatsApp link', `https://wa.me/${expected.altPhoneWhatsapp}`, page],
   ['primary tel: link', `"tel:${expected.phoneTel}"`, page],
   ['alternate tel: link', `"tel:${expected.altPhoneTel}"`, page],
-  ['Viber deep link', `viber://chat?number=${encodeURIComponent(expected.phoneTel ?? '')}`, page],
+  [
+    'Viber deep link',
+    `viber://chat?number=${encodeURIComponent(expected.altPhoneTel ?? '')}`,
+    page,
+  ],
   ['Facebook link', expected.facebook, page],
   ['mailto: link', `mailto:${expected.email}`, page],
   ['primary number, displayed', expected.phoneDisplay, pageText],
@@ -95,8 +104,8 @@ for (const [label, needle, haystack] of must) {
 /** No contact target may exist on the page that site.ts does not declare. */
 const allowed = {
   'tel:': new Set([`tel:${expected.phoneTel}`, `tel:${expected.altPhoneTel}`]),
-  'wa.me': new Set([`https://wa.me/${expected.whatsapp}`]),
-  'viber:': new Set([`viber://chat?number=${encodeURIComponent(expected.phoneTel ?? '')}`]),
+  'wa.me': new Set([`https://wa.me/${expected.altPhoneWhatsapp}`]),
+  'viber:': new Set([`viber://chat?number=${encodeURIComponent(expected.altPhoneTel ?? '')}`]),
   'mailto:': new Set([`mailto:${expected.email}`]),
   'facebook.com': new Set([expected.facebook]),
 };
