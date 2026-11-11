@@ -55,14 +55,18 @@ export default function TrustBar() {
           skeleton={<TrustBarSkeleton />}
           errorTitle="Content could not load"
         >
-          {({ trust }) => {
+          {({ trust, permits }) => {
             // guestsServed is nullable: omit the item entirely rather than
             // showing a blank or zero (no fabricated social proof).
             // `label` is a ReactNode (not just a string) so the guests-served
             // item can carry a <CountUpStat>, so each item also gets its own
             // stable string `key` — a JSX label can't double as a map key.
             const items: { key: string; icon: LucideIcon; label: ReactNode }[] = [];
-            if (trust.dotAccredited) {
+            // Decision 4 (2026-11-10): never claim DOT accreditation without
+            // a real permit number — `trust.dotAccredited` alone is an
+            // admin toggle, not proof; `permits.dot` is the actual number,
+            // "— pending —" (null) until one exists.
+            if (trust.dotAccredited && permits.dot !== null) {
               items.push({ key: 'dot', icon: BadgeCheck, label: 'DOT accredited operator' });
             }
             if (trust.guestsServed !== null) {

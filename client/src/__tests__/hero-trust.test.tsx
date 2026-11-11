@@ -184,6 +184,10 @@ describe('HeroSection — settings-driven', () => {
     const settings = {
       ...SETTINGS_FIXTURE,
       trust: { ...SETTINGS_FIXTURE.trust, guestsServed: null },
+      // Decision 4: set a real permit number so this test's unrelated "dot
+      // accredited" assertion (proving the other items still render) keeps
+      // working under the new gate.
+      permits: { ...SETTINGS_FIXTURE.permits, dot: 'DOT-R-IATO-12345' },
     };
     mockTrpc({ 'settings.get': settings, 'destinations.list': DESTINATIONS_FIXTURE });
     const { container } = renderHero();
@@ -355,7 +359,16 @@ describe('HeroCopySkeleton / TrustBarSkeleton — loading announced to screen re
 
 describe('TrustBar — settings-driven', () => {
   it('renders all four trust items from settings', async () => {
-    mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
+    // Decision 4: the badge needs a real permit number too — SETTINGS_FIXTURE's
+    // own `permits.dot` is `null` (today's seed reality), so this test
+    // overrides it to keep asserting all four items; the null-permit case is
+    // covered by its own describe block below.
+    mockTrpc({
+      'settings.get': {
+        ...SETTINGS_FIXTURE,
+        permits: { ...SETTINGS_FIXTURE.permits, dot: 'DOT-R-IATO-12345' },
+      },
+    });
     renderTrustBar();
 
     expect(await screen.findByText(/dot accredited/i)).toBeInTheDocument();
@@ -374,6 +387,10 @@ describe('TrustBar — settings-driven', () => {
     const settings = {
       ...SETTINGS_FIXTURE,
       trust: { ...SETTINGS_FIXTURE.trust, guestsServed: null },
+      // Decision 4: set a real permit number so this test's unrelated "dot
+      // accredited" assertion (proving the other items still render) keeps
+      // working under the new gate.
+      permits: { ...SETTINGS_FIXTURE.permits, dot: 'DOT-R-IATO-12345' },
     };
     mockTrpc({ 'settings.get': settings });
     renderTrustBar();
@@ -381,6 +398,47 @@ describe('TrustBar — settings-driven', () => {
     expect(await screen.findByText(/dot accredited/i)).toBeInTheDocument();
     expect(screen.queryByText(/guests served/i)).not.toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/\bnull\b/i);
+  });
+});
+
+describe('DOT accredited badge requires a real permit number (Decision 4)', () => {
+  it('TrustBar hides "DOT accredited" when dotAccredited is true but permits.dot is null', async () => {
+    mockTrpc({
+      'settings.get': {
+        ...SETTINGS_FIXTURE,
+        trust: { ...SETTINGS_FIXTURE.trust, dotAccredited: true },
+        permits: { ...SETTINGS_FIXTURE.permits, dot: null },
+      },
+    });
+    renderTrustBar();
+    await screen.findByText(/deposit to reserve/i); // wait for the real content to resolve
+    expect(screen.queryByText(/dot accredited/i)).not.toBeInTheDocument();
+  });
+
+  it('TrustBar shows "DOT accredited" when dotAccredited is true AND permits.dot is set', async () => {
+    mockTrpc({
+      'settings.get': {
+        ...SETTINGS_FIXTURE,
+        trust: { ...SETTINGS_FIXTURE.trust, dotAccredited: true },
+        permits: { ...SETTINGS_FIXTURE.permits, dot: 'DOT-R-IATO-12345' },
+      },
+    });
+    renderTrustBar();
+    expect(await screen.findByText(/dot accredited/i)).toBeInTheDocument();
+  });
+
+  it('HeroSection hides "DOT accredited" when permits.dot is null, even with dotAccredited true', async () => {
+    mockTrpc({
+      'settings.get': {
+        ...SETTINGS_FIXTURE,
+        trust: { ...SETTINGS_FIXTURE.trust, dotAccredited: true },
+        permits: { ...SETTINGS_FIXTURE.permits, dot: null },
+      },
+      'destinations.list': DESTINATIONS_FIXTURE,
+    });
+    renderHero();
+    await screen.findByRole('heading', { level: 1 });
+    expect(screen.queryByText(/^dot accredited$/i)).not.toBeInTheDocument();
   });
 });
 
