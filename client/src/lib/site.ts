@@ -95,14 +95,17 @@ export const SITE = {
 } as const;
 
 /**
- * `SITE.nav`, minus "Tours" while `show_tours` is off (transfers-launch
- * plan, Task T16). One shared filter rather than three independent
+ * `SITE.nav`, minus "Tours" and "Packages" while `show_tours` is off
+ * (transfers-launch plan Task T16; extended to Packages by owner decision
+ * 2026-11-10, Decision 2 — packages now follow the same gate as tours,
+ * server-side AND here). One shared filter rather than three independent
  * `SITE.nav.map(...)` calls each re-deriving the same rule — `SiteHeader.tsx`
  * (desktop nav and mobile nav) and `SiteFooter.tsx` (footer nav) all read
  * this instead.
  */
 export function visibleNav(showTours: boolean) {
-  return SITE.nav.filter((item) => item.href !== '/tours' || showTours);
+  const hiddenWhileToursOff = new Set(['/tours', '/#packages']);
+  return SITE.nav.filter((item) => !hiddenWhileToursOff.has(item.href) || showTours);
 }
 
 /** Builds a wa.me deep link with an optional prefilled message. */

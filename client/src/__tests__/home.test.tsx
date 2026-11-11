@@ -70,8 +70,13 @@ describe('home page', () => {
 
   it('shows three packages, each with a struck-through old price', async () => {
     const { container } = renderHome();
-    const packages = container.querySelector('#packages') as HTMLElement;
-    expect(packages).toBeTruthy();
+    // Task T16 + Decision 2: PackagesSection is now gated on `settings.get`
+    // resolving `showTours: true`, so wait for it before checking its children.
+    const packages = (await waitFor(() => {
+      const el = container.querySelector('#packages') as HTMLElement | null;
+      expect(el).toBeTruthy();
+      return el;
+    }))!;
     await within(packages).findByRole('heading', {
       level: 3,
       name: PACKAGES_FIXTURE[0]!.title,
@@ -285,6 +290,8 @@ describe('home page — tours hidden (show_tours gate, Task T16)', () => {
     expect(screen.queryByRole('heading', { name: /most visited places/i })).not.toBeInTheDocument();
     expect(document.querySelector('#tours')).toBeNull();
     expect(document.querySelector('#places')).toBeNull();
+    expect(screen.queryByRole('heading', { name: /^packages$/i })).not.toBeInTheDocument();
+    expect(document.querySelector('#packages')).toBeNull();
   });
 
   it('still renders the primary transfer mini-flow form, unaffected', async () => {
@@ -317,5 +324,6 @@ describe('home page — tours shown (regression, Task T16)', () => {
       await screen.findByRole('heading', { name: /popular cebu day tours/i }),
     ).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /most visited places/i })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: /^packages$/i })).toBeInTheDocument();
   });
 });

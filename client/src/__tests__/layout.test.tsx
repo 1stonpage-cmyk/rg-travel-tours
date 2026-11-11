@@ -177,7 +177,7 @@ describe('PublicLayout', () => {
  * helper's own unit behaviour — a filter that is wired into only two of the
  * three loops is the bug this guards against.
  */
-describe('nav hides "Tours" while show_tours is off, in all three places', () => {
+describe('nav hides "Tours" and "Packages" while show_tours is off, in all three places', () => {
   it('shows Tours in desktop nav, mobile nav, and the footer when showTours is true', async () => {
     mockTrpc({ 'settings.get': SETTINGS_FIXTURE }); // SETTINGS_FIXTURE.showTours is true.
     renderLayout();
@@ -185,16 +185,19 @@ describe('nav hides "Tours" while show_tours is off, in all three places', () =>
 
     const desktopNav = screen.getByRole('navigation', { name: /^main$/i });
     expect(await within(desktopNav).findByRole('link', { name: /^tours$/i })).toBeInTheDocument();
+    expect(within(desktopNav).getByRole('link', { name: /^packages$/i })).toBeInTheDocument();
     // A neighbouring entry stays present too — catches a filter that is too broad.
     expect(within(desktopNav).getByRole('link', { name: /^transfers$/i })).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /open menu/i }));
     const mobileNav = screen.getByRole('navigation', { name: /^mobile$/i });
     expect(within(mobileNav).getByRole('link', { name: /^tours$/i })).toBeInTheDocument();
+    expect(within(mobileNav).getByRole('link', { name: /^packages$/i })).toBeInTheDocument();
     expect(within(mobileNav).getByRole('link', { name: /^transfers$/i })).toBeInTheDocument();
 
     const footerNav = screen.getByRole('navigation', { name: /^footer$/i });
     expect(within(footerNav).getByRole('link', { name: /^tours$/i })).toBeInTheDocument();
+    expect(within(footerNav).getByRole('link', { name: /^packages$/i })).toBeInTheDocument();
     expect(within(footerNav).getByRole('link', { name: /^transfers$/i })).toBeInTheDocument();
   });
 
@@ -210,15 +213,18 @@ describe('nav hides "Tours" while show_tours is off, in all three places', () =>
       await within(desktopNav).findByRole('link', { name: /^transfers$/i }),
     ).toBeInTheDocument();
     expect(within(desktopNav).queryByRole('link', { name: /^tours$/i })).toBeNull();
+    expect(within(desktopNav).queryByRole('link', { name: /^packages$/i })).toBeNull();
 
     await user.click(screen.getByRole('button', { name: /open menu/i }));
     const mobileNav = screen.getByRole('navigation', { name: /^mobile$/i });
     expect(within(mobileNav).getByRole('link', { name: /^transfers$/i })).toBeInTheDocument();
     expect(within(mobileNav).queryByRole('link', { name: /^tours$/i })).toBeNull();
+    expect(within(mobileNav).queryByRole('link', { name: /^packages$/i })).toBeNull();
 
     const footerNav = screen.getByRole('navigation', { name: /^footer$/i });
     expect(within(footerNav).getByRole('link', { name: /^transfers$/i })).toBeInTheDocument();
     expect(within(footerNav).queryByRole('link', { name: /^tours$/i })).toBeNull();
+    expect(within(footerNav).queryByRole('link', { name: /^packages$/i })).toBeNull();
   });
 });
 

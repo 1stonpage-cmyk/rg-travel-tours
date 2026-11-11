@@ -43,6 +43,10 @@ export default function HomePage() {
    * Defaults to hidden before `settings.get` resolves, same as every other
    * gate this task adds: the product default is tours off, so there is
    * nothing to flash on while loading.
+   *
+   * Decision 2 (2026-11-10) extends this to `PackagesSection`: packages are
+   * hidden the same way, for the same reason — a mounted section whose only
+   * links lead into a hidden product line is worse than no section.
    */
   const { data: settings } = trpc.settings.get.useQuery();
   const showTours = settings?.showTours ?? false;
@@ -55,7 +59,7 @@ export default function HomePage() {
       <HowItWorks />
       <WhyBookDirect />
       {showTours && <MostVisited />}
-      <PackagesSection />
+      {showTours && <PackagesSection />}
       <ReviewsSection />
       <PromoNewsletter />
       <FaqSection />
