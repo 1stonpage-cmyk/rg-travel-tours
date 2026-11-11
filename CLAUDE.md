@@ -537,10 +537,11 @@ db:seed:demo`.
   their own PIN**. No single test claims both halves, because a request cannot inject `now` and a
   locked driver's attempts count toward nothing; the clock is why the backoff test has no IP.
   **Deployment dependency:** the per-IP limit is only per-IP when
-  `trust proxy` is set (`docs/LAUNCH_CHECKLIST.md` carries it as a launch item; `app.ts` does not set
-  it), and without it all three limits collapse onto one key — measured by removing it from the test
-  app: the three-IP test fails with 429s, so one attacker could lock every driver's login out of
-  one window.
+  `trust proxy` is set (`docs/LAUNCH_CHECKLIST.md` carries it as a launch item; `app.ts` sets it,
+  via `createApp(..., trustProxy)`, only when the deployed `.env` has `TRUST_PROXY=1` — see
+  Decision 1, staging-fixes batch, 2026-11-10), and without it all three limits collapse onto one
+  key — measured by removing it from the test app: the three-IP test fails with 429s, so one
+  attacker could lock every driver's login out of one window.
 - **The three app surfaces (`/driver`, `/admin`, `/portal`) are served HTTP 200 with a title of their
   own and `noindex,nofollow`** (owner decision 2026-10-16, C2; built Task 9). They used to fall through
   to the not-found shell: `404` and `<title>Page not found | TravelSugbo</title>`, so a driver's tab
