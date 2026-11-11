@@ -96,9 +96,14 @@ describeWithDb('public mutations', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Turnstile (Task 13; widened to every inquiry type by owner decision
-  // 2026-11-11, Task 1A) — gated for EVERY `input.type`, unconditionally.
-  // Both tests below prove the same shape for both types.
+  // Turnstile (Task 13; widened by owner decision 2026-11-11, Task 1A) —
+  // gated for `contact` and `transfer_custom`, the two ContactSection
+  // request kinds. `package` is DELIBERATELY excluded (1A ruling,
+  // 2026-11-11): neither PackagesSection nor PackageInquiryForm renders a
+  // widget. Four tests below: two prove the gate refuses a tokenless
+  // `contact`/`transfer_custom` submission, one proves `package` is NOT
+  // gated (a regression guard for that exclusion), and one proves both
+  // gated types are still accepted via the feature-off path.
   // -------------------------------------------------------------------------
 
   it('refuses a transfer_custom inquiry when Turnstile is enabled and the token is missing, storing nothing', async () => {

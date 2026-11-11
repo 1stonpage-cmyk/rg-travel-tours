@@ -24,11 +24,14 @@ export const inquiriesRouter = router({
     // switched on — a real regression of a working flow, not something the
     // owner asked for. The owner's "every type" instruction meant every
     // type the contact form itself submits, not literally every member of
-    // `INQUIRY_TYPES`. Excluding by name (rather than listing `contact`/
-    // `transfer_custom`) is deliberate: a future 4th inquiry type with no
-    // widget of its own stays ungated by default instead of silently
-    // breaking the same way `package` would have. Revisit this exclusion
-    // only alongside a task that adds a widget to the package form(s).
+    // `INQUIRY_TYPES`. This is a DENY-list (`!== 'package'`), not an
+    // allow-list, and that is deliberate too: a future 4th inquiry type is
+    // GATED BY DEFAULT (fail-closed), same as `contact`/`transfer_custom`
+    // are today. Whoever adds one must either ship it with its own
+    // TurnstileWidget/token, or make the conscious choice to add it to this
+    // exclusion — it cannot silently land ungated the way `package` almost
+    // did. Revisit the `package` exclusion itself only alongside a task
+    // that adds a widget to the package form(s).
     if (input.type !== 'package') {
       if (!(await verifyTurnstile({ token: input.turnstileToken, remoteIp: ctx.req.ip }))) {
         throw turnstileRefusedError();
