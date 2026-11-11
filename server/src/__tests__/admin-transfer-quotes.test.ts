@@ -387,6 +387,14 @@ describeWithDb('admin.transferQuotes.convert', () => {
     await makeVan();
     await makeDriver();
 
+    // `createInquiry()` above now goes through the real `inquiries.create`
+    // mutation, which (owner decision 2026-11-11, Task 1C) sends its own
+    // office notification + guest acknowledgement as a side effect — both
+    // land in this file's shared `mail` capture array. Reset it here so the
+    // assertions below see ONLY `sendQuoteReadyNotice`'s own mail, not the
+    // inquiry-creation side effects this test never meant to exercise.
+    mail.length = 0;
+
     const result = await ownerApi().admin.transferQuotes.convert(convertInput(inquiryId));
     created.bookingIds.push(result.bookingId);
 

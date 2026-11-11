@@ -6,6 +6,7 @@ import { appRouter } from '../routers/_app';
 import { getDb } from '../db/client';
 import { inquiries, newsletterSubscribers } from '../db/schema';
 import { env } from '../env';
+import { resetTransportForTests, setTransportForTests } from '../services/notify';
 
 const caller = appRouter.createCaller(testContext());
 const MARK = 'vitest+';
@@ -152,6 +153,41 @@ describeWithDb('public mutations', () => {
     }
     const rows = await getDb().select().from(inquiries).where(eq(inquiries.email, email));
     expect(rows, 'a Turnstile refusal must leave no inquiry row').toHaveLength(0);
+  });
+
+  /**
+   * Final whole-branch review (contact-fixes batch, 2026-11-11): the 1A
+   * gate and 1C's new office/guest emails both live in `inquiries.create`,
+   * and nothing proved the ORDER between them — a refusal must cost no
+   * mail, not just no row. Install the transport mock scoped to THIS test
+   * only (not file-wide, unlike `inquiry-notify.test.ts`) so the other
+   * Turnstile tests above/below are unaffected.
+   */
+  it('a Turnstile refusal sends neither the office notification nor the guest acknowledgement', async () => {
+    const sent: unknown[] = [];
+    const originalEnabled = env.TURNSTILE_ENABLED;
+    (env as { TURNSTILE_ENABLED?: string }).TURNSTILE_ENABLED = '1';
+    setTransportForTests({
+      sendMail: async (message) => {
+        sent.push(message);
+        return { messageId: 'mock' };
+      },
+    });
+    try {
+      await expect(
+        caller.inquiries.create({
+          type: 'contact',
+          name: 'Vitest',
+          email: `${MARK}turnstile-no-mail@example.com`,
+          message: 'Should never reach a mailbox.',
+          consent: true,
+        }),
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    } finally {
+      (env as { TURNSTILE_ENABLED?: string }).TURNSTILE_ENABLED = originalEnabled;
+      resetTransportForTests();
+    }
+    expect(sent, 'a Turnstile refusal must send no mail at all').toHaveLength(0);
   });
 
   it('still accepts a package inquiry with the SAME missing Turnstile token — package is deliberately excluded from the gate (1A ruling, 2026-11-11): neither PackagesSection nor PackageInquiryForm renders a TurnstileWidget, so gating it would refuse every package inquiry outright', async () => {
