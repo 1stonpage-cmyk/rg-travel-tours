@@ -413,7 +413,7 @@ export const SEED_PACKAGES: SeedPackage[] = [
       'City heritage, Oslob whale sharks and Kawasan canyoneering with hotel transfers included.',
     imagePath: placeholderImage('package-cebu-highlights'),
     imageAlt: 'Placeholder image for the 3-day Cebu Highlights package',
-    highlights: ['Private van throughout', 'Licensed guide', '2 nights accommodation'],
+    highlights: ['Private van throughout', 'Licensed driver', '2 nights accommodation'],
     sortOrder: 0,
   },
   {
@@ -522,11 +522,16 @@ export const SEED_SETTINGS: SettingsBlocks = {
   // production-build gate both read this.
   content_unverified: true,
 
-  // Verbatim from client/index.html — today's actual <title>/<meta description>.
+  // Transfer-first (owner decision 2026-11-10, Decision 3): while
+  // show_tours is off, transfers are the lead and only visible product, so
+  // the site-wide default title/description must not name tours or
+  // packages. This is a `settings` row, inserted only if missing by
+  // `seedBase` — an already-seeded database keeps its old value until an
+  // admin edits it (Admin -> Settings -> Content).
   site_seo: {
-    title: 'TravelSugbo — Cebu Day Tours & Packages',
+    title: 'TravelSugbo — Cebu Airport & Island Transfers',
     description:
-      'Book Cebu day tours and multi-day packages direct with TravelSugbo. Private vans, licensed drivers, pay a 30% deposit online.',
+      'Book private airport and island transfers in Cebu direct with TravelSugbo. Private vans, licensed drivers. Reserve with a 30% deposit online.',
     ogImage: null,
   },
 
@@ -621,7 +626,7 @@ export const SEED_SETTINGS: SettingsBlocks = {
     },
     {
       step: 4,
-      title: 'Meet your guide',
+      title: 'Meet your driver',
       body: 'Your driver arrives at your pickup point. Settle any balance on the day.',
     },
   ],

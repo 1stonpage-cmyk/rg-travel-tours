@@ -74,8 +74,8 @@ describeWithDb('page resolution', () => {
     expect(meta.canonical).toBe('http://localhost:5180/');
     expect(meta.title.length).toBeGreaterThan(10);
     // The seeded site_seo block, verbatim — not a generated title.
-    expect(meta.title).toBe('TravelSugbo — Cebu Day Tours & Packages');
-    expect(meta.description).toContain('Book Cebu day tours');
+    expect(meta.title).toBe('TravelSugbo — Cebu Airport & Island Transfers');
+    expect(meta.description).toContain('private airport and island transfers');
     // Task 4.3: the home route itself asks for `index,follow`, but the
     // seeded database has `settings.content_unverified = true`, and the
     // site-wide gate in `resolvePage` overrides every route while that is

@@ -74,9 +74,9 @@ export const SETTINGS_FIXTURE: SettingsPayload = {
    */
   showTours: true,
   siteSeo: {
-    title: 'TravelSugbo — Cebu Day Tours & Packages',
+    title: 'TravelSugbo — Cebu Airport & Island Transfers',
     description:
-      'Book Cebu day tours and multi-day packages direct with TravelSugbo. Private vans, licensed drivers, pay a 30% deposit online.',
+      'Book private airport and island transfers in Cebu direct with TravelSugbo. Private vans, licensed drivers. Reserve with a 30% deposit online.',
     ogImage: null,
   },
   trust: {
