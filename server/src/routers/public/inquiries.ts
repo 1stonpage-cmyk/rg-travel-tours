@@ -2,6 +2,7 @@ import { inquiryInput } from '@rg/shared';
 import { TRPCError } from '@trpc/server';
 import { getDb } from '../../db/client';
 import { inquiries } from '../../db/schema';
+import { verifyTurnstile, turnstileRefusedError } from '../../services/turnstile';
 import { publicProcedure, router } from '../../trpc';
 
 export const inquiriesRouter = router({
@@ -13,7 +14,16 @@ export const inquiriesRouter = router({
    * personal data under the Data Privacy Act and the spec restricts
    * personal data to admin-only access.
    */
-  create: publicProcedure.input(inquiryInput).mutation(async ({ input }) => {
+  create: publicProcedure.input(inquiryInput).mutation(async ({ input, ctx }) => {
+    // Cloudflare Turnstile (Task 13) — ONLY the custom-trip request kind is
+    // gated; a contact or package inquiry is unaffected. The owner's own
+    // wording named "the public custom trip request form", not every
+    // inquiry this one procedure happens to share a handler with.
+    if (input.type === 'transfer_custom') {
+      if (!(await verifyTurnstile({ token: input.turnstileToken, remoteIp: ctx.req.ip }))) {
+        throw turnstileRefusedError();
+      }
+    }
     const db = getDb();
     try {
       await db.insert(inquiries).values({

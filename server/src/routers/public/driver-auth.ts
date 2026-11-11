@@ -32,6 +32,7 @@ import {
 } from '../../middleware/session-cookie';
 import { attemptDriverLogin } from '../../services/driver-auth';
 import { revokeSession } from '../../services/sessions';
+import { verifyTurnstile } from '../../services/turnstile';
 import { publicProcedure, router } from '../../trpc';
 
 /**
@@ -94,6 +95,22 @@ export const driverAuthRouter = router({
    * caller cannot ask for a lockout to be evaluated against yesterday.
    */
   login: publicProcedure.input(driverLoginSchema).mutation(async ({ input, ctx }) => {
+    /**
+     * Cloudflare Turnstile (Task 13) — checked BEFORE `attemptDriverLogin`,
+     * deliberately, and reusing the SAME refusal a wrong code/PIN pair gets.
+     * `attemptDriverLogin` owns the per-driver lockout counter (§8's 15/30/60
+     * backoff); a missing or failed Turnstile token is not a wrong PIN, so it
+     * must never reach that counter — only the per-IP limiter in `app.ts`,
+     * which counts every call regardless of reason. Running this after
+     * `attemptDriverLogin` instead would let anyone strip or replay a stale
+     * token to burn through a driver's five-attempt lockout budget without
+     * ever guessing a PIN — a new attack CLAUDE.md's §8 says needs a fresh
+     * owner decision to introduce, which this task does not have.
+     */
+    if (!(await verifyTurnstile({ token: input.turnstileToken, remoteIp: ctx.req.ip }))) {
+      throw asTrpcError('wrong_credentials');
+    }
+
     const result = await attemptDriverLogin({
       code: input.code,
       pin: input.pin,

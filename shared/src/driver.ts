@@ -34,6 +34,9 @@ export const driverLoginSchema = z
   .object({
     code: z.string().trim().min(1).max(20).toUpperCase(),
     pin: z.string().regex(/^[0-9]{6}$/, 'A PIN is six digits'),
+    // Cloudflare Turnstile (Task 13) — optional, since the widget renders
+    // nothing (and never calls back) when Turnstile is not configured.
+    turnstileToken: z.string().optional(),
   })
   .strict();
 export type DriverLoginInput = z.infer<typeof driverLoginSchema>;

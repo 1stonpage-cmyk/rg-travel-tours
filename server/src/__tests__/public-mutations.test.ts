@@ -5,6 +5,7 @@ import { describeWithDb } from './helpers/db';
 import { appRouter } from '../routers/_app';
 import { getDb } from '../db/client';
 import { inquiries, newsletterSubscribers } from '../db/schema';
+import { env } from '../env';
 
 const caller = appRouter.createCaller(testContext());
 const MARK = 'vitest+';
@@ -92,6 +93,55 @@ describeWithDb('public mutations', () => {
     expect(rows[0]?.pax).toBe(4);
     expect(rows[0]?.routeDescription).toBe('Mactan airport to Oslob');
     expect(rows[0]?.convertedBookingId).toBeNull();
+  });
+
+  // -------------------------------------------------------------------------
+  // Turnstile (Task 13) — scoped to `type === 'transfer_custom'` ONLY. The
+  // second test below is the one that proves the scope: a plain `'contact'`
+  // submission with the SAME missing token must still succeed.
+  // -------------------------------------------------------------------------
+
+  it('refuses a transfer_custom inquiry when Turnstile is enabled and the token is missing, storing nothing', async () => {
+    const email = `${MARK}turnstile-custom@example.com`;
+    const original = env.TURNSTILE_ENABLED;
+    (env as { TURNSTILE_ENABLED?: string }).TURNSTILE_ENABLED = '1';
+    try {
+      await expect(
+        caller.inquiries.create({
+          type: 'transfer_custom',
+          name: 'Vitest',
+          email,
+          message: 'Can you take us to Oslob?',
+          consent: true,
+        }),
+      ).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'Please complete the verification and try again.',
+      });
+    } finally {
+      (env as { TURNSTILE_ENABLED?: string }).TURNSTILE_ENABLED = original;
+    }
+    const rows = await getDb().select().from(inquiries).where(eq(inquiries.email, email));
+    expect(rows, 'a Turnstile refusal must leave no inquiry row').toHaveLength(0);
+  });
+
+  it('still accepts a contact inquiry with the SAME missing Turnstile token — the gate is scoped to transfer_custom only', async () => {
+    const email = `${MARK}turnstile-contact@example.com`;
+    const original = env.TURNSTILE_ENABLED;
+    (env as { TURNSTILE_ENABLED?: string }).TURNSTILE_ENABLED = '1';
+    try {
+      await caller.inquiries.create({
+        type: 'contact',
+        name: 'Vitest',
+        email,
+        message: 'Just a general question, no transfer involved.',
+        consent: true,
+      });
+    } finally {
+      (env as { TURNSTILE_ENABLED?: string }).TURNSTILE_ENABLED = original;
+    }
+    const rows = await getDb().select().from(inquiries).where(eq(inquiries.email, email));
+    expect(rows, 'a contact inquiry must not be gated by Turnstile').toHaveLength(1);
   });
 
   it('treats a duplicate newsletter signup as success, not an error', async () => {

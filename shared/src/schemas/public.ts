@@ -70,6 +70,13 @@ export const inquiryInput = z.object({
   consent: z.boolean().refine((value) => value === true, {
     message: 'Consent is required',
   }),
+  /**
+   * Cloudflare Turnstile (Task 13). Optional here because the gate is only
+   * checked server-side for `type === 'transfer_custom'` — every other
+   * inquiry type ignores this field entirely, so it cannot be required at
+   * the schema level.
+   */
+  turnstileToken: z.string().optional(),
 });
 
 export const newsletterInput = z.object({

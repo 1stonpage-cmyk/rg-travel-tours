@@ -41,6 +41,7 @@ import { createApp } from '../app';
 import { appRouter } from '../routers/_app';
 import { getDb, getPool } from '../db/client';
 import { auditLog, drivers, sessions, users } from '../db/schema';
+import { env } from '../env';
 import * as driverAuthService from '../services/driver-auth';
 import { attemptDriverLogin } from '../services/driver-auth';
 import { LOCKOUT_SCHEDULE_MINUTES, MAX_FAILED_ATTEMPTS } from '../services/driver-lockout';
@@ -637,6 +638,85 @@ describeWithDb('driver.login / driver.logout (resolvers)', () => {
     });
 
     expect(set, 'a refused driver login handed out a cookie').toHaveLength(0);
+  }, 30_000);
+
+  // -------------------------------------------------------------------------
+  // Turnstile (Task 13). Ordering decision, recorded here and in
+  // `routers/public/driver-auth.ts`: the check runs BEFORE
+  // `attemptDriverLogin`, so a Turnstile refusal (a) gets the exact same
+  // `wrong_credentials` shape a wrong PIN gets, even against a driver's own
+  // genuinely correct code+PIN, and (b) never touches the per-driver
+  // lockout counter — only `attemptDriverLogin` itself writes that counter.
+  // -------------------------------------------------------------------------
+
+  it('refuses a correct code+PIN pair with the byte-identical wrong_credentials shape when Turnstile is enabled and no token is sent', async () => {
+    const { code, pin } = await makeDriverWithPin();
+    const { res } = captureResponse();
+    const api = appRouter.createCaller({
+      req: { cookies: {} },
+      res,
+      driverSession: null,
+    } as never);
+
+    const original = env.TURNSTILE_ENABLED;
+    (env as { TURNSTILE_ENABLED?: string }).TURNSTILE_ENABLED = '1';
+    let turnstileRefusal: unknown;
+    try {
+      // The genuinely correct code+PIN — proves the check runs before the
+      // credential is ever looked at, not merely that it refuses bad ones.
+      turnstileRefusal = await api.driver.login({ code, pin }).catch((e: unknown) => e);
+    } finally {
+      (env as { TURNSTILE_ENABLED?: string }).TURNSTILE_ENABLED = original;
+    }
+
+    // The control case, with Turnstile back off: a genuinely wrong PIN,
+    // going through `attemptDriverLogin`.
+    const wrongPinRefusal = await api.driver
+      .login({ code, pin: pin === '000000' ? '111111' : '000000' })
+      .catch((e: unknown) => e);
+
+    expect(turnstileRefusal).toMatchObject({ code: 'UNAUTHORIZED', message: 'wrong_credentials' });
+    expect(wrongPinRefusal).toMatchObject({ code: 'UNAUTHORIZED', message: 'wrong_credentials' });
+    // Byte-identical, not merely "both refuse" — a difference here would be
+    // the same oracle BUG-122's own tests exist to rule out elsewhere.
+    expect((turnstileRefusal as { code: string }).code).toBe(
+      (wrongPinRefusal as { code: string }).code,
+    );
+    expect((turnstileRefusal as { message: string }).message).toBe(
+      (wrongPinRefusal as { message: string }).message,
+    );
+  }, 30_000);
+
+  it('does not count a Turnstile refusal against the per-driver PIN lockout counter', async () => {
+    const { code, pin, driverId } = await makeDriverWithPin();
+    const { res } = captureResponse();
+    const api = appRouter.createCaller({
+      req: { cookies: {} },
+      res,
+      driverSession: null,
+    } as never);
+
+    const before = await driverRow(driverId);
+    expect(before.failedAttempts).toBe(0);
+
+    const original = env.TURNSTILE_ENABLED;
+    (env as { TURNSTILE_ENABLED?: string }).TURNSTILE_ENABLED = '1';
+    try {
+      await expect(api.driver.login({ code, pin })).rejects.toMatchObject({
+        code: 'UNAUTHORIZED',
+        message: 'wrong_credentials',
+      });
+    } finally {
+      (env as { TURNSTILE_ENABLED?: string }).TURNSTILE_ENABLED = original;
+    }
+
+    const after = await driverRow(driverId);
+    expect(
+      after.failedAttempts,
+      'a Turnstile refusal must not count against the per-driver PIN lockout — only ' +
+        'attemptDriverLogin may touch that counter, and the ordering decision keeps it ' +
+        'from ever being called here',
+    ).toBe(before.failedAttempts);
   }, 30_000);
 
   /**

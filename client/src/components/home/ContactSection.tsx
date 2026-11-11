@@ -3,6 +3,7 @@ import { useState, type FormEvent, type ReactNode } from 'react';
 import { ViberGlyph, WhatsAppGlyph } from '@/components/common/BrandGlyphs';
 import FieldError from '@/components/common/FieldError';
 import SectionHeading from '@/components/common/SectionHeading';
+import TurnstileWidget from '@/components/common/TurnstileWidget';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -62,7 +63,19 @@ export default function ContactSection() {
    * sends — see `handleSubmit` below.
    */
   const [requestKind, setRequestKind] = useState<'contact' | 'transfer_custom'>('contact');
-  const sendInquiry = trpc.inquiries.create.useMutation();
+  /**
+   * Cloudflare Turnstile (Task 13), scoped to the `transfer_custom` branch
+   * ONLY — a plain contact message is never gated. See `handleSubmit` below:
+   * `turnstileToken` is appended to the `transfer_custom` mutate call and
+   * nowhere else.
+   */
+  const [turnstileToken, setTurnstileToken] = useState<string | undefined>(undefined);
+  // A Turnstile token is single-use — bump this to remount the widget (and
+  // get a fresh one) after any failed attempt, not only a Turnstile refusal.
+  const [turnstileResetKey, setTurnstileResetKey] = useState(0);
+  const sendInquiry = trpc.inquiries.create.useMutation({
+    onError: () => setTurnstileResetKey((key) => key + 1),
+  });
 
   function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -96,6 +109,7 @@ export default function ContactSection() {
           phone: phone === '' ? undefined : phone,
           message: String(data.get('message') ?? ''),
           consent: true,
+          turnstileToken,
         },
         { onSuccess: () => form.reset() },
       );
@@ -397,6 +411,16 @@ export default function ContactSection() {
                     className="tap-target"
                   />
                   <FieldError id="contact-route-error" message={fieldErrors?.routeDescription} />
+                </div>
+                {/*
+                 * Cloudflare Turnstile (Task 13), scoped to this branch
+                 * only — a plain contact message is never gated. Renders
+                 * nothing when Turnstile is not configured (local dev, or
+                 * switched off); remounted via `key` after any failed
+                 * submit, since a token is single-use.
+                 */}
+                <div className="sm:col-span-2">
+                  <TurnstileWidget key={turnstileResetKey} onVerify={setTurnstileToken} />
                 </div>
               </div>
             ) : null}

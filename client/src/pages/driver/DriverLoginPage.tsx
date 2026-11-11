@@ -52,6 +52,7 @@ import { useNavigate } from 'react-router-dom';
 import { Loader2, LogIn } from 'lucide-react';
 import { TRPCClientError } from '@trpc/client';
 import type { DriverLoginRefusal } from '@rg/shared';
+import TurnstileWidget from '@/components/common/TurnstileWidget';
 import PinPad from '@/components/driver/PinPad';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -149,10 +150,17 @@ export default function DriverLoginPage() {
   const [code, setCode] = useState('');
   const [pin, setPin] = useState('');
   const [refusal, setRefusal] = useState<Refusal | null>(null);
+  const [turnstileToken, setTurnstileToken] = useState<string | undefined>(undefined);
+  // A Turnstile token is single-use — bump this to remount the widget (and
+  // get a fresh one) after any failed attempt, not only a Turnstile refusal.
+  const [turnstileResetKey, setTurnstileResetKey] = useState(0);
 
   const login = trpc.driver.login.useMutation({
     onSuccess: () => navigate('/driver', { replace: true }),
-    onError: (error) => setRefusal(describeRefusal(error)),
+    onError: (error) => {
+      setRefusal(describeRefusal(error));
+      setTurnstileResetKey((k) => k + 1); // tokens are single-use
+    },
   });
 
   const ready = code.trim().length > 0 && pin.length === PIN_LENGTH;
@@ -161,7 +169,7 @@ export default function DriverLoginPage() {
     event.preventDefault();
     if (!ready) return;
     setRefusal(null);
-    login.mutate({ code: code.trim(), pin });
+    login.mutate({ code: code.trim(), pin, turnstileToken });
   }
 
   return (
@@ -246,6 +254,13 @@ export default function DriverLoginPage() {
             disabled={login.isPending}
             describedBy={refusal ? ERROR_ID : undefined}
           />
+
+          {/*
+           * Renders nothing when Turnstile is not configured (local dev, or
+           * switched off) — see the component's own note. Remounted via
+           * `key` after any failed submit, since a token is single-use.
+           */}
+          <TurnstileWidget key={turnstileResetKey} onVerify={setTurnstileToken} />
 
           <Button
             type="submit"
