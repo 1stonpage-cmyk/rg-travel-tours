@@ -191,6 +191,38 @@ describeWithDb('public queries', () => {
     expect((await caller.tours.list({})).length).toBe(6);
   });
 
+  it('packages.list and packages.bySlug are gated by show_tours, same pattern as tours (Decision 2)', async () => {
+    const db = getDb();
+    const packageSlug = 'cebu-highlights-3d2n';
+
+    // The premise, asserted rather than assumed.
+    const before = await caller.packages.list();
+    expect(before.length).toBe(3);
+    await expect(caller.packages.bySlug({ slug: packageSlug })).resolves.toBeDefined();
+
+    await db.update(settingsTable).set({ value: false }).where(eq(settingsTable.key, 'show_tours'));
+
+    try {
+      expect(await caller.packages.list()).toEqual([]);
+      await expect(caller.packages.bySlug({ slug: packageSlug })).rejects.toThrow(/NOT_FOUND/);
+      // Byte-identical to an unknown slug's refusal — same BUG-122 shape tours.bySlug already has.
+      const hidden = await caller.packages
+        .bySlug({ slug: packageSlug })
+        .catch((e: unknown) => (e as Error).message);
+      const unknown = await caller.packages
+        .bySlug({ slug: '__no_such_package__' })
+        .catch((e: unknown) => (e as Error).message);
+      expect(hidden).toBe(`NOT_FOUND: no package found for slug "${packageSlug}"`);
+      expect(unknown).toBe(`NOT_FOUND: no package found for slug "__no_such_package__"`);
+    } finally {
+      const { resetTestDb } = await import('./helpers/test-db');
+      await resetTestDb();
+    }
+
+    // Baseline restored — packages are visible again.
+    expect((await caller.packages.list()).length).toBe(3);
+  });
+
   // Fix round 2 (review F1): placeholder-data.ts renders a "Free
   // cancellation" badge from an explicit per-tour boolean on five of the
   // six tours today. seed-data.ts left `free_cancel_hours` NULL on every

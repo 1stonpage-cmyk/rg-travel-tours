@@ -259,7 +259,7 @@ describeWithDb('buildSitemap', () => {
    * are about which URLs `collectSitemapUrls()` emits, which the site-wide
    * gate does not affect at all.
    */
-  it('omits /tours and every tour detail URL while show_tours is off', async () => {
+  it('omits /tours, every tour detail URL, and every package detail URL while show_tours is off', async () => {
     const db = getDb();
 
     // The premise: both halves really are listed while the switch is on.
@@ -275,13 +275,17 @@ describeWithDb('buildSitemap', () => {
       expect(locs).not.toContain(absoluteUrl('/tours'));
       expect(locs.filter((loc) => loc.includes('/tours/'))).toEqual([]);
 
-      // Everything else stays: home, the four legal pages, and every
-      // package detail URL — this flag is only about tours.
+      // Everything else stays: home and the four legal pages.
       expect(locs).toContain(absoluteUrl('/'));
       for (const path of ['/privacy', '/terms', '/refund-policy', '/cookies']) {
         expect(locs, path).toContain(absoluteUrl(path));
       }
-      expect(locs).toContain(absoluteUrl('/packages/cebu-highlights-3d2n'));
+
+      // Decision 2 (2026-11-10) supersedes the earlier "this flag is only
+      // about tours" comment — package detail URLs are dropped too, same as
+      // tour detail URLs just above.
+      expect(locs).not.toContain(absoluteUrl('/packages/cebu-highlights-3d2n'));
+      expect(locs.filter((loc) => loc.includes('/packages/'))).toEqual([]);
 
       // And the document itself, not only the collector.
       const xml = await buildSitemap();

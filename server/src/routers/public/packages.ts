@@ -1,6 +1,7 @@
 import { packagesBySlugInput } from '@rg/shared';
 import { TRPCError } from '@trpc/server';
 import { asc, eq } from 'drizzle-orm';
+import { readShowTours } from '../../content/settings';
 import { getDb } from '../../db/client';
 import { packages } from '../../db/schema';
 import { publicProcedure, router } from '../../trpc';
@@ -24,6 +25,10 @@ export interface PackageListItem {
 
 export const packagesRouter = router({
   list: publicProcedure.query(async (): Promise<PackageListItem[]> => {
+    // The `show_tours` gate (owner decision 2026-11-10, Decision 2) —
+    // packages now follow the exact same rule as tours.list (T15/BUG-122):
+    // an empty catalog, not an error, checked before any package query.
+    if (!(await readShowTours())) return [];
     const db = getDb();
     const rows = await db
       .select()
@@ -57,6 +62,16 @@ export const packagesRouter = router({
   bySlug: publicProcedure
     .input(packagesBySlugInput)
     .query(async ({ input }): Promise<PackageListItem> => {
+      // The `show_tours` gate (Decision 2). The SAME message, byte for
+      // byte, the inactive-row branch below throws — a hidden package and a
+      // slug naming nothing must be indistinguishable (BUG-122's rule,
+      // applied here for the first time).
+      if (!(await readShowTours())) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: `NOT_FOUND: no package found for slug "${input.slug}"`,
+        });
+      }
       const db = getDb();
       const [row] = await db.select().from(packages).where(eq(packages.slug, input.slug));
 

@@ -96,10 +96,11 @@ describeWithDb('page resolution', () => {
   });
 
   /**
-   * The `show_tours` gate on the two tour routes (transfers-launch plan,
-   * Task T15). Both answer `notFoundMeta()` — 404 and `noindex,nofollow`,
-   * exactly what a path that names nothing gets — rather than 200 with a
-   * title for a catalog the owner has taken off sale.
+   * The `show_tours` gate on the two tour routes and the package detail
+   * route (transfers-launch plan, Task T15; packages added by owner decision
+   * 2026-11-10, Decision 2). All three answer `notFoundMeta()` — 404 and
+   * `noindex,nofollow`, exactly what a path that names nothing gets — rather
+   * than 200 with a title for a catalog the owner has taken off sale.
    *
    * The ON state is already proven by the two tests either side of this one
    * ("gives /tours its own title…" above, and the tour-detail title/
@@ -131,8 +132,11 @@ describeWithDb('page resolution', () => {
       expect(detail.title).toBe('Page not found | TravelSugbo');
       expect(detail.canonical).toBe(`http://localhost:5180${tourPath}`);
 
-      // Packages are a different product and are NOT gated by this flag.
-      expect((await resolvePage('/packages/cebu-highlights-3d2n')).status).toBe(200);
+      // Decision 2 (2026-11-10) supersedes the earlier "packages are a
+      // different product" ruling: packages now follow the same gate.
+      const pkg = await resolvePage('/packages/cebu-highlights-3d2n');
+      expect(pkg.status).toBe(404);
+      expect(pkg.robots).toBe('noindex,nofollow');
     } finally {
       await db.update(settings).set({ value: true }).where(eq(settings.key, 'show_tours'));
     }

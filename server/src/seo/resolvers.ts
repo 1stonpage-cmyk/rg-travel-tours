@@ -686,6 +686,11 @@ const resolveTour: Resolver = async (params) => {
 
 const resolvePackage: Resolver = async (params) => {
   const slug = params.slug ?? '';
+  // The `show_tours` gate (owner decision 2026-11-10, Decision 2) —
+  // supersedes the earlier ruling that packages are a separate product.
+  // Same shape as resolveTour: a hidden package is indistinguishable from
+  // one that does not exist.
+  if (!(await readShowTours())) return notFoundMeta(`/packages/${slug}`);
   const [pkg, site] = await Promise.all([loadPackageSeo(slug), readSiteBlocks()]);
   if (!pkg) return notFoundMeta(`/packages/${slug}`);
 

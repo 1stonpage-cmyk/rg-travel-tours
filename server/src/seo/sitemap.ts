@@ -168,12 +168,14 @@ function buildPackageDetailUrls(rows: SitemapRows): SitemapEntry[] {
  * own rule is "read, never invented" — so `lastmod` is omitted for all four (`null`; the renderer
  * below drops the `<lastmod>` tag entirely rather than emit a guessed date).
  *
- * `show_tours` being off (transfers-launch plan, Task T15) drops BOTH tour
- * halves — `/tours` and every `/tours/:slug` — because `resolveToursIndex`
- * and `resolveTour` then answer `notFoundMeta`, i.e. 404 and `noindex`. That
- * is this file's first rule applied to a second gate, not a new rule: the
- * per-route decision is what the sitemap must agree with, and it is now
- * decided by two independent flags rather than one.
+ * `show_tours` being off (transfers-launch plan, Task T15; extended to
+ * packages by owner decision 2026-11-10, Decision 2) drops BOTH tour
+ * halves — `/tours` and every `/tours/:slug` — AND every package detail
+ * URL, because `resolveToursIndex`, `resolveTour` and `resolvePackage` then
+ * all answer `notFoundMeta`, i.e. 404 and `noindex`. That is this file's
+ * first rule applied to a second gate, not a new rule: the per-route
+ * decision is what the sitemap must agree with, and it is now decided by
+ * two independent flags rather than one.
  */
 export async function collectSitemapUrls(): Promise<SitemapEntry[]> {
   const [rows, showTours] = await Promise.all([loadSitemapRows(), readShowTours()]);
@@ -205,12 +207,14 @@ export async function collectSitemapUrls(): Promise<SitemapEntry[]> {
     urls.push(...buildTourDetailUrls(rows));
   }
 
-  // Package detail pages render now too (Task 3, Week 7 plan) and
-  // `resolvePackage` answers `index,follow` — same reasoning as the tour
-  // half above, shipped in the same commit as that page and that robots
-  // line's deletion. Not gated by `show_tours`: packages are a separate
-  // product and this flag is explicitly only about tours.
-  urls.push(...buildPackageDetailUrls(rows));
+  // Package detail pages (Task 3, Week 7 plan). Owner decision 2026-11-10,
+  // Decision 2, supersedes the earlier "packages are a separate product"
+  // ruling: `resolvePackage` now answers `notFoundMeta` while `show_tours`
+  // is off, exactly like the tour half above, so the sitemap must agree —
+  // this file's own absolute rule (see the function's doc comment).
+  if (showTours) {
+    urls.push(...buildPackageDetailUrls(rows));
+  }
 
   return urls;
 }
