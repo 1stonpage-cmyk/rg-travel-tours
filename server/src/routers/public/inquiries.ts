@@ -15,14 +15,12 @@ export const inquiriesRouter = router({
    * personal data to admin-only access.
    */
   create: publicProcedure.input(inquiryInput).mutation(async ({ input, ctx }) => {
-    // Cloudflare Turnstile (Task 13) — ONLY the custom-trip request kind is
-    // gated; a contact or package inquiry is unaffected. The owner's own
-    // wording named "the public custom trip request form", not every
-    // inquiry this one procedure happens to share a handler with.
-    if (input.type === 'transfer_custom') {
-      if (!(await verifyTurnstile({ token: input.turnstileToken, remoteIp: ctx.req.ip }))) {
-        throw turnstileRefusedError();
-      }
+    // Cloudflare Turnstile (Task 13; widened to every inquiry type by owner
+    // decision 2026-11-11, Task 1A) — gated unconditionally, for every
+    // `input.type`, before any write. The scoping to `transfer_custom` only
+    // that stood here previously is superseded.
+    if (!(await verifyTurnstile({ token: input.turnstileToken, remoteIp: ctx.req.ip }))) {
+      throw turnstileRefusedError();
     }
     const db = getDb();
     try {

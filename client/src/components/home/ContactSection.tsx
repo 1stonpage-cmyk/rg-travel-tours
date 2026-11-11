@@ -64,10 +64,9 @@ export default function ContactSection() {
    */
   const [requestKind, setRequestKind] = useState<'contact' | 'transfer_custom'>('contact');
   /**
-   * Cloudflare Turnstile (Task 13), scoped to the `transfer_custom` branch
-   * ONLY — a plain contact message is never gated. See `handleSubmit` below:
-   * `turnstileToken` is appended to the `transfer_custom` mutate call and
-   * nowhere else.
+   * Cloudflare Turnstile (Task 13; widened to both inquiry types by owner
+   * decision 2026-11-11, Task 1A) — gated for every request kind. See
+   * `handleSubmit` below: `turnstileToken` is appended to both mutate calls.
    */
   const [turnstileToken, setTurnstileToken] = useState<string | undefined>(undefined);
   // A Turnstile token is single-use — bump this to remount the widget (and
@@ -126,6 +125,7 @@ export default function ContactSection() {
         phone: phone === '' ? undefined : phone,
         message: String(data.get('message') ?? ''),
         consent: true,
+        turnstileToken,
       },
       { onSuccess: () => form.reset() },
     );
@@ -415,20 +415,6 @@ export default function ContactSection() {
                   />
                   <FieldError id="contact-route-error" message={fieldErrors?.routeDescription} />
                 </div>
-                {/*
-                 * Cloudflare Turnstile (Task 13), scoped to this branch
-                 * only — a plain contact message is never gated. Renders
-                 * nothing when Turnstile is not configured (local dev, or
-                 * switched off); remounted via `key` after any failed
-                 * submit, since a token is single-use.
-                 */}
-                <div className="sm:col-span-2">
-                  <TurnstileWidget
-                    key={turnstileResetKey}
-                    onVerify={setTurnstileToken}
-                    onError={() => setTurnstileToken(undefined)}
-                  />
-                </div>
               </div>
             ) : null}
 
@@ -523,6 +509,20 @@ export default function ContactSection() {
             ) : (
               <FieldError id="contact-consent-error" message={fieldErrors?.consent} />
             )}
+
+            {/*
+             * Cloudflare Turnstile (Task 13; widened to both inquiry types
+             * by owner decision 2026-11-11, Task 1A) — gated for both
+             * "General message" and "Custom trip request". Renders nothing
+             * when Turnstile is not configured (local dev, or switched
+             * off); remounted via `key` after any failed submit, since a
+             * token is single-use.
+             */}
+            <TurnstileWidget
+              key={turnstileResetKey}
+              onVerify={setTurnstileToken}
+              onError={() => setTurnstileToken(undefined)}
+            />
 
             <Button
               type="submit"

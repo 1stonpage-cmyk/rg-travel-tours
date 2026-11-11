@@ -96,9 +96,9 @@ describeWithDb('public mutations', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Turnstile (Task 13) — scoped to `type === 'transfer_custom'` ONLY. The
-  // second test below is the one that proves the scope: a plain `'contact'`
-  // submission with the SAME missing token must still succeed.
+  // Turnstile (Task 13; widened to every inquiry type by owner decision
+  // 2026-11-11, Task 1A) — gated for EVERY `input.type`, unconditionally.
+  // Both tests below prove the same shape for both types.
   // -------------------------------------------------------------------------
 
   it('refuses a transfer_custom inquiry when Turnstile is enabled and the token is missing, storing nothing', async () => {
@@ -125,23 +125,60 @@ describeWithDb('public mutations', () => {
     expect(rows, 'a Turnstile refusal must leave no inquiry row').toHaveLength(0);
   });
 
-  it('still accepts a contact inquiry with the SAME missing Turnstile token — the gate is scoped to transfer_custom only', async () => {
+  it('refuses a contact inquiry when Turnstile is enabled and the token is missing, storing nothing (owner decision 2026-11-11: every type is gated)', async () => {
     const email = `${MARK}turnstile-contact@example.com`;
     const original = env.TURNSTILE_ENABLED;
     (env as { TURNSTILE_ENABLED?: string }).TURNSTILE_ENABLED = '1';
     try {
-      await caller.inquiries.create({
-        type: 'contact',
-        name: 'Vitest',
-        email,
-        message: 'Just a general question, no transfer involved.',
-        consent: true,
+      await expect(
+        caller.inquiries.create({
+          type: 'contact',
+          name: 'Vitest',
+          email,
+          message: 'Just a general question, no transfer involved.',
+          consent: true,
+        }),
+      ).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'Please complete the verification and try again.',
       });
     } finally {
       (env as { TURNSTILE_ENABLED?: string }).TURNSTILE_ENABLED = original;
     }
     const rows = await getDb().select().from(inquiries).where(eq(inquiries.email, email));
-    expect(rows, 'a contact inquiry must not be gated by Turnstile').toHaveLength(1);
+    expect(rows, 'a Turnstile refusal must leave no inquiry row').toHaveLength(0);
+  });
+
+  it('accepts both inquiry types with Turnstile switched off (feature-off path, no network call)', async () => {
+    const contactEmail = `${MARK}turnstile-off-contact@example.com`;
+    const customEmail = `${MARK}turnstile-off-custom@example.com`;
+    // env.TURNSTILE_ENABLED is left at its current (unset/off) value on
+    // purpose — this is the feature-off branch of verifyTurnstile(), which
+    // returns true with no network call, rather than a live gateway call.
+    await caller.inquiries.create({
+      type: 'contact',
+      name: 'Vitest',
+      email: contactEmail,
+      message: 'Just a general question, no transfer involved.',
+      consent: true,
+    });
+    await caller.inquiries.create({
+      type: 'transfer_custom',
+      name: 'Vitest',
+      email: customEmail,
+      message: 'Can you take us to Oslob?',
+      consent: true,
+    });
+    const contactRows = await getDb()
+      .select()
+      .from(inquiries)
+      .where(eq(inquiries.email, contactEmail));
+    const customRows = await getDb()
+      .select()
+      .from(inquiries)
+      .where(eq(inquiries.email, customEmail));
+    expect(contactRows).toHaveLength(1);
+    expect(customRows).toHaveLength(1);
   });
 
   it('treats a duplicate newsletter signup as success, not an error', async () => {

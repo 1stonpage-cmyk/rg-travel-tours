@@ -7,6 +7,7 @@ declare global {
         container: HTMLElement,
         options: {
           sitekey: string;
+          theme?: 'light' | 'dark' | 'auto';
           callback: (token: string) => void;
           'error-callback'?: () => void;
           'expired-callback'?: () => void;
@@ -85,6 +86,7 @@ export default function TurnstileWidget({
         if (cancelled || !containerRef.current || !window.turnstile) return;
         widgetId = window.turnstile.render(containerRef.current, {
           sitekey: SITE_KEY,
+          theme: 'light',
           callback: onVerify,
           'error-callback': onError,
           'expired-callback': onError,
