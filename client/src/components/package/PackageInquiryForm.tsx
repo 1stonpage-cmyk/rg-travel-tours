@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import FieldError from '@/components/common/FieldError';
+import TurnstileWidget from '@/components/common/TurnstileWidget';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -35,7 +36,21 @@ export default function PackageInquiryForm({
   packageTitle: string;
 }) {
   const [consentError, setConsentError] = useState<string | null>(null);
-  const sendInquiry = trpc.inquiries.create.useMutation();
+  /**
+   * Cloudflare Turnstile (owner decision 2026-11-11, follow-up: `package`
+   * is no longer excluded from the server-side gate). Same shape as
+   * ContactSection.tsx's own wiring — see that component's comments for
+   * why the mutation's `onError` bumps the reset key but the widget's own
+   * `onError` only clears the token.
+   */
+  const [turnstileToken, setTurnstileToken] = useState<string | undefined>(undefined);
+  const [turnstileResetKey, setTurnstileResetKey] = useState(0);
+  const sendInquiry = trpc.inquiries.create.useMutation({
+    onError: () => {
+      setTurnstileToken(undefined);
+      setTurnstileResetKey((key) => key + 1);
+    },
+  });
 
   function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -63,6 +78,7 @@ export default function PackageInquiryForm({
           dates ? `Preferred dates: ${dates}.` : 'Dates flexible.'
         }`,
         consent: true,
+        turnstileToken,
       },
       { onSuccess: () => form.reset() },
     );
@@ -161,6 +177,20 @@ export default function PackageInquiryForm({
           <FieldError id="package-detail-inquiry-consent-error" message={fieldErrors.consent} />
         </div>
       ) : null}
+
+      {/*
+       * Cloudflare Turnstile (owner decision 2026-11-11, follow-up).
+       * Renders nothing when Turnstile is not configured (local dev, or
+       * switched off); remounted via `key` after any failed submit, since
+       * a token is single-use.
+       */}
+      <div className="sm:col-span-2">
+        <TurnstileWidget
+          key={turnstileResetKey}
+          onVerify={setTurnstileToken}
+          onError={() => setTurnstileToken(undefined)}
+        />
+      </div>
 
       <div className="sm:col-span-2">
         <Button

@@ -58,26 +58,22 @@ export const inquiriesRouter = router({
    */
   create: publicProcedure.input(inquiryInput).mutation(async ({ input, ctx }) => {
     // Cloudflare Turnstile (Task 13; widened by owner decision 2026-11-11,
-    // Task 1A) — gated for both ContactSection request kinds, `contact` and
-    // `transfer_custom`. `package` is DELIBERATELY excluded: it is submitted
-    // by PackagesSection.tsx and PackageInquiryForm.tsx, neither of which
-    // renders a TurnstileWidget or sends a token, so gating it here would
-    // refuse every package inquiry outright the moment Turnstile is
-    // switched on — a real regression of a working flow, not something the
-    // owner asked for. The owner's "every type" instruction meant every
-    // type the contact form itself submits, not literally every member of
-    // `INQUIRY_TYPES`. This is a DENY-list (`!== 'package'`), not an
-    // allow-list, and that is deliberate too: a future 4th inquiry type is
-    // GATED BY DEFAULT (fail-closed), same as `contact`/`transfer_custom`
-    // are today. Whoever adds one must either ship it with its own
-    // TurnstileWidget/token, or make the conscious choice to add it to this
-    // exclusion — it cannot silently land ungated the way `package` almost
-    // did. Revisit the `package` exclusion itself only alongside a task
-    // that adds a widget to the package form(s).
-    if (input.type !== 'package') {
-      if (!(await verifyTurnstile({ token: input.turnstileToken, remoteIp: ctx.req.ip }))) {
-        throw turnstileRefusedError();
-      }
+    // Task 1A, to `contact`+`transfer_custom`; widened AGAIN by owner
+    // decision 2026-11-11, follow-up, to EVERY inquiry type). 1A had
+    // deliberately excluded `package` because neither of its two forms
+    // (PackagesSection.tsx, PackageInquiryForm.tsx) rendered a
+    // TurnstileWidget yet — gating it then would have refused every package
+    // inquiry outright. The owner has since reviewed that exclusion and
+    // overridden it directly: both package forms now carry their own
+    // widget, so there is no longer a reason for `package` to be the one
+    // type this check skips. The gate is unconditional again, exactly as it
+    // was right after the first widening and before the `package`
+    // exclusion existed — every `input.type` is checked, with no deny-list
+    // left to maintain. A future 4th inquiry type is gated by default
+    // (fail-closed) the same way; it needs its own widget before launch,
+    // not an exclusion here.
+    if (!(await verifyTurnstile({ token: input.turnstileToken, remoteIp: ctx.req.ip }))) {
+      throw turnstileRefusedError();
     }
     const db = getDb();
     // One clock read at the request boundary, passed down to the ack mail's

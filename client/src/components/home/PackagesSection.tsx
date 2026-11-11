@@ -5,6 +5,7 @@ import QueryBoundary, { EmptyState } from '@/components/common/QueryBoundary';
 import { Skeleton } from '@/components/common/Skeleton';
 import FieldError from '@/components/common/FieldError';
 import SectionHeading from '@/components/common/SectionHeading';
+import TurnstileWidget from '@/components/common/TurnstileWidget';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -81,7 +82,23 @@ export default function PackagesSection() {
   const packagesQuery = trpc.packages.list.useQuery();
   const [selected, setSelected] = useState<string | null>(null);
   const [consentError, setConsentError] = useState<string | null>(null);
-  const sendInquiry = trpc.inquiries.create.useMutation();
+  /**
+   * Cloudflare Turnstile (owner decision 2026-11-11, follow-up: `package`
+   * is no longer excluded from the server-side gate). Same shape as
+   * ContactSection.tsx's own wiring. These hooks live at the component's
+   * own top level — not inside the `QueryBoundary` render-prop closure
+   * below, where `handleSubmit` and the `<form>` live — because hooks
+   * can't be called conditionally/inside a callback; the token and reset
+   * key are plain values the closure below reads and sets.
+   */
+  const [turnstileToken, setTurnstileToken] = useState<string | undefined>(undefined);
+  const [turnstileResetKey, setTurnstileResetKey] = useState(0);
+  const sendInquiry = trpc.inquiries.create.useMutation({
+    onError: () => {
+      setTurnstileToken(undefined);
+      setTurnstileResetKey((key) => key + 1);
+    },
+  });
 
   /*
    * `inquiries.create`'s refusal, split as everywhere else in task A4: a
@@ -162,6 +179,7 @@ export default function PackagesSection() {
                   dates ? `Preferred dates: ${dates}.` : 'Dates flexible.'
                 }`,
                 consent: true,
+                turnstileToken,
               },
               { onSuccess: () => form.reset() },
             );
@@ -333,6 +351,21 @@ export default function PackagesSection() {
                     <FieldError id="package-inquiry-consent-error" message={fieldErrors.consent} />
                   </div>
                 ) : null}
+
+                {/*
+                 * Cloudflare Turnstile (owner decision 2026-11-11,
+                 * follow-up). Renders nothing when Turnstile is not
+                 * configured (local dev, or switched off); remounted via
+                 * `key` after any failed submit, since a token is
+                 * single-use.
+                 */}
+                <div className="sm:col-span-2">
+                  <TurnstileWidget
+                    key={turnstileResetKey}
+                    onVerify={setTurnstileToken}
+                    onError={() => setTurnstileToken(undefined)}
+                  />
+                </div>
 
                 <div className="sm:col-span-2">
                   <Button

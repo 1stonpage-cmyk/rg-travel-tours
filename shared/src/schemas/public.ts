@@ -72,11 +72,15 @@ export const inquiryInput = z.object({
   }),
   /**
    * Cloudflare Turnstile (Task 13; widened by owner decision 2026-11-11,
-   * Task 1A). Optional here because the gate is checked server-side for
-   * `contact` and `transfer_custom` only — `package` is deliberately
-   * excluded (no form that submits it renders a TurnstileWidget) and
-   * ignores this field entirely, so it cannot be required at the schema
-   * level.
+   * Task 1A to `contact`+`transfer_custom`; widened again by owner decision
+   * 2026-11-11, follow-up, to EVERY inquiry type including `package`).
+   * `package` now has its own widget on both of its forms (PackagesSection
+   * and PackageInquiryForm), so the gate is checked server-side for every
+   * `input.type` with no exclusion left. Optional here rather than
+   * required at the schema level because the check itself is feature-
+   * flagged (`verifyTurnstile()` is a no-op, returning `true`, whenever
+   * `TURNSTILE_ENABLED !== '1'`) — a required field would break every
+   * submission whenever the feature is switched off.
    */
   turnstileToken: z.string().optional(),
 });

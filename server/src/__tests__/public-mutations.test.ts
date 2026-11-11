@@ -97,14 +97,17 @@ describeWithDb('public mutations', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Turnstile (Task 13; widened by owner decision 2026-11-11, Task 1A) —
-  // gated for `contact` and `transfer_custom`, the two ContactSection
-  // request kinds. `package` is DELIBERATELY excluded (1A ruling,
-  // 2026-11-11): neither PackagesSection nor PackageInquiryForm renders a
-  // widget. Four tests below: two prove the gate refuses a tokenless
-  // `contact`/`transfer_custom` submission, one proves `package` is NOT
-  // gated (a regression guard for that exclusion), and one proves both
-  // gated types are still accepted via the feature-off path.
+  // Turnstile (Task 13; widened by owner decision 2026-11-11, Task 1A, to
+  // `contact`+`transfer_custom`; widened AGAIN by owner decision
+  // 2026-11-11, follow-up, to EVERY inquiry type). `package` was DELIBERATELY
+  // excluded under 1A because neither PackagesSection nor PackageInquiryForm
+  // rendered a widget at the time — the owner has since reviewed that
+  // exclusion and overridden it directly, now that both package forms carry
+  // their own TurnstileWidget. Five tests below: three prove the gate
+  // refuses a tokenless submission for each of the three gated types
+  // (`contact`, `transfer_custom`, `package`), one proves a refusal sends no
+  // mail, and one proves all three types are still accepted via the
+  // feature-off path (Turnstile switched off entirely).
   // -------------------------------------------------------------------------
 
   it('refuses a transfer_custom inquiry when Turnstile is enabled and the token is missing, storing nothing', async () => {
@@ -190,28 +193,34 @@ describeWithDb('public mutations', () => {
     expect(sent, 'a Turnstile refusal must send no mail at all').toHaveLength(0);
   });
 
-  it('still accepts a package inquiry with the SAME missing Turnstile token — package is deliberately excluded from the gate (1A ruling, 2026-11-11): neither PackagesSection nor PackageInquiryForm renders a TurnstileWidget, so gating it would refuse every package inquiry outright', async () => {
+  it('refuses a package inquiry when Turnstile is enabled and the token is missing, storing nothing (owner decision 2026-11-11, follow-up: package is no longer excluded)', async () => {
     const email = `${MARK}turnstile-package@example.com`;
     const original = env.TURNSTILE_ENABLED;
     (env as { TURNSTILE_ENABLED?: string }).TURNSTILE_ENABLED = '1';
     try {
-      await caller.inquiries.create({
-        type: 'package',
-        name: 'Vitest',
-        email,
-        message: 'Package enquiry: Oslob day tour.',
-        consent: true,
+      await expect(
+        caller.inquiries.create({
+          type: 'package',
+          name: 'Vitest',
+          email,
+          message: 'Package enquiry: Oslob day tour.',
+          consent: true,
+        }),
+      ).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'Please complete the verification and try again.',
       });
     } finally {
       (env as { TURNSTILE_ENABLED?: string }).TURNSTILE_ENABLED = original;
     }
     const rows = await getDb().select().from(inquiries).where(eq(inquiries.email, email));
-    expect(rows, 'a package inquiry must not be gated by Turnstile').toHaveLength(1);
+    expect(rows, 'a Turnstile refusal must leave no inquiry row').toHaveLength(0);
   });
 
-  it('accepts both inquiry types with Turnstile switched off (feature-off path, no network call)', async () => {
+  it('accepts all three inquiry types with Turnstile switched off (feature-off path, no network call)', async () => {
     const contactEmail = `${MARK}turnstile-off-contact@example.com`;
     const customEmail = `${MARK}turnstile-off-custom@example.com`;
+    const packageEmail = `${MARK}turnstile-off-package@example.com`;
     // env.TURNSTILE_ENABLED is left at its current (unset/off) value on
     // purpose — this is the feature-off branch of verifyTurnstile(), which
     // returns true with no network call, rather than a live gateway call.
@@ -229,6 +238,13 @@ describeWithDb('public mutations', () => {
       message: 'Can you take us to Oslob?',
       consent: true,
     });
+    await caller.inquiries.create({
+      type: 'package',
+      name: 'Vitest',
+      email: packageEmail,
+      message: 'Package enquiry: Oslob day tour.',
+      consent: true,
+    });
     const contactRows = await getDb()
       .select()
       .from(inquiries)
@@ -237,8 +253,13 @@ describeWithDb('public mutations', () => {
       .select()
       .from(inquiries)
       .where(eq(inquiries.email, customEmail));
+    const packageRows = await getDb()
+      .select()
+      .from(inquiries)
+      .where(eq(inquiries.email, packageEmail));
     expect(contactRows).toHaveLength(1);
     expect(customRows).toHaveLength(1);
+    expect(packageRows).toHaveLength(1);
   });
 
   it('treats a duplicate newsletter signup as success, not an error', async () => {
