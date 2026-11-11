@@ -71,10 +71,12 @@ export const inquiryInput = z.object({
     message: 'Consent is required',
   }),
   /**
-   * Cloudflare Turnstile (Task 13). Optional here because the gate is only
-   * checked server-side for `type === 'transfer_custom'` — every other
-   * inquiry type ignores this field entirely, so it cannot be required at
-   * the schema level.
+   * Cloudflare Turnstile (Task 13; widened by owner decision 2026-11-11,
+   * Task 1A). Optional here because the gate is checked server-side for
+   * `contact` and `transfer_custom` only — `package` is deliberately
+   * excluded (no form that submits it renders a TurnstileWidget) and
+   * ignores this field entirely, so it cannot be required at the schema
+   * level.
    */
   turnstileToken: z.string().optional(),
 });
