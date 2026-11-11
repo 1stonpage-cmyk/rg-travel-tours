@@ -117,6 +117,23 @@ export function visibleNav(showTours: boolean) {
   return SITE.nav.filter((item) => !hiddenWhileToursOff.has(item.href) || showTours);
 }
 
+/**
+ * Transfers-wording tagline shown under the footer wordmark while
+ * `show_tours` is off (owner decision 2026-11-11, 1C). `SITE.tagline`'s own
+ * tour-wording promise only makes sense while tours are for sale.
+ */
+const TRANSFERS_TAGLINE = 'Private airport and island transfers across Cebu, booked direct.';
+
+/**
+ * Same shape as `visibleNav(showTours)` above: an exported function taking
+ * the boolean, rather than turning `SITE.tagline` itself into a function or
+ * restructuring `SITE` — either of which would break every existing
+ * reader's call-shape.
+ */
+export function siteTagline(showTours: boolean): string {
+  return showTours ? SITE.tagline : TRANSFERS_TAGLINE;
+}
+
 /** Builds a wa.me deep link with an optional prefilled message. */
 export function whatsappLink(message?: string) {
   const base = `https://wa.me/${SITE.contact.altPhone.whatsapp}`;

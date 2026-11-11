@@ -275,6 +275,43 @@ describe('footer hours come from settings, not a second hardcoded copy', () => {
   });
 });
 
+/**
+ * Owner decision 2026-11-11, 1C: the footer tagline is product-neutral while
+ * `show_tours` is off, via `siteTagline(showTours)` — SiteFooter already
+ * reads `settings?.showTours` for `visibleNav` (the T16 nav gate just above
+ * this in the test file list), so this needed no new query.
+ */
+describe('footer tagline follows show_tours (owner decision 2026-11-11, 1C)', () => {
+  // Fixed literal strings, not calls to `siteTagline()` itself — a test that
+  // re-derived its expectation from the function under test would pass no
+  // matter which branch the implementation returned for which input.
+  const TOUR_TAGLINE = 'Cebu day tours and multi-day packages, booked direct.';
+  const TRANSFERS_TAGLINE = 'Private airport and island transfers across Cebu, booked direct.';
+
+  it('shows the existing tour-wording tagline when show_tours is on', async () => {
+    mockTrpc({ 'settings.get': settingsWith({ showTours: true }) });
+    renderWithTrpc(<SiteFooter />);
+
+    const footer = screen.getByRole('contentinfo');
+    // Wait for the resolved settings query before asserting, the same marker
+    // the hours tests above use — the pre-resolution default (showTours
+    // false) must not be what either assertion below is actually seeing.
+    await within(footer).findByText('GCash');
+    expect(within(footer).getByText(TOUR_TAGLINE)).toBeInTheDocument();
+    expect(within(footer).queryByText(TRANSFERS_TAGLINE)).not.toBeInTheDocument();
+  });
+
+  it('shows the transfers-wording tagline when show_tours is off', async () => {
+    mockTrpc({ 'settings.get': settingsWith({ showTours: false }) });
+    renderWithTrpc(<SiteFooter />);
+
+    const footer = screen.getByRole('contentinfo');
+    await within(footer).findByText('GCash');
+    expect(within(footer).getByText(TRANSFERS_TAGLINE)).toBeInTheDocument();
+    expect(within(footer).queryByText(TOUR_TAGLINE)).not.toBeInTheDocument();
+  });
+});
+
 describe('payment methods — footer and FAQ composed from the same settings.paymentMethods, not two static lists', () => {
   it('lists only enabled payment methods in the footer', async () => {
     const methods = SETTINGS_FIXTURE.paymentMethods.filter((m) => m.key !== 'grabpay');

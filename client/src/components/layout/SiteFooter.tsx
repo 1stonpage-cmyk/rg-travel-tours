@@ -3,7 +3,15 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ViberGlyph, WhatsAppGlyph } from '@/components/common/BrandGlyphs';
 import { useConsent } from '@/lib/consent/useConsent';
-import { BUILT_BY, SITE, telLink, viberLink, visibleNav, whatsappLink } from '@/lib/site';
+import {
+  BUILT_BY,
+  SITE,
+  siteTagline,
+  telLink,
+  viberLink,
+  visibleNav,
+  whatsappLink,
+} from '@/lib/site';
 import { trpc } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
 
@@ -93,7 +101,8 @@ export default function SiteFooter() {
   const permits = settings?.permits ?? NO_PERMITS;
   // `show_tours` gate (transfers-launch plan, Task T16) — see `visibleNav`'s
   // own comment. Hidden by default before this resolves, same as SiteHeader.
-  const nav = visibleNav(settings?.showTours ?? false);
+  const showTours = settings?.showTours ?? false;
+  const nav = visibleNav(showTours);
   const paymentMethods = settings?.paymentMethods ?? [];
   /** BUG-100 — same source as ContactSection's hours. See the Clock row below. */
   const hoursNote = settings?.contact.hoursNote ?? null;
@@ -116,7 +125,9 @@ export default function SiteFooter() {
             className="h-8 w-auto"
           />
           <p className="text-brand-blue-100 mt-3 text-base font-medium sm:text-sm">{SITE.motto}</p>
-          <p className="text-brand-blue-200 mt-2 max-w-sm text-base sm:text-sm">{SITE.tagline}</p>
+          <p className="text-brand-blue-200 mt-2 max-w-sm text-base sm:text-sm">
+            {siteTagline(showTours)}
+          </p>
 
           <ul className="mt-6 space-y-2 text-base sm:text-sm">
             {/* Primary line (owner decision 2026-11-11, 1B — WhatsApp/Viber
