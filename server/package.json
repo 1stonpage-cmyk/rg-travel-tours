@@ -17,6 +17,7 @@
     "db:seed": "node scripts/db-preflight.mjs && tsx src/db/seed.ts",
     "db:seed:demo": "node scripts/db-preflight.mjs && tsx src/db/seed-demo.ts",
     "db:clear-demo-transfers": "node scripts/db-preflight.mjs && tsx src/db/clear-demo-transfer-bookings.ts",
+    "db:clear-demo-tours": "node scripts/db-preflight.mjs && tsx src/db/clear-demo-tour-bookings.ts",
     "dev:reset-password": "tsx scripts/dev-reset-staff-password.ts"
   },
   "dependencies": {

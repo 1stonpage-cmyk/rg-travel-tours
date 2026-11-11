@@ -295,20 +295,27 @@ describe('schema conventions, read from the real source', () => {
 
   /**
    * Owner decision 2026-11-10 (transfer-photos task, "fix both unrelated
-   * failures now"): exactly ONE file may hard-delete a `bookings` or
-   * `payments` row — `clear-demo-transfer-bookings.ts`, the dev-only tool
-   * that resets Task 1E's five fixed demo items so `db:seed:demo` can
-   * recreate them with today's actual date. This is a documented
-   * exemption, not a loosened guard: the file fails closed
-   * (`ALLOW_DEMO_SEED=1`, never `NODE_ENV=production`, both checked before
-   * any query), matches only the seed's own five fixed demo identifiers
-   * (never by date or status), refuses outright if any matched booking's
-   * payment was not created by the seed itself, and runs in one
-   * transaction. See its own module doc comment. Any OTHER file that
-   * hard-deletes a booking or a payment still fails this guard — the
-   * exemption is this one path, by name, not a pattern.
+   * failures now"), extended by owner decision 2026-11-11 (Demo Polish
+   * Round 2, Task 4 / "1D"): exactly TWO files may hard-delete a `bookings`
+   * or `payments` row — `clear-demo-transfer-bookings.ts`, the dev-only
+   * tool that resets Task 1E's five fixed demo items so `db:seed:demo` can
+   * recreate them with today's actual date, and its sibling
+   * `clear-demo-tour-bookings.ts`, which does the same for the seed's two
+   * demo TOUR bookings (`RG-SEED23`, `RG-SEED24`). This is a documented,
+   * by-name extension of an existing exemption, not a loosened guard: BOTH
+   * files fail closed (`ALLOW_DEMO_SEED=1`, never `NODE_ENV=production`,
+   * both checked before any query), match only a fixed set of the seed's
+   * own demo identifiers (never by date or status), refuse the whole run
+   * outright if any matched booking's payment was not created by the seed
+   * itself, and run in one transaction. See each file's own module doc
+   * comment. Any OTHER file that hard-deletes a booking or a payment still
+   * fails this guard — the exemption is these two paths, by name, not a
+   * pattern.
    */
-  const HARD_DELETE_EXEMPT_FILES = ['src/db/clear-demo-transfer-bookings.ts'];
+  const HARD_DELETE_EXEMPT_FILES = [
+    'src/db/clear-demo-transfer-bookings.ts',
+    'src/db/clear-demo-tour-bookings.ts',
+  ];
 
   it('never hard-deletes a booking or a payment anywhere in the server source', () => {
     // Drizzle form, scanned across the whole server tree.
@@ -316,13 +323,16 @@ describe('schema conventions, read from the real source', () => {
     expectPatternIsLive(drizzleDelete, 'await db.delete(bookings)', 'Drizzle hard-delete');
     expect(allServerFiles.length).toBeGreaterThan(50);
 
-    // The exemption itself must still be live: if the exempted file ever
+    // Each exemption itself must still be live: if an exempted file ever
     // stops hard-deleting (a rewrite, a rename), the exemption is stale and
-    // must be removed rather than silently kept around for nothing.
-    expect(
-      allServerFiles,
-      `exempted file "${HARD_DELETE_EXEMPT_FILES[0]}" is missing from the server tree`,
-    ).toContain(HARD_DELETE_EXEMPT_FILES[0]);
+    // must be removed rather than silently kept around for nothing. Also
+    // confirms each exempted file is still actually in the tree, rather
+    // than hardcoding one index and leaving a second entry unchecked.
+    for (const exempt of HARD_DELETE_EXEMPT_FILES) {
+      expect(allServerFiles, `exempted file "${exempt}" is missing from the server tree`).toContain(
+        exempt,
+      );
+    }
     for (const exempt of HARD_DELETE_EXEMPT_FILES) {
       expect(
         drizzleDelete.test(readStripped(exempt)),
