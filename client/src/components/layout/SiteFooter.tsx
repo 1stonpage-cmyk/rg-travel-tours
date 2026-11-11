@@ -119,20 +119,20 @@ export default function SiteFooter() {
           <p className="text-brand-blue-200 mt-2 max-w-sm text-base sm:text-sm">{SITE.tagline}</p>
 
           <ul className="mt-6 space-y-2 text-base sm:text-sm">
-            {/* Primary line: calls only (owner decision 2026-11-11, 1B —
-                WhatsApp/Viber moved to the alternate line below). */}
-            <li className="flex items-start gap-2">
-              <Phone className="mt-3.5 size-4 shrink-0" aria-hidden="true" />
-              <div>
-                <a
-                  href={telLink(SITE.contact.phone.tel)}
-                  className="flex min-h-11 items-center gap-2 hover:underline"
-                >
-                  {SITE.contact.phone.display}
-                  <span className="text-brand-blue-300 text-xs">{SITE.contact.phone.network}</span>
-                </a>
-                <p className="text-brand-blue-300 -mt-2 text-xs">Calls only</p>
-              </div>
+            {/* Primary line (owner decision 2026-11-11, 1B — WhatsApp/Viber
+                moved to the alternate line below; owner decision 2026-11-11,
+                follow-up — no "Calls only" caption here, this line's own
+                label elsewhere on the page ("Call or text (Smart)",
+                ContactSection.tsx) is untouched and is not repeated here). */}
+            <li className="flex items-center gap-2">
+              <Phone className="size-4 shrink-0" aria-hidden="true" />
+              <a
+                href={telLink(SITE.contact.phone.tel)}
+                className="flex min-h-11 items-center gap-2 hover:underline"
+              >
+                {SITE.contact.phone.display}
+                <span className="text-brand-blue-300 text-xs">{SITE.contact.phone.network}</span>
+              </a>
             </li>
             {/* Alternate line: WhatsApp, Viber, calls and SMS all land here now.
                 The apps are named as text rather than as extra links so the
