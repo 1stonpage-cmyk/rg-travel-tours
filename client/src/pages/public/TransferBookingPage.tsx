@@ -12,6 +12,7 @@ import {
 import CouponField from '@/components/checkout/CouponField';
 import PaymentOptions from '@/components/checkout/PaymentOptions';
 import HoldCountdown from '@/components/checkout/HoldCountdown';
+import TurnstileWidget from '@/components/common/TurnstileWidget';
 import RoutePicker, { type TransferRouteSelection } from '@/components/transfer/RoutePicker';
 import TransferGuestDetailsForm, {
   type FlightDetailsRequirement,
@@ -206,6 +207,10 @@ export default function TransferBookingPage() {
   const [couponInput, setCouponInput] = useState('');
   const [couponError, setCouponError] = useState<string | null>(null);
   const [consentError, setConsentError] = useState<string | null>(null);
+  const [turnstileToken, setTurnstileToken] = useState<string | undefined>(undefined);
+  // A Turnstile token is single-use — bump this to remount the widget (and
+  // get a fresh one) after any failed attempt, not only a Turnstile refusal.
+  const [turnstileResetKey, setTurnstileResetKey] = useState(0);
 
   /**
    * Task 1F (DEMO POLISH). A guest can click a route card before picking a
@@ -413,7 +418,9 @@ export default function TransferBookingPage() {
     setVehicleTypeId(null);
   }, [routeId, productType]);
 
-  const createHoldTransfer = trpc.checkout.createHoldTransfer.useMutation();
+  const createHoldTransfer = trpc.checkout.createHoldTransfer.useMutation({
+    onError: () => setTurnstileResetKey((key) => key + 1),
+  });
 
   const holdFieldErrors = createHoldTransfer.isError
     ? getFieldErrors(createHoldTransfer.error)
@@ -477,6 +484,7 @@ export default function TransferBookingPage() {
         phone: String(data.get('phone') ?? ''),
       },
       consent: true,
+      turnstileToken,
     });
   }
 
@@ -608,6 +616,14 @@ export default function TransferBookingPage() {
                   {message}
                 </p>
               ))}
+
+              {/*
+               * Renders nothing when Turnstile is not configured (local dev,
+               * or switched off) — see the component's own note. Remounted
+               * via `key` after any failed submit, since a token is
+               * single-use.
+               */}
+              <TurnstileWidget key={turnstileResetKey} onVerify={setTurnstileToken} />
 
               <Button
                 type="submit"

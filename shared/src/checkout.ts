@@ -164,6 +164,14 @@ export const createHoldInput = quoteInput
     requests: z.string().max(2000).optional(),
     /** RA 10173. Anything but `true` fails here, before the router runs. */
     consent: z.boolean().refine((v) => v === true, { message: 'Consent is required' }),
+    /**
+     * Cloudflare Turnstile response token (Task 12). Optional on the wire —
+     * `verifyTurnstile()` fails closed on a missing token only while
+     * Turnstile is switched ON (`env.TURNSTILE_ENABLED === '1'`), so this
+     * stays `.optional()` rather than required, exactly as the staff-login
+     * input does (Task 11).
+     */
+    turnstileToken: z.string().optional(),
   })
   .strict();
 export type CreateHoldInput = z.infer<typeof createHoldInput>;

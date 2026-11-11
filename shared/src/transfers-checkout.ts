@@ -173,6 +173,12 @@ export const createHoldTransferInput = quoteTransferInput
     lead: leadSchema,
     /** RA 10173. Anything but `true` fails here, before the router runs. */
     consent: z.boolean().refine((v) => v === true, { message: 'Consent is required' }),
+    /**
+     * Cloudflare Turnstile response token (Task 12) — the same optional
+     * field `createHoldInput` carries, for the same reason: `verifyTurnstile()`
+     * fails closed on a missing token only while Turnstile is switched ON.
+     */
+    turnstileToken: z.string().optional(),
   })
   .strict()
   .superRefine((value, ctx) => {

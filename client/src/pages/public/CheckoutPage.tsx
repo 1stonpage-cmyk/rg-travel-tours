@@ -10,6 +10,7 @@ import HoldCountdown from '@/components/checkout/HoldCountdown';
 import ConsentCheckbox from '@/components/checkout/ConsentCheckbox';
 import PaymentOptions from '@/components/checkout/PaymentOptions';
 import QuoteSummary from '@/components/checkout/QuoteSummary';
+import TurnstileWidget from '@/components/common/TurnstileWidget';
 import { Button } from '@/components/ui/button';
 import {
   firstValidationMessage,
@@ -196,6 +197,10 @@ export default function CheckoutPage() {
   const [couponError, setCouponError] = useState<string | null>(null);
   const [payMode, setPayMode] = useState<PayMode>('deposit');
   const [consentError, setConsentError] = useState<string | null>(null);
+  const [turnstileToken, setTurnstileToken] = useState<string | undefined>(undefined);
+  // A Turnstile token is single-use — bump this to remount the widget (and
+  // get a fresh one) after any failed attempt, not only a Turnstile refusal.
+  const [turnstileResetKey, setTurnstileResetKey] = useState(0);
 
   const hasSelection = Boolean(tourSlug) && date !== '' && pax >= 1;
 
@@ -209,7 +214,9 @@ export default function CheckoutPage() {
     { tourSlug: tourSlug ?? '', date, pax },
     { enabled: hasSelection, retry: false, placeholderData: keepPreviousData },
   );
-  const createHold = trpc.checkout.createHold.useMutation();
+  const createHold = trpc.checkout.createHold.useMutation({
+    onError: () => setTurnstileResetKey((key) => key + 1),
+  });
   /*
    * `settings.get` moved OUT of this page for the payment-method question
    * (task A5) — see the removed comment this one replaces: that read is
@@ -296,6 +303,7 @@ export default function CheckoutPage() {
       pickupMapUrl: pickupMapUrl === '' ? undefined : pickupMapUrl,
       requests: requests === '' ? undefined : requests,
       consent: true,
+      turnstileToken,
     });
   }
 
@@ -473,6 +481,14 @@ export default function CheckoutPage() {
                       {message}
                     </p>
                   ))}
+
+                  {/*
+                   * Renders nothing when Turnstile is not configured (local
+                   * dev, or switched off) — see the component's own note.
+                   * Remounted via `key` after any failed submit, since a
+                   * token is single-use.
+                   */}
+                  <TurnstileWidget key={turnstileResetKey} onVerify={setTurnstileToken} />
 
                   <Button
                     type="submit"

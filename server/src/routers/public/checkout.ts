@@ -163,6 +163,7 @@ import {
   TransferRouteNotQuotableError,
   type TransferBookingShapeProblem,
 } from '../../services/transfers/create-booking';
+import { turnstileRefusedError, verifyTurnstile } from '../../services/turnstile';
 import { publicProcedure, router } from '../../trpc';
 
 /**
@@ -1115,7 +1116,15 @@ export const checkoutRouter = router({
    * see `middleware/rate-limit.ts`'s `createCheckoutHoldLimiter()`, mounted
    * in `app.ts`.
    */
-  createHold: publicProcedure.input(createHoldInput).mutation(async ({ input }) => {
+  createHold: publicProcedure.input(createHoldInput).mutation(async ({ input, ctx }) => {
+    // Cloudflare Turnstile (Task 12) — checked BEFORE the service call, so a
+    // refusal takes no lock, no capacity read, no write at all. A hold takes
+    // real capacity and real slot locks (fleet_date_slots → tour_date_slots →
+    // the booking row), and none of that may be spent on a request that
+    // never solved the widget.
+    if (!(await verifyTurnstile({ token: input.turnstileToken, remoteIp: ctx.req.ip }))) {
+      throw turnstileRefusedError();
+    }
     try {
       return await createHoldService(input);
     } catch (error) {
@@ -1164,42 +1173,49 @@ export const checkoutRouter = router({
    * when it happens is one of the guest-actionable sentences above, never a
    * crash.
    */
-  createHoldTransfer: publicProcedure.input(createHoldTransferInput).mutation(async ({ input }) => {
-    try {
-      return await createTransferBooking({
-        date: input.date,
-        routeId: input.routeId,
-        customRouteDescription: null,
-        // Catalog-only on this path (no `customRouteDescription` above, no
-        // routeless booking possible) — a catalog route always carries its
-        // own duration. See `CreateTransferBookingInput`'s own note.
-        customRouteDurationMinutes: null,
-        vehicleTypeId: input.vehicleTypeId,
-        productType: input.productType,
-        direction: input.direction,
-        pickupTime: input.pickupTime,
-        // The service's shape is `null`-for-absent throughout; the wire's is
-        // optional-for-absent, which is what a form that omits a field
-        // actually sends. This is the one place the two meet.
-        dayUseEndTime: input.dayUseEndTime ?? null,
-        pax: input.pax,
-        luggageCount: input.luggageCount,
-        pickup: input.pickup ?? null,
-        pickupMapUrl: input.pickupMapUrl ?? null,
-        dropoffAddress: input.dropoffAddress,
-        dropoffMapUrl: input.dropoffMapUrl ?? null,
-        flightNumber: input.flightNumber ?? null,
-        airline: input.airline ?? null,
-        requests: input.requests ?? null,
-        payMode: input.payMode,
-        couponCode: input.couponCode,
-        lead: input.lead,
-        priceSource: { kind: 'catalog' },
-      });
-    } catch (error) {
-      throw translateHoldTransferError(error);
-    }
-  }),
+  createHoldTransfer: publicProcedure
+    .input(createHoldTransferInput)
+    .mutation(async ({ input, ctx }) => {
+      // Cloudflare Turnstile (Task 12) — same placement and same reasoning as
+      // `createHold` above: before any lock, capacity read or write.
+      if (!(await verifyTurnstile({ token: input.turnstileToken, remoteIp: ctx.req.ip }))) {
+        throw turnstileRefusedError();
+      }
+      try {
+        return await createTransferBooking({
+          date: input.date,
+          routeId: input.routeId,
+          customRouteDescription: null,
+          // Catalog-only on this path (no `customRouteDescription` above, no
+          // routeless booking possible) — a catalog route always carries its
+          // own duration. See `CreateTransferBookingInput`'s own note.
+          customRouteDurationMinutes: null,
+          vehicleTypeId: input.vehicleTypeId,
+          productType: input.productType,
+          direction: input.direction,
+          pickupTime: input.pickupTime,
+          // The service's shape is `null`-for-absent throughout; the wire's
+          // is optional-for-absent, which is what a form that omits a field
+          // actually sends. This is the one place the two meet.
+          dayUseEndTime: input.dayUseEndTime ?? null,
+          pax: input.pax,
+          luggageCount: input.luggageCount,
+          pickup: input.pickup ?? null,
+          pickupMapUrl: input.pickupMapUrl ?? null,
+          dropoffAddress: input.dropoffAddress,
+          dropoffMapUrl: input.dropoffMapUrl ?? null,
+          flightNumber: input.flightNumber ?? null,
+          airline: input.airline ?? null,
+          requests: input.requests ?? null,
+          payMode: input.payMode,
+          couponCode: input.couponCode,
+          lead: input.lead,
+          priceSource: { kind: 'catalog' },
+        });
+      } catch (error) {
+        throw translateHoldTransferError(error);
+      }
+    }),
 
   /**
    * Starts a gateway payment for a held booking and returns where to send

@@ -25,6 +25,7 @@ import {
   TOTAL_BELOW_GATEWAY_MINIMUM,
 } from '@rg/shared';
 import { createApp } from '../app';
+import { env } from '../env';
 import { getDb, getPool } from '../db/client';
 import {
   bookings,
@@ -725,6 +726,46 @@ describeWithDb('checkout router', () => {
       message: TOTAL_BELOW_GATEWAY_MINIMUM,
     });
     expect(await countBookings(), 'a refused hold must leave no booking row').toBe(before);
+  });
+
+  /**
+   * Task 12 — Turnstile ahead of the guest booking hold. Same shape as
+   * `admin-auth.test.ts`'s Task 11 test: enable Turnstile, send a request
+   * with no `turnstileToken`, and expect the one shared guest-safe refusal
+   * `turnstileRefusedError()` gives everywhere it is used. Because a hold
+   * takes a real capacity read and a real lock before it ever writes a
+   * booking row, the refusal must also leave the row count untouched —
+   * proven the same way the gateway-floor refusals above are, with this
+   * file's own `countBookings()`.
+   */
+  it('refuses createHold with a guest-safe message when Turnstile is enabled and the token is missing', async () => {
+    const tour = await makeTour();
+    await makeFleet();
+    const quote = await caller.checkout.quote({
+      tourSlug: tour.slug,
+      date: DAY,
+      pax: 2,
+      addonIds: [],
+    });
+    const before = await countBookings();
+
+    const original = env.TURNSTILE_ENABLED;
+    (env as { TURNSTILE_ENABLED?: string }).TURNSTILE_ENABLED = '1';
+    try {
+      const error = await caller.checkout
+        .createHold(
+          validHoldInput({ tourSlug: tour.slug, date: DAY, pax: 2, quoteId: quote.quoteId }),
+        )
+        .catch((e: unknown) => e);
+      expect(error).toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'Please complete the verification and try again.',
+      });
+    } finally {
+      (env as { TURNSTILE_ENABLED?: string }).TURNSTILE_ENABLED = original;
+    }
+
+    expect(await countBookings(), 'a Turnstile refusal must leave no booking row').toBe(before);
   });
 
   it('rejects a request carrying totalCentavos — the .strict() schema at the router boundary', async () => {

@@ -48,6 +48,7 @@ import {
 } from '@rg/shared';
 import { createApp } from '../app';
 import { readSettingBlock, readTransferOperationsSettings } from '../content/settings';
+import { env } from '../env';
 import { getDb, getPool } from '../db/client';
 import {
   bookingTransferDetails,
@@ -451,6 +452,42 @@ describeWithDb('checkout.createHoldTransfer', () => {
     expect(depositCentavos(row.totalCentavos, row.priceSnapshot.depositPercent)).toBe(
       depositCentavos(ONE_WAY_PRICE, DEPOSIT_PERCENT),
     );
+  });
+
+  // -------------------------------------------------------------------------
+  // Turnstile (Task 12) — ahead of the service call, so a refusal takes no
+  // lock, no capacity read, nothing.
+  // -------------------------------------------------------------------------
+
+  /**
+   * Same shape as `checkout-router.test.ts`'s own Task 12 test and
+   * `admin-auth.test.ts`'s Task 11 test: enable Turnstile, send a request
+   * with no `turnstileToken`, and expect the one shared guest-safe refusal
+   * `turnstileRefusedError()` gives everywhere it is used. A transfer hold
+   * takes a real capacity read, a real coupon reservation and a real lock
+   * before it writes anything, so the refusal must leave every one of those
+   * row counts untouched — this file's own `writtenRowCounts()`.
+   */
+  it('refuses createHoldTransfer with a guest-safe message when Turnstile is enabled and the token is missing', async () => {
+    const routeId = await makeRoute();
+    await makeFleet();
+    const before = await writtenRowCounts();
+
+    const original = env.TURNSTILE_ENABLED;
+    (env as { TURNSTILE_ENABLED?: string }).TURNSTILE_ENABLED = '1';
+    try {
+      expect(await refusal(holdInput({ routeId }))).toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'Please complete the verification and try again.',
+      });
+    } finally {
+      (env as { TURNSTILE_ENABLED?: string }).TURNSTILE_ENABLED = original;
+    }
+
+    expect(
+      await writtenRowCounts(),
+      'a Turnstile refusal must leave no slot, booking or audit row',
+    ).toEqual(before);
   });
 
   // -------------------------------------------------------------------------
