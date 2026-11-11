@@ -54,11 +54,7 @@ export default function WhyBookDirect() {
 
   return (
     <section id="why" className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
-      <SectionHeading
-        eyebrow="Book direct"
-        title="Six reasons to skip the booking platforms"
-        subtitle="Editable from admin settings once the site is live."
-      />
+      <SectionHeading eyebrow="Book direct" title="Six reasons to skip the booking platforms" />
       <QueryBoundary
         query={query}
         skeleton={<WhyBookDirectSkeleton />}
