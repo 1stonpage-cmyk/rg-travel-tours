@@ -181,7 +181,20 @@ export default function PackagesSection() {
                 consent: true,
                 turnstileToken,
               },
-              { onSuccess: () => form.reset() },
+              {
+                onSuccess: () => {
+                  form.reset();
+                  // Fix round 1 (coordinator review of deed0fe): a
+                  // spent/expired token must not go out again on the
+                  // guest's NEXT submission in the same session — this
+                  // form is fed by six "Enquire about this package"
+                  // buttons sharing one form, so a second enquiry in the
+                  // same visit is the designed flow, not an edge case.
+                  // Same pair the mutation's `onError` already does.
+                  setTurnstileToken(undefined);
+                  setTurnstileResetKey((key) => key + 1);
+                },
+              },
             );
           }
 

@@ -113,7 +113,17 @@ export default function ContactSection() {
           consent: true,
           turnstileToken,
         },
-        { onSuccess: () => form.reset() },
+        {
+          onSuccess: () => {
+            form.reset();
+            // Fix round 1 (coordinator review of deed0fe): a spent/expired
+            // token must not go out again on the guest's NEXT submission in
+            // the same session — the same pair the mutation's `onError`
+            // already does, just on the success path too.
+            setTurnstileToken(undefined);
+            setTurnstileResetKey((key) => key + 1);
+          },
+        },
       );
       return;
     }
@@ -127,7 +137,17 @@ export default function ContactSection() {
         consent: true,
         turnstileToken,
       },
-      { onSuccess: () => form.reset() },
+      {
+        onSuccess: () => {
+          form.reset();
+          // Fix round 1 (coordinator review of deed0fe): a spent/expired
+          // token must not go out again on the guest's NEXT submission in
+          // the same session — the same pair the mutation's `onError`
+          // already does, just on the success path too.
+          setTurnstileToken(undefined);
+          setTurnstileResetKey((key) => key + 1);
+        },
+      },
     );
   }
 
