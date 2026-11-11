@@ -155,6 +155,7 @@ describe('AdminLayout', () => {
         'Dashboard',
         'Reports',
         'Bookings',
+        'Trip requests',
         'Payment checks',
         'Dispatch',
         'Departures',
@@ -179,6 +180,7 @@ describe('AdminLayout', () => {
       expect(names()).toEqual([
         'Dashboard',
         'Bookings',
+        'Trip requests',
         'Dispatch',
         'Departures',
         'Vans',
@@ -248,6 +250,7 @@ describe('AdminLayout', () => {
       expect(withAlice).toEqual([
         'Dashboard',
         'Bookings',
+        'Trip requests',
         'Dispatch',
         'Departures',
         'Vans',
