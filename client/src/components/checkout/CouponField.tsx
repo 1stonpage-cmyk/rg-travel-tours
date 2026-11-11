@@ -38,7 +38,7 @@ export default function CouponField({
           name="couponInput"
           value={value}
           onChange={(e) => onValueChange(e.target.value)}
-          placeholder="e.g. RGTOURS10"
+          placeholder="e.g. WELCOME10"
           disabled={Boolean(applied)}
           /*
            * `quoteInput.couponCode`'s own `.max(40)` (@rg/shared), mirrored
