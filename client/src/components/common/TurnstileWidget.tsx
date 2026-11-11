@@ -65,8 +65,8 @@ function loadTurnstileScript(): Promise<void> {
  * fix wave — a prior version of this wiring did, and a persistent render-
  * time error — e.g. a site-key/domain mismatch — re-fired on every remount,
  * looping unbounded with no human in the loop). Bumping the reset key stays
- * the mutation's `onError`'s job: that one only fires on an actual submit,
- * which is bounded by how many times a guest clicks Submit.
+ * the mutation's own `onError`/`onSuccess` handlers' job: those only fire on
+ * an actual submit, bounded by how many times a guest clicks Submit.
  */
 export default function TurnstileWidget({
   onVerify,

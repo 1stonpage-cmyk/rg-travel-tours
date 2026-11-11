@@ -70,7 +70,9 @@ export default function ContactSection() {
    */
   const [turnstileToken, setTurnstileToken] = useState<string | undefined>(undefined);
   // A Turnstile token is single-use — bump this to remount the widget (and
-  // get a fresh one) after any failed attempt, not only a Turnstile refusal.
+  // get a fresh one) after any failed attempt (not only a Turnstile refusal)
+  // AND after a successful submit, since a second inquiry in the same
+  // session would otherwise replay the first one's spent token.
   const [turnstileResetKey, setTurnstileResetKey] = useState(0);
   const sendInquiry = trpc.inquiries.create.useMutation({
     onError: () => {
