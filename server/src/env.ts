@@ -70,8 +70,10 @@ const schema = z.object({
    * (`docs/LAUNCH_CHECKLIST.md`), which terminates TLS and proxies to
    * 127.0.0.1 — without telling Express to trust that one hop, `req.ip` is
    * nginx's own address for every request, and every per-IP rate limiter in
-   * `middleware/rate-limit.ts` collapses onto one shared counter (measured
-   * on staging as the admin-session bug this decision fixes).
+   * `middleware/rate-limit.ts` collapses onto one shared counter (hypothesised
+   * as the admin-session bug this decision targets — unverified; the
+   * discriminating fact, the staffAuth.me HTTP status code on staging, was
+   * not available at the time of this fix).
    *
    * No default, optional, exact string '1' required — mirroring
    * `ALLOW_DEMO_SEED`'s shape: unset means "do not trust any proxy", which

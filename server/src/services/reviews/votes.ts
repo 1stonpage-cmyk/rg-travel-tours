@@ -40,11 +40,14 @@
  * a value that is not a well-formed minted id is replaced rather than hashed,
  * so `voter_hash` is always the hash of an identifier this server recognises.
  *
- * `app.ts` does not set `trust proxy`, so behind a reverse proxy `req.ip` is
- * the proxy's address rather than the visitor's — a pre-existing, documented
- * limitation (`docs/LAUNCH_CHECKLIST.md` carries it as a launch item). The
- * consequence here is that visitors behind one proxy share the IP half of the
- * hash; the cookie half still separates them.
+ * `app.ts` supports trusting exactly one proxy hop behind the `TRUST_PROXY`
+ * flag (owner decision 2026-11-10, Decision 1). With `TRUST_PROXY=1` set (as
+ * the deployed `.env` must be — `docs/LAUNCH_CHECKLIST.md` carries it as a
+ * launch item), `req.ip` is the real visitor address even behind nginx, so
+ * the IP half of this hash is genuinely per-visitor again. The limitation
+ * described here — visitors behind one proxy sharing the IP half of the
+ * hash, with only the cookie half separating them — applies only when
+ * `TRUST_PROXY` is left unset.
  */
 import { createHash, randomUUID } from 'node:crypto';
 import type { Request, Response } from 'express';

@@ -146,12 +146,12 @@ config changes.
       IP. Without it, Express reads nginx's own address for every request, so every visitor
       collectively shares one IP's worth of rate limit — one abusive visitor exhausts the
       login/coupon/review limiter for everyone else behind the same proxy, not just themselves, and
-      (measured on staging, 2026-11-10) the generic `/trpc` backstop can exhaust fast enough that
-      ordinary admin traffic starts seeing 429s, which the admin UI shows as "Could not confirm your
-      session". **This is measured, not only reasoned:** `server/src/__tests__/trust-proxy.test.ts`
-      sends attempts from two distinct `X-Forwarded-For` addresses through a real `createApp()` and
-      passes with `TRUST_PROXY` on; with it left unset, the exact same two addresses collapse onto
-      one shared budget.
+      (hypothesised, unverified — see the trust-proxy.test.ts docblock) the generic `/trpc` backstop
+      COULD exhaust fast enough that ordinary admin traffic starts seeing 429s, which the admin UI
+      shows as "Could not confirm your session". **This is measured, not only reasoned:**
+      `server/src/__tests__/trust-proxy.test.ts` sends attempts from two distinct `X-Forwarded-For`
+      addresses through a real `createApp()` and passes with `TRUST_PROXY` on; with it left unset,
+      the exact same two addresses collapse onto one shared budget.
 - [ ] **`NODE_ENV=production` is set** in the PM2 environment. tRPC's default error
       formatter includes the `stack` field when `NODE_ENV` is not `production`, so a
       malformed or hostile request gets a stack trace — file paths, call sites — back

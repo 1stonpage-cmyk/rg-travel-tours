@@ -1,11 +1,12 @@
 /**
  * Owner decision 2026-11-10 (staging fixes), Decision 1: exactly ONE trusted
- * proxy hop, gated by `TRUST_PROXY`, default OFF. Fixes the staging bug
- * where every per-IP rate limiter collapsed onto nginx's own loopback
- * address (see `app.ts`'s own note on `trustProxy` and
+ * proxy hop, gated by `TRUST_PROXY`, default OFF. Addresses a required launch
+ * item (trust proxy behind nginx) that is ALSO a plausible, unverified
+ * explanation for a staging symptom — see env.ts's own note on what remains
+ * unverified (see also `app.ts`'s own note on `trustProxy` and
  * `docs/LAUNCH_CHECKLIST.md`).
  *
- * Four properties, each proven both ways (on fixes it / off leaves the prior
+ * Three properties, each proven both ways (on fixes it / off leaves the prior
  * behaviour untouched):
  *  1. Rate-limit key: two distinct X-Forwarded-For client IPs get separate
  *     budgets when trustProxy is on, and share ONE budget when it is off.
