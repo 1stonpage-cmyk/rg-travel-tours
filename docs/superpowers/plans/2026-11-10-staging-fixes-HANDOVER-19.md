@@ -2307,16 +2307,19 @@ one fix wave per the subagent-driven-development process.
 ### 1. Commits, mapped to the controller prompt's own numbering
 
 **1A = Task 1 (trust proxy):**
+
 - `48deb1c` - fix(server): trust exactly one nginx hop, behind TRUST_PROXY (Decision 1)
 - `34ccbb8` - fix(server): trust proxy — correct overreaching "measured" claims, update stale comments (fix round 1)
 - `131ec75` - docs: correct stale CLAUDE.md claim that app.ts does not set trust proxy (controller-made, fix round 1)
 
 **1B = Tasks 2–3 (packages follow show_tours, server + client):**
+
 - `cfb30a5` - fix(packages): show_tours gates packages too, server-side (Decision 2)
 - `7c07a48` - fix(packages): hide "Packages" from nav/footer/home while show_tours is off (Decision 2)
 - `4454d90` - fix: untrack plan doc accidentally swept into Task 3 commit (process correction, not a task)
 
 **1C = Tasks 4–8 (the five guest-copy decisions):**
+
 - `a5da684` - fix(content): transfer-first default title/description, driver wording for "guide" (Decision 3)
 - `902523a` - fix(content): drop the internal placeholder subtitle from the public home page (Decision 5)
 - `b1f4f10` - fix(checkout): generic coupon placeholder, not tour-branded (Decision 7)
@@ -2325,14 +2328,16 @@ one fix wave per the subagent-driven-development process.
 - `a4ba58e` - feat(transfer): friendly "about N hr M min" duration wording for guests (Decision 6)
 
 **1D = Task 15 (this closing task) + the final whole-branch review and its fix wave:**
+
 - `8e3cc86` - docs: fix stale trust-proxy/Turnstile documentation found in final review
 - `ad08e7b` - fix(turnstile): wire widget onError and clear stale tokens on all six sites, fix script-cache retry
 - `359929f` - fix(admin): Packages gets the same "Hidden" nav tag as Tours while show_tours is off (Decision 2 consequence)
 - `fe9002d` - fix(turnstile): stop a script-load failure from looping through onError (fix round 1)
 - `3ecf407` - fix(turnstile): stop the widget-level onError from remounting itself, two doc nits (breaker adjudication)
-- *(plus this commit, closing the report)*
+- _(plus this commit, closing the report)_
 
 **Tasks 10–14, reported under their own names (added mid-batch, no 1A–1D letter of their own):**
+
 - **Task 10 (Turnstile shared infra):** `1b11c88` - feat(turnstile): shared infrastructure — env, server verify, client widget; `cbdee39` - docs: LAUNCH_CHECKLIST — Turnstile startup guard can't see a stale client bundle (fix round 1)
 - **Task 11 (staff login + forgot-password):** `6d9b246` - feat(turnstile): staff login and forgot-password
 - **Task 12 (guest booking holds):** `b87c0c2` - feat(turnstile): guest booking holds — tour and transfer
@@ -2344,6 +2349,7 @@ one fix wave per the subagent-driven-development process.
 ### 2. Owner decisions, verbatim
 
 **2026-11-10, staging fixes batch:**
+
 1. `TRUST_PROXY` env flag, exactly one trusted proxy hop (`app.set('trust proxy', 1)`, never `true`), gated off by default.
 2. Packages now follow the exact same `show_tours` gate tours already have — server-side (router, SEO resolver, sitemap) and client-side (nav, footer, home section) — superseding the earlier "packages are a different product" ruling.
 3. Transfer-first default site title/description, "Meet your guide"→"Meet your driver", "Licensed guide"→"Licensed driver" (seed content only).
@@ -2375,7 +2381,7 @@ VITE_TURNSTILE_SITE_KEY=   # fill in from the Cloudflare dashboard
 - `TURNSTILE_ENABLED=1` — **PM2 restart.**
 - `TURNSTILE_SECRET_KEY=` — **PM2 restart.** Server refuses to boot if this is missing while `TURNSTILE_ENABLED=1` (`assertTurnstileConfigured`).
 - `VITE_TURNSTILE_SITE_KEY=` — **CLIENT REBUILD required, not just a server restart.** It is baked into the client bundle at build time (`import.meta.env.VITE_TURNSTILE_SITE_KEY`), never read server-side at runtime. **Deploy order matters and is now a documented launch-checklist dependency:** set this and rebuild the client BEFORE (or in the same deploy as) setting `TURNSTILE_ENABLED=1` and restarting the server — a server that requires a token while the deployed bundle was built before the key existed will refuse every one of the five gated endpoints simultaneously, with the startup guard reporting healthy the whole time. `docs/LAUNCH_CHECKLIST.md` carries this warning on the Turnstile item now.
-- **`remoteip` sent to Cloudflare is `req.ip`, which is only the real visitor's address once `TRUST_PROXY=1` is actually set** (`docs/LAUNCH_CHECKLIST.md`'s Turnstile item now says so) — set `TRUST_PROXY=1` and restart *before* enabling Turnstile, not at the same time, so the dependency is satisfied in the right order.
+- **`remoteip` sent to Cloudflare is `req.ip`, which is only the real visitor's address once `TRUST_PROXY=1` is actually set** (`docs/LAUNCH_CHECKLIST.md`'s Turnstile item now says so) — set `TRUST_PROXY=1` and restart _before_ enabling Turnstile, not at the same time, so the dependency is satisfied in the right order.
 
 `TRUST_PROXY`/`TURNSTILE_ENABLED` are in **addition** to the existing `NODE_ENV=production`/`SITE_ENV=production` launch-checklist items — `SITE_ENV` stays whatever the owner already has it set to for staging vs. production.
 
