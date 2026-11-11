@@ -738,15 +738,21 @@ describeWithDb('the backoff is reachable, bounded and never terminal (C7)', () =
    * requirements") makes it a launch item because the app sits behind nginx,
    * and without it `req.ip` is nginx's own address for every request — which
    * turns this per-IP limiter into one global one. It is set HERE, on the
-   * test's own app, so the test can present distinct client addresses to one
-   * limiter the way several real phones would. `app.ts` deliberately does not
-   * set it: that is the deployment's decision and the checklist owns it.
+   * test's own raw `express()` app, so the test can present distinct client
+   * addresses to one limiter the way several real phones would.
+   * `app.ts`'s `createApp()` now SUPPORTS trust proxy — behind the
+   * `trustProxy` parameter, on only when `TRUST_PROXY=1` (owner decision
+   * 2026-11-10, Decision 1) — but it defaults to `false`, and this test
+   * builds its own bare `express()` app rather than calling `createApp()` at
+   * all, so that default is irrelevant here either way: the line below is
+   * what puts this test's app behind a trusted hop, independently of what
+   * the deployed app is configured to do.
    *
    * `'loopback'` rather than `true`: nginx proxies from the same host, so it
    * is the hop to trust, and `true` makes the leftmost `X-Forwarded-For`
    * entry believable from anyone — `express-rate-limit` says as much at
    * runtime (`ERR_ERL_PERMISSIVE_TRUST_PROXY`). The deployed value should be
-   * as narrow as this one.
+   * as narrow as this one: exactly `1`, never `true`.
    */
   function appBehindProxy() {
     const app = express();

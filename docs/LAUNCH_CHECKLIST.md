@@ -134,14 +134,14 @@ Checks before leaving it running:
 
 ## Deployment requirements — not optional
 
-Four things Phase 1 and Week 3 found the hard way. Each one is a config line that
+Five things Phase 1 and Week 3 found the hard way. Each one is a config line that
 silently disables a security control or a scheduled job if it's missing — no error, no
-log line, nothing to notice until it's exploited or until something leaks. Set all four
+log line, nothing to notice until it's exploited or until something leaks. Set all five
 before the app ever takes real traffic, and re-check them any time the PM2 or nginx
 config changes.
 
 - [ ] **`TRUST_PROXY=1` is set** in the deployed `.env`, because the app sits behind nginx (see the
-      `proxy_pass` blocks above). `app.ts` reads this into `createApp(..., trustProxy)`, which calls
+      `proxy_pass` blocks above). `index.ts` reads this into `createApp(..., trustProxy)`, which calls
       `app.set('trust proxy', 1)` — exactly one hop, never `true`. The rate limiter keys on request
       IP. Without it, Express reads nginx's own address for every request, so every visitor
       collectively shares one IP's worth of rate limit — one abusive visitor exhausts the
@@ -162,6 +162,10 @@ config changes.
       staff forgot-password, both guest booking holds, the custom-trip inquiry, driver PIN login)
       while the guard reports healthy the whole time: the server correctly requires a token, but
       `TurnstileWidget` renders nothing and no token is ever produced to send it.
+      **This item also depends on the one above:** the `remoteip` sent to Cloudflare
+      (`services/turnstile.ts`) is `req.ip`, which is only the real visitor's address once
+      `TRUST_PROXY=1` is set — without it, every verification reports nginx's own loopback
+      address instead.
 - [ ] **`NODE_ENV=production` is set** in the PM2 environment. tRPC's default error
       formatter includes the `stack` field when `NODE_ENV` is not `production`, so a
       malformed or hostile request gets a stack trace — file paths, call sites — back
