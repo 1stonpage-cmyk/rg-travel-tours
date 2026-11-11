@@ -649,42 +649,44 @@ describeWithDb('driver.login / driver.logout (resolvers)', () => {
   // lockout counter — only `attemptDriverLogin` itself writes that counter.
   // -------------------------------------------------------------------------
 
-  it('refuses a correct code+PIN pair with the byte-identical wrong_credentials shape when Turnstile is enabled and no token is sent', async () => {
+  /**
+   * The HTTP layer, through `createApp()` — same convention as this
+   * describe block's own `'is byte-identical on the wire'` test below:
+   * status AND the serialised body, character for character, rather than
+   * two parsed objects that merely `toMatchObject` the same shape.
+   */
+  it('is byte-identical on the wire: a correct code+PIN pair refused by Turnstile vs a genuinely wrong PIN', async () => {
     const { code, pin } = await makeDriverWithPin();
-    const { res } = captureResponse();
-    const api = appRouter.createCaller({
-      req: { cookies: {} },
-      res,
-      driverSession: null,
-    } as never);
+    const app = createApp();
+    const post = (body: Record<string, unknown>) =>
+      request(app)
+        .post('/trpc/driver.login')
+        // A browser's Origin: the CSRF check runs ahead of the router.
+        .set('Origin', 'http://localhost:5180')
+        .send(body);
 
     const original = env.TURNSTILE_ENABLED;
     (env as { TURNSTILE_ENABLED?: string }).TURNSTILE_ENABLED = '1';
-    let turnstileRefusal: unknown;
+    let turnstileRefusal: Awaited<ReturnType<typeof post>>;
     try {
       // The genuinely correct code+PIN — proves the check runs before the
       // credential is ever looked at, not merely that it refuses bad ones.
-      turnstileRefusal = await api.driver.login({ code, pin }).catch((e: unknown) => e);
+      turnstileRefusal = await post({ code, pin });
     } finally {
       (env as { TURNSTILE_ENABLED?: string }).TURNSTILE_ENABLED = original;
     }
 
     // The control case, with Turnstile back off: a genuinely wrong PIN,
     // going through `attemptDriverLogin`.
-    const wrongPinRefusal = await api.driver
-      .login({ code, pin: pin === '000000' ? '111111' : '000000' })
-      .catch((e: unknown) => e);
+    const wrongPinRefusal = await post({ code, pin: pin === '000000' ? '111111' : '000000' });
 
-    expect(turnstileRefusal).toMatchObject({ code: 'UNAUTHORIZED', message: 'wrong_credentials' });
-    expect(wrongPinRefusal).toMatchObject({ code: 'UNAUTHORIZED', message: 'wrong_credentials' });
-    // Byte-identical, not merely "both refuse" — a difference here would be
-    // the same oracle BUG-122's own tests exist to rule out elsewhere.
-    expect((turnstileRefusal as { code: string }).code).toBe(
-      (wrongPinRefusal as { code: string }).code,
-    );
-    expect((turnstileRefusal as { message: string }).message).toBe(
-      (wrongPinRefusal as { message: string }).message,
-    );
+    expect(turnstileRefusal.status).toBe(401);
+    expect(wrongPinRefusal.status).toBe(turnstileRefusal.status);
+    // Same bytes, not merely the same parsed object.
+    expect(turnstileRefusal.text).toBe(wrongPinRefusal.text);
+    expect(turnstileRefusal.text).toContain('wrong_credentials');
+    expect(turnstileRefusal.headers['set-cookie']).toBeUndefined();
+    expect(wrongPinRefusal.headers['set-cookie']).toBeUndefined();
   }, 30_000);
 
   it('does not count a Turnstile refusal against the per-driver PIN lockout counter', async () => {
