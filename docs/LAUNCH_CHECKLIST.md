@@ -156,6 +156,12 @@ config changes.
       `VITE_TURNSTILE_SITE_KEY` are set** — `server/src/env.ts` refuses to boot otherwise
       (`assertTurnstileConfigured`, `server/src/services/turnstile-guard.ts`), so a misconfigured
       deploy fails loudly at startup rather than silently serving a widget that can never verify.
+      **And the client bundle has been rebuilt since `VITE_TURNSTILE_SITE_KEY` was set** — it is
+      baked in at build time, and the server's startup guard cannot see the bundle, so a stale
+      bundle built before the key existed silently refuses every gated endpoint (staff login,
+      staff forgot-password, both guest booking holds, the custom-trip inquiry, driver PIN login)
+      while the guard reports healthy the whole time: the server correctly requires a token, but
+      `TurnstileWidget` renders nothing and no token is ever produced to send it.
 - [ ] **`NODE_ENV=production` is set** in the PM2 environment. tRPC's default error
       formatter includes the `stack` field when `NODE_ENV` is not `production`, so a
       malformed or hostile request gets a stack trace — file paths, call sites — back
