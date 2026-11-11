@@ -79,15 +79,19 @@ import { guardAndConnect } from './seed';
 const DEMO_TOUR_BOOKING_REFS = ['RG-SEED23', 'RG-SEED24'] as const;
 
 /**
- * The one actor type `seed.ts`'s own demo-booking path (and `seedDemo`
- * generally) ever passes when it writes a `payments` row for these two
- * bookings — identical reasoning to `clear-demo-transfer-bookings.ts`'s own
- * `DEMO_PAYMENT_ACTOR_TYPE`: a webhook uses `'provider'`, an admin approval,
- * cash verification or refund uses `'user'`, driver-collected cash uses
- * `'driver'`. A cron job (`expire-holds.ts`) also writes `'system'`, but
- * never against `entity = 'payments'` — it only ever touches bookings
- * directly. That makes `(entity = 'payments', actorType = 'system')` unique
- * to the seed among every row this query could see.
+ * `seed.ts` never records a payment against `RG-SEED23` / `RG-SEED24` at
+ * all (see `assertOnlyDemoPayments`'s own doc comment) — so any payment
+ * found on either booking was created by something other than the seed,
+ * full stop. `'system'` is kept as the allowlisted value anyway, for shape
+ * consistency with `clear-demo-transfer-bookings.ts`'s own
+ * `DEMO_PAYMENT_ACTOR_TYPE` (whose seed path DOES write `'system'`
+ * payments) and because it is strictly the narrower, more cautious check:
+ * a webhook uses `'provider'`, an admin approval, cash verification or
+ * refund uses `'user'`, driver-collected cash uses `'driver'`, and a cron
+ * job (`expire-holds.ts`) writes `'system'` but never against `entity =
+ * 'payments'`. Even if this seed path later grew its own `'system'`
+ * payment write, the check would still be correct without changing a
+ * character.
  */
 const DEMO_PAYMENT_ACTOR_TYPE = 'system';
 
