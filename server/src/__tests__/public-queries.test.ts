@@ -1,4 +1,4 @@
-import { manilaCivilDate } from '@rg/shared';
+import { formatPeso, manilaCivilDate } from '@rg/shared';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeAll, expect, it } from 'vitest';
 import { getDb } from '../db/client';
@@ -252,6 +252,62 @@ describeWithDb('public queries', () => {
     await expect(caller.tours.bySlug({ slug: 'no-such-tour' })).rejects.toThrow(/NOT_FOUND/);
   });
 
+  /**
+   * Task 4 (1D): `pageTitle` must be the SAME formula `tourTitle()`
+   * (`seo/resolvers.ts`) computes for the server-injected `<title>` on a
+   * cold load — not a re-derivation, and not the bare row title. The seed
+   * ships no `seo_title` override, so this is the common, no-override path:
+   * the generated fallback string, built from this exact row's own
+   * `title`/`destination.name`/`fromPriceCentavos`.
+   */
+  it('tours.bySlug publishes pageTitle computed via the tourTitle() formula (no override)', async () => {
+    const slug = 'oslob-whale-shark-tumalog-falls';
+    const detail = await caller.tours.bySlug({ slug });
+
+    expect(detail.seoTitle).toBeNull();
+    expect(detail.fromPriceCentavos).not.toBeNull();
+    expect(detail.pageTitle).toBe(
+      `${detail.title} — ${detail.destination.name} day tour from ${formatPeso(detail.fromPriceCentavos!)} | TravelSugbo`,
+    );
+  });
+
+  /** The other branch of the same formula: an admin `seo_title` override wins outright. */
+  it('tours.bySlug publishes pageTitle from the admin seo_title override when one is set', async () => {
+    const db = getDb();
+    const slug = 'oslob-whale-shark-tumalog-falls';
+    await db
+      .update(toursTable)
+      .set({ seoTitle: 'Fixture Override Tour Title' })
+      .where(eq(toursTable.slug, slug));
+
+    try {
+      const detail = await caller.tours.bySlug({ slug });
+      expect(detail.pageTitle).toBe('Fixture Override Tour Title');
+    } finally {
+      await db.update(toursTable).set({ seoTitle: null }).where(eq(toursTable.slug, slug));
+    }
+  });
+
+  /**
+   * The commit's own claim is byte-IDENTITY with what the server injects
+   * into `<title>` on a cold load, not merely "the same formula FUNCTION" —
+   * `resolvePage()`'s `resolveTour` builds its `TourSeoRow` via
+   * `loadTourSeo()` (a `MIN()` SQL aggregate for `fromPriceCentavos`), while
+   * `tours.bySlug` derives the same number via `Math.min()` over its own
+   * `priceTiers` read. Both land on the identical value today, but nothing
+   * before this test actually compared the two call paths' OUTPUT strings
+   * against each other rather than against a hand-written expectation.
+   */
+  it("tours.bySlug.pageTitle is byte-identical to resolvePage()'s cold-load <title> for the same route", async () => {
+    const slug = 'kawasan-falls-canyoneering';
+    const { resolvePage } = await import('../seo/resolvers');
+
+    const detail = await caller.tours.bySlug({ slug });
+    const coldLoad = await resolvePage(`/tours/${slug}`);
+
+    expect(detail.pageTitle).toBe(coldLoad.title);
+  });
+
   it('reviews.published separates the display and real aggregates', async () => {
     const r = await caller.reviews.published({});
     expect(r.items.length).toBeGreaterThan(0);
@@ -436,14 +492,57 @@ describeWithDb('public queries', () => {
   // Week 7 plan, Task 3: `packages.bySlug` backs `/packages/:slug`. Same
   // row shape as one entry of `packages.list` — no joins, because the
   // `packages` table has no child tables.
-  it('packages.bySlug returns the package by slug, same shape as one row of list', async () => {
+  it('packages.bySlug returns the package by slug, same shape as one row of list plus pageTitle', async () => {
     const [fromList] = await caller.packages.list();
     const detail = await caller.packages.bySlug({ slug: fromList!.slug });
-    expect(detail).toEqual(fromList);
+    // `pageTitle` (Task 4, 1D) is `bySlug`'s own addition — carved out before
+    // the equality check below, rather than widening `list`'s shape to match.
+    const { pageTitle, ...detailWithoutPageTitle } = detail;
+    expect(detailWithoutPageTitle).toEqual(fromList);
+    expect(typeof pageTitle).toBe('string');
   });
 
   it('packages.bySlug throws NOT_FOUND for an unknown slug', async () => {
     await expect(caller.packages.bySlug({ slug: 'no-such-package' })).rejects.toThrow(/NOT_FOUND/);
+  });
+
+  /** Task 4 (1D) — same proof as tours.bySlug's: pageTitle is the formula's own output, not a re-derivation. */
+  it('packages.bySlug publishes pageTitle computed via the packageTitle() formula (no override)', async () => {
+    const slug = 'cebu-highlights-3d2n';
+    const detail = await caller.packages.bySlug({ slug });
+
+    expect(detail.seoTitle).toBeNull();
+    expect(detail.pageTitle).toBe(
+      `${detail.title} — ${detail.days}-day Cebu package from ${formatPeso(detail.newPriceCentavos)} | TravelSugbo`,
+    );
+  });
+
+  /** The other branch of the same formula: an admin seo_title override wins outright. */
+  it('packages.bySlug publishes pageTitle from the admin seo_title override when one is set', async () => {
+    const db = getDb();
+    const slug = 'cebu-highlights-3d2n';
+    await db
+      .update(packagesTable)
+      .set({ seoTitle: 'Fixture Override Package Title' })
+      .where(eq(packagesTable.slug, slug));
+
+    try {
+      const detail = await caller.packages.bySlug({ slug });
+      expect(detail.pageTitle).toBe('Fixture Override Package Title');
+    } finally {
+      await db.update(packagesTable).set({ seoTitle: null }).where(eq(packagesTable.slug, slug));
+    }
+  });
+
+  /** Packages' half of the same byte-identity proof as tours.bySlug's above. */
+  it("packages.bySlug.pageTitle is byte-identical to resolvePage()'s cold-load <title> for the same route", async () => {
+    const slug = 'cebu-bohol-5d4n';
+    const { resolvePage } = await import('../seo/resolvers');
+
+    const detail = await caller.packages.bySlug({ slug });
+    const coldLoad = await resolvePage(`/packages/${slug}`);
+
+    expect(detail.pageTitle).toBe(coldLoad.title);
   });
 
   it('packages.bySlug throws NOT_FOUND for a soft-deleted package', async () => {

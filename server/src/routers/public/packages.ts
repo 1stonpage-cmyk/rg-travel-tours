@@ -4,6 +4,7 @@ import { asc, eq } from 'drizzle-orm';
 import { readShowTours } from '../../content/settings';
 import { getDb } from '../../db/client';
 import { packages } from '../../db/schema';
+import { packageTitle } from '../../seo/resolvers';
 import { publicProcedure, router } from '../../trpc';
 
 export interface PackageListItem {
@@ -21,6 +22,19 @@ export interface PackageListItem {
   seoTitle: string | null;
   seoDescription: string | null;
   ogImage: string | null;
+}
+
+/**
+ * `bySlug`'s own response shape — one field wider than a `list` row (Task 4,
+ * 1D). `pageTitle` is the exact title the server injects into `<title>` for
+ * this page on a cold load (`packageTitle()`, `server/src/seo/resolvers.ts`),
+ * published so a client-side navigation can re-assert the SAME string rather
+ * than re-deriving it. Not added to `PackageListItem` itself: `list` has no
+ * use for a per-page browser-tab title, and widening it there would make
+ * every list row carry a field only the detail page reads.
+ */
+export interface PackageDetail extends PackageListItem {
+  pageTitle: string;
 }
 
 export const packagesRouter = router({
@@ -61,7 +75,7 @@ export const packagesRouter = router({
    */
   bySlug: publicProcedure
     .input(packagesBySlugInput)
-    .query(async ({ input }): Promise<PackageListItem> => {
+    .query(async ({ input }): Promise<PackageDetail> => {
       // The `show_tours` gate (Decision 2). The SAME message, byte for
       // byte, the inactive-row branch below throws — a hidden package and a
       // slug naming nothing must be indistinguishable (BUG-122's rule,
@@ -95,6 +109,7 @@ export const packagesRouter = router({
         seoTitle: row.seoTitle,
         seoDescription: row.seoDescription,
         ogImage: row.ogImage,
+        pageTitle: packageTitle(row),
       };
     }),
 });

@@ -4,6 +4,7 @@ import { useParams } from 'react-router-dom';
 import QueryBoundary from '@/components/common/QueryBoundary';
 import { Skeleton } from '@/components/common/Skeleton';
 import PackageInquiryForm from '@/components/package/PackageInquiryForm';
+import { useRawDocumentTitle } from '@/hooks/useDocumentTitle';
 import { trpc } from '@/lib/trpc';
 
 /**
@@ -42,6 +43,8 @@ function DetailSkeleton() {
 export default function PackageDetailPage() {
   const { slug } = useParams<{ slug: string }>();
   const query = trpc.packages.bySlug.useQuery({ slug: slug ?? '' }, { enabled: Boolean(slug) });
+  // Task 4 (1D) — see TourDetailPage.tsx's identical call for the full note.
+  useRawDocumentTitle(query.data?.pageTitle ?? null);
 
   return (
     <QueryBoundary

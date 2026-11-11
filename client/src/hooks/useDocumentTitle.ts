@@ -15,13 +15,24 @@
  *
  * ## Why it takes a nullable title
  *
- * `null` means "leave the injected title alone", and it is the right answer
- * more often than it looks. The home page's title comes from
- * `settings.site_seo` and a tour or package detail title from that row's own
- * `seo_title`; the browser has no access to either, so inventing a
- * client-side substitute would replace a correct database-driven title with
- * a worse guess. Passing `null` preserves exactly today's behaviour for
- * those routes rather than regressing them.
+ * `null` means "leave the injected title alone", and for THIS hook it is the
+ * right answer always: `useDocumentTitle` only ever carries a bare name
+ * (`STATIC_PUBLIC_TITLES`, `APP_SURFACE_TITLES`) that it appends the brand
+ * suffix to itself, so it has nothing useful to say about a route whose real
+ * title is a different shape entirely.
+ *
+ * That used to include the home page and the two detail pages — their
+ * titles come from `settings.site_seo` and a row's own `seo_title`/the
+ * `tourTitle()`/`packageTitle()` fallback, and this hook cannot build either
+ * without duplicating server logic, so it passed `null` and left the
+ * server-injected title to go stale on a client-side navigation. Task 4
+ * (1D) closed that gap, but NOT by teaching this hook those formulas: those
+ * three pages now call {@link useRawDocumentTitle} themselves, with the
+ * server's own already-complete string (`pageTitle` on `tours.bySlug` /
+ * `packages.bySlug`, `siteSeo.title` on `settings.get`). This hook's `null`
+ * contract for those routes is accordingly unchanged — `PublicLayout` still
+ * has nothing to offer them and still says so by passing `null` — but it is
+ * no longer the WHOLE story for those routes the way it reads below.
  *
  * ## It writes nothing but the title
  *
@@ -55,4 +66,24 @@ export function useDocumentTitle(name: string | null): void {
     if (name === null) return;
     document.title = brandedTitle(name);
   }, [name]);
+}
+
+/**
+ * Sets `document.title` to `title` VERBATIM — no ` | TravelSugbo` suffix —
+ * whenever `title` changes. Pass `null` to leave the document's current
+ * title untouched, exactly as {@link useDocumentTitle} does.
+ *
+ * For the handful of routes whose real title is already a complete,
+ * fully-formed string by the time it leaves the server: the home page's
+ * `settings.site_seo.title`, and a tour/package detail page's `tourTitle()` /
+ * `packageTitle()` (`server/src/seo/resolvers.ts`) — both of which already
+ * end in the brand name, or are an admin's own `seo_title` override with no
+ * brand suffix implied at all. Passing either through {@link useDocumentTitle}
+ * would append a second, redundant suffix.
+ */
+export function useRawDocumentTitle(title: string | null): void {
+  useEffect(() => {
+    if (title === null) return;
+    document.title = title;
+  }, [title]);
 }

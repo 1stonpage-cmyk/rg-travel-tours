@@ -10,6 +10,7 @@ import BookingPicker from '@/components/tour/BookingPicker';
 import Gallery from '@/components/tour/Gallery';
 import PriceTierTable from '@/components/tour/PriceTierTable';
 import ReviewsBlock from '@/components/tour/ReviewsBlock';
+import { useRawDocumentTitle } from '@/hooks/useDocumentTitle';
 import { trpc } from '@/lib/trpc';
 
 /**
@@ -58,6 +59,15 @@ function isTourNotFound(error: unknown): boolean {
 export default function TourDetailPage() {
   const { slug } = useParams<{ slug: string }>();
   const query = trpc.tours.bySlug.useQuery({ slug: slug ?? '' }, { enabled: Boolean(slug) });
+  /*
+   * Task 4 (1D): `pageTitle` is the server's own `tourTitle()` formula
+   * (`server/src/seo/resolvers.ts`), already fully-formed — the server
+   * injected the identical string on a cold load, and this re-asserts it on
+   * a client-side navigation into this page. `null` while the query hasn't
+   * resolved yet (or has errored), which leaves whatever title is already
+   * showing untouched rather than flashing a guess.
+   */
+  useRawDocumentTitle(query.data?.pageTitle ?? null);
 
   /*
    * Task T16, C3. Before this, a `NOT_FOUND` (a wrong/retired slug, or a tour

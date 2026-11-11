@@ -306,7 +306,19 @@ async function buildSiteGraph(
 // 5A fallbacks — applied when seo_title / seo_description are empty
 // ---------------------------------------------------------------------------
 
-function tourTitle(tour: TourSeoRow): string {
+/**
+ * The single formula for a tour's title, admin override included — exported
+ * so `tours.bySlug` (`routers/public/tours.ts`) can publish the SAME string
+ * on the wire as `pageTitle`, rather than a client-side re-derivation of it.
+ * Narrowed to exactly the four fields it reads, rather than the full
+ * `TourSeoRow`, because `tours.bySlug`'s own row shape differs (a nested
+ * `destination.name`, not a flat `destinationName`) — this lets each caller
+ * pass a small object literal built from its own row instead of either
+ * widening that row or duplicating the formula.
+ */
+export function tourTitle(
+  tour: Pick<TourSeoRow, 'title' | 'seoTitle' | 'fromPriceCentavos' | 'destinationName'>,
+): string {
   const explicit = nonEmpty(tour.seoTitle);
   if (explicit) return explicit;
 
@@ -330,7 +342,17 @@ function tourDescription(tour: TourSeoRow): string {
   return `Book the ${tour.title} day tour in ${tour.destinationName} with ${BRAND}. Private van, licensed driver${from}.`;
 }
 
-function packageTitle(pkg: PackageSeoRow): string {
+/**
+ * The single formula for a package's title, admin override included —
+ * exported for the same reason as {@link tourTitle}: `packages.bySlug`
+ * publishes this SAME string as `pageTitle` rather than re-deriving it. Its
+ * row is a flat `packages` row with no joins, so the narrowed `Pick` here
+ * happens to match every field `PackageSeoRow` has except `id`/`slug` — kept
+ * narrow anyway, for the same reason as `tourTitle`'s.
+ */
+export function packageTitle(
+  pkg: Pick<PackageSeoRow, 'title' | 'seoTitle' | 'days' | 'newPriceCentavos'>,
+): string {
   const explicit = nonEmpty(pkg.seoTitle);
   if (explicit) return explicit;
 

@@ -243,6 +243,39 @@ describe('home page', () => {
 });
 
 /**
+ * Task 4 (1D): a client-side navigation INTO `/` used to leave the previous
+ * page's title showing — `settings.site_seo.title` is already a complete,
+ * database-driven string (no brand suffix to append), and nothing here
+ * called any title hook at all before this task.
+ */
+describe('home page — document title (Task 4, 1D)', () => {
+  beforeEach(() => {
+    mockTrpc({
+      'settings.get': SETTINGS_FIXTURE,
+      'destinations.list': DESTINATIONS_FIXTURE,
+      'tours.list': TOURS_FIXTURE,
+      'packages.list': PACKAGES_FIXTURE,
+      'reviews.published': REVIEWS_FIXTURE,
+    });
+  });
+
+  it('sets document.title to settings.siteSeo.title once settings.get resolves', async () => {
+    document.title = 'Some other page | TravelSugbo';
+    renderHome();
+
+    await waitFor(() => expect(document.title).toBe(SETTINGS_FIXTURE.siteSeo.title));
+  });
+
+  it('leaves the previous title alone while settings.get is still pending', () => {
+    document.title = 'Some other page | TravelSugbo';
+    mockTrpc({ 'settings.get': () => new Promise(() => {}) });
+    renderHome();
+
+    expect(document.title).toBe('Some other page | TravelSugbo');
+  });
+});
+
+/**
  * `show_tours` gate (transfers-launch plan, Task T16). `CatalogPreview` and
  * `MostVisited` are not mounted at all while tours are hidden (rather than
  * mounted and rendering an empty/dead-end section — see `HomePage.tsx`'s own

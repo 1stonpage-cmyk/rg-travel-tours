@@ -7,10 +7,20 @@
  * read "Driver portal" all shift (right by luck) and a guest who clicked
  * from `/privacy` to `/terms` kept reading "Privacy Notice" (not right).
  *
- * The null case is tested too, and it is the load-bearing half: `/` and the
- * two detail routes resolve their titles from the database, which the
- * browser cannot read, so the hook must leave the injected title ALONE
- * there rather than overwrite a correct title with a guess.
+ * The null case is tested too, and it is the load-bearing half for
+ * `PublicLayout`'s OWN hook call: `/` and the two detail routes resolve
+ * their titles from the database, so `PublicLayout` — which only ever
+ * carries a bare `STATIC_PUBLIC_TITLES`/`APP_SURFACE_TITLES` name — has
+ * nothing to offer those routes and must leave the injected title alone
+ * rather than overwrite it with a guess. This is still true after Task 4
+ * (1D): `PublicLayout` did not gain those formulas. What changed is that the
+ * real page components for those three routes now call their OWN title hook
+ * (`useRawDocumentTitle`) directly, with the server's own already-complete
+ * string — see `tour-detail-page.test.tsx` / `package-detail-page.test.tsx`
+ * / `home.test.tsx`'s own "document title" tests for that half. The two
+ * tests below render stub children in place of the real pages specifically
+ * so they keep pinning `PublicLayout`'s contract in isolation, undisturbed
+ * by what the real pages do.
  */
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -101,17 +111,23 @@ describe('document.title', () => {
     expect(document.title).toBe('Terms of Service | TravelSugbo');
   });
 
-  it('LEAVES the injected title alone on a route whose title the database owns', () => {
+  it('PublicLayout claims no title on a route whose page owns it: home', () => {
     renderPublicAt('/');
-    // `/` is `settings.site_seo.title`, which the browser cannot read.
+    // `/`'s real title is `settings.site_seo.title` — a full database string
+    // `PublicLayout` has no access to — so it passes `null` and leaves
+    // whatever is already showing untouched. (The stub index route here
+    // renders no title itself; the REAL HomePage's own call is pinned
+    // separately in home.test.tsx's "document title" tests.)
     expect(document.title).toBe(INJECTED);
   });
 
-  it('leaves the injected title alone on a tour detail route too', () => {
+  it('PublicLayout claims no title on a route whose page owns it: tour detail too', () => {
     renderPublicAt('/tours/kawasan-falls');
     expect(document.title).toBe(INJECTED);
     // Not to be confused with the catalog index, which IS named.
     expect(STATIC_PUBLIC_TITLES['/tours']).toBe('Cebu Day Tours');
+    // (Same caveat as above: the REAL TourDetailPage's own call is pinned
+    // separately in tour-detail-page.test.tsx's "document title" tests.)
   });
 
   it('still renders the page it titled', () => {

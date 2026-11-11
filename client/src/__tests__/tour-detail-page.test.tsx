@@ -14,6 +14,7 @@
  */
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { formatPeso } from '@rg/shared';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
 import TourDetailPage from '@/pages/public/TourDetailPage';
@@ -91,6 +92,17 @@ const TOUR_DETAIL_FIXTURE: TourDetail = {
   seoTitle: null,
   seoDescription: null,
   ogImage: null,
+  /*
+   * Task 4 (1D): the server's own `tourTitle()` formula output for this
+   * fixture row — no `seoTitle` override, so this is the generated fallback:
+   * `${title} — ${destination.name} day tour from ${formatPeso(fromPriceCentavos)} | TravelSugbo`.
+   * Hand-typed here (unlike `formatPeso(fromPriceCentavos)` inline, which
+   * would need a second object to reference this one's own fields); the
+   * document-title tests below assert against this same constant, so a
+   * mismatch with the real formula is caught the moment either value
+   * changes without the other.
+   */
+  pageTitle: `Oslob Whale Sharks + Tumalog Falls — Oslob day tour from ${formatPeso(160_000)} | TravelSugbo`,
 };
 
 function detail(overrides: Partial<TourDetail> = {}): TourDetail {
@@ -299,6 +311,32 @@ describe('TourDetailPage — a NOT_FOUND slug gets a dedicated friendly state', 
       await screen.findByRole('button', { name: /try again/i }, { timeout: 3000 }),
     ).toBeInTheDocument();
     expect(screen.queryByText(/this tour isn.t available/i)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Task 4 (1D): a client-side navigation into this page used to leave the
+ * PREVIOUS page's title showing — nothing here called any title hook at
+ * all. `pageTitle` is the server's own `tourTitle()` formula output
+ * (asserted directly against the real formula in public-queries.test.ts);
+ * this only pins that the page actually sets `document.title` to it.
+ */
+describe('TourDetailPage — document title (Task 4, 1D)', () => {
+  it('sets document.title to the server-computed pageTitle once the query resolves', async () => {
+    document.title = 'Some other page | TravelSugbo';
+    mockTrpc({ 'tours.bySlug': () => detail(), 'settings.get': SETTINGS_FIXTURE });
+    renderDetail();
+
+    await screen.findByText('Hotel pickup');
+    expect(document.title).toBe(TOUR_DETAIL_FIXTURE.pageTitle);
+  });
+
+  it('leaves the previous title alone while the query is still pending', () => {
+    document.title = 'Some other page | TravelSugbo';
+    mockTrpc({ 'tours.bySlug': () => new Promise(() => {}), 'settings.get': SETTINGS_FIXTURE });
+    renderDetail();
+
+    expect(document.title).toBe('Some other page | TravelSugbo');
   });
 });
 

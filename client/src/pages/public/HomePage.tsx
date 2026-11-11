@@ -9,6 +9,7 @@ import PromoNewsletter from '@/components/home/PromoNewsletter';
 import ReviewsSection from '@/components/home/ReviewsSection';
 import TrustBar from '@/components/home/TrustBar';
 import WhyBookDirect from '@/components/home/WhyBookDirect';
+import { useRawDocumentTitle } from '@/hooks/useDocumentTitle';
 import { trpc } from '@/lib/trpc';
 import { useScrollReveal } from '@/lib/use-scroll-reveal';
 
@@ -50,6 +51,15 @@ export default function HomePage() {
    */
   const { data: settings } = trpc.settings.get.useQuery();
   const showTours = settings?.showTours ?? false;
+  /*
+   * Task 4 (1D): `settings.site_seo.title` is already a complete string
+   * (e.g. "TravelSugbo — Cebu Airport & Island Transfers") — the server
+   * injects it verbatim on a cold load, so this re-asserts the same string
+   * on a client-side navigation INTO `/`, with no brand suffix appended.
+   * `null` until `settings.get` resolves, which leaves whatever title is
+   * already showing untouched.
+   */
+  useRawDocumentTitle(settings?.siteSeo?.title ?? null);
 
   return (
     <>

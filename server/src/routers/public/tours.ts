@@ -29,6 +29,7 @@ import {
   displayAggregate,
   type Aggregate,
 } from '../../services/ratings';
+import { tourTitle } from '../../seo/resolvers';
 import { publicProcedure, router } from '../../trpc';
 
 export interface TourImage {
@@ -77,6 +78,14 @@ export interface TourDetail extends TourListItem {
   seoTitle: string | null;
   seoDescription: string | null;
   ogImage: string | null;
+  /**
+   * The exact title the server injects into `<title>` for this page on a
+   * cold load (`tourTitle()`, `server/src/seo/resolvers.ts`) — published here
+   * so a client-side navigation (Task 4, 1D) can re-assert the SAME string
+   * via `useRawDocumentTitle` instead of re-deriving it from `seoTitle` and
+   * risking a second copy of the fallback formula.
+   */
+  pageTitle: string;
 }
 
 interface ListRow {
@@ -358,6 +367,12 @@ export const toursRouter = router({
       seoTitle: row.seoTitle,
       seoDescription: row.seoDescription,
       ogImage: row.ogImage,
+      pageTitle: tourTitle({
+        title: row.title,
+        seoTitle: row.seoTitle,
+        fromPriceCentavos,
+        destinationName: row.destinationName,
+      }),
     };
   }),
 });

@@ -17,13 +17,21 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 import PackageDetailPage from '@/pages/public/PackageDetailPage';
 import { TrpcProviders } from '@/lib/trpc';
-import type { PackageListItem } from '../../../server/src/routers/public/packages';
+import type { PackageDetail } from '../../../server/src/routers/public/packages';
 import { PACKAGES_FIXTURE } from './helpers/fixtures';
 import { mockTrpc, mockTrpcError } from './helpers/mock-trpc';
 
-const PACKAGE_DETAIL_FIXTURE: PackageListItem = PACKAGES_FIXTURE[0]!;
+const BASE_PACKAGE_FIXTURE = PACKAGES_FIXTURE[0]!;
+const PACKAGE_DETAIL_FIXTURE: PackageDetail = {
+  ...BASE_PACKAGE_FIXTURE,
+  // Task 4 (1D): the server's own `packageTitle()` formula output for this
+  // fixture row — no `seoTitle` override, so this is the generated fallback.
+  // Computed, not hand-typed, so a price change to the fixture cannot drift
+  // silently out of sync with the string below.
+  pageTitle: `${BASE_PACKAGE_FIXTURE.title} — ${BASE_PACKAGE_FIXTURE.days}-day Cebu package from ${formatPeso(BASE_PACKAGE_FIXTURE.newPriceCentavos)} | TravelSugbo`,
+};
 
-function detail(overrides: Partial<PackageListItem> = {}): PackageListItem {
+function detail(overrides: Partial<PackageDetail> = {}): PackageDetail {
   return { ...PACKAGE_DETAIL_FIXTURE, ...overrides };
 }
 
@@ -128,6 +136,33 @@ describe('PackageDetailPage — inquiry form', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/agree to be contacted/i);
     expect(calls).toBe(0);
+  });
+});
+
+/**
+ * Task 4 (1D): a client-side navigation into this page used to leave the
+ * PREVIOUS page's title showing, because nothing here called any title
+ * hook at all. `pageTitle` is the server's own `packageTitle()` formula
+ * output (asserted directly against the real formula in
+ * public-queries.test.ts); this only pins that the page actually sets
+ * `document.title` to it.
+ */
+describe('PackageDetailPage — document title (Task 4, 1D)', () => {
+  it('sets document.title to the server-computed pageTitle once the query resolves', async () => {
+    document.title = 'Some other page | TravelSugbo';
+    mockTrpc({ 'packages.bySlug': () => detail() });
+    renderDetail();
+
+    await screen.findByRole('heading', { level: 1, name: PACKAGE_DETAIL_FIXTURE.title });
+    expect(document.title).toBe(PACKAGE_DETAIL_FIXTURE.pageTitle);
+  });
+
+  it('leaves the previous title alone while the query is still pending', () => {
+    document.title = 'Some other page | TravelSugbo';
+    mockTrpc({ 'packages.bySlug': () => new Promise(() => {}) });
+    renderDetail();
+
+    expect(document.title).toBe('Some other page | TravelSugbo');
   });
 });
 
