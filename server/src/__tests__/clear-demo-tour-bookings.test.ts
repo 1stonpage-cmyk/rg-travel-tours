@@ -243,9 +243,8 @@ describeWithDb(
     it('refuses the whole run, deleting nothing, when the SECOND matched booking has a non-demo payment', async () => {
       const tourId = await makeTour();
       // REF_ONE is read-and-verified FIRST (array order); tainting REF_TWO
-      // (the second) means a future refactor that interleaved check-and-
-      // delete per booking would already have deleted REF_ONE — a strictly
-      // stronger proof than tainting the first.
+      // (the second) proves the whole run refuses regardless of which
+      // matched booking is tainted — not only the one checked first.
       const cleanBookingId = await makeBooking(tourId, REF_ONE);
       const taintedBookingId = await makeBooking(tourId, REF_TWO);
       const taintedPaymentId = await makePayment(taintedBookingId, 'user');
