@@ -39,6 +39,15 @@
  * back a guessing run, and `audit_log` is already admin-only. **The
  * password is never in the row, the message, or a log line**, and there is
  * no code path here that could put it there.
+ *
+ * **Exception, deliberate (Task 11):** a Turnstile refusal — switched on,
+ * no token — throws `refused()` before `verifyStaffPassword` ever runs, so
+ * it writes no `auth.login_failed` row. That is not a credential attempt;
+ * it is a bot filter rejecting a request before it reaches one. Nothing
+ * here is lost that matters: `audit_log` is admin-only, so a row's absence
+ * tells an attacker nothing they could not already infer, and a real
+ * guessing run against a real password still gets its row exactly as
+ * before.
  */
 import { randomBytes } from 'node:crypto';
 import { TRPCError } from '@trpc/server';
@@ -81,6 +90,7 @@ import {
   recordChangePasswordFailure,
   verifyStaffPassword,
 } from '../../services/staff-auth';
+import { verifyTurnstile } from '../../services/turnstile';
 import { adminProcedureAllowingPasswordChange, publicProcedure, router } from '../../trpc';
 
 /**
@@ -90,7 +100,14 @@ import { adminProcedureAllowingPasswordChange, publicProcedure, router } from '.
  * that looks like it might honour one.
  */
 const loginInput = z
-  .object({ email: z.email().max(200), password: z.string().min(1).max(200) })
+  .object({
+    email: z.email().max(200),
+    password: z.string().min(1).max(200),
+    // Cloudflare Turnstile (Task 11). `.optional()` with no further bounds:
+    // see this file's `login` resolver for why no validation rule here can
+    // ever surface a raw Zod message to the sign-in screen.
+    turnstileToken: z.string().optional(),
+  })
   .strict();
 
 /**
@@ -130,6 +147,21 @@ const resetRefused = () =>
 export const staffAuthRouter = router({
   login: publicProcedure.input(loginInput).mutation(async ({ input, ctx }) => {
     const now = new Date();
+
+    /*
+     * Cloudflare Turnstile (owner decision 2026-11-10/11, Task 11) — checked
+     * BEFORE `verifyStaffPassword`, which does a real ~128MB scrypt hash
+     * (services/password.ts): a Turnstile refusal must not pay the cost a
+     * real credential check pays. Reuses the EXISTING single refusal
+     * (`refused()`) rather than a new shape — a different message here
+     * would let an attacker tell "no token" apart from "wrong password",
+     * which is the same oracle this file's other anti-enumeration tests
+     * (the unknown-email / wrong-password pair below) exist to rule out.
+     */
+    if (!(await verifyTurnstile({ token: input.turnstileToken, remoteIp: ctx.req.ip }))) {
+      throw refused();
+    }
+
     const identity = await verifyStaffPassword(input.email, input.password, now);
 
     if (!identity) {
@@ -367,11 +399,23 @@ export const staffAuthRouter = router({
    */
   requestPasswordReset: publicProcedure
     .input(requestPasswordResetInputSchema)
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       // One clock read at the request boundary, passed down — so the
       // 30-minute window and the throttle window are both assertable.
       const now = new Date();
       const email = input.email;
+
+      /*
+       * Cloudflare Turnstile (Task 11), checked FIRST — before the throttle
+       * read and before anything else — so a refused attempt costs nothing:
+       * no throttle budget spent, no lookup, no insert, no send. Returns
+       * the SAME `REQUESTED` answer every other refusal this procedure
+       * gives (unknown email, throttled, deactivated): see this procedure's
+       * own note above on why a different answer here would be an oracle.
+       */
+      if (!(await verifyTurnstile({ token: input.turnstileToken, remoteIp: ctx.req.ip }))) {
+        return REQUESTED;
+      }
 
       /*
        * The per-email half of the limit, BEFORE the lookup and before any

@@ -39,6 +39,7 @@ import { useState, type FormEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff, Loader2, Lock } from 'lucide-react';
+import TurnstileWidget from '@/components/common/TurnstileWidget';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -63,6 +64,10 @@ export default function AdminLoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [revealed, setRevealed] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState<string | undefined>(undefined);
+  // A Turnstile token is single-use — bump this to remount the widget (and
+  // get a fresh one) after any failed attempt, not only a Turnstile refusal.
+  const [turnstileResetKey, setTurnstileResetKey] = useState(0);
 
   const login = trpc.staffAuth.login.useMutation({
     onSuccess: (result) => {
@@ -70,12 +75,13 @@ export default function AdminLoginPage() {
       queryClient.clear();
       navigate(result.mustChangePassword ? '/admin/change-password' : '/admin', { replace: true });
     },
+    onError: () => setTurnstileResetKey((key) => key + 1),
   });
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     login.reset();
-    login.mutate({ email: email.trim(), password });
+    login.mutate({ email: email.trim(), password, turnstileToken });
   }
 
   return (
@@ -199,6 +205,15 @@ export default function AdminLoginPage() {
               </button>
             </div>
           </div>
+
+          {/*
+           * Renders nothing when Turnstile is not configured (local dev, or
+           * switched off) — `onVerify` simply never fires, `turnstileToken`
+           * stays `undefined`, and the server treats that exactly like the
+           * feature being off (`verifyTurnstile`). Remounted via `key` after
+           * any failed attempt, since a token is single-use.
+           */}
+          <TurnstileWidget key={turnstileResetKey} onVerify={setTurnstileToken} />
 
           <Button
             type="submit"

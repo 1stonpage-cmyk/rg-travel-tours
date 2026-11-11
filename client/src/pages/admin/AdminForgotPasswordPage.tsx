@@ -40,6 +40,7 @@ import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, Loader2, MailCheck, Send } from 'lucide-react';
 import { TRPCClientError } from '@trpc/client';
+import TurnstileWidget from '@/components/common/TurnstileWidget';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -72,6 +73,10 @@ export default function AdminForgotPasswordPage() {
   const [email, setEmail] = useState('');
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
+  const [turnstileToken, setTurnstileToken] = useState<string | undefined>(undefined);
+  // A Turnstile token is single-use — bump this to remount the widget (and
+  // get a fresh one) after a failed attempt.
+  const [turnstileResetKey, setTurnstileResetKey] = useState(0);
 
   const request = trpc.staffAuth.requestPasswordReset.useMutation({
     onSuccess: () => {
@@ -79,6 +84,7 @@ export default function AdminForgotPasswordPage() {
       setBanner(null);
     },
     onError: (error) => {
+      setTurnstileResetKey((key) => key + 1);
       /*
        * The shared reader (`lib/field-errors.ts`), never `error.message` for
        * a validation failure: that message is tRPC's raw JSON issue list,
@@ -103,7 +109,7 @@ export default function AdminForgotPasswordPage() {
     setFieldError(null);
     setBanner(null);
     request.reset();
-    request.mutate({ email: email.trim() });
+    request.mutate({ email: email.trim(), turnstileToken });
   }
 
   const sent = request.isSuccess;
@@ -193,6 +199,13 @@ export default function AdminForgotPasswordPage() {
                 </p>
               ) : null}
             </div>
+
+            {/*
+             * Renders nothing when Turnstile is not configured (local dev,
+             * or switched off) — see AdminLoginPage's own note on this
+             * component for why that is safe.
+             */}
+            <TurnstileWidget key={turnstileResetKey} onVerify={setTurnstileToken} />
 
             <Button
               type="submit"

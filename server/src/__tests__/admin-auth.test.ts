@@ -16,12 +16,18 @@
 import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
 import request from 'supertest';
 import { eq, inArray, sql } from 'drizzle-orm';
+import { PASSWORD_RESET_REQUESTED_MESSAGE } from '@rg/shared';
 import { createApp } from '../app';
 import { getDb, getPool } from '../db/client';
-import { auditLog, users } from '../db/schema';
+import { auditLog, passwordResetTokens, users } from '../db/schema';
+import { env } from '../env';
 import { SESSION_COOKIE_BY_SUBJECT } from '../middleware/session-cookie';
 import { STAFF_LOGIN_MAX_PER_IP } from '../middleware/rate-limit';
 import { hashPassword } from '../services/password';
+import {
+  RESET_MAX_PER_EMAIL,
+  resetPasswordResetThrottleForTests,
+} from '../services/password-reset';
 import { resetEmailThrottleForTests } from '../services/staff-auth';
 import { createSession, readSession } from '../services/sessions';
 import { appRouter } from '../routers/_app';
@@ -56,12 +62,18 @@ beforeAll(async () => {
 
 afterEach(async () => {
   resetEmailThrottleForTests();
+  resetPasswordResetThrottleForTests();
   const pool = getPool();
   for (const id of createdIds) {
     await pool.query('DELETE FROM sessions WHERE subject_type = ? AND subject_id = ?', [
       'user',
       id,
     ]);
+    // Task 11's Turnstile test exercises `requestPasswordReset`, which can
+    // insert a real token row — clean it up here (as `password-reset.test.ts`
+    // already does for its own suite) rather than at `afterAll`, which only
+    // deletes `users` and would otherwise die on the FK this table holds.
+    await pool.query('DELETE FROM password_reset_tokens WHERE user_id = ?', [id]);
   }
   await pool.query(
     "DELETE FROM audit_log WHERE action LIKE 'auth.%' AND (actor_id IN (?, ?) OR actor_id IS NULL)",
@@ -187,6 +199,42 @@ describeWithDb('staffAuth.login', () => {
     expect((unknown as { code?: string }).code).toBe((wrong as { code?: string }).code);
   });
 
+  /**
+   * **Task 11 — Turnstile.** The property that matters is not the literal
+   * sentence, it is that a missing-token refusal and a wrong-password
+   * refusal are the SAME refusal, exactly as the test above pins "unknown
+   * email" and "wrong password" as the same refusal. A new/different
+   * message here would let an attacker tell "forgot to solve the widget"
+   * apart from "wrong credentials" — nothing by itself, but exactly the
+   * oracle this file's other anti-enumeration tests exist to rule out. Also
+   * proves the ordering matters: Turnstile is enabled with the CORRECT
+   * password and still refused, which only holds if the check runs before
+   * `verifyStaffPassword` ever looks at the password.
+   */
+  it('refuses a correct password with a missing Turnstile token, identically to a wrong password', async () => {
+    const original = env.TURNSTILE_ENABLED;
+    (env as { TURNSTILE_ENABLED?: string }).TURNSTILE_ENABLED = '1';
+    let turnstileRefusal: unknown;
+    try {
+      turnstileRefusal = await callerWithCookies()
+        .api.staffAuth.login({ email: EMAIL.owner, password: PASSWORD })
+        .catch((e: unknown) => e);
+    } finally {
+      (env as { TURNSTILE_ENABLED?: string }).TURNSTILE_ENABLED = original;
+    }
+
+    // The control case, with Turnstile back off (as it was before this
+    // test): a genuinely wrong password, going through `verifyStaffPassword`.
+    const wrongPasswordRefusal = await callerWithCookies()
+      .api.staffAuth.login({ email: EMAIL.owner, password: 'nope' })
+      .catch((e: unknown) => e);
+
+    expect((turnstileRefusal as Error).message).toBe((wrongPasswordRefusal as Error).message);
+    expect((turnstileRefusal as { code?: string }).code).toBe(
+      (wrongPasswordRefusal as { code?: string }).code,
+    );
+  });
+
   it('REFUSES a deactivated account and sets no cookie', async () => {
     const { api, set } = callerWithCookies();
     await expect(
@@ -255,6 +303,75 @@ describeWithDb('staffAuth.login', () => {
       );
 
     expect(res.status, 'a batch of eleven failed logins was not refused').toBe(429);
+  });
+});
+
+/**
+ * **Task 11 — Turnstile on `requestPasswordReset`.** The full behavioural
+ * suite for this procedure (unknown email, throttle, expiry, deactivated
+ * account…) lives in `password-reset.test.ts`; this block adds only the
+ * Turnstile-specific property, reusing this file's own fixtures
+ * (`EMAIL.owner` / `ownerId`) rather than duplicating that suite.
+ */
+describeWithDb('staffAuth.requestPasswordReset — Turnstile', () => {
+  /**
+   * Answers the SAME `REQUESTED` shape every other refusal this procedure
+   * gives (unknown email, throttled, deactivated), and — the property that
+   * actually matters — is checked BEFORE the per-email throttle read, so a
+   * refused attempt costs nothing.
+   *
+   * A test that merely asserted "no row after one Turnstile-refused call"
+   * could not tell a correctly-ordered check from one sitting right after
+   * Turnstile but still ahead of the real throttle, nor from one planted
+   * AFTER `isResetThrottled`/`recordResetRequest` — the first real request
+   * (Turnstile off) would still return `REQUESTED` either way. So instead
+   * this spends the WHOLE per-email budget (`RESET_MAX_PER_EMAIL`) on
+   * Turnstile-refused calls, then — Turnstile off again — fires one more,
+   * real request and requires it to actually succeed and write a token. If
+   * the Turnstile check were misordered to run after the throttle, those
+   * `RESET_MAX_PER_EMAIL` refused calls would have consumed the budget
+   * themselves, the final real request would come back throttled instead,
+   * and this assertion goes red.
+   */
+  it('answers REQUESTED and writes nothing while Turnstile refuses, spending none of the throttle budget', async () => {
+    resetPasswordResetThrottleForTests();
+    const original = env.TURNSTILE_ENABLED;
+    (env as { TURNSTILE_ENABLED?: string }).TURNSTILE_ENABLED = '1';
+    try {
+      for (let i = 0; i < RESET_MAX_PER_EMAIL; i += 1) {
+        const result = await callerWithCookies().api.staffAuth.requestPasswordReset({
+          email: EMAIL.owner,
+        });
+        expect(result).toEqual({ ok: true, message: PASSWORD_RESET_REQUESTED_MESSAGE });
+      }
+
+      const whileRefusing = await getDb()
+        .select()
+        .from(passwordResetTokens)
+        .where(eq(passwordResetTokens.userId, ownerId));
+      expect(whileRefusing, 'a token was written despite a missing Turnstile token').toHaveLength(
+        0,
+      );
+    } finally {
+      (env as { TURNSTILE_ENABLED?: string }).TURNSTILE_ENABLED = original;
+    }
+
+    // Turnstile is off again. A real request now must succeed AND find the
+    // per-email budget untouched by the refused attempts above.
+    const real = await callerWithCookies().api.staffAuth.requestPasswordReset({
+      email: EMAIL.owner,
+    });
+    expect(real).toEqual({ ok: true, message: PASSWORD_RESET_REQUESTED_MESSAGE });
+
+    const rows = await getDb()
+      .select()
+      .from(passwordResetTokens)
+      .where(eq(passwordResetTokens.userId, ownerId));
+    expect(
+      rows,
+      'the per-email throttle budget was spent by Turnstile-refused attempts — the ' +
+        'Turnstile check is running after the throttle read, not before it',
+    ).toHaveLength(1);
   });
 });
 

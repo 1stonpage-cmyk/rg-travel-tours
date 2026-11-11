@@ -111,7 +111,9 @@ export const PASSWORD_RESET_REFUSED_MESSAGE =
  * ignored. `staffEmailSchema` trims and lowercases, so the throttle key and
  * the account lookup agree with every other staff surface.
  */
-export const requestPasswordResetInputSchema = z.object({ email: staffEmailSchema }).strict();
+export const requestPasswordResetInputSchema = z
+  .object({ email: staffEmailSchema, turnstileToken: z.string().optional() })
+  .strict();
 export type RequestPasswordResetInput = z.infer<typeof requestPasswordResetInputSchema>;
 
 /**
