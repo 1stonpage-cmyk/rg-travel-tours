@@ -166,4 +166,13 @@ describe('RoutePicker', () => {
       expect(screen.getAllByText(/₱1,000/)).toHaveLength(2);
     });
   });
+
+  describe('duration is shown as a friendly estimate (Decision 6)', () => {
+    it('shows "about 45 min" and "about 3 hr" for the two seeded durations', () => {
+      render(<RoutePicker routes={[MACTAN, OSLOB]} value={null} onChange={() => {}} />);
+      expect(screen.getByText('about 45 min')).toBeInTheDocument();
+      expect(screen.getByText('about 3 hr')).toBeInTheDocument();
+      expect(screen.queryByText(/~/)).not.toBeInTheDocument();
+    });
+  });
 });

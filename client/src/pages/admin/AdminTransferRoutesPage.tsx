@@ -65,6 +65,7 @@ import AdminPageHeader from '@/components/admin/AdminPageHeader';
 import EntityForm, { type EntityFormField } from '@/components/admin/EntityForm';
 import FormActions from '@/components/admin/FormActions';
 import TransferPlaceCombobox from '@/components/admin/TransferPlaceCombobox';
+import { exactDuration } from '@/lib/duration-words';
 import { centavosToPesosInput, pesosToCentavos } from '@/lib/money-input';
 import { firstValidationMessage, splitFieldErrors } from '@/lib/field-errors';
 import { trpc } from '@/lib/trpc';
@@ -123,14 +124,6 @@ function isRoleRefusal(error: unknown): boolean {
 
 function statusLabel(isActive: boolean): 'Active' | 'Inactive' {
   return isActive ? 'Active' : 'Inactive';
-}
-
-function durationWords(minutes: number): string {
-  const hours = Math.floor(minutes / 60);
-  const mins = minutes % 60;
-  if (hours === 0) return `${mins} min`;
-  if (mins === 0) return `${hours} hr`;
-  return `${hours} hr ${mins} min`;
 }
 
 /** "2 of 3 vehicle types priced" — the list screen's stand-in for a fixed price table. */
@@ -815,7 +808,7 @@ function TransferRoutesAdmin() {
                   </p>
                 ) : null}
                 <p className="text-brand-error mt-2 text-xs">
-                  {durationWords(route.estimatedDurationMinutes)} ·{' '}
+                  {exactDuration(route.estimatedDurationMinutes)} ·{' '}
                   {route.reverseEnabled ? 'Reverse bookable' : 'One direction only'}
                 </p>
                 <p className="text-brand-ink mt-1">{priceSummaryWords(route)}</p>
@@ -867,7 +860,7 @@ function TransferRoutesAdmin() {
                       <span className="text-brand-error block text-xs">{route.slug}</span>
                     </td>
                     <td className="text-brand-ink px-4 py-3">
-                      {durationWords(route.estimatedDurationMinutes)}
+                      {exactDuration(route.estimatedDurationMinutes)}
                     </td>
                     <td className="text-brand-ink px-4 py-3">
                       {route.reverseEnabled ? 'Yes' : 'No'}

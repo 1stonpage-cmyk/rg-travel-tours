@@ -2,6 +2,7 @@ import { CheckCircle2, Clock, MapPin, Plane } from 'lucide-react';
 import { formatPeso, type TransferDirection, type TransferRoutePublicRow } from '@rg/shared';
 import FieldError from '@/components/common/FieldError';
 import { Skeleton } from '@/components/common/Skeleton';
+import { friendlyDuration } from '@/lib/duration-words';
 import { cn } from '@/lib/utils';
 
 /**
@@ -161,7 +162,7 @@ export default function RoutePicker({ routes, value, onChange, isLoading, error 
                   </span>
                   <span className="text-muted-foreground flex items-center gap-1.5 text-xs">
                     <Clock className="size-3.5 shrink-0" aria-hidden="true" />
-                    {`~${route.estimatedDurationMinutes} min`}
+                    {friendlyDuration(route.estimatedDurationMinutes)}
                   </span>
                 </div>
                 <span className="shrink-0 text-right text-sm">
