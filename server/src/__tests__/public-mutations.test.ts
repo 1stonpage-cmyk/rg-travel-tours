@@ -149,6 +149,30 @@ describeWithDb('public mutations', () => {
     expect(rows, 'a Turnstile refusal must leave no inquiry row').toHaveLength(0);
   });
 
+  it('refuses a package inquiry when Turnstile is enabled and the token is missing, storing nothing — the server gate is unconditional on type, even though neither PackagesSection nor PackageInquiryForm sends a token today (flagged separately, not fixed here)', async () => {
+    const email = `${MARK}turnstile-package@example.com`;
+    const original = env.TURNSTILE_ENABLED;
+    (env as { TURNSTILE_ENABLED?: string }).TURNSTILE_ENABLED = '1';
+    try {
+      await expect(
+        caller.inquiries.create({
+          type: 'package',
+          name: 'Vitest',
+          email,
+          message: 'Package enquiry: Oslob day tour.',
+          consent: true,
+        }),
+      ).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'Please complete the verification and try again.',
+      });
+    } finally {
+      (env as { TURNSTILE_ENABLED?: string }).TURNSTILE_ENABLED = original;
+    }
+    const rows = await getDb().select().from(inquiries).where(eq(inquiries.email, email));
+    expect(rows, 'a Turnstile refusal must leave no inquiry row').toHaveLength(0);
+  });
+
   it('accepts both inquiry types with Turnstile switched off (feature-off path, no network call)', async () => {
     const contactEmail = `${MARK}turnstile-off-contact@example.com`;
     const customEmail = `${MARK}turnstile-off-custom@example.com`;
