@@ -226,7 +226,7 @@ function ReviewRow({ row }: { row: ReviewModerationRow }) {
       <div className="text-sm">
         <p className="text-brand-ink font-semibold">{row.name}</p>
         <p className="text-muted-foreground text-xs">
-          {row.tourTitle ?? 'General feedback (no tour)'} · {bookingInWords(row)}
+          {row.tourTitle ?? 'General feedback (no trip)'} · {bookingInWords(row)}
         </p>
       </div>
 

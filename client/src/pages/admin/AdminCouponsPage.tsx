@@ -560,7 +560,7 @@ function RedemptionLog({ coupon }: { coupon: CouponAdminRow }) {
                     Booking
                   </th>
                   <th scope="col" className="px-3 py-2 font-semibold">
-                    Tour date
+                    Trip date
                   </th>
                   <th scope="col" className="px-3 py-2 font-semibold">
                     Status

@@ -215,7 +215,7 @@ function FigureCard({ label, value, bucket }: { label: string; value: string; bu
 }
 
 const BY_PAYMENT_DATE = 'By the date the money moved';
-const BY_TOUR_DATE = 'By tour date';
+const BY_TRIP_DATE = 'By trip date';
 
 function FigureCards({ summary }: { summary: ReportSummary }) {
   return (
@@ -241,9 +241,9 @@ function FigureCards({ summary }: { summary: ReportSummary }) {
       <FigureCard
         label="Still to collect"
         value={formatPeso(summary.stillToCollectCentavos)}
-        bucket={BY_TOUR_DATE}
+        bucket={BY_TRIP_DATE}
       />
-      <FigureCard label="Bookings" value={String(summary.bookingCount)} bucket={BY_TOUR_DATE} />
+      <FigureCard label="Bookings" value={String(summary.bookingCount)} bucket={BY_TRIP_DATE} />
     </div>
   );
 }
@@ -366,7 +366,7 @@ function OutstandingTable({ rows }: { rows: readonly OutstandingRow[] }) {
   if (rows.length === 0) {
     return (
       <p className={`${CARD} text-brand-error p-5 text-sm`}>
-        Every booking on these tour dates is paid in full.
+        Every booking on these trip dates is paid in full.
       </p>
     );
   }
@@ -375,7 +375,7 @@ function OutstandingTable({ rows }: { rows: readonly OutstandingRow[] }) {
       <table className="w-full text-left text-sm">
         <caption className="text-brand-error px-4 pb-2 pt-3 text-left text-xs">
           {rows.length} {rows.length === 1 ? 'booking' : 'bookings'} whose total and payments do not
-          agree, earliest tour date first. A negative figure means the guest has overpaid.
+          agree, earliest trip date first. A negative figure means the guest has overpaid.
         </caption>
         <thead className="bg-brand-blue-50 text-brand-error border-brand-blue-100 border-b text-xs uppercase tracking-[0.06em]">
           <tr>
@@ -383,7 +383,7 @@ function OutstandingTable({ rows }: { rows: readonly OutstandingRow[] }) {
               Booking
             </th>
             <th scope="col" className="px-4 py-3 font-semibold">
-              Tour date
+              Trip date
             </th>
             {/* Since T18: a transfer booking has a route here, not a tour. */}
             <th scope="col" className="px-4 py-3 font-semibold">
@@ -487,7 +487,7 @@ function ReportsAdmin() {
       <AdminPageHeader
         eyebrow="Finance"
         title="Reports"
-        description="Money received and refunded counts by the date it moved. Bookings and the balance still to collect count by the tour date. Both are Asia/Manila days, so the two halves of a window are not meant to add up to each other."
+        description="Money received and refunded counts by the date it moved. Bookings and the balance still to collect count by the trip date. Both are Asia/Manila days, so the two halves of a window are not meant to add up to each other."
       />
 
       <Card className={CARD}>

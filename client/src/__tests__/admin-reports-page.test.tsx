@@ -306,7 +306,7 @@ describe('the figures', () => {
     renderPage();
     await screen.findByText('₱3,700');
     expect(screen.getAllByText('By the date the money moved')).toHaveLength(2);
-    expect(screen.getAllByText('By tour date')).toHaveLength(2);
+    expect(screen.getAllByText('By trip date')).toHaveLength(2);
   });
 });
 

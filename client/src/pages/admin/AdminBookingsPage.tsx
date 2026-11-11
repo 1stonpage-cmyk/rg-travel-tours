@@ -71,7 +71,7 @@ export default function AdminBookingsPage() {
       <AdminPageHeader
         eyebrow="Operations"
         title="Bookings"
-        description="Soonest tour first. Open a booking to act on it."
+        description="Soonest trip first. Open a booking to act on it."
       />
 
       <form
@@ -97,7 +97,7 @@ export default function AdminBookingsPage() {
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="filter-from">Tour date from</Label>
+          <Label htmlFor="filter-from">Trip date from</Label>
           <Input
             id="filter-from"
             type="date"
@@ -108,7 +108,7 @@ export default function AdminBookingsPage() {
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="filter-to">Tour date to</Label>
+          <Label htmlFor="filter-to">Trip date to</Label>
           <Input
             id="filter-to"
             type="date"

@@ -266,7 +266,7 @@ describe('AdminBookingsPage', () => {
     renderList();
     await screen.findByRole('table');
 
-    await userEvent.type(screen.getByLabelText(/tour date from/i), '2026-12-01');
+    await userEvent.type(screen.getByLabelText(/trip date from/i), '2026-12-01');
     await userEvent.click(screen.getByLabelText(/waiting for verification/i));
 
     expect(sent.at(-1)).toMatchObject({ from: '2026-12-01', awaitingVerification: true });
