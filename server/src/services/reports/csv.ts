@@ -216,7 +216,7 @@ export function outstandingCsv(rows: readonly OutstandingRow[]): string {
   return toCsv(
     [
       'Booking',
-      'Tour date',
+      'Trip date',
       // Since T18: a transfer booking has a route here, not a tour — see
       // `OutstandingRow.tourTitle`'s own doc comment in @rg/shared.
       'Trip',

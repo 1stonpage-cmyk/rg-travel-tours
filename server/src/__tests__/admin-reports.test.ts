@@ -1339,7 +1339,7 @@ describeWithDb('admin.reports', () => {
     const outstanding = await api.admin.reports.csv({ ...MARCH, report: 'outstanding' });
     expect(outstanding.filename).toBe('travelsugbo-outstanding-2098-03-01-to-2098-03-31.csv');
     expect(outstanding.csv.split('\r\n')[0]).toBe(
-      'Booking,Tour date,Trip,Guest,Status,Total (PHP),Paid (PHP),Outstanding (PHP)',
+      'Booking,Trip date,Trip,Guest,Status,Total (PHP),Paid (PHP),Outstanding (PHP)',
     );
     expect(outstanding.csv).toContain(`"${TITLE_WITH_COMMA}"`);
     expect(outstanding.csv).toContain('3000.00,1000.00,2000.00');
