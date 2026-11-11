@@ -152,6 +152,10 @@ config changes.
       `server/src/__tests__/trust-proxy.test.ts` sends attempts from two distinct `X-Forwarded-For`
       addresses through a real `createApp()` and passes with `TRUST_PROXY` on; with it left unset,
       the exact same two addresses collapse onto one shared budget.
+- [ ] **If Turnstile is enabled (`TURNSTILE_ENABLED=1`), both `TURNSTILE_SECRET_KEY` and
+      `VITE_TURNSTILE_SITE_KEY` are set** — `server/src/env.ts` refuses to boot otherwise
+      (`assertTurnstileConfigured`, `server/src/services/turnstile-guard.ts`), so a misconfigured
+      deploy fails loudly at startup rather than silently serving a widget that can never verify.
 - [ ] **`NODE_ENV=production` is set** in the PM2 environment. tRPC's default error
       formatter includes the `stack` field when `NODE_ENV` is not `production`, so a
       malformed or hostile request gets a stack trace — file paths, call sites — back

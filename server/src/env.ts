@@ -1,6 +1,7 @@
 import { config } from 'dotenv';
 import { resolve } from 'node:path';
 import { z } from 'zod';
+import { assertTurnstileConfigured } from './services/turnstile-guard';
 
 config({ path: resolve(process.cwd(), '../.env'), quiet: true });
 
@@ -117,6 +118,25 @@ const schema = z.object({
    * "defaulted on", and it must be the exact string `'1'`.
    */
   ALLOW_DEV_PASSWORD_RESET: z.string().optional(),
+  /*
+   * Cloudflare Turnstile (owner decision 2026-11-10/11, staging-fixes
+   * batch, Task 10). Off by default — unset (or anything but the exact
+   * string '1') means every gated endpoint behaves exactly as it did
+   * before this task, mirroring ALLOW_DEMO_SEED's shape.
+   */
+  TURNSTILE_ENABLED: z.string().optional(),
+  /** Never sent to the client, never logged. Required when enabled. */
+  TURNSTILE_SECRET_KEY: z.string().optional(),
+  /*
+   * Read here ONLY so the server can refuse to boot with it missing while
+   * TURNSTILE_ENABLED=1 (see assertTurnstileConfigured below) — the server
+   * itself never calls Cloudflare with this value; the widget script on
+   * the CLIENT does. VITE_-prefixed so Vite also exposes it to the client
+   * bundle at build time; dotenv loads the same root .env for both
+   * processes (client/vite.config.ts's `envDir`), so this one key is read
+   * by both without being duplicated anywhere.
+   */
+  VITE_TURNSTILE_SITE_KEY: z.string().optional(),
 });
 
 /**
@@ -138,6 +158,11 @@ if (FORBIDDEN_PORTS.includes(parsed.data.PORT)) {
   throw new Error(
     `PORT ${parsed.data.PORT} belongs to Kong PMS. Use 3100 for this project (see CLAUDE.md).`,
   );
+}
+
+const turnstileProblem = assertTurnstileConfigured(parsed.data);
+if (turnstileProblem) {
+  throw new Error(turnstileProblem);
 }
 
 export const env = parsed.data;
