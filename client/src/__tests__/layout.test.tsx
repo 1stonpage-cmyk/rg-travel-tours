@@ -532,3 +532,30 @@ describe('SiteFooter — WhatsApp/Viber icon buttons beside the phone number (sp
     expect(screen.getByRole('contentinfo')).toHaveTextContent(SITE.contact.phone.display);
   });
 });
+
+/**
+ * "Powered by First On Page" footer credit (public footer only).
+ * Owner decision 2026-11-11: add a small, subtle credit link to the public
+ * site footer only — never admin/driver/portal.
+ */
+describe('"Powered by First On Page" footer credit (public footer only)', () => {
+  it('renders with the right href, opens in a new tab, and is not followed', async () => {
+    mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
+    renderLayout();
+    const credit = await screen.findByRole('link', { name: /first on page/i });
+    expect(credit).toHaveAttribute('href', 'https://firstonpage.com');
+    expect(credit).toHaveAttribute('target', '_blank');
+    expect(credit.getAttribute('rel')).toMatch(/nofollow/);
+    expect(credit.getAttribute('rel')).toMatch(/noopener/);
+    expect(credit.getAttribute('rel')).toMatch(/noreferrer/);
+  });
+
+  it('keeps the existing copyright and "Operated by" lines unchanged', async () => {
+    mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
+    renderLayout();
+    expect(await screen.findByText(/operated by r&g travel & tours/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(new RegExp(`${new Date().getFullYear()}.*r&g travel & tours`, 'i')),
+    ).toBeInTheDocument();
+  });
+});

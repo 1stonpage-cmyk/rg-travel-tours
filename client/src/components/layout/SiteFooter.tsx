@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ViberGlyph, WhatsAppGlyph } from '@/components/common/BrandGlyphs';
 import { useConsent } from '@/lib/consent/useConsent';
-import { SITE, telLink, viberLink, visibleNav, whatsappLink } from '@/lib/site';
+import { BUILT_BY, SITE, telLink, viberLink, visibleNav, whatsappLink } from '@/lib/site';
 import { trpc } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
 
@@ -313,6 +313,17 @@ export default function SiteFooter() {
             </nav>
           </div>
           <p>Payments processed securely by PayMongo. Card details never touch our servers.</p>
+          <p className="text-brand-blue-300 mt-1 text-xs sm:mt-0">
+            Powered by{' '}
+            <a
+              href={BUILT_BY.url}
+              target="_blank"
+              rel="nofollow noopener noreferrer"
+              className="tap-target inline-flex min-h-11 items-center hover:underline"
+            >
+              {BUILT_BY.label}
+            </a>
+          </p>
         </div>
       </div>
     </footer>

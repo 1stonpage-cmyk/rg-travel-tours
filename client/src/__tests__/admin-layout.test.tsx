@@ -380,4 +380,16 @@ describe('AdminLayout', () => {
       'true',
     );
   });
+
+  /**
+   * "Powered by First On Page" footer credit is PUBLIC FOOTER ONLY.
+   * Owner decision 2026-11-11: the credit link appears on the public
+   * footer only — never on admin, driver, or portal surfaces.
+   * This test guards that AdminLayout does not render it, even though
+   * it may mount a footer of its own.
+   */
+  it('does not render the "Powered by First On Page" credit (public footer only)', () => {
+    renderAt('/admin');
+    expect(screen.queryByText(/first on page/i)).not.toBeInTheDocument();
+  });
 });

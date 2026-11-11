@@ -94,6 +94,12 @@ export const SITE = {
   paymentMethods: ['GCash', 'Maya', 'GrabPay', 'QR Ph', 'Visa', 'Mastercard'],
 } as const;
 
+/** The agency that built this site (owner decision 2026-11-11). Public footer only — never admin/driver/portal. */
+export const BUILT_BY = {
+  label: 'First On Page',
+  url: 'https://firstonpage.com',
+} as const;
+
 /**
  * `SITE.nav`, minus "Tours" and "Packages" while `show_tours` is off
  * (transfers-launch plan Task T16; extended to Packages by owner decision
