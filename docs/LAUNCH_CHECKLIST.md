@@ -190,7 +190,7 @@ config changes.
       load by the worker count, and any future job that is _not_ idempotent would do real
       damage. A shared store does **not** fix this one: the schedule has to be owned by
       exactly one process.
-- [ ] **The scheduled jobs are registered** — three, all in `server/src/jobs/index.ts`.
+- [ ] **The scheduled jobs are registered** — five, all in `server/src/jobs/index.ts`.
       Nothing to configure; check them against `pm2 logs` after the first day in production.
       `expire-holds` runs every minute and moves lapsed, unpaid holds to `expired`.
       `orphaned-vans` runs daily at 07:00 Asia/Manila and logs a warning about a van left

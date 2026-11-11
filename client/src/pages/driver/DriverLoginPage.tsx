@@ -264,10 +264,7 @@ export default function DriverLoginPage() {
           <TurnstileWidget
             key={turnstileResetKey}
             onVerify={setTurnstileToken}
-            onError={() => {
-              setTurnstileToken(undefined);
-              setTurnstileResetKey((k) => k + 1);
-            }}
+            onError={() => setTurnstileToken(undefined)}
           />
 
           <Button

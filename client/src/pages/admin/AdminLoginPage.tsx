@@ -219,10 +219,7 @@ export default function AdminLoginPage() {
           <TurnstileWidget
             key={turnstileResetKey}
             onVerify={setTurnstileToken}
-            onError={() => {
-              setTurnstileToken(undefined);
-              setTurnstileResetKey((key) => key + 1);
-            }}
+            onError={() => setTurnstileToken(undefined)}
           />
 
           <Button
