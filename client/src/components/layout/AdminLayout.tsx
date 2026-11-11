@@ -264,9 +264,11 @@ export default function AdminLayout() {
                     {group}
                   </div>
                   {items.map((item) => {
-                    // "Hidden" tag — Tours only, while settings.show_tours is
-                    // off (see `hiddenWhileToursOff`'s own doc comment in
-                    // admin-nav.ts for why Packages does NOT get this).
+                    // "Hidden" tag — Tours and Packages alike, while
+                    // settings.show_tours is off (Decision 2, 2026-11-10:
+                    // Packages now follows the same show_tours gate as
+                    // Tours on every surface — see `hiddenWhileToursOff`'s
+                    // own doc comment in admin-nav.ts).
                     const faded = item.hiddenWhileToursOff === true && !showTours;
                     return (
                       <NavLink

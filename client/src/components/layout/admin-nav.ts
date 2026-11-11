@@ -51,14 +51,14 @@ export interface AdminNavItem {
    * Faded, with a "Hidden" tag, while `settings.show_tours` is off — still
    * a real, clickable link (owner decision 2026-11-10, group 2).
    *
-   * **Tours only, not Packages.** Decision 2's own sidebar spec named both,
-   * but `show_tours` does not actually gate Packages anywhere in the public
-   * app — `PackagesSection` renders unconditionally on the home page
-   * (`HomePage.tsx`) and `/packages/:slug` carries no gate at all; only
-   * `CatalogPreview`/`MostVisited` (the day-tour catalog) and the `/tours`
-   * nav link are conditional on it. Tagging Packages "Hidden" here would
-   * tell staff something false about what a guest can see. Named deviation,
-   * not an oversight — see HANDOVER-17.
+   * **Tours and Packages both** — Decision 2's own sidebar spec named both,
+   * and Decision 2 ("packages follow the same show_tours gate as tours",
+   * 2026-11-10) made that true: Tasks 2-3 put Packages behind the same
+   * `show_tours` gate as Tours on every surface (server router, SEO
+   * resolver, sitemap, client nav/footer, home page section), so the
+   * deviation this comment used to document (Packages ungated while Tours
+   * was tagged "Hidden") no longer exists. Tagging only Tours here would now
+   * tell staff something false about what a guest can see.
    */
   hiddenWhileToursOff?: boolean;
 }
@@ -166,6 +166,7 @@ export const ADMIN_NAV: readonly AdminNavItem[] = [
     end: false,
     roles: ['owner', 'dispatcher'],
     group: 'Tours setup',
+    hiddenWhileToursOff: true,
   },
   { to: '/admin/coupons', label: 'Coupons', end: false, roles: ['owner'], group: 'Marketing' },
   // Owner + dispatcher (Week 7 Task 11): `admin.reviews.*` is §9's

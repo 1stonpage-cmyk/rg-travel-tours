@@ -289,7 +289,7 @@ describe('AdminLayout', () => {
     });
   });
 
-  describe('the Tours "Hidden" tag (owner decision 2026-11-10, group 2)', () => {
+  describe('the Tours and Packages "Hidden" tag (owner decision 2026-11-10, group 2; Decision 2 consequence, HANDOVER-19 fix wave)', () => {
     it('fades Tours and shows a Hidden tag while show_tours is off', async () => {
       mockTrpc({ 'settings.get': { ...SETTINGS_FIXTURE, showTours: false } });
       renderAt('/admin');
@@ -298,12 +298,12 @@ describe('AdminLayout', () => {
       expect(tours.className).toMatch(/opacity-55/);
     });
 
-    it('never fades Packages, even while show_tours is off — show_tours does not gate it anywhere in the public app', async () => {
+    it('also fades Packages and shows a Hidden tag while show_tours is off — Decision 2 put Packages behind the same show_tours gate as Tours on every surface, so it is no longer a named deviation', async () => {
       mockTrpc({ 'settings.get': { ...SETTINGS_FIXTURE, showTours: false } });
       renderAt('/admin');
-      const packages = await screen.findByRole('link', { name: /^packages$/i });
-      expect(packages.textContent).toBe('Packages');
-      expect(packages.className).not.toMatch(/opacity-55/);
+      const packages = await screen.findByRole('link', { name: /packages/i });
+      expect(packages.textContent).toBe('PackagesHidden');
+      expect(packages.className).toMatch(/opacity-55/);
     });
 
     it('draws Tours with no Hidden tag while show_tours is on', async () => {
@@ -312,6 +312,14 @@ describe('AdminLayout', () => {
       const tours = await screen.findByRole('link', { name: /^tours$/i });
       expect(tours.textContent).toBe('Tours');
       expect(tours.className).not.toMatch(/opacity-55/);
+    });
+
+    it('draws Packages with no Hidden tag while show_tours is on', async () => {
+      mockTrpc({ 'settings.get': { ...SETTINGS_FIXTURE, showTours: true } });
+      renderAt('/admin');
+      const packages = await screen.findByRole('link', { name: /^packages$/i });
+      expect(packages.textContent).toBe('Packages');
+      expect(packages.className).not.toMatch(/opacity-55/);
     });
   });
 

@@ -121,21 +121,21 @@ describe('groupedNavFor — regroups navFor(role) without changing its item set'
   });
 });
 
-describe('hiddenWhileToursOff — only Tours carries it, never Packages', () => {
+describe('hiddenWhileToursOff — Tours and Packages both carry it (Decision 2 consequence)', () => {
   it('Tours is flagged', () => {
     const tours = navFor('owner').find((i) => i.to === '/admin/tours');
     expect(tours?.hiddenWhileToursOff).toBe(true);
   });
 
-  it('Packages is NOT flagged — show_tours does not actually gate it anywhere in the public app (named deviation from decision 2, HANDOVER-17)', () => {
+  it('Packages is flagged too — Decision 2 (2026-11-10) put Packages behind the same show_tours gate as Tours on every surface, so the earlier named deviation (HANDOVER-17) no longer holds', () => {
     const packages = navFor('owner').find((i) => i.to === '/admin/packages');
-    expect(packages?.hiddenWhileToursOff).toBeUndefined();
+    expect(packages?.hiddenWhileToursOff).toBe(true);
   });
 
   it('nothing else in the nav carries the flag', () => {
     const flagged = navFor('owner')
       .filter((i) => i.hiddenWhileToursOff)
       .map((i) => i.to);
-    expect(flagged).toEqual(['/admin/tours']);
+    expect(flagged).toEqual(['/admin/tours', '/admin/packages']);
   });
 });
