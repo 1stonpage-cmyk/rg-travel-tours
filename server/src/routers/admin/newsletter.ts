@@ -1,6 +1,13 @@
 /**
  * `admin.newsletter.export` — the subscriber list as a file (Week 7 plan,
- * Task 13 — 7C; BUILD_SPEC §9 "Settings: Newsletter list export").
+ * Task 13 — 7C; BUILD_SPEC §9 "Settings: Newsletter list export") — and, as
+ * of the sign-up coupons plan's Task 1C, `admin.newsletter.list`, the same
+ * subscriber list rendered ON SCREEN (now on `/admin/coupons`'s "Sign-up
+ * coupons" section, rather than `/admin/packages` — see `export`'s own
+ * screen reference below, which still names the export's original home).
+ * Both share the one gate this file's header describes; `list`'s own doc
+ * comment, beside its resolver, explains why it is a query rather than a
+ * second mutation.
  *
  * ## Its own file because it has its own GATE
  *
@@ -47,10 +54,15 @@
  * second column would put more personal data in the file than the job needs
  * (RA 10173, data minimisation: §9 asks for the list, not a profile).
  */
-import { manilaCivilDate, NEWSLETTER_CSV_HEADER, type NewsletterExport } from '@rg/shared';
-import { asc } from 'drizzle-orm';
+import {
+  manilaCivilDate,
+  NEWSLETTER_CSV_HEADER,
+  type NewsletterExport,
+  type SignupSubscriberRow,
+} from '@rg/shared';
+import { asc, desc, eq } from 'drizzle-orm';
 import { getDb } from '../../db/client';
-import { newsletterSubscribers } from '../../db/schema';
+import { bookings, couponRedemptions, coupons, newsletterSubscribers } from '../../db/schema';
 import { writeAudit } from '../../services/audit';
 import { csvText, toCsv } from '../../services/reports/csv';
 import { adminProcedure, router } from '../../trpc';
@@ -112,5 +124,86 @@ export const adminNewsletterRouter = router({
       csv,
       count: rows.length,
     };
+  }),
+
+  /**
+   * `admin.newsletter.list` — the subscriber list rendered on screen, on the
+   * Coupons page's "Sign-up coupons" section (sign-up coupons plan, Task 1C,
+   * decision 5).
+   *
+   * **Same gate as `export`, for the same reason — this hands the browser
+   * every subscriber's email address too.** It is NOT the disclosure event
+   * `export` is: nothing here leaves the server as a file, and the owner
+   * viewing their own screen is not a bulk hand-off the way a download is.
+   * So, unlike `export`, this is a plain QUERY and writes no audit row
+   * (CLAUDE.md: reports and read-only screens write no audit rows) — the
+   * disclosure `export`'s own doc comment cares about is the CSV, not this
+   * list.
+   *
+   * **`status` is computed here, once, rather than shipped as raw columns**
+   * the client would have to re-derive (`endsAt`, `isActive`,
+   * "does a redemption exist") — the same reasoning `admin.bookings.list`'s
+   * own status-in-words fields already follow elsewhere in this codebase.
+   * A sign-up coupon's `usageLimit` is always 1
+   * (`services/signup-coupons.ts`), so at most one redemption row can ever
+   * exist for it and the three-way LEFT JOIN below is safely one-to-one.
+   */
+  list: adminProcedure('usersSettings').query(async (): Promise<SignupSubscriberRow[]> => {
+    // Read once, at the request boundary — see this file's own `export`
+    // resolver for why.
+    const now = new Date();
+
+    const rows = await getDb()
+      .select({
+        email: newsletterSubscribers.email,
+        createdAt: newsletterSubscribers.createdAt,
+        code: coupons.code,
+        couponIsActive: coupons.isActive,
+        couponEndsAt: coupons.endsAt,
+        redemptionId: couponRedemptions.id,
+        bookingRef: bookings.ref,
+      })
+      .from(newsletterSubscribers)
+      .leftJoin(coupons, eq(coupons.id, newsletterSubscribers.couponId))
+      .leftJoin(couponRedemptions, eq(couponRedemptions.couponId, coupons.id))
+      .leftJoin(bookings, eq(bookings.id, couponRedemptions.bookingId))
+      // Newest sign-up first — an admin looking at this screen wants to see
+      // who just signed up, the opposite ordering from `export`'s CSV
+      // (oldest first, so a second export appends cleanly).
+      .orderBy(desc(newsletterSubscribers.createdAt), desc(newsletterSubscribers.id));
+
+    return rows.map((row) => {
+      if (row.code === null) {
+        return {
+          email: row.email,
+          createdAt: row.createdAt.toISOString(),
+          code: null,
+          status: 'none' as const,
+          usedBookingRef: null,
+        };
+      }
+
+      if (row.redemptionId !== null) {
+        return {
+          email: row.email,
+          createdAt: row.createdAt.toISOString(),
+          code: row.code,
+          status: 'used' as const,
+          usedBookingRef: row.bookingRef,
+        };
+      }
+
+      const expired =
+        row.couponIsActive === false ||
+        (row.couponEndsAt !== null && row.couponEndsAt.getTime() < now.getTime());
+
+      return {
+        email: row.email,
+        createdAt: row.createdAt.toISOString(),
+        code: row.code,
+        status: expired ? ('expired' as const) : ('unused' as const),
+        usedBookingRef: null,
+      };
+    });
   }),
 });

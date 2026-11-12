@@ -1,28 +1,29 @@
 /**
- * The packages, enquiries and newsletter screen (Week 7 plan, Task 13 — 7C;
- * BUILD_SPEC §9 "Packages, inquiries" and "Users, settings").
+ * The packages and enquiries screen (Week 7 plan, Task 13 — 7C; BUILD_SPEC
+ * §9 "Packages, inquiries").
+ *
+ * **The newsletter export's tests moved to `admin-coupons-page.test.tsx`**
+ * (sign-up coupons plan, Task 1C, decision 5) along with the card itself —
+ * see that file's own "the newsletter export" describe block. Nothing about
+ * `admin.newsletter.export` changed server-side; only which page's client
+ * renders the button.
  *
  * The server is the guard — `admin.packages.*` / `admin.inquiries.*` are
- * `adminProcedure('packagesInquiries')` and `admin.newsletter.export` is
- * `adminProcedure('usersSettings')`. What is pinned here is what the SCREEN
- * promises: every package including the retired ones with the money in pesos,
- * enquiries newest first with the package they are about and a status control,
- * the newsletter export drawn for an owner and **not drawn for a dispatcher**,
- * and a denied state rather than a blank page for a refused role.
- *
- * The export button's absence for a dispatcher is cosmetic and is tested AS
- * cosmetic — the server refusal is `admin-packages.test.ts`'s job. A test that
- * only checked the button would be checking the weaker half.
+ * `adminProcedure('packagesInquiries')`. What is pinned here is what the
+ * SCREEN promises: every package including the retired ones with the money
+ * in pesos, enquiries newest first with the package they are about and a
+ * status control, and a denied state rather than a blank page for a refused
+ * role.
  *
  * The "quote & convert" control (Task T20; `admin.transferQuotes.convert` is
- * `adminProcedure('transferQuoting')`, owner and finance) is tested the same
- * cosmetic way: drawn for an owner on an unconverted custom-trip request,
+ * `adminProcedure('transferQuoting')`, owner and finance) is tested
+ * cosmetically: drawn for an owner on an unconverted custom-trip request,
  * absent for a dispatcher who can see the same request read-only.
  */
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { InquiryAdminRow, PackageAdminRow, VehicleTypeAdminRow } from '@rg/shared';
 import AdminPackagesPage from '@/pages/admin/AdminPackagesPage';
 import { TrpcProviders } from '@/lib/trpc';
@@ -52,44 +53,8 @@ beforeAll(() => {
   proto.scrollIntoView = () => {};
 });
 
-/** Every object URL this test created, and the anchor that was clicked. */
-const downloads: Array<{ blob: Blob }> = [];
-let clickedAnchors: Array<{ download: string }> = [];
-
-/*
- * jsdom implements neither object-URL method, and a download is the one thing
- * this screen does that is not a render. Only the two STATICS are replaced —
- * never the `URL` global itself, which the tRPC mock's own `new URL(...)`
- * depends on — and both are put back afterwards. (Stubbing the global was
- * tried first and broke every later test in the file, exactly as
- * `admin-reports-page.test.tsx` already warns.)
- */
-const realCreateObjectURL = URL.createObjectURL;
-const realRevokeObjectURL = URL.revokeObjectURL;
-
-beforeEach(() => {
-  downloads.length = 0;
-  clickedAnchors = [];
-  URL.createObjectURL = (blob: Blob) => {
-    downloads.push({ blob });
-    return `blob:mock-${downloads.length}`;
-  };
-  URL.revokeObjectURL = () => {};
-  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
-    this: HTMLAnchorElement,
-  ) {
-    clickedAnchors.push({ download: this.download });
-  });
-});
-
 afterEach(() => {
   resetTrpcMock();
-  vi.restoreAllMocks();
-});
-
-afterAll(() => {
-  URL.createObjectURL = realCreateObjectURL;
-  URL.revokeObjectURL = realRevokeObjectURL;
 });
 
 function pkg(overrides: Partial<PackageAdminRow> = {}): PackageAdminRow {
@@ -663,47 +628,15 @@ describe('AdminPackagesPage — quote & convert to booking (T20)', () => {
   });
 });
 
-describe('AdminPackagesPage — the newsletter export', () => {
-  it('downloads the file the server built, and says how many addresses it held', async () => {
-    renderPage({
-      'admin.newsletter.export': {
-        filename: 'travelsugbo-newsletter-2026-10-27.csv',
-        csv: 'Email\nmaria@example.test\njuan@example.test',
-        count: 2,
-      },
-    });
-    await screen.findByText('Cebu Highlights');
-
-    await user.click(screen.getByRole('button', { name: /export the newsletter list/i }));
-
-    await waitFor(() => expect(clickedAnchors).toHaveLength(1));
-    expect(clickedAnchors[0]!.download).toBe('travelsugbo-newsletter-2026-10-27.csv');
-    expect(downloads).toHaveLength(1);
-    expect(downloads[0]!.blob.type).toBe('text/csv;charset=utf-8');
-    expect(await screen.findByText(/2 addresses/i)).toBeInTheDocument();
-  });
-
-  /**
-   * Cosmetic only — the server refuses a dispatcher with FORBIDDEN, which is
-   * `admin-packages.test.ts`'s assertion. This one is here so a dispatcher is
-   * not shown a button that can only be refused.
-   */
-  it('is not drawn for a dispatcher, who still gets the packages and enquiries', async () => {
-    renderPage({ 'staffAuth.me': { userId: 2, role: 'dispatcher', mustChangePassword: false } });
-    await screen.findByText('Cebu Highlights');
-
-    expect(screen.getByText('Maria Santos')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /export the newsletter list/i })).toBeNull();
-  });
-
-  it('shows the refusal rather than a crash when the export itself fails', async () => {
-    renderPage();
-    await screen.findByText('Cebu Highlights');
-    mockTrpcError('admin.newsletter.export', 'FORBIDDEN', 'Not permitted for this account.');
-
-    await user.click(screen.getByRole('button', { name: /export the newsletter list/i }));
-    expect(await screen.findByText(/could not build that file/i)).toBeInTheDocument();
-  });
+/**
+ * The newsletter export button no longer renders on this page at all (moved
+ * to `AdminCouponsPage.tsx`'s "Sign-up coupons" section — see this file's
+ * own header comment), for any role — not only hidden from a dispatcher.
+ */
+it('never renders the newsletter export button here any more, for any role', async () => {
+  renderPage();
+  await screen.findByText('Cebu Highlights');
+  expect(screen.queryByRole('button', { name: /export the newsletter list/i })).toBeNull();
 });
 
 describe('AdminPackagesPage — denied state', () => {

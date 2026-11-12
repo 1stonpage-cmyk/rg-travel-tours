@@ -1,31 +1,86 @@
 /**
- * The coupon screens (Week 7 plan, Task 8). `admin.coupons.*` is
- * `adminProcedure('toursPricing')` server-side — owner only; what is pinned
- * here is what the SCREEN itself promises: the discount and the usage in
- * words, a percentage typed as "2.5" reaching the mutation as integer basis
- * points and a peso amount as integer centavos, a Manila wall-clock window
- * reaching it as a UTC instant, a two-step confirm for deactivating that never
- * says "Delete", the redemption log showing a booking ref, and a denied state
- * rather than a blank screen for a refused role.
+ * The coupon screens (Week 7 plan, Task 8), and the "Sign-up coupons"
+ * section added below them (sign-up coupons plan, Task 1C, decision 5).
+ * `admin.coupons.*` is `adminProcedure('toursPricing')` server-side — owner
+ * only; what is pinned here is what the SCREEN itself promises: the
+ * discount and the usage in words, a percentage typed as "2.5" reaching the
+ * mutation as integer basis points and a peso amount as integer centavos, a
+ * Manila wall-clock window reaching it as a UTC instant, a two-step confirm
+ * for deactivating that never says "Delete", the redemption log showing a
+ * booking ref, and a denied state rather than a blank screen for a refused
+ * role.
+ *
+ * **The "Sign-up coupons" section's tests** cover the `discountPercent` /
+ * `expiryDays` settings form (`admin.settings.all` / `.write`, both
+ * `usersSettings`), the subscriber list (`admin.newsletter.list`, same
+ * gate), and the CSV export — moved here, tests and all, from
+ * `admin-packages-page.test.tsx` (that file's own header comment now says
+ * so). `admin.newsletter.export` itself is unchanged server-side.
  */
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import AdminCouponsPage from '@/pages/admin/AdminCouponsPage';
 import { TrpcProviders } from '@/lib/trpc';
-import { manilaLocalToUtcIso, utcIsoToManilaLocal } from '@/lib/manila-datetime';
+import {
+  manilaLocalToUtcIso,
+  utcIsoToManilaLabel,
+  utcIsoToManilaLocal,
+} from '@/lib/manila-datetime';
 import {
   basisPointsToPercentInput,
   basisPointsToPercentLabel,
   percentToBasisPoints,
 } from '@/lib/percent-input';
-import { mockTrpc, mockTrpcError, resetTrpcMock } from './helpers/mock-trpc';
+import {
+  mockTrpc,
+  mockTrpcError,
+  mockTrpcValidationError,
+  resetTrpcMock,
+} from './helpers/mock-trpc';
 
 const user = userEvent.setup();
 
+/** Every object URL the CSV export test created, and the anchor that was clicked. */
+const downloads: Array<{ blob: Blob }> = [];
+let clickedAnchors: Array<{ download: string }> = [];
+
+/*
+ * jsdom implements neither object-URL method, and a download is the one
+ * thing the export card does that is not a render. Only the two STATICS are
+ * replaced — never the `URL` global itself, which the tRPC mock's own
+ * `new URL(...)` depends on — and both are put back afterwards. Moved here
+ * verbatim from `admin-packages-page.test.tsx`, where this same plumbing
+ * used to guard the export card before it moved (sign-up coupons plan, Task
+ * 1C, decision 5).
+ */
+const realCreateObjectURL = URL.createObjectURL;
+const realRevokeObjectURL = URL.revokeObjectURL;
+
+beforeEach(() => {
+  downloads.length = 0;
+  clickedAnchors = [];
+  URL.createObjectURL = (blob: Blob) => {
+    downloads.push({ blob });
+    return `blob:mock-${downloads.length}`;
+  };
+  URL.revokeObjectURL = () => {};
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+    this: HTMLAnchorElement,
+  ) {
+    clickedAnchors.push({ download: this.download });
+  });
+});
+
 afterEach(() => {
   resetTrpcMock();
+  vi.restoreAllMocks();
+});
+
+afterAll(() => {
+  URL.createObjectURL = realCreateObjectURL;
+  URL.revokeObjectURL = realRevokeObjectURL;
 });
 
 /*
@@ -103,10 +158,17 @@ async function firstRowFor(code: string): Promise<HTMLElement> {
   return matches[0]!.closest('li, tr') as HTMLElement;
 }
 
+/** `admin.settings.all`'s default `signup_coupon` block — the seed's own values. */
+const SIGNUP_COUPON_SETTING = { discountPercent: 5, expiryDays: 60 };
+
 function renderPage(extra: Record<string, unknown> = {}) {
   mockTrpc({
     'staffAuth.me': { userId: 1, role: 'owner', mustChangePassword: false },
     'admin.coupons.list': [PERCENT_COUPON, FIXED_COUPON],
+    // Every render exercises the "Sign-up coupons" section too (Task 1C),
+    // so it needs sensible defaults a test can override.
+    'admin.settings.all': { signup_coupon: SIGNUP_COUPON_SETTING },
+    'admin.newsletter.list': [],
     ...extra,
   });
   return render(
@@ -438,5 +500,200 @@ describe('AdminCouponsPage', () => {
     await screen.findAllByText('SAVE10');
     const wrapper = screen.getByTestId('coupons-table-wrapper');
     expect(wrapper.className).toMatch(/overflow-x-auto/);
+  });
+});
+
+/* ------------------------------------------------------- Sign-up coupons (1C) */
+
+describe('Sign-up coupons — settings form', () => {
+  it('shows the current discount and expiry, and saves whole numbers typed into it', async () => {
+    const sent: unknown[] = [];
+    renderPage({
+      'admin.settings.write': (input: unknown) => {
+        sent.push(input);
+        return { ok: true };
+      },
+    });
+    await screen.findAllByText('SAVE10');
+
+    const percentInput = await screen.findByLabelText(/discount percentage/i);
+    const daysInput = screen.getByLabelText(/expires after/i);
+    // Pre-filled from `admin.settings.all`'s `signup_coupon` block.
+    expect(percentInput).toHaveValue(5);
+    expect(daysInput).toHaveValue(60);
+
+    await user.clear(percentInput);
+    await user.type(percentInput, '10');
+    await user.clear(daysInput);
+    await user.type(daysInput, '90');
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(sent).toHaveLength(1));
+    // Whole numbers, never a string and never basis points — this block has
+    // no unit to convert, unlike `coupons.percent_bp`.
+    expect(sent[0]).toEqual({
+      key: 'signup_coupon',
+      value: { discountPercent: 10, expiryDays: 90 },
+    });
+    expect(await screen.findByText('Saved.')).toBeInTheDocument();
+  });
+
+  it('refuses a percentage above 100 at the field, without calling the server', async () => {
+    const sent: unknown[] = [];
+    renderPage({
+      'admin.settings.write': (input: unknown) => {
+        sent.push(input);
+        return { ok: true };
+      },
+    });
+    await screen.findAllByText('SAVE10');
+
+    const percentInput = await screen.findByLabelText(/discount percentage/i);
+    await user.clear(percentInput);
+    await user.type(percentInput, '150');
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/1 to 100/i);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('refuses an expiry outside 1..365 at the field, without calling the server', async () => {
+    const sent: unknown[] = [];
+    renderPage({
+      'admin.settings.write': (input: unknown) => {
+        sent.push(input);
+        return { ok: true };
+      },
+    });
+    await screen.findAllByText('SAVE10');
+
+    const daysInput = await screen.findByLabelText(/expires after/i);
+    await user.clear(daysInput);
+    await user.type(daysInput, '0');
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/1 to 365/i);
+    expect(sent).toHaveLength(0);
+  });
+
+  it("places the server's own validation message beside the field it names", async () => {
+    renderPage();
+    await screen.findAllByText('SAVE10');
+    mockTrpcValidationError('admin.settings.write', {
+      fieldErrors: { discountPercent: ['Enter a whole number from 1 to 100.'] },
+    });
+
+    const percentInput = await screen.findByLabelText(/discount percentage/i);
+    await user.clear(percentInput);
+    await user.type(percentInput, '10');
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+    expect(await screen.findByText('Enter a whole number from 1 to 100.')).toBeInTheDocument();
+    expect(await screen.findByLabelText(/discount percentage/i)).toHaveAttribute(
+      'aria-invalid',
+      'true',
+    );
+  });
+});
+
+describe('Sign-up coupons — subscriber list', () => {
+  const NONE_ROW = {
+    email: 'nocode@example.test',
+    createdAt: '2026-11-01T00:00:00.000Z',
+    code: null,
+    status: 'none' as const,
+    usedBookingRef: null,
+  };
+  const UNUSED_ROW = {
+    email: 'unused@example.test',
+    createdAt: '2026-11-05T00:00:00.000Z',
+    code: 'WELCOME-7KQ4M9PR',
+    status: 'unused' as const,
+    usedBookingRef: null,
+  };
+  const USED_ROW = {
+    email: 'used@example.test',
+    createdAt: '2026-11-02T00:00:00.000Z',
+    code: 'WELCOME-AB12CD34',
+    status: 'used' as const,
+    usedBookingRef: 'RG-7KQ4M9',
+  };
+  const EXPIRED_ROW = {
+    email: 'expired@example.test',
+    createdAt: '2026-10-01T00:00:00.000Z',
+    code: 'WELCOME-ZZ99YY88',
+    status: 'expired' as const,
+    usedBookingRef: null,
+  };
+
+  it('shows each sign-up with its Manila date, code and status in words, and a count', async () => {
+    renderPage({
+      'admin.newsletter.list': [NONE_ROW, UNUSED_ROW, USED_ROW, EXPIRED_ROW],
+    });
+    await screen.findAllByText('SAVE10');
+
+    expect(screen.getAllByText('nocode@example.test').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('No code yet').length).toBeGreaterThan(0);
+
+    expect(screen.getAllByText('unused@example.test').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('WELCOME-7KQ4M9PR').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Unused').length).toBeGreaterThan(0);
+
+    // "Used on <ref>" — the booking ref, never the guest's own details.
+    expect(screen.getAllByText('Used on RG-7KQ4M9').length).toBeGreaterThan(0);
+
+    expect(screen.getAllByText('Expired').length).toBeGreaterThan(0);
+
+    // The Manila wall-clock label, not the raw UTC instant.
+    expect(screen.getAllByText(utcIsoToManilaLabel(UNUSED_ROW.createdAt)).length).toBeGreaterThan(
+      0,
+    );
+
+    expect(screen.getAllByText(/4 sign-ups/i).length).toBeGreaterThan(0);
+  });
+
+  it('says nothing has signed up yet, rather than an empty table', async () => {
+    renderPage({ 'admin.newsletter.list': [] });
+    await screen.findAllByText('SAVE10');
+    expect(await screen.findByText(/no newsletter sign-ups yet/i)).toBeInTheDocument();
+  });
+
+  it('shows a calm inline message, not a crash, when the list itself is refused', async () => {
+    renderPage();
+    mockTrpcError('admin.newsletter.list', 'FORBIDDEN', 'Not permitted for this account.');
+    await screen.findAllByText('SAVE10');
+
+    expect(await screen.findByText(/could not load the sign-up list/i)).toBeInTheDocument();
+    expect(screen.queryByText('Not permitted for this account.')).toBeNull();
+  });
+});
+
+describe('Sign-up coupons — CSV export (moved here from AdminPackagesPage.tsx)', () => {
+  it('downloads the file the server built, and says how many addresses it held', async () => {
+    renderPage({
+      'admin.newsletter.export': {
+        filename: 'travelsugbo-newsletter-2026-10-27.csv',
+        csv: 'Email\nmaria@example.test\njuan@example.test',
+        count: 2,
+      },
+    });
+    await screen.findAllByText('SAVE10');
+
+    await user.click(screen.getByRole('button', { name: /export the newsletter list/i }));
+
+    await waitFor(() => expect(clickedAnchors).toHaveLength(1));
+    expect(clickedAnchors[0]!.download).toBe('travelsugbo-newsletter-2026-10-27.csv');
+    expect(downloads).toHaveLength(1);
+    expect(downloads[0]!.blob.type).toBe('text/csv;charset=utf-8');
+    expect(await screen.findByText(/2 addresses/i)).toBeInTheDocument();
+  });
+
+  it('shows the refusal rather than a crash when the export itself fails', async () => {
+    renderPage();
+    await screen.findAllByText('SAVE10');
+    mockTrpcError('admin.newsletter.export', 'FORBIDDEN', 'Not permitted for this account.');
+
+    await user.click(screen.getByRole('button', { name: /export the newsletter list/i }));
+    expect(await screen.findByText(/could not build that file/i)).toBeInTheDocument();
   });
 });

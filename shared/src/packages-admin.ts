@@ -343,3 +343,32 @@ export interface NewsletterExport {
 
 /** The export's single column heading. */
 export const NEWSLETTER_CSV_HEADER = 'Email';
+
+/**
+ * One row of `admin.newsletter.list` — the on-screen subscriber list the
+ * Coupons page's "Sign-up coupons" section renders (sign-up coupons plan,
+ * Task 1C, decision 5).
+ *
+ * `code` is `null` only for a subscriber who predates the sign-up coupon
+ * feature (or lost a mint race — see `services/signup-coupons.ts`) and has
+ * not re-submitted the newsletter form since; every other row carries the
+ * one code ever minted for that address.
+ *
+ * `status` is derived server-side, never recomputed in the browser from a
+ * `endsAt`/`isActive` pair this type deliberately does not carry:
+ *  - `'none'` — no coupon minted yet (`code` is `null`).
+ *  - `'used'` — a `coupon_redemptions` row exists for it; `usedBookingRef`
+ *    names the booking.
+ *  - `'expired'` — unredeemed, and either past `coupons.ends_at` or
+ *    deactivated.
+ *  - `'unused'` — unredeemed, unexpired, active.
+ */
+export interface SignupSubscriberRow {
+  email: string;
+  /** ISO instant, UTC. The screen renders it in Asia/Manila. */
+  createdAt: string;
+  code: string | null;
+  status: 'none' | 'unused' | 'used' | 'expired';
+  /** Set only when `status === 'used'`. */
+  usedBookingRef: string | null;
+}

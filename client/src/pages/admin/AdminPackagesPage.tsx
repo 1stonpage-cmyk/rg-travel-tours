@@ -1,21 +1,20 @@
 /**
- * Packages, the enquiries about them, and the newsletter export (Week 7 plan,
- * Task 13 — 7C; BUILD_SPEC §9 "Packages: multi-day packages and their
- * inquiries", client half).
+ * Packages and the enquiries about them (Week 7 plan, Task 13 — 7C;
+ * BUILD_SPEC §9 "Packages: multi-day packages and their inquiries", client
+ * half).
  *
- * ## One screen, TWO server gates
+ * **The newsletter export moved off this page** (sign-up coupons plan, Task
+ * 1C, decision 5): it now lives in `AdminCouponsPage.tsx`'s "Sign-up
+ * coupons" section, beside the coupons it mints and the subscriber list
+ * that reads the same table. The server procedure, `admin.newsletter.export`
+ * (owner-only, `usersSettings`), is unchanged — only this page's CLIENT card
+ * moved.
+ *
+ * ## One screen, ONE server gate
  *
  * `admin.packages.*` and `admin.inquiries.*` are
- * `adminProcedure('packagesInquiries')` — owner and dispatcher, never finance.
- * `admin.newsletter.export` is `adminProcedure('usersSettings')` — **owner
- * only**. That is owner decision 2026-10-23 (Q3, option c), and it is why this
- * page draws the export button for an owner and not for a dispatcher.
- *
- * **That button's absence is cosmetic** (CLAUDE.md: hiding a button is not
- * access control). The server refuses a dispatcher's export with `FORBIDDEN`
- * whether or not the button was drawn, and `admin-packages.test.ts` is what
- * proves it. What the hidden button buys is that a dispatcher is not shown a
- * control that can only refuse them.
+ * `adminProcedure('packagesInquiries')` — owner and dispatcher, never
+ * finance.
  *
  * The role-denied state follows the same two-layer shape `AdminCouponsPage.tsx`
  * and `AdminReviewsPage.tsx` use: the role this session already knows
@@ -46,7 +45,7 @@
  */
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Download, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { TRPCClientError } from '@trpc/client';
 import {
   formatPeso,
@@ -490,93 +489,6 @@ function PackageActions({ row, onEdit }: { row: PackageAdminRow; onEdit: () => v
   );
 }
 
-/* --------------------------------------------------------- Newsletter export */
-
-/**
- * A UTF-8 byte-order mark.
- *
- * Excel on Windows guesses a CSV's encoding and gets it wrong without this.
- * Built from its code point rather than typed, because the literal character is
- * invisible in a diff and `no-irregular-whitespace` rightly refuses it in
- * source. (The same constant, for the same reason, as `AdminReportsPage.tsx`.)
- */
-const BOM = String.fromCharCode(0xfeff);
-
-/** Hands the browser a file built from a string it already has. */
-function downloadCsv(filename: string, csv: string): void {
-  const blob = new Blob([BOM + csv], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.click();
-  URL.revokeObjectURL(url);
-}
-
-/**
- * The owner-only control, and the only part of this screen gated on
- * `usersSettings`.
- *
- * A MUTATION rather than a query, because the server audits the export — an
- * export of every subscriber's address is a disclosure under RA 10173, so it is
- * an event rather than a read, and a query that writes must never be retried or
- * prefetched. See `server/src/routers/admin/newsletter.ts`.
- */
-function NewsletterExportCard() {
-  const [result, setResult] = useState<{ count: number } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const exportList = trpc.admin.newsletter.export.useMutation({
-    onSuccess: (file) => {
-      setError(null);
-      setResult({ count: file.count });
-      downloadCsv(file.filename, file.csv);
-    },
-    onError: () => {
-      setResult(null);
-      setError('Could not build that file. Try again in a moment.');
-    },
-  });
-
-  return (
-    <Card className={CARD}>
-      <CardHeader>
-        <CardTitle className="text-brand-ink text-lg font-bold">Newsletter list</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <p className="text-brand-error text-sm">
-          Everybody who has signed up on the site, as a CSV with one address per line. Subscriber
-          addresses are personal data — the download is recorded against your account, and only the
-          owner can take it.
-        </p>
-        <Button
-          type="button"
-          variant="secondary-pill"
-          disabled={exportList.isPending}
-          onClick={() => exportList.mutate()}
-        >
-          {exportList.isPending ? (
-            <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />
-          ) : (
-            <Download className="mr-2 size-4" aria-hidden="true" />
-          )}
-          Export the newsletter list (CSV)
-        </Button>
-        {result ? (
-          <p role="status" className={NOTICE}>
-            {result.count === 1 ? '1 address' : `${result.count} addresses`} downloaded.
-          </p>
-        ) : null}
-        {error ? (
-          <p role="alert" className={ALERT}>
-            {error}
-          </p>
-        ) : null}
-      </CardContent>
-    </Card>
-  );
-}
-
 /* ------------------------------------------------------------- Denied state */
 
 function DeniedState() {
@@ -604,7 +516,6 @@ function DeniedState() {
 /* ------------------------------------------------------------------ The page */
 
 function PackagesAdmin({ role }: { role: AdminRole | undefined }) {
-  const isOwner = role === 'owner';
   const list = trpc.admin.packages.list.useQuery(undefined, { retry: false });
   const [editingId, setEditingId] = useState<number | 'new' | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -625,7 +536,7 @@ function PackagesAdmin({ role }: { role: AdminRole | undefined }) {
       <AdminPageHeader
         eyebrow="Operations"
         title="Packages"
-        description="Multi-day packages, the enquiries guests send about them, and the newsletter list. Deactivating a package takes it off the site and keeps every enquiry about it."
+        description="Multi-day packages and the enquiries guests send about them. Deactivating a package takes it off the site and keeps every enquiry about it."
         action={
           editingId === null ? (
             <Button
@@ -722,25 +633,17 @@ function PackagesAdmin({ role }: { role: AdminRole | undefined }) {
       <h2 className="text-brand-ink -mb-3 text-lg font-bold">Enquiries</h2>
 
       <InquiriesInbox role={role} />
-
-      {/*
-       * Owner only, cosmetically — `admin.newsletter.export` is gated
-       * `usersSettings` on the server and refuses a dispatcher whether or not
-       * this card was drawn.
-       */}
-      {isOwner ? <NewsletterExportCard /> : null}
     </div>
   );
 }
 
 /**
  * A convenience, not the control: the server refuses every `admin.packages` and
- * `admin.inquiries` call from anyone but owner and dispatcher, and every
- * `admin.newsletter` call from anyone but the owner. This just stops a finance
- * user who types the address from being shown a screen that can only be
- * refused. The second denial layer — a refused `admin.packages.list` this role
- * check did not catch — lives inside `PackagesAdmin`, beside the query it
- * guards.
+ * `admin.inquiries` call from anyone but owner and dispatcher. This just stops
+ * a finance user who types the address from being shown a screen that can
+ * only be refused. The second denial layer — a refused `admin.packages.list`
+ * this role check did not catch — lives inside `PackagesAdmin`, beside the
+ * query it guards.
  */
 export default function AdminPackagesPage() {
   const me = trpc.staffAuth.me.useQuery(undefined, { retry: false });

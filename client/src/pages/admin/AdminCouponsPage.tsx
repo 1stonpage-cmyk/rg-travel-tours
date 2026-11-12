@@ -48,9 +48,15 @@
  */
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Loader2 } from 'lucide-react';
+import { Download, Loader2 } from 'lucide-react';
 import { TRPCClientError } from '@trpc/client';
-import { couponCreateInput, couponUpdateInput, formatPeso, type CouponAdminRow } from '@rg/shared';
+import {
+  couponCreateInput,
+  couponUpdateInput,
+  formatPeso,
+  type CouponAdminRow,
+  type SignupSubscriberRow,
+} from '@rg/shared';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -712,6 +718,444 @@ function CouponActions({
   );
 }
 
+/* ------------------------------------------------------------ Sign-up coupons */
+
+/**
+ * The "Sign-up coupons" section (sign-up coupons plan, Task 1C, decision 5):
+ * the % and expiry the newsletter form mints codes with, the subscriber
+ * list and its count, and the CSV export (moved here from
+ * `AdminPackagesPage.tsx`, since both are owner-only, `usersSettings`
+ * disclosures about the same table).
+ *
+ * Every piece on this page is already owner-only — `AdminCouponsPage`'s own
+ * role check and `CouponsAdmin`'s second denial layer both run before this
+ * ever mounts — so no third denial layer is added here. `admin.newsletter.*`
+ * and `admin.settings.*` are `usersSettings`, the SAME area `admin.coupons.*`
+ * is `toursPricing` under, both owner-only; a role that loses one grant but
+ * keeps the other is not a case this codebase's role matrix produces.
+ */
+
+/** `signupCouponSchema`'s own bounds (`server/src/content/settings-schema.ts`). */
+const MIN_DISCOUNT_PERCENT = 1;
+const MAX_DISCOUNT_PERCENT = 100;
+const MIN_EXPIRY_DAYS = 1;
+const MAX_EXPIRY_DAYS = 365;
+
+interface SignupCouponSetting {
+  discountPercent: number;
+  expiryDays: number;
+}
+
+function isSignupCouponSetting(value: unknown): value is SignupCouponSetting {
+  if (typeof value !== 'object' || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.discountPercent === 'number' && typeof record.expiryDays === 'number';
+}
+
+/** The two field names this form renders, for `splitFieldErrors`. */
+const SIGNUP_COUPON_FIELD_NAMES: ReadonlySet<string> = new Set(['discountPercent', 'expiryDays']);
+
+/**
+ * The % off and expiry window a sign-up code is minted with.
+ *
+ * A second, more convenient place to edit the SAME `signup_coupon` settings
+ * row the generic Settings screen already covers (`AdminSettingsPage.tsx`,
+ * "Payments" group) — not a replacement for it. Numbers are typed and sent
+ * as whole numbers, matching `signupCouponSchema`'s own `z.number().int()`
+ * bounds, which is why this form does none of the peso/basis-point unit
+ * conversion `CouponForm` above does: there is no unit to convert.
+ */
+function SignupCouponSettingsForm({ stored }: { stored: unknown }) {
+  const utils = trpc.useUtils();
+  const initial = isSignupCouponSetting(stored) ? stored : null;
+
+  const [discountPercent, setDiscountPercent] = useState(
+    initial ? String(initial.discountPercent) : '',
+  );
+  const [expiryDays, setExpiryDays] = useState(initial ? String(initial.expiryDays) : '');
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [banner, setBanner] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const write = trpc.admin.settings.write.useMutation({
+    onSuccess: () => {
+      setBanner(null);
+      setErrors({});
+      setNotice('Saved.');
+      void utils.admin.settings.all.invalidate();
+    },
+    onError: (error) => {
+      setNotice(null);
+      const validation = splitFieldErrors(error, SIGNUP_COUPON_FIELD_NAMES);
+      if (validation) {
+        setErrors(validation.fields);
+        setBanner(validation.banner);
+        return;
+      }
+      setBanner(
+        describeCouponError(
+          error,
+          'Could not save the sign-up coupon settings. Nothing was changed.',
+        ),
+      );
+    },
+  });
+
+  function submit() {
+    setBanner(null);
+    setNotice(null);
+    const next: Record<string, string> = {};
+
+    const percentRaw = discountPercent.trim();
+    const percentValue = Number(percentRaw);
+    const percentValid =
+      percentRaw !== '' &&
+      Number.isInteger(percentValue) &&
+      percentValue >= MIN_DISCOUNT_PERCENT &&
+      percentValue <= MAX_DISCOUNT_PERCENT;
+    if (!percentValid) {
+      next.discountPercent = `Enter a whole number from ${MIN_DISCOUNT_PERCENT} to ${MAX_DISCOUNT_PERCENT}.`;
+    }
+
+    const daysRaw = expiryDays.trim();
+    const daysValue = Number(daysRaw);
+    const daysValid =
+      daysRaw !== '' &&
+      Number.isInteger(daysValue) &&
+      daysValue >= MIN_EXPIRY_DAYS &&
+      daysValue <= MAX_EXPIRY_DAYS;
+    if (!daysValid) {
+      next.expiryDays = `Enter a whole number from ${MIN_EXPIRY_DAYS} to ${MAX_EXPIRY_DAYS}.`;
+    }
+
+    if (Object.keys(next).length > 0) {
+      setErrors(next);
+      return;
+    }
+
+    setErrors({});
+    write.mutate({
+      key: 'signup_coupon',
+      value: { discountPercent: percentValue, expiryDays: daysValue },
+    });
+  }
+
+  return (
+    <Card className={CARD}>
+      <CardHeader>
+        <CardTitle className="text-brand-ink text-lg font-bold">Sign-up coupon settings</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-brand-error text-sm">
+          The discount and expiry a newsletter sign-up code is minted with. Changing this affects
+          only codes minted after Save — a code already issued keeps the percent and expiry it was
+          given.
+        </p>
+
+        {banner ? (
+          <p role="alert" className={ALERT}>
+            {banner}
+          </p>
+        ) : null}
+        {notice ? (
+          <p role="status" className={NOTICE}>
+            {notice}
+          </p>
+        ) : null}
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="min-w-0 space-y-1.5">
+            <Label htmlFor="signup-coupon-discount-percent">Discount percentage</Label>
+            <Input
+              id="signup-coupon-discount-percent"
+              type="number"
+              step="1"
+              className={FIELD}
+              value={discountPercent}
+              aria-invalid={errors.discountPercent ? true : undefined}
+              aria-describedby={
+                errors.discountPercent ? 'signup-coupon-discount-percent-error' : undefined
+              }
+              onChange={(event) => setDiscountPercent(event.target.value)}
+            />
+            {errors.discountPercent ? (
+              <p id="signup-coupon-discount-percent-error" role="alert" className={ROW_ERROR}>
+                {errors.discountPercent}
+              </p>
+            ) : null}
+          </div>
+          <div className="min-w-0 space-y-1.5">
+            <Label htmlFor="signup-coupon-expiry-days">Expires after (days)</Label>
+            <Input
+              id="signup-coupon-expiry-days"
+              type="number"
+              step="1"
+              className={FIELD}
+              value={expiryDays}
+              aria-invalid={errors.expiryDays ? true : undefined}
+              aria-describedby={errors.expiryDays ? 'signup-coupon-expiry-days-error' : undefined}
+              onChange={(event) => setExpiryDays(event.target.value)}
+            />
+            {errors.expiryDays ? (
+              <p id="signup-coupon-expiry-days-error" role="alert" className={ROW_ERROR}>
+                {errors.expiryDays}
+              </p>
+            ) : null}
+          </div>
+        </div>
+
+        {/* This form's own footer is its own region — the page header's
+            primary pill ("Add a coupon") belongs to a different region. */}
+        <div className="flex justify-end">
+          <Button type="button" variant="primary-pill" disabled={write.isPending} onClick={submit}>
+            {write.isPending ? 'Saving…' : 'Save'}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** "Unused" / "Used on RG-7KQ4M9" / "Expired" / "No code yet". */
+function subscriberStatusInWords(row: SignupSubscriberRow): string {
+  switch (row.status) {
+    case 'none':
+      return 'No code yet';
+    case 'unused':
+      return 'Unused';
+    case 'used':
+      return `Used on ${row.usedBookingRef}`;
+    case 'expired':
+      return 'Expired';
+  }
+}
+
+const SUBSCRIBER_STATUS_BADGE_CLASS: Record<SignupSubscriberRow['status'], string> = {
+  none: 'border-0 bg-slate-100 text-brand-ink',
+  unused: 'border-0 bg-brand-blue-50 text-brand-blue-800',
+  used: 'border-0 bg-brand-blue-50 text-brand-blue-800',
+  expired: 'border-0 bg-brand-gold-100 text-brand-gold-800',
+};
+
+/**
+ * Every newsletter subscriber, their minted code (if any) and its status —
+ * the on-screen counterpart of the CSV export below, read through
+ * `admin.newsletter.list` rather than `export`. See that procedure's own
+ * doc comment for why viewing this is not the same disclosure event as
+ * downloading the file.
+ */
+function SignupSubscribersList({ rows }: { rows: SignupSubscriberRow[] }) {
+  return (
+    <div className="space-y-3">
+      <p className="text-brand-ink text-sm font-semibold">
+        {rows.length === 1 ? '1 sign-up' : `${rows.length} sign-ups`}
+      </p>
+
+      {rows.length === 0 ? (
+        <p className={`${CARD} text-brand-error p-5 text-sm`}>No newsletter sign-ups yet.</p>
+      ) : (
+        <>
+          {/* Phone: one card per subscriber. */}
+          <ul className="space-y-3 md:hidden">
+            {rows.map((row) => (
+              <li key={row.email} className={`${CARD} p-4 text-sm`}>
+                <p className="text-brand-ink max-w-full break-all font-semibold">{row.email}</p>
+                <p className="text-brand-error text-xs">
+                  Signed up {utcIsoToManilaLabel(row.createdAt)}
+                </p>
+                <p className="text-brand-ink mt-1 max-w-full break-all">{row.code ?? '—'}</p>
+                <Badge className={`${SUBSCRIBER_STATUS_BADGE_CLASS[row.status]} mt-2`}>
+                  {subscriberStatusInWords(row)}
+                </Badge>
+              </li>
+            ))}
+          </ul>
+
+          {/* Laptop and up: the table, inside its own horizontal scroll container. */}
+          <div
+            data-testid="signup-subscribers-table-wrapper"
+            className={`${CARD} hidden overflow-x-auto md:block`}
+          >
+            <table className="w-full text-left text-sm">
+              <thead className="bg-brand-blue-50 text-brand-error border-brand-blue-100 border-b text-xs uppercase tracking-[0.06em]">
+                <tr>
+                  <th scope="col" className="px-4 py-3 font-semibold">
+                    Email
+                  </th>
+                  <th scope="col" className="px-4 py-3 font-semibold">
+                    Signed up
+                  </th>
+                  <th scope="col" className="px-4 py-3 font-semibold">
+                    Code
+                  </th>
+                  <th scope="col" className="px-4 py-3 font-semibold">
+                    Status
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={row.email} className="border-brand-blue-100 border-b last:border-0">
+                    <td className="text-brand-ink max-w-0 break-all px-4 py-3">{row.email}</td>
+                    <td className="text-brand-ink px-4 py-3">
+                      {utcIsoToManilaLabel(row.createdAt)}
+                    </td>
+                    <td className="text-brand-ink max-w-0 break-all px-4 py-3">
+                      {row.code ?? '—'}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge className={SUBSCRIBER_STATUS_BADGE_CLASS[row.status]}>
+                        {subscriberStatusInWords(row)}
+                      </Badge>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A UTF-8 byte-order mark.
+ *
+ * Excel on Windows guesses a CSV's encoding and gets it wrong without this.
+ * Built from its code point rather than typed, because the literal character
+ * is invisible in a diff and `no-irregular-whitespace` rightly refuses it in
+ * source. (The same constant, for the same reason, as `AdminReportsPage.tsx`
+ * — and, until this task moved it here, `AdminPackagesPage.tsx`.)
+ */
+const BOM = String.fromCharCode(0xfeff);
+
+/** Hands the browser a file built from a string it already has. */
+function downloadCsv(filename: string, csv: string): void {
+  const blob = new Blob([BOM + csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * The owner-only CSV export, moved here from `AdminPackagesPage.tsx`
+ * (sign-up coupons plan, Task 1C, decision 5) — the subscriber list belongs
+ * beside the coupons it now mints, not beside packages. The server
+ * procedure, `admin.newsletter.export`, is unchanged.
+ *
+ * A MUTATION rather than a query, because the server audits the export — an
+ * export of every subscriber's address is a disclosure under RA 10173, so it
+ * is an event rather than a read, and a query that writes must never be
+ * retried or prefetched. See `server/src/routers/admin/newsletter.ts`.
+ */
+function NewsletterExportCard() {
+  const [result, setResult] = useState<{ count: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const exportList = trpc.admin.newsletter.export.useMutation({
+    onSuccess: (file) => {
+      setError(null);
+      setResult({ count: file.count });
+      downloadCsv(file.filename, file.csv);
+    },
+    onError: () => {
+      setResult(null);
+      setError('Could not build that file. Try again in a moment.');
+    },
+  });
+
+  return (
+    <Card className={CARD}>
+      <CardHeader>
+        <CardTitle className="text-brand-ink text-lg font-bold">Newsletter list</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-brand-error text-sm">
+          Everybody who has signed up on the site, as a CSV with one address per line. Subscriber
+          addresses are personal data — the download is recorded against your account, and only the
+          owner can take it.
+        </p>
+        <Button
+          type="button"
+          variant="secondary-pill"
+          disabled={exportList.isPending}
+          onClick={() => exportList.mutate()}
+        >
+          {exportList.isPending ? (
+            <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />
+          ) : (
+            <Download className="mr-2 size-4" aria-hidden="true" />
+          )}
+          Export the newsletter list (CSV)
+        </Button>
+        {result ? (
+          <p role="status" className={NOTICE}>
+            {result.count === 1 ? '1 address' : `${result.count} addresses`} downloaded.
+          </p>
+        ) : null}
+        {error ? (
+          <p role="alert" className={ALERT}>
+            {error}
+          </p>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * The whole "Sign-up coupons" section: settings, subscriber list, export.
+ * Each query is read independently, so one failing does not blank the
+ * others — the same "small inline could not load message" convention
+ * `RedemptionLog` already follows on this page.
+ */
+function SignupCouponsSection() {
+  const settings = trpc.admin.settings.all.useQuery(undefined, { retry: false });
+  const subscribers = trpc.admin.newsletter.list.useQuery(undefined, { retry: false });
+
+  return (
+    <div className="flex flex-col gap-4">
+      <h2 className="text-brand-ink -mb-1 text-lg font-bold">Sign-up coupons</h2>
+      <p className="text-brand-error text-sm">
+        The newsletter sign-up form mints one of these codes per address. The settings below decide
+        every code minted from now on; the list is every address that has ever signed up.
+      </p>
+
+      {settings.isPending ? (
+        <p className="text-brand-error flex items-center gap-2 text-sm">
+          <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+          Loading settings…
+        </p>
+      ) : settings.isError ? (
+        <p role="alert" className={ALERT}>
+          Could not load the sign-up coupon settings. Try again in a moment.
+        </p>
+      ) : (
+        <SignupCouponSettingsForm stored={settings.data.signup_coupon} />
+      )}
+
+      {subscribers.isPending ? (
+        <p className="text-brand-error flex items-center gap-2 text-sm">
+          <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+          Loading sign-ups…
+        </p>
+      ) : subscribers.isError ? (
+        <p role="alert" className={ALERT}>
+          Could not load the sign-up list. Try again in a moment.
+        </p>
+      ) : (
+        <SignupSubscribersList rows={subscribers.data} />
+      )}
+
+      <NewsletterExportCard />
+    </div>
+  );
+}
+
 /** The same denied markup `AdminToursPage.tsx` renders, for both denial layers. */
 function DeniedState() {
   return (
@@ -948,6 +1392,8 @@ function CouponsAdmin() {
           {logCoupon ? <RedemptionLog coupon={logCoupon} /> : null}
         </>
       )}
+
+      <SignupCouponsSection />
     </div>
   );
 }
