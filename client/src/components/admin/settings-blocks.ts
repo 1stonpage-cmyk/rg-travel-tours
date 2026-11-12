@@ -1,5 +1,5 @@
 /**
- * What each of the nineteen `settings` blocks looks like on the admin screen,
+ * What each of the twenty `settings` blocks looks like on the admin screen,
  * and how its fields convert to and from the stored JSON (Week 7 plan, Task 9).
  *
  * Separate from `AdminSettingsPage.tsx` for two reasons: the page then holds
@@ -455,6 +455,27 @@ export const BLOCKS: readonly BlockSpec[] = [
     ],
   },
   {
+    key: 'signup_coupon',
+    title: 'Sign-up coupon',
+    blurb:
+      'The % off and expiry window a newsletter sign-up code is minted with. Changing this affects only codes minted after the save — an already-issued code keeps the percent and expiry it was given.',
+    shape: 'object',
+    fields: [
+      {
+        name: 'discountPercent',
+        label: 'Discount percentage',
+        kind: 'number',
+        hint: 'A whole percent off the subtotal, applied once at mint time.',
+      },
+      {
+        name: 'expiryDays',
+        label: 'Expires after (days)',
+        kind: 'number',
+        hint: 'How many days after issuance a sign-up code stays usable.',
+      },
+    ],
+  },
+  {
     key: 'legal_privacy',
     title: 'Privacy notice',
     blurb:
@@ -510,7 +531,7 @@ export const GROUPS: readonly GroupSpec[] = [
     id: 'payments',
     title: 'Payments',
     blurb: 'How a guest pays, where a transfer goes, and the deposit taken at checkout.',
-    keys: ['payment_methods', 'payment_qr', 'trust'],
+    keys: ['payment_methods', 'payment_qr', 'trust', 'signup_coupon'],
   },
   {
     id: 'legal',

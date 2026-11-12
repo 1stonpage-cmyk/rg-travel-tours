@@ -270,6 +270,7 @@ export const SETTINGS_FIXTURE: SettingsPayload = {
       updatedAt: '2026-10-09T00:00:00.000Z',
     },
   },
+  signupCoupon: { discountPercent: 5 },
 };
 
 export const DESTINATIONS_FIXTURE: Destination[] = [

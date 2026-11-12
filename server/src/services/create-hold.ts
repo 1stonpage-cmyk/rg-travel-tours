@@ -773,7 +773,7 @@ export async function createHold(
            * the fleet, tour and coupon locks, which turns a competitor's wait
            * into the 1205 this module deliberately does not retry.
            */
-          await validateCoupon(input.couponCode, quote.subtotalCentavos, now, tx);
+          await validateCoupon(input.couponCode, quote.subtotalCentavos, now, tx, input.lead.email);
           // `inputs.coupon` is what the money above was actually computed
           // from, and — both reads now going through `tx`, i.e. one snapshot —
           // it is the same row version `validateCoupon` just approved. The

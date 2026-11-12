@@ -506,6 +506,14 @@ export const newsletterSubscribers = mysqlTable('newsletter_subscribers', {
   createdAt: datetime('created_at', { mode: 'date' })
     .notNull()
     .$defaultFn(() => new Date()),
+  /**
+   * The sign-up coupon minted for this address, if any (sign-up coupons
+   * plan, Task 1B-i). Null until a code has been issued — this is what makes
+   * "one code per email ever" checkable without a second table. Plain
+   * RESTRICT, no `onDelete` — house style, matching `convertedBookingId`
+   * above.
+   */
+  couponId: int('coupon_id').references(() => coupons.id),
 });
 
 /**
@@ -867,6 +875,20 @@ export const coupons = mysqlTable(
     usageLimit: int('usage_limit'),
     usedCount: int('used_count').notNull().default(0),
     isActive: boolean('is_active').notNull().default(true),
+    /**
+     * Set only for a sign-up coupon (sign-up coupons plan, Task 1B-i): the
+     * address it was minted for, normalised (trim + lowercase) at issuance
+     * so `validateCoupon()`'s comparison never has to re-normalise a stored
+     * value. Null for every ordinary admin-created coupon.
+     *
+     * Deliberately unreachable from `admin.coupons.create`/`update` — the
+     * same reasoning `shared/src/coupons-admin.ts`'s own note gives for
+     * `usedCount` and `isActive` being structurally unreachable from those
+     * `.strict()` inputs: a field minted by one code path must not also be
+     * postable by an admin screen, or the two could disagree about who a
+     * code belongs to.
+     */
+    restrictedToEmail: varchar('restricted_to_email', { length: 200 }),
     createdAt: datetime('created_at', { mode: 'date' })
       .notNull()
       .$defaultFn(() => new Date()),

@@ -138,6 +138,24 @@ export class CouponMinimumSpendNotMetError extends Error {
 }
 
 /**
+ * The coupon is bound to one address (`restricted_to_email`, sign-up coupons
+ * plan) and `email` did not match it.
+ *
+ * **The message deliberately never echoes the restricted address** (RA
+ * 10173): a stranger who found or guessed a sign-up code must not be able to
+ * learn whose inbox it was issued to from the refusal text alone.
+ */
+export class CouponEmailMismatchError extends Error {
+  readonly code: string;
+
+  constructor(code: string) {
+    super(`Coupon "${code}" is not valid for this email address`);
+    this.name = 'CouponEmailMismatchError';
+    this.code = code;
+  }
+}
+
+/**
  * §6: "server-validated: active, within dates, under usage limit, minimum
  * spend" — checked IN THAT ORDER, each its own typed error, so the checkout
  * UI can tell a guest which rule they failed.
@@ -162,12 +180,23 @@ export class CouponMinimumSpendNotMetError extends Error {
  * `createHold`'s re-read under `SELECT … FOR UPDATE`, which — being a
  * locking read — always sees the latest committed row rather than the
  * snapshot.
+ *
+ * **`email`, 5th and optional (sign-up coupons plan, Task 1B-i).** When the
+ * loaded row's `restricted_to_email` is non-null AND `email` is given, the
+ * two are compared (`email.trim().toLowerCase() === restrictedToEmail`; the
+ * stored value is already normalised at write time) and a mismatch throws
+ * `CouponEmailMismatchError`. When `email` is omitted — the two `quote`/
+ * `quoteTransfer` preview call sites, which have no lead email in scope at
+ * all — this check is skipped entirely, not failed: back-compat for every
+ * existing caller, and for any ordinary (non-restricted) coupon the new
+ * parameter changes nothing regardless of what is passed.
  */
 export async function validateCoupon(
   code: string,
   subtotalCentavos: number,
   now: Date,
   db: Database | Transaction = getDb(),
+  email?: string,
 ): Promise<ValidCoupon> {
   const normalized = normalizeCouponCode(code);
   const [row] = await db
@@ -183,6 +212,7 @@ export async function validateCoupon(
       usageLimit: coupons.usageLimit,
       usedCount: coupons.usedCount,
       isActive: coupons.isActive,
+      restrictedToEmail: coupons.restrictedToEmail,
     })
     .from(coupons)
     .where(eq(coupons.code, normalized));
@@ -196,6 +226,11 @@ export async function validateCoupon(
   }
   if (row.minSpendCentavos !== null && subtotalCentavos < row.minSpendCentavos) {
     throw new CouponMinimumSpendNotMetError(normalized, row.minSpendCentavos, subtotalCentavos);
+  }
+  if (row.restrictedToEmail !== null && email !== undefined) {
+    if (email.trim().toLowerCase() !== row.restrictedToEmail) {
+      throw new CouponEmailMismatchError(normalized);
+    }
   }
 
   if (row.discountType === 'percent') {

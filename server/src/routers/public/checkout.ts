@@ -129,6 +129,7 @@ import {
   type CapacityVerdict,
 } from '../../services/capacity';
 import {
+  CouponEmailMismatchError,
   CouponExpiredError,
   CouponInactiveError,
   CouponMinimumSpendNotMetError,
@@ -436,6 +437,13 @@ function translateCouponError(error: unknown): TRPCError | null {
   }
   if (error instanceof CouponNotFoundError) {
     return new TRPCError({ code: 'BAD_REQUEST', message: "We couldn't find that coupon code." });
+  }
+  if (error instanceof CouponEmailMismatchError) {
+    // Guest-safe (RA 10173): never names the address the coupon is bound to.
+    return new TRPCError({
+      code: 'BAD_REQUEST',
+      message: "That code isn't valid for this email address.",
+    });
   }
   return null;
 }

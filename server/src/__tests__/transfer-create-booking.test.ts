@@ -52,7 +52,7 @@ import {
 import { readSettingBlock, readTransferOperationsSettings } from '../content/settings';
 import { generateBookingRef } from '../services/booking-ref';
 import { takeFleetDateLock } from '../services/capacity';
-import { CouponUsageLimitReachedError } from '../services/coupons';
+import { CouponEmailMismatchError, CouponUsageLimitReachedError } from '../services/coupons';
 import {
   CouponExhaustedUnderLockError,
   GatewayMinimumNotMetError,
@@ -272,7 +272,12 @@ async function makeFleet(n: number) {
 }
 
 async function makeCoupon(
-  opts: { percentBp?: number; amountCentavos?: number; usageLimit?: number | null } = {},
+  opts: {
+    percentBp?: number;
+    amountCentavos?: number;
+    usageLimit?: number | null;
+    restrictedToEmail?: string | null;
+  } = {},
 ) {
   const code = `__XFER__${unique()}`.toUpperCase().slice(0, 40);
   const [row] = await getDb()
@@ -283,6 +288,7 @@ async function makeCoupon(
       percentBp: opts.amountCentavos === undefined ? (opts.percentBp ?? 1000) : null,
       amountCentavos: opts.amountCentavos ?? null,
       usageLimit: opts.usageLimit ?? null,
+      restrictedToEmail: opts.restrictedToEmail ?? null,
       isActive: true,
     });
   created.couponIds.push(row.insertId);
@@ -1276,6 +1282,39 @@ describeWithDb('createTransferBooking', () => {
       code: fixed.code,
       discount: { discountType: 'fixed', percentBp: null, amountCentavos: 50_000 },
     });
+  });
+
+  /**
+   * A sign-up coupon's `restricted_to_email` (sign-up coupons plan, Task
+   * 1B-i), honoured end-to-end through `createTransferBooking`'s own
+   * `validateCoupon` call. Same shape as `create-hold.test.ts`'s equivalent
+   * case: the refusal is authoritative here (inside the transaction, with
+   * `input.lead.email` in scope), unlike a `quote`/`quoteTransfer` preview.
+   */
+  it("refuses a restricted-to-email coupon when the booking's lead email does not match, and reserves nothing", async () => {
+    const routeId = await makeRoute();
+    await makeFleet(2);
+    const coupon = await makeCoupon({
+      percentBp: 1000,
+      restrictedToEmail: 'owner-of-code@example.test',
+    });
+
+    const error = await createTransferBooking(
+      transferInput({
+        routeId,
+        payMode: 'full',
+        couponCode: coupon.code,
+        email: 'someone-else@example.test',
+      }),
+      NOW,
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(CouponEmailMismatchError);
+    expect((error as Error).message).not.toContain('owner-of-code@example.test');
+    expect(await count(sql`SELECT used_count n FROM coupons WHERE id = ${coupon.id}`)).toBe(0);
+    expect(
+      await count(sql`SELECT COUNT(*) n FROM coupon_redemptions WHERE coupon_id = ${coupon.id}`),
+    ).toBe(0);
   });
 
   // -------------------------------------------------------------------------

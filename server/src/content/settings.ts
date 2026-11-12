@@ -438,6 +438,17 @@ export interface SettingsPayload {
     privacy: SettingsBlocks['legal_privacy'];
     terms: SettingsBlocks['legal_terms'];
   };
+  /**
+   * The sign-up coupon's public face — percent only; the expiry day count is
+   * email copy, not page copy, and stays server-side (sign-up coupons plan,
+   * Task 1B-i). `PromoNewsletter.tsx` reads this to say "Sign up for N% off"
+   * so the CTA tracks the live admin setting rather than a hardcoded number.
+   * A required field, not optional: `signup_coupon` is seeded by `seedBase`
+   * like every other settings row, so there is always a value to publish.
+   */
+  signupCoupon: {
+    discountPercent: number;
+  };
 }
 
 function resolveAnnouncement(
@@ -517,6 +528,7 @@ export function toSettingsPayload(
      */
     onlinePaymentEnabled: paymongoConfigured && enabledPaymentMethods.length > 0,
     legal: { privacy: blocks.legal_privacy, terms: blocks.legal_terms },
+    signupCoupon: { discountPercent: blocks.signup_coupon.discountPercent },
   };
 }
 

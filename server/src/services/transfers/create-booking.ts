@@ -805,7 +805,7 @@ export async function createTransferBooking(
          * from this one.
          */
         const coupon: ValidCoupon | null = input.couponCode
-          ? await validateCoupon(input.couponCode, priceCentavos, now, tx)
+          ? await validateCoupon(input.couponCode, priceCentavos, now, tx, input.lead.email)
           : null;
 
         const trust = await readSettingBlockTx(tx, 'trust');

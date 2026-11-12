@@ -840,6 +840,18 @@ These terms may change before launch as the client's legal review proceeds.
 This placeholder will be replaced with reviewed terms before launch.`,
     updatedAt: '2026-10-09T00:00:00.000Z',
   },
+
+  /**
+   * The owner's sign-up-coupon defaults (sign-up coupons plan, Task 1B-i):
+   * 5% off, expiring 60 days after a code is minted. A whole percent, not
+   * basis points — the conversion happens once, at mint time, not here.
+   * Insert-only like every other `seedBase` row: an admin who has already
+   * changed this through the settings screen keeps their own value.
+   */
+  signup_coupon: {
+    discountPercent: 5,
+    expiryDays: 60,
+  },
 };
 
 // ---------------------------------------------------------------------------

@@ -274,6 +274,22 @@ const legalDocSchema = z.object({
   updatedAt: z.string(),
 });
 
+/**
+ * Sign-up coupon settings (sign-up coupons plan, Task 1B-i): the % off and
+ * expiry window a newly-minted `WELCOME-XXXXXXXX` coupon is issued with.
+ *
+ * `discountPercent` is a WHOLE PERCENT (1..100), matching `trustSchema`'s
+ * `depositPercent` convention above — deliberately NOT `coupons.percent_bp`'s
+ * basis-point convention. The conversion to basis points
+ * (`discountPercent * 100`) happens once, at the moment a code is minted
+ * (`newsletter.subscribe`'s mint helper); this block is never re-read to
+ * recompute a discount an already-issued code carries as its own snapshot.
+ */
+const signupCouponSchema = z.object({
+  discountPercent: z.number().int().min(1).max(100),
+  expiryDays: z.number().int().min(1).max(365),
+});
+
 export const SETTING_SCHEMAS = {
   content_unverified: z.boolean(),
   site_seo: siteSeoSchema,
@@ -294,6 +310,7 @@ export const SETTING_SCHEMAS = {
   transfer_operations: transferOperationsSchema,
   legal_privacy: legalDocSchema,
   legal_terms: legalDocSchema,
+  signup_coupon: signupCouponSchema,
 } satisfies Record<string, z.ZodType>;
 
 export type SettingKey = keyof typeof SETTING_SCHEMAS;

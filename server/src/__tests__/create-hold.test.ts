@@ -50,7 +50,7 @@ import {
 } from '../db/schema';
 import { generateBookingRef } from '../services/booking-ref';
 import { takeSlotLocks } from '../services/capacity';
-import { CouponUsageLimitReachedError } from '../services/coupons';
+import { CouponEmailMismatchError, CouponUsageLimitReachedError } from '../services/coupons';
 import {
   CapacityRefusedError,
   CouponExhaustedUnderLockError,
@@ -229,7 +229,12 @@ async function makeFleet(n: number) {
 }
 
 async function makeCoupon(
-  opts: { percentBp?: number; amountCentavos?: number; usageLimit?: number | null } = {},
+  opts: {
+    percentBp?: number;
+    amountCentavos?: number;
+    usageLimit?: number | null;
+    restrictedToEmail?: string | null;
+  } = {},
 ) {
   const code = `__HOLD__${unique()}`.toUpperCase().slice(0, 40);
   const [row] = await getDb()
@@ -240,6 +245,7 @@ async function makeCoupon(
       percentBp: opts.amountCentavos === undefined ? (opts.percentBp ?? 1000) : null,
       amountCentavos: opts.amountCentavos ?? null,
       usageLimit: opts.usageLimit ?? null,
+      restrictedToEmail: opts.restrictedToEmail ?? null,
       isActive: true,
     });
   created.couponIds.push(row.insertId);
@@ -636,6 +642,40 @@ describeWithDb('createHold', () => {
     expect((error as CapacityRefusedError).reason).toBe('tour_sold_out');
     // Not merely "it threw": a refusal that left a booking, an add-on line,
     // an audit row or a consumed coupon use behind would be a sold slot.
+    expect(await writtenRowCounts()).toEqual(before);
+  });
+
+  /**
+   * A sign-up coupon's `restricted_to_email` (sign-up coupons plan, Task
+   * 1B-i) is checked AUTHORITATIVELY here, inside `createHold`'s own
+   * transaction — unlike `quoteFor`/`loadQuoteInputs` above, which has no
+   * lead email in scope at all and so cannot see this rule. A guest who
+   * previewed the code successfully is still refused at hold time if the
+   * email they actually type does not match.
+   */
+  it("refuses a restricted-to-email coupon when the hold's lead email does not match, and writes nothing", async () => {
+    const tour = await makeTour({ groupsPerDay: 2 });
+    await makeFleet(1);
+    const coupon = await makeCoupon({
+      percentBp: 500,
+      restrictedToEmail: 'owner-of-code@example.test',
+    });
+    const { quoteId } = await quoteFor(tour.slug, DAY, 2, [], coupon.code);
+
+    const before = await writtenRowCounts();
+    const error = await hold(
+      holdInput({
+        tourSlug: tour.slug,
+        date: DAY,
+        pax: 2,
+        couponCode: coupon.code,
+        quoteId,
+        email: 'someone-else@example.test',
+      }),
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(CouponEmailMismatchError);
+    expect((error as Error).message).not.toContain('owner-of-code@example.test');
     expect(await writtenRowCounts()).toEqual(before);
   });
 

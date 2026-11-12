@@ -131,6 +131,10 @@ function validValueFor(key: string): unknown {
       return { markdown: '# Privacy', updatedAt: '2026-01-01T00:00:00.000Z' };
     case 'legal_terms':
       return { markdown: '# Terms', updatedAt: '2026-01-01T00:00:00.000Z' };
+    case 'signup_coupon':
+      // The owner's defaults (sign-up coupons plan, Task 1B-i; same as
+      // `SEED_SETTINGS.signup_coupon`).
+      return { discountPercent: 5, expiryDays: 60 };
     default:
       throw new Error(`no fixture value for "${key}"`);
   }

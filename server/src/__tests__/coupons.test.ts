@@ -33,6 +33,7 @@ import { getDb, getPool } from '../db/client';
 import { bookings, coupons, couponRedemptions, destinations, tours } from '../db/schema';
 import { generateBookingRef } from '../services/booking-ref';
 import {
+  CouponEmailMismatchError,
   CouponExpiredError,
   CouponInactiveError,
   CouponMinimumSpendNotMetError,
@@ -81,6 +82,9 @@ describeWithDb('validateCoupon', () => {
   let validFixedCode: string;
   /** Window entirely in the future of the REAL clock, valid only under an injected `now`. */
   let futureWindowCode: string;
+  /** Sign-up coupon: `restricted_to_email` set, normalised at write time. */
+  let restrictedCode: string;
+  const restrictedEmail = 'guest@example.com';
 
   beforeAll(async () => {
     const db = getDb();
@@ -170,6 +174,18 @@ describeWithDb('validateCoupon', () => {
         isActive: true,
         startsAt: new Date('2099-01-01T00:00:00Z'),
         endsAt: new Date('2099-12-31T00:00:00Z'),
+      })
+      .then(([r]) => couponIds.push(r.insertId));
+
+    restrictedCode = `${unique}-RESTRICTED`;
+    await db
+      .insert(coupons)
+      .values({
+        code: restrictedCode,
+        discountType: 'percent',
+        percentBp: 500,
+        isActive: true,
+        restrictedToEmail: restrictedEmail,
       })
       .then(([r]) => couponIds.push(r.insertId));
   });
@@ -267,6 +283,55 @@ describeWithDb('validateCoupon', () => {
     const insideInjectedWindow = new Date('2099-06-01T00:00:00Z');
     const result = await validateCoupon(futureWindowCode, 100000, insideInjectedWindow);
     expect(result.code).toBe(futureWindowCode);
+  });
+
+  // -------------------------------------------------------------------------
+  // restricted_to_email (sign-up coupons plan, Task 1B-i).
+  // -------------------------------------------------------------------------
+
+  it('REFUSES a restricted coupon when the email does not match, with CouponEmailMismatchError', async () => {
+    await expect(
+      validateCoupon(restrictedCode, 100000, NOW, getDb(), 'someoneelse@example.com'),
+    ).rejects.toThrow(CouponEmailMismatchError);
+  });
+
+  it("the mismatch error's message does not contain the restricted address", async () => {
+    try {
+      await validateCoupon(restrictedCode, 100000, NOW, getDb(), 'someoneelse@example.com');
+      expect.unreachable('expected CouponEmailMismatchError');
+    } catch (err) {
+      expect(err).toBeInstanceOf(CouponEmailMismatchError);
+      expect((err as Error).message).not.toContain(restrictedEmail);
+    }
+  });
+
+  it('ACCEPTS a restricted coupon when the email matches in a different case and with surrounding whitespace', async () => {
+    const result = await validateCoupon(
+      restrictedCode,
+      100000,
+      NOW,
+      getDb(),
+      `  ${restrictedEmail.toUpperCase()}  `,
+    );
+    expect(result.code).toBe(restrictedCode);
+  });
+
+  it('ACCEPTS a restricted coupon when email is omitted entirely (back-compat for the preview call sites)', async () => {
+    const result = await validateCoupon(restrictedCode, 100000, NOW);
+    expect(result.code).toBe(restrictedCode);
+  });
+
+  it('a non-restricted coupon is unaffected by the new parameter, whatever email is passed', async () => {
+    const withEmail = await validateCoupon(
+      validPercentCode,
+      500000,
+      NOW,
+      getDb(),
+      'anyone@example.com',
+    );
+    expect(withEmail.code).toBe(validPercentCode);
+    const withoutEmail = await validateCoupon(validPercentCode, 500000, NOW);
+    expect(withoutEmail.code).toBe(validPercentCode);
   });
 });
 

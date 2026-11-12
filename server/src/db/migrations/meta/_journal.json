@@ -183,6 +183,13 @@
       "when": 1794241811943,
       "tag": "0025_military_mauler",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "5",
+      "when": 1794516348292,
+      "tag": "0026_happy_mister_sinister",
+      "breakpoints": true
     }
   ]
 }
