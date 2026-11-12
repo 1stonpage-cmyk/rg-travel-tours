@@ -99,11 +99,15 @@ describe('home page', () => {
     expect(within(faq).getAllByRole('button')).toHaveLength(7);
   });
 
-  it('reveals the promo code only after newsletter signup', async () => {
+  it('never reveals a promo code, before or after newsletter signup', async () => {
     const user = userEvent.setup();
-    // Task 3.5 wires this form to the real newsletter.subscribe mutation —
-    // the reveal now depends on that mutation actually resolving, so it
-    // needs its own mock on top of the beforeEach's five read queries.
+    // Task 3.5 wires this form to the real newsletter.subscribe mutation.
+    // Rewritten for Task 1D/1E: PromoNewsletter.tsx no longer reads or
+    // displays `promo.code` at all (the server itself never returns a code
+    // from `newsletter.subscribe` — email only, decision 1 of the sign-up
+    // coupons plan), so this integration test's job is to pin that the
+    // HomePage-mounted component honours that for real, matching
+    // promo.test.tsx's own unit-level assertion of the same rule.
     mockTrpc({ 'newsletter.subscribe': { ok: true, alreadySubscribed: false } });
     renderHome();
 
@@ -114,7 +118,8 @@ describe('home page', () => {
     await user.click(within(form).getByRole('button', { name: /sign up/i }));
 
     const status = await screen.findByRole('status');
-    expect(within(status).getByText(SETTINGS_FIXTURE.promo!.code)).toBeInTheDocument();
+    expect(status).toHaveTextContent(/check your inbox for your code/i);
+    expect(document.body.textContent ?? '').not.toContain(SETTINGS_FIXTURE.promo!.code);
   });
 
   it('renders exactly six review cards', async () => {

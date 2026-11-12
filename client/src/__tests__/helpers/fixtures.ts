@@ -99,7 +99,7 @@ export const SETTINGS_FIXTURE: SettingsPayload = {
   },
   announcement: null,
   promo: {
-    code: 'RGTOURS10',
+    code: 'WELCOME',
     discountLabel: '10% off',
     headline: 'Get 10% off your first tour',
     body: 'Join the list for Cebu trip tips and seasonal offers. We send a few emails a year and never share your address.',

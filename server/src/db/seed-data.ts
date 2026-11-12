@@ -576,8 +576,12 @@ export const SEED_SETTINGS: SettingsBlocks = {
   },
 
   // From PromoNewsletter.tsx — today's real newsletter-signup promo, always on.
+  // `code` is sample content only: PromoNewsletter.tsx never reads or displays
+  // promo.code (Task 1D, sign-up coupons plan) — the live sign-up discount
+  // percentage comes from the separate `signup_coupon` block instead. Kept as
+  // a generic placeholder, never a real/working coupon code (Task 1E).
   promo: {
-    code: 'RGTOURS10',
+    code: 'WELCOME',
     discountLabel: '10% off',
     headline: 'Get 10% off your first tour',
     body: 'Join the list for Cebu trip tips and seasonal offers. We send a few emails a year and never share your address.',
