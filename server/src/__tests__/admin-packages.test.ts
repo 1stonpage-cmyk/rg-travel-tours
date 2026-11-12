@@ -33,13 +33,19 @@
  * nothing tracked, and `packages.slug` is UNIQUE, so one stray row makes the
  * next run's duplicate test pass for the wrong reason. Removal is in FK order:
  * audit rows, inquiries (they reference packages), packages, subscribers, users.
+ * `coupons` IS in `LEAK_TABLES` (sign-up coupons plan, Task 1B-ii): the
+ * `subscribe()` helper's `newsletter.subscribe()` call mints one on every
+ * first-time signup, so those rows are swept by `restrictedToEmail` prefix
+ * right after `newsletter_subscribers` — a subscriber row FK-references its
+ * coupon, so the coupon has to go second — rather than left for `LEAK_TABLES`
+ * to catch at the end of the whole suite.
  */
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { and, eq, inArray, like } from 'drizzle-orm';
 import { manilaCivilDate, NEWSLETTER_CSV_HEADER, type InquiryStatus } from '@rg/shared';
 import { appRouter } from '../routers/_app';
 import { getDb, getPool } from '../db/client';
-import { auditLog, inquiries, newsletterSubscribers, packages, users } from '../db/schema';
+import { auditLog, coupons, inquiries, newsletterSubscribers, packages, users } from '../db/schema';
 import { staffContext, testContext } from './helpers/ctx';
 import { describeWithDb } from './helpers/db';
 
@@ -244,6 +250,11 @@ afterAll(async () => {
   await db
     .delete(newsletterSubscribers)
     .where(like(newsletterSubscribers.email, `${EMAIL_PREFIX}%`));
+  // Subscribers before coupons — a subscriber row FK-references its coupon,
+  // and newsletter.subscribe() mints one on every first-time signup (sign-up
+  // coupons plan, Task 1B-ii), so this file's `subscribe()` helper leaves a
+  // `coupons` row behind on every call unless this cleans it up too.
+  await db.delete(coupons).where(like(coupons.restrictedToEmail, `${EMAIL_PREFIX}%`));
 
   for (const id of created.userIds) {
     await pool.query('DELETE FROM sessions WHERE subject_type = ? AND subject_id = ?', [

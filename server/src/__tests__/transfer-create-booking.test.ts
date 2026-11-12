@@ -1317,6 +1317,54 @@ describeWithDb('createTransferBooking', () => {
     ).toBe(0);
   });
 
+  /**
+   * Review fix 4 (post-launch review of 1B) — the transfer-path equivalent
+   * of `create-hold.test.ts`'s own positive-path test. The refusal test
+   * above only proves `validateCoupon` is called with SOME value for the
+   * lead email; swapping `input.lead.email` for `input.lead.phone` at the
+   * `validateCoupon` call site in `createTransferBooking` left the whole
+   * file green before this test existed, because a wrong field there only
+   * ever produces a mismatch and nothing asserted the match case. Confirmed
+   * able to fail: that same swap turns this test red
+   * (`CouponEmailMismatchError` instead of a successful booking), then
+   * restored.
+   */
+  it("succeeds and applies the discount when a restricted-to-email coupon's email matches the booking's lead email", async () => {
+    const routeId = await makeRoute();
+    await makeFleet(2);
+    const coupon = await makeCoupon({
+      percentBp: 1000,
+      restrictedToEmail: 'owner-of-code@example.test',
+    });
+
+    const result = await hold(
+      transferInput({
+        routeId,
+        payMode: 'full',
+        couponCode: coupon.code,
+        email: 'owner-of-code@example.test',
+      }),
+    );
+
+    const row = await bookingRow(result.bookingId);
+    expect(row.couponId).toBe(coupon.id);
+    expect(row.discountCentavos).toBe(Math.floor((ONE_WAY_PRICE * 1000) / 10_000));
+    expect(row.discountCentavos).toBeGreaterThan(0);
+    expect(row.totalCentavos).toBe(ONE_WAY_PRICE - row.discountCentavos);
+    expect(transferPriceSnapshotSchema.parse(row.priceSnapshot).coupon).toEqual({
+      id: coupon.id,
+      code: coupon.code,
+      discount: { discountType: 'percent', percentBp: 1000, amountCentavos: null },
+    });
+    expect(
+      await count(
+        sql`SELECT COUNT(*) n FROM coupon_redemptions
+            WHERE coupon_id = ${coupon.id} AND booking_id = ${result.bookingId}`,
+      ),
+    ).toBe(1);
+    expect(await count(sql`SELECT used_count n FROM coupons WHERE id = ${coupon.id}`)).toBe(1);
+  });
+
   // -------------------------------------------------------------------------
   // Hold caps — ONE pool shared with tours
   // -------------------------------------------------------------------------

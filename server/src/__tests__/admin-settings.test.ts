@@ -177,7 +177,7 @@ afterAll(async () => {
  * are built from; `SETTING_SCHEMAS` in the server is what validates a block.
  * The shared list cannot be derived from the schemas (the client must not
  * import the server), so this is the seam that keeps them one list: a
- * twenty-first-and-a-half key added to one side and not the other fails here,
+ * twentieth-and-a-half key added to one side and not the other fails here,
  * rather than becoming an editing screen for a key nothing validates.
  *
  * No database — a pure test, outside `describeWithDb`.

@@ -192,15 +192,38 @@ describeWithDb('newsletter.subscribe — sign-up coupon (1B-ii)', () => {
     expect(sub?.couponId).toBe(couponRows[0]!.id);
   });
 
-  it('resend throttle: repeat signups in quick succession resend the mail only once in the window', async () => {
+  /**
+   * Review fix 5 (post-launch review of 1B): the FIRST mail now records its
+   * own throttle entry (`newsletter.ts`'s `subscribe`, right beside both
+   * `sendSignupCouponEmail` calls that are "someone's first code" — the
+   * brand-new-subscriber branch and the pre-existing-coupon-less-subscriber
+   * branch), not only the later resend branch. Before that fix, a
+   * near-simultaneous repeat-signup request landing in the gap between the
+   * winning request's commit (which already links an active, unused,
+   * unexpired coupon) and that SAME request's own `sendSignupCouponEmail`
+   * call would see `outcome.kind === 'resend'` with no throttle entry yet
+   * recorded, and send a second mail for what is really the same first
+   * code. This test cannot reproduce that exact interleaving (the mint and
+   * its mail happen inside one awaited call, not across two), but it proves
+   * the mechanism the fix actually relies on: once ANY `subscribe` call for
+   * an address has sent a mail, an immediate subsequent call for the same
+   * address — which is exactly what a request landing in that race window
+   * would do — finds the address already throttled and sends nothing,
+   * closing the gap regardless of timing. Proven able to fail: reverting
+   * the fix (dropping either `recordSignupCouponResendSent` call in
+   * `newsletter.ts`) turns the second `expect(sent).toHaveLength(0)` below
+   * into a length of 2 (one mail per immediate repeat) — confirmed red,
+   * then restored.
+   */
+  it('the FIRST mail counts toward the resend throttle too, so an immediate repeat signup sends nothing until the window expires', async () => {
     const email = `${MARK}resend@example.com`;
-    await caller.newsletter.subscribe({ email }); // establishes the coupon + first mail
-    sent.length = 0; // isolate measurement to the two repeat calls below
-
-    await caller.newsletter.subscribe({ email }); // repeat #1 -> resend (not yet throttled)
+    await caller.newsletter.subscribe({ email }); // first-time: mints, sends, and now also throttles
     expect(sent).toHaveLength(1);
 
-    await caller.newsletter.subscribe({ email }); // repeat #2, same window -> throttled
+    await caller.newsletter.subscribe({ email }); // repeat #1, same window -> already throttled by the mint above
+    expect(sent).toHaveLength(1);
+
+    await caller.newsletter.subscribe({ email }); // repeat #2, same window -> still throttled
     expect(sent).toHaveLength(1);
   });
 

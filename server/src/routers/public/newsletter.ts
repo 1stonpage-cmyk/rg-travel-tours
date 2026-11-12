@@ -172,7 +172,17 @@ export const newsletterRouter = router({
     if (firstTimeCode !== null) {
       // AFTER commit, never inside the transaction — a mail failure must
       // never roll back the subscriber row or the coupon it already owns
-      // (`notify()`'s own module doc explains why).
+      // (`notify()`'s own module doc explains why). The throttle entry is
+      // recorded here too, not only on the resend branch below: a
+      // near-simultaneous repeat-signup request for this same address can
+      // land in the gap between this transaction's commit (which already
+      // linked the coupon) and this very call, see the coupon as already
+      // minted and active, and take the `outcome.kind === 'resend'` branch
+      // — which, with no throttle entry yet recorded, would send a second
+      // mail for what is really this same first code. Recording it now
+      // closes that gap: the SAME throttle entry governs both "first mail"
+      // and "any later resend".
+      recordSignupCouponResendSent(email, now);
       await sendSignupCouponEmail(
         email,
         firstTimeCode,
@@ -184,7 +194,9 @@ export const newsletterRouter = router({
 
     const outcome = await handleRepeatSignup(db, email, signupCoupon, now);
     if (outcome.kind === 'minted') {
-      // Their first code, not a resend — never subject to the resend throttle.
+      // Their first code, not a resend, but the same race above applies to
+      // this mint too — record the throttle entry before sending.
+      recordSignupCouponResendSent(email, now);
       await sendSignupCouponEmail(
         email,
         outcome.code,

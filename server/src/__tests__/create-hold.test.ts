@@ -679,6 +679,57 @@ describeWithDb('createHold', () => {
     expect(await writtenRowCounts()).toEqual(before);
   });
 
+  /**
+   * Review fix 4 (post-launch review of 1B): the refusal test above proves
+   * `validateCoupon` is called with SOME value for the lead email, but
+   * nothing in the suite proved it was called with the RIGHT one —
+   * swapping `input.lead.email` for `input.lead.phone` at the
+   * `validateCoupon` call site in `createHold` (the one passing the lead
+   * email into the restricted-to-email check) left the whole file green,
+   * because a wrong field there only ever produces a mismatch, and the
+   * suite had only ever asserted the mismatch case. This test closes that
+   * gap from the other side: a lead email that actually MATCHES a
+   * restricted-to-email coupon must let the hold succeed, coupon and
+   * discount applied — which the email/phone swap above also breaks (the
+   * phone is never `restrictedToEmail`'s value, so the hold would wrongly
+   * refuse with `CouponEmailMismatchError` instead of succeeding).
+   * Confirmed able to fail: swapping `.email` for `.phone` on that call
+   * site turned this test red (`CouponEmailMismatchError` thrown instead of
+   * a successful hold), then restored.
+   */
+  it("succeeds and applies the discount when a restricted-to-email coupon's email matches the hold's lead email", async () => {
+    const tour = await makeTour({ groupsPerDay: 2 });
+    await makeFleet(1);
+    const coupon = await makeCoupon({
+      percentBp: 500,
+      restrictedToEmail: 'owner-of-code@example.test',
+    });
+    const { quote, quoteId } = await quoteFor(tour.slug, DAY, 2, [], coupon.code);
+
+    const result = await hold(
+      holdInput({
+        tourSlug: tour.slug,
+        date: DAY,
+        pax: 2,
+        couponCode: coupon.code,
+        quoteId,
+        email: 'owner-of-code@example.test',
+      }),
+    );
+
+    const row = await bookingRow(result.bookingId);
+    expect(row.couponId).toBe(coupon.id);
+    expect(row.discountCentavos).toBe(quote.discountCentavos);
+    expect(row.discountCentavos).toBeGreaterThan(0);
+    expect(row.totalCentavos).toBe(quote.totalCentavos);
+    const snapshot = priceSnapshotSchema.parse(row.priceSnapshot);
+    expect(snapshot.coupon).toEqual({
+      id: coupon.id,
+      code: coupon.code,
+      discount: { discountType: 'percent', percentBp: 500, amountCentavos: null },
+    });
+  });
+
   it('refuses a tour that has been switched off', async () => {
     const tour = await makeTour({ groupsPerDay: 1 });
     await makeFleet(1);

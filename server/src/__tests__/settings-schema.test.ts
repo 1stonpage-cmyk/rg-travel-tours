@@ -306,7 +306,7 @@ describe('settings schemas', () => {
    * down until the seed runs — `show_tours` being the one exception, since
    * `readSettings()` resolves it through a fallback rather than throwing.
    */
-  it('covers all 19 settings keys — the 15 from the plan, plus booking, payment_qr, transfer_operations and show_tours', () => {
+  it('covers all 20 settings keys — the 15 from the plan, plus booking, payment_qr, transfer_operations, show_tours and signup_coupon', () => {
     const expectedKeys = [
       'content_unverified',
       'site_seo',
@@ -327,6 +327,7 @@ describe('settings schemas', () => {
       'payment_qr',
       'transfer_operations',
       'show_tours',
+      'signup_coupon',
     ];
     expect(Object.keys(SETTING_SCHEMAS).sort()).toEqual(expectedKeys.sort());
   });
