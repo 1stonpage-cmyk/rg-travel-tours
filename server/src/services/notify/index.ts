@@ -67,6 +67,20 @@ export {
   INQUIRY_ACK_WINDOW_MS,
   type InquiryMailFields,
 } from './inquiry';
+/*
+ * Sign-up coupons plan, Task 1B-ii. Its own sender rather than another
+ * `NotifyEvent`, for the same reason the two senders above have their own —
+ * see `./signup-coupon.ts`.
+ */
+export {
+  sendSignupCouponEmail,
+  renderSignupCouponMail,
+  isSignupCouponResendThrottled,
+  recordSignupCouponResendSent,
+  resetSignupCouponResendThrottleForTests,
+  SIGNUP_COUPON_RESEND_MAX_PER_EMAIL,
+  SIGNUP_COUPON_RESEND_WINDOW_MS,
+} from './signup-coupon';
 
 /**
  * Sends one notification, or logs why it could not. Never throws, never

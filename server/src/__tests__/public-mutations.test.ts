@@ -4,7 +4,7 @@ import { testContext } from './helpers/ctx';
 import { describeWithDb } from './helpers/db';
 import { appRouter } from '../routers/_app';
 import { getDb } from '../db/client';
-import { inquiries, newsletterSubscribers } from '../db/schema';
+import { coupons, inquiries, newsletterSubscribers } from '../db/schema';
 import { env } from '../env';
 import { resetTransportForTests, setTransportForTests } from '../services/notify';
 
@@ -15,7 +15,12 @@ describeWithDb('public mutations', () => {
   afterEach(async () => {
     const db = getDb();
     await db.delete(inquiries).where(like(inquiries.email, `${MARK}%`));
+    // Subscribers before coupons — a subscriber row FK-references its
+    // coupon, and newsletter.subscribe now mints one on every first-time
+    // signup (sign-up coupons plan, Task 1B-ii), so a signup test here also
+    // leaves a `coupons` row behind unless this cleans it up too.
     await db.delete(newsletterSubscribers).where(like(newsletterSubscribers.email, `${MARK}%`));
+    await db.delete(coupons).where(like(coupons.restrictedToEmail, `${MARK}%`));
   });
 
   it('rejects a malformed email', async () => {

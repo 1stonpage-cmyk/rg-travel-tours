@@ -89,6 +89,15 @@ export const newsletterInput = z.object({
   // .max(200) matches the `varchar(200)` email column (round 1 review, I4).
   // Custom message for the same reason `inquiryInput` above carries one.
   email: z.email('Enter a valid email address.').max(200),
+  /**
+   * Cloudflare Turnstile (sign-up coupons plan, Task 1B-ii), matching
+   * `inquiryInput`'s own field exactly — see its doc comment just above.
+   * Optional here for the same reason: the check itself is feature-flagged
+   * (`verifyTurnstile()` is a no-op, returning `true`, whenever
+   * `TURNSTILE_ENABLED !== '1'`), so a required field would break every
+   * submission whenever the feature is switched off.
+   */
+  turnstileToken: z.string().optional(),
 });
 
 export type ToursListInput = z.infer<typeof toursListInput>;
