@@ -101,12 +101,14 @@ guard inside `validateCoupon()` itself:**
 
 New first-time subscriber (insert succeeds):
 1. Insert the `newsletter_subscribers` row.
-2. Mint a coupon: `WELCOME-XXXX`, 4 characters from the existing
+2. Mint a coupon: `WELCOME-XXXXXXXX`, **8** characters from the existing
    `REF_ALPHABET` (`services/booking-ref.ts` — already excludes
-   `0/O/1/I/L/U`, "unambiguous characters" for free), via `node:crypto`
-   `randomInt`, retried on a unique-constraint collision — same shape as
-   `insertBookingWithRef`, new sibling helper in `services/coupons.ts` (or a
-   new `services/signup-coupons.ts`; implementer's call, documented inline).
+   `0/O/1/I/L/U`, "unambiguous characters" for free; 30^8 ≈ 6.6×10^11,
+   against 30^4 ≈ 810k for a 4-character code — see the enumeration note
+   under Rulings), via `node:crypto` `randomInt`, retried on a
+   unique-constraint collision — same shape as `insertBookingWithRef`, new
+   sibling helper in `services/coupons.ts` (or a new
+   `services/signup-coupons.ts`; implementer's call, documented inline).
    `discountType: 'percent'`, `percentBp: discountPercent * 100`,
    `usageLimit: 1`, `endsAt: now + expiryDays`, `restrictedToEmail:
    normalizedEmail`, `isActive: true`.
@@ -189,7 +191,15 @@ from `AdminPackagesPage.tsx` to the new "Sign-up coupons" section of
 copy reads the new public field the settings payload needs to expose for
 this (`signupCoupon: { discountPercent: number }` — percent only; the
 expiry day count is email-copy, not page copy) so "Sign up for 5% off"
-tracks the live admin setting. On success it shows "Check your inbox for
+tracks the live admin setting. **This is a required field on
+`SettingsPayload`, not optional** — adding it touches two places beyond
+`settings-schema.ts`/`settings.ts`'s `blocks.*` → payload assembly (around
+line 497): `client/src/__tests__/helpers/fixtures.ts`'s full settings
+fixture (already seen carrying `promo` at line 101) needs the new field
+added or every client test using that fixture breaks, and the 1C/1D
+implementer owns that fixture update as part of the task — not a follow-up,
+and not "make the field optional to stop the red tests," which would let
+the panel silently render "Sign up for off". On success it shows "Check your inbox for
 your code" (`role="status"`) regardless of `alreadySubscribed` — the server
 already treats a repeat signup as success, and the screen must say nothing
 that reveals whether this was a first signup or a resend. Turnstile widget
@@ -222,6 +232,19 @@ code.
    sign-up code provisionally accepted in the live price preview before
    typing their email, then refused at submit if the emails don't match —
    a worse-than-ideal but truthful UX, never a money error.
+   **Enumeration risk, named rather than waved away:** because `email` is
+   never passed at the `quote`/`quoteTransfer` preview call sites,
+   `CouponEmailMismatchError` cannot fire there at all — the only place it
+   can fire is the authoritative `createHold`/`createHoldTransfer` path,
+   which is already behind the existing 5-per-15-minutes-per-IP checkout
+   hold limiter (`CHECKOUT_HOLD_PROCEDURES`, `middleware/rate-limit.ts`) —
+   the same budget that already bounds guessing against the general
+   "does this coupon code exist" question `CouponNotFoundError` answers for
+   every coupon, sign-up or not. The 8-character code (above) is the
+   primary mitigation for low-cost guessing at the unbounded `quote`
+   endpoint, where a found-but-mismatched sign-up code would in any case
+   only confirm the code EXISTS, not that the guesser can spend it — it
+   stays bound to one specific address they would still have to know.
 2. **A pre-existing subscriber with no coupon yet (`coupon_id IS NULL`) gets
    one minted on their next signup**, under a row lock to prevent a
    double-mint race. This is read as "their first code," not "a second
@@ -267,4 +290,33 @@ code.
 - Each test is proven able to fail (CLAUDE.md) by breaking the guard under
   test and watching it go red before the real implementation is restored.
 
-Proceeding to 1B.
+## Execution split for 1B
+
+1B is too wide a surface for one dispatch. Split sequentially into two
+implementer briefs, reviewed together as ONE Opus review over the combined
+range afterward (the owner asked for one dedicated reviewer on 1B, not
+two) — the split is for implementer coherence, not extra review seats.
+
+- **1B-i**: migration 0026 (`restricted_to_email`, `newsletter_subscribers
+  .coupon_id`, the `signup_coupon` settings key + schema + `seedBase` row),
+  `validateCoupon`'s new optional `email` parameter + `CouponEmailMismatchError`
+  + the `translateCouponError` case, and threading `input.lead.email` into
+  the two authoritative call sites (`create-hold.ts`, `transfers/create-
+  booking.ts`). Tests: the `validateCoupon` matrix (wrong email, matching
+  email any case/whitespace, `email` omitted is back-compat, non-restricted
+  coupons unaffected).
+- **1B-ii**: the mint helper (8-char `WELCOME-` code, retry-on-collision),
+  `newsletter.subscribe`'s rewrite (both branches, the `FOR UPDATE` path on
+  repeat signup), `services/notify/signup-coupon.ts` (sender + per-email
+  resend throttle), `newsletterInput`'s `turnstileToken` + the
+  `verifyTurnstile`/`turnstileRefusedError` wiring. Tests: issuance mints
+  exactly one coupon; a race on a brand-new email still ends with exactly
+  one; resend throttle; no `code` key anywhere on the wire; percent
+  snapshot survives a later settings change; Turnstile refusal. The
+  expire-holds/cancel release tests in this group are **regression
+  assertions over `releaseRedemption`, which 1B-ii does not modify** — a
+  sign-up coupon's redemption row is released exactly like any other
+  coupon's, and the test proves that remains true rather than teaching
+  `releaseRedemption` anything new about coupon kinds.
+
+Proceeding to 1B-i.
