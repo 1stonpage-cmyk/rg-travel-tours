@@ -43,12 +43,12 @@ the server after this ships (handover line).
 4. New settings key `signup_coupon` (20th entry in `SETTING_KEYS` /
    `SETTING_SCHEMAS`, same owner-only `usersSettings` write gate every
    settings key already shares): `{ discountPercent: int 1..100, expiryDays: int
-   1..365 }`. Stored as a **whole percent** (matching `trust.depositPercent`'s
+1..365 }`. Stored as a **whole percent** (matching `trust.depositPercent`'s
    existing convention — plain int, not basis points), converted to basis
    points (`discountPercent * 100`) only at the moment a code is minted, the
    same unit conversion `AdminCouponsPage.tsx`'s own form already does by hand
    for an admin-typed percentage. Default `{ discountPercent: 5, expiryDays:
-   60 }`, inserted by `seedBase` (insert-only, same as every other settings
+60 }`, inserted by `seedBase` (insert-only, same as every other settings
    row) so a fresh clone and the server's existing `rg_travel` both gain the
    row without overwriting anything.
 
@@ -100,6 +100,7 @@ guard inside `validateCoupon()` itself:**
 ## Issuing a code (`newsletter.subscribe`)
 
 New first-time subscriber (insert succeeds):
+
 1. Insert the `newsletter_subscribers` row.
 2. Mint a coupon: `WELCOME-XXXXXXXX`, **8** characters from the existing
    `REF_ALPHABET` (`services/booking-ref.ts` — already excludes
@@ -111,7 +112,7 @@ New first-time subscriber (insert succeeds):
    `services/signup-coupons.ts`; implementer's call, documented inline).
    `discountType: 'percent'`, `percentBp: discountPercent * 100`,
    `usageLimit: 1`, `endsAt: now + expiryDays`, `restrictedToEmail:
-   normalizedEmail`, `isActive: true`.
+normalizedEmail`, `isActive: true`.
 3. Link `newsletter_subscribers.coupon_id` to the new coupon, in the **same
    transaction** as steps 1–2 (one subscriber row and one coupon row commit
    together or not at all).
@@ -119,20 +120,21 @@ New first-time subscriber (insert succeeds):
    (`NotifyPayload` is booking-shaped, exactly the reasoning
    `staff-password-reset.ts` and `notify/inquiry.ts` already give for their
    own senders) — `sendSignupCouponEmail(email, code, discountPercent,
-   expiryDays)` in a new `services/notify/signup-coupon.ts`, built on the
+expiryDays)` in a new `services/notify/signup-coupon.ts`, built on the
    shared `mailDocument`/`mailLink` shell. Cannot throw, same discipline as
    every other sender in that directory. **The code is never returned to the
    caller** — `subscribe`'s response carries no code, matching decision 1.
 
 Repeat signup, same email (insert hits the unique-key duplicate):
+
 1. Look up the existing subscriber row **`FOR UPDATE`, in a short
    transaction** (closes an otherwise-real race: two near-simultaneous
    signups for a brand-new address could otherwise both see `coupon_id IS
-   NULL` and both mint a coupon, violating "one code per email ever").
+NULL` and both mint a coupon, violating "one code per email ever").
 2. `coupon_id IS NULL` (a subscriber who predates this feature, or who lost
    a race): mint one now, exactly as step 2 above, under the same lock —
    this is their **first** code, not a second one, so it does not conflict
-   with decision 2's "no second code" rule. *(Ruling — see below.)*
+   with decision 2's "no second code" rule. _(Ruling — see below.)_
 3. `coupon_id` set: load that coupon. If it is `is_active` **and** unused
    (`usage_limit` not yet exhausted — i.e. no `coupon_redemptions` row for
    it) **and** unexpired (`ends_at` is null or in the future): resend that
@@ -160,7 +162,7 @@ Repeat signup, same email (insert hits the unique-key duplicate):
   write**, mirroring `inquiries.create`'s own first line exactly.
 - `newsletter.subscribe` is already in `app.ts`'s shared 5-per-15-minutes
   limiter (`createProcedureRateLimit(['inquiries.create',
-  'newsletter.subscribe'], …)`) — unchanged, still covers first-time signup
+'newsletter.subscribe'], …)`) — unchanged, still covers first-time signup
   abuse from one IP.
 - The resend path adds its own **per-email** cap (above) — a different axis
   (address, not IP) from the existing per-IP limiter, the same two-axis
@@ -298,13 +300,13 @@ range afterward (the owner asked for one dedicated reviewer on 1B, not
 two) — the split is for implementer coherence, not extra review seats.
 
 - **1B-i**: migration 0026 (`restricted_to_email`, `newsletter_subscribers
-  .coupon_id`, the `signup_coupon` settings key + schema + `seedBase` row),
+.coupon_id`, the `signup_coupon` settings key + schema + `seedBase` row),
   `validateCoupon`'s new optional `email` parameter + `CouponEmailMismatchError`
-  + the `translateCouponError` case, and threading `input.lead.email` into
-  the two authoritative call sites (`create-hold.ts`, `transfers/create-
-  booking.ts`). Tests: the `validateCoupon` matrix (wrong email, matching
-  email any case/whitespace, `email` omitted is back-compat, non-restricted
-  coupons unaffected).
+  - the `translateCouponError` case, and threading `input.lead.email` into
+    the two authoritative call sites (`create-hold.ts`, `transfers/create-
+booking.ts`). Tests: the `validateCoupon` matrix (wrong email, matching
+    email any case/whitespace, `email` omitted is back-compat, non-restricted
+    coupons unaffected).
 - **1B-ii**: the mint helper (8-char `WELCOME-` code, retry-on-collision),
   `newsletter.subscribe`'s rewrite (both branches, the `FOR UPDATE` path on
   repeat signup), `services/notify/signup-coupon.ts` (sender + per-email

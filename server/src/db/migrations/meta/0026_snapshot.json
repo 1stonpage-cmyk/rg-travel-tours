@@ -67,25 +67,17 @@
       "indexes": {
         "audit_log_entity_idx": {
           "name": "audit_log_entity_idx",
-          "columns": [
-            "entity",
-            "entity_id"
-          ],
+          "columns": ["entity", "entity_id"],
           "isUnique": false
         },
         "audit_log_actor_idx": {
           "name": "audit_log_actor_idx",
-          "columns": [
-            "actor_type",
-            "actor_id"
-          ],
+          "columns": ["actor_type", "actor_id"],
           "isUnique": false
         },
         "audit_log_created_idx": {
           "name": "audit_log_created_idx",
-          "columns": [
-            "created_at"
-          ],
+          "columns": ["created_at"],
           "isUnique": false
         }
       },
@@ -93,9 +85,7 @@
       "compositePrimaryKeys": {
         "audit_log_id": {
           "name": "audit_log_id",
-          "columns": [
-            "id"
-          ]
+          "columns": ["id"]
         }
       },
       "uniqueConstraints": {},
@@ -158,9 +148,7 @@
       "indexes": {
         "booking_addons_booking_idx": {
           "name": "booking_addons_booking_idx",
-          "columns": [
-            "booking_id"
-          ],
+          "columns": ["booking_id"],
           "isUnique": false
         }
       },
@@ -169,12 +157,8 @@
           "name": "booking_addons_booking_id_bookings_id_fk",
           "tableFrom": "booking_addons",
           "tableTo": "bookings",
-          "columnsFrom": [
-            "booking_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["booking_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -182,12 +166,8 @@
           "name": "booking_addons_addon_id_tour_addons_id_fk",
           "tableFrom": "booking_addons",
           "tableTo": "tour_addons",
-          "columnsFrom": [
-            "addon_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["addon_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -195,9 +175,7 @@
       "compositePrimaryKeys": {
         "booking_addons_id": {
           "name": "booking_addons_id",
-          "columns": [
-            "id"
-          ]
+          "columns": ["id"]
         }
       },
       "uniqueConstraints": {},
@@ -253,10 +231,7 @@
       "indexes": {
         "booking_notes_booking_idx": {
           "name": "booking_notes_booking_idx",
-          "columns": [
-            "booking_id",
-            "created_at"
-          ],
+          "columns": ["booking_id", "created_at"],
           "isUnique": false
         }
       },
@@ -265,12 +240,8 @@
           "name": "booking_notes_booking_id_bookings_id_fk",
           "tableFrom": "booking_notes",
           "tableTo": "bookings",
-          "columnsFrom": [
-            "booking_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["booking_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -278,12 +249,8 @@
           "name": "booking_notes_user_id_users_id_fk",
           "tableFrom": "booking_notes",
           "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -291,9 +258,7 @@
       "compositePrimaryKeys": {
         "booking_notes_id": {
           "name": "booking_notes_id",
-          "columns": [
-            "id"
-          ]
+          "columns": ["id"]
         }
       },
       "uniqueConstraints": {},
@@ -409,12 +374,8 @@
           "name": "booking_transfer_details_booking_id_bookings_id_fk",
           "tableFrom": "booking_transfer_details",
           "tableTo": "bookings",
-          "columnsFrom": [
-            "booking_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["booking_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -422,9 +383,7 @@
       "compositePrimaryKeys": {
         "booking_transfer_details_booking_id": {
           "name": "booking_transfer_details_booking_id",
-          "columns": [
-            "booking_id"
-          ]
+          "columns": ["booking_id"]
         }
       },
       "uniqueConstraints": {},
@@ -666,51 +625,32 @@
       "indexes": {
         "bookings_tour_date_status_idx": {
           "name": "bookings_tour_date_status_idx",
-          "columns": [
-            "tour_id",
-            "tour_date",
-            "status"
-          ],
+          "columns": ["tour_id", "tour_date", "status"],
           "isUnique": false
         },
         "bookings_ref_idx": {
           "name": "bookings_ref_idx",
-          "columns": [
-            "ref"
-          ],
+          "columns": ["ref"],
           "isUnique": false
         },
         "bookings_driver_date_idx": {
           "name": "bookings_driver_date_idx",
-          "columns": [
-            "driver_id",
-            "tour_date"
-          ],
+          "columns": ["driver_id", "tour_date"],
           "isUnique": false
         },
         "bookings_van_date_idx": {
           "name": "bookings_van_date_idx",
-          "columns": [
-            "van_id",
-            "tour_date"
-          ],
+          "columns": ["van_id", "tour_date"],
           "isUnique": false
         },
         "bookings_hold_expiry_idx": {
           "name": "bookings_hold_expiry_idx",
-          "columns": [
-            "status",
-            "hold_expires_at"
-          ],
+          "columns": ["status", "hold_expires_at"],
           "isUnique": false
         },
         "bookings_product_type_date_idx": {
           "name": "bookings_product_type_date_idx",
-          "columns": [
-            "product_type",
-            "tour_date",
-            "status"
-          ],
+          "columns": ["product_type", "tour_date", "status"],
           "isUnique": false
         }
       },
@@ -719,12 +659,8 @@
           "name": "bookings_tour_id_tours_id_fk",
           "tableFrom": "bookings",
           "tableTo": "tours",
-          "columnsFrom": [
-            "tour_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["tour_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -732,12 +668,8 @@
           "name": "bookings_route_id_transfer_routes_id_fk",
           "tableFrom": "bookings",
           "tableTo": "transfer_routes",
-          "columnsFrom": [
-            "route_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["route_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -745,12 +677,8 @@
           "name": "bookings_vehicle_type_id_vehicle_types_id_fk",
           "tableFrom": "bookings",
           "tableTo": "vehicle_types",
-          "columnsFrom": [
-            "vehicle_type_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["vehicle_type_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -758,12 +686,8 @@
           "name": "bookings_coupon_id_coupons_id_fk",
           "tableFrom": "bookings",
           "tableTo": "coupons",
-          "columnsFrom": [
-            "coupon_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["coupon_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -771,12 +695,8 @@
           "name": "bookings_van_id_vans_id_fk",
           "tableFrom": "bookings",
           "tableTo": "vans",
-          "columnsFrom": [
-            "van_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["van_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -784,12 +704,8 @@
           "name": "bookings_driver_id_drivers_id_fk",
           "tableFrom": "bookings",
           "tableTo": "drivers",
-          "columnsFrom": [
-            "driver_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["driver_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -797,17 +713,13 @@
       "compositePrimaryKeys": {
         "bookings_id": {
           "name": "bookings_id",
-          "columns": [
-            "id"
-          ]
+          "columns": ["id"]
         }
       },
       "uniqueConstraints": {
         "bookings_ref_unique": {
           "name": "bookings_ref_unique",
-          "columns": [
-            "ref"
-          ]
+          "columns": ["ref"]
         }
       },
       "checkConstraint": {
@@ -868,17 +780,12 @@
       "indexes": {
         "coupon_redemptions_unique": {
           "name": "coupon_redemptions_unique",
-          "columns": [
-            "coupon_id",
-            "booking_id"
-          ],
+          "columns": ["coupon_id", "booking_id"],
           "isUnique": true
         },
         "coupon_redemptions_coupon_idx": {
           "name": "coupon_redemptions_coupon_idx",
-          "columns": [
-            "coupon_id"
-          ],
+          "columns": ["coupon_id"],
           "isUnique": false
         }
       },
@@ -887,12 +794,8 @@
           "name": "coupon_redemptions_coupon_id_coupons_id_fk",
           "tableFrom": "coupon_redemptions",
           "tableTo": "coupons",
-          "columnsFrom": [
-            "coupon_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["coupon_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -900,12 +803,8 @@
           "name": "coupon_redemptions_booking_id_bookings_id_fk",
           "tableFrom": "coupon_redemptions",
           "tableTo": "bookings",
-          "columnsFrom": [
-            "booking_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["booking_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -913,9 +812,7 @@
       "compositePrimaryKeys": {
         "coupon_redemptions_id": {
           "name": "coupon_redemptions_id",
-          "columns": [
-            "id"
-          ]
+          "columns": ["id"]
         }
       },
       "uniqueConstraints": {},
@@ -1028,11 +925,7 @@
       "indexes": {
         "coupons_active_window_idx": {
           "name": "coupons_active_window_idx",
-          "columns": [
-            "is_active",
-            "starts_at",
-            "ends_at"
-          ],
+          "columns": ["is_active", "starts_at", "ends_at"],
           "isUnique": false
         }
       },
@@ -1040,17 +933,13 @@
       "compositePrimaryKeys": {
         "coupons_id": {
           "name": "coupons_id",
-          "columns": [
-            "id"
-          ]
+          "columns": ["id"]
         }
       },
       "uniqueConstraints": {
         "coupons_code_unique": {
           "name": "coupons_code_unique",
-          "columns": [
-            "code"
-          ]
+          "columns": ["code"]
         }
       },
       "checkConstraint": {
@@ -1171,17 +1060,13 @@
       "compositePrimaryKeys": {
         "destinations_id": {
           "name": "destinations_id",
-          "columns": [
-            "id"
-          ]
+          "columns": ["id"]
         }
       },
       "uniqueConstraints": {
         "destinations_slug_unique": {
           "name": "destinations_slug_unique",
-          "columns": [
-            "slug"
-          ]
+          "columns": ["slug"]
         }
       },
       "checkConstraint": {}
@@ -1235,11 +1120,7 @@
       "indexes": {
         "driver_leaves_driver_range_idx": {
           "name": "driver_leaves_driver_range_idx",
-          "columns": [
-            "driver_id",
-            "start_date",
-            "end_date"
-          ],
+          "columns": ["driver_id", "start_date", "end_date"],
           "isUnique": false
         }
       },
@@ -1248,12 +1129,8 @@
           "name": "driver_leaves_driver_id_drivers_id_fk",
           "tableFrom": "driver_leaves",
           "tableTo": "drivers",
-          "columnsFrom": [
-            "driver_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["driver_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -1261,9 +1138,7 @@
       "compositePrimaryKeys": {
         "driver_leaves_id": {
           "name": "driver_leaves_id",
-          "columns": [
-            "id"
-          ]
+          "columns": ["id"]
         }
       },
       "uniqueConstraints": {},
@@ -1419,10 +1294,7 @@
       "indexes": {
         "drivers_active_status_idx": {
           "name": "drivers_active_status_idx",
-          "columns": [
-            "is_active",
-            "status"
-          ],
+          "columns": ["is_active", "status"],
           "isUnique": false
         }
       },
@@ -1430,17 +1302,13 @@
       "compositePrimaryKeys": {
         "drivers_id": {
           "name": "drivers_id",
-          "columns": [
-            "id"
-          ]
+          "columns": ["id"]
         }
       },
       "uniqueConstraints": {
         "drivers_code_unique": {
           "name": "drivers_code_unique",
-          "columns": [
-            "code"
-          ]
+          "columns": ["code"]
         }
       },
       "checkConstraint": {}
@@ -1461,9 +1329,7 @@
       "compositePrimaryKeys": {
         "fleet_date_slots_date": {
           "name": "fleet_date_slots_date",
-          "columns": [
-            "date"
-          ]
+          "columns": ["date"]
         }
       },
       "uniqueConstraints": {},
@@ -1568,10 +1434,7 @@
       "indexes": {
         "inquiries_status_created_idx": {
           "name": "inquiries_status_created_idx",
-          "columns": [
-            "status",
-            "created_at"
-          ],
+          "columns": ["status", "created_at"],
           "isUnique": false
         }
       },
@@ -1580,12 +1443,8 @@
           "name": "inquiries_package_id_packages_id_fk",
           "tableFrom": "inquiries",
           "tableTo": "packages",
-          "columnsFrom": [
-            "package_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["package_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -1593,12 +1452,8 @@
           "name": "inquiries_converted_booking_id_bookings_id_fk",
           "tableFrom": "inquiries",
           "tableTo": "bookings",
-          "columnsFrom": [
-            "converted_booking_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["converted_booking_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -1606,9 +1461,7 @@
       "compositePrimaryKeys": {
         "inquiries_id": {
           "name": "inquiries_id",
-          "columns": [
-            "id"
-          ]
+          "columns": ["id"]
         }
       },
       "uniqueConstraints": {},
@@ -1652,12 +1505,8 @@
           "name": "newsletter_subscribers_coupon_id_coupons_id_fk",
           "tableFrom": "newsletter_subscribers",
           "tableTo": "coupons",
-          "columnsFrom": [
-            "coupon_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["coupon_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -1665,17 +1514,13 @@
       "compositePrimaryKeys": {
         "newsletter_subscribers_id": {
           "name": "newsletter_subscribers_id",
-          "columns": [
-            "id"
-          ]
+          "columns": ["id"]
         }
       },
       "uniqueConstraints": {
         "newsletter_subscribers_email_unique": {
           "name": "newsletter_subscribers_email_unique",
-          "columns": [
-            "email"
-          ]
+          "columns": ["email"]
         }
       },
       "checkConstraint": {}
@@ -1810,17 +1655,13 @@
       "compositePrimaryKeys": {
         "packages_id": {
           "name": "packages_id",
-          "columns": [
-            "id"
-          ]
+          "columns": ["id"]
         }
       },
       "uniqueConstraints": {
         "packages_slug_unique": {
           "name": "packages_slug_unique",
-          "columns": [
-            "slug"
-          ]
+          "columns": ["slug"]
         }
       },
       "checkConstraint": {}
@@ -1874,9 +1715,7 @@
       "indexes": {
         "password_reset_tokens_user_idx": {
           "name": "password_reset_tokens_user_idx",
-          "columns": [
-            "user_id"
-          ],
+          "columns": ["user_id"],
           "isUnique": false
         }
       },
@@ -1885,12 +1724,8 @@
           "name": "password_reset_tokens_user_id_users_id_fk",
           "tableFrom": "password_reset_tokens",
           "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -1898,17 +1733,13 @@
       "compositePrimaryKeys": {
         "password_reset_tokens_id": {
           "name": "password_reset_tokens_id",
-          "columns": [
-            "id"
-          ]
+          "columns": ["id"]
         }
       },
       "uniqueConstraints": {
         "password_reset_tokens_token_hash_unique": {
           "name": "password_reset_tokens_token_hash_unique",
-          "columns": [
-            "token_hash"
-          ]
+          "columns": ["token_hash"]
         }
       },
       "checkConstraint": {}
@@ -1969,17 +1800,12 @@
       "indexes": {
         "payment_events_provider_event_unique": {
           "name": "payment_events_provider_event_unique",
-          "columns": [
-            "provider",
-            "provider_event_id"
-          ],
+          "columns": ["provider", "provider_event_id"],
           "isUnique": true
         },
         "payment_events_unprocessed_idx": {
           "name": "payment_events_unprocessed_idx",
-          "columns": [
-            "processed_at"
-          ],
+          "columns": ["processed_at"],
           "isUnique": false
         }
       },
@@ -1987,9 +1813,7 @@
       "compositePrimaryKeys": {
         "payment_events_id": {
           "name": "payment_events_id",
-          "columns": [
-            "id"
-          ]
+          "columns": ["id"]
         }
       },
       "uniqueConstraints": {},
@@ -2122,24 +1946,17 @@
       "indexes": {
         "payments_booking_idx": {
           "name": "payments_booking_idx",
-          "columns": [
-            "booking_id"
-          ],
+          "columns": ["booking_id"],
           "isUnique": false
         },
         "payments_status_idx": {
           "name": "payments_status_idx",
-          "columns": [
-            "status"
-          ],
+          "columns": ["status"],
           "isUnique": false
         },
         "payments_provider_ref_idx": {
           "name": "payments_provider_ref_idx",
-          "columns": [
-            "provider",
-            "provider_ref"
-          ],
+          "columns": ["provider", "provider_ref"],
           "isUnique": false
         }
       },
@@ -2148,12 +1965,8 @@
           "name": "payments_booking_id_bookings_id_fk",
           "tableFrom": "payments",
           "tableTo": "bookings",
-          "columnsFrom": [
-            "booking_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["booking_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -2161,12 +1974,8 @@
           "name": "payments_verified_by_users_id_fk",
           "tableFrom": "payments",
           "tableTo": "users",
-          "columnsFrom": [
-            "verified_by"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["verified_by"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -2174,12 +1983,8 @@
           "name": "payments_collected_by_driver_id_drivers_id_fk",
           "tableFrom": "payments",
           "tableTo": "drivers",
-          "columnsFrom": [
-            "collected_by_driver_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["collected_by_driver_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -2187,9 +1992,7 @@
       "compositePrimaryKeys": {
         "payments_id": {
           "name": "payments_id",
-          "columns": [
-            "id"
-          ]
+          "columns": ["id"]
         }
       },
       "uniqueConstraints": {},
@@ -2231,12 +2034,8 @@
           "name": "review_helpful_votes_review_id_reviews_id_fk",
           "tableFrom": "review_helpful_votes",
           "tableTo": "reviews",
-          "columnsFrom": [
-            "review_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["review_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -2244,10 +2043,7 @@
       "compositePrimaryKeys": {
         "review_helpful_votes_review_id_voter_hash_pk": {
           "name": "review_helpful_votes_review_id_voter_hash_pk",
-          "columns": [
-            "review_id",
-            "voter_hash"
-          ]
+          "columns": ["review_id", "voter_hash"]
         }
       },
       "uniqueConstraints": {},
@@ -2374,18 +2170,12 @@
       "indexes": {
         "reviews_status_sample_idx": {
           "name": "reviews_status_sample_idx",
-          "columns": [
-            "status",
-            "is_sample"
-          ],
+          "columns": ["status", "is_sample"],
           "isUnique": false
         },
         "reviews_tour_idx": {
           "name": "reviews_tour_idx",
-          "columns": [
-            "tour_id",
-            "status"
-          ],
+          "columns": ["tour_id", "status"],
           "isUnique": false
         }
       },
@@ -2394,12 +2184,8 @@
           "name": "reviews_tour_id_tours_id_fk",
           "tableFrom": "reviews",
           "tableTo": "tours",
-          "columnsFrom": [
-            "tour_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["tour_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -2407,12 +2193,8 @@
           "name": "reviews_booking_id_bookings_id_fk",
           "tableFrom": "reviews",
           "tableTo": "bookings",
-          "columnsFrom": [
-            "booking_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["booking_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -2420,9 +2202,7 @@
       "compositePrimaryKeys": {
         "reviews_id": {
           "name": "reviews_id",
-          "columns": [
-            "id"
-          ]
+          "columns": ["id"]
         }
       },
       "uniqueConstraints": {},
@@ -2477,17 +2257,12 @@
       "indexes": {
         "sessions_subject_idx": {
           "name": "sessions_subject_idx",
-          "columns": [
-            "subject_type",
-            "subject_id"
-          ],
+          "columns": ["subject_type", "subject_id"],
           "isUnique": false
         },
         "sessions_expiry_idx": {
           "name": "sessions_expiry_idx",
-          "columns": [
-            "expires_at"
-          ],
+          "columns": ["expires_at"],
           "isUnique": false
         }
       },
@@ -2495,17 +2270,13 @@
       "compositePrimaryKeys": {
         "sessions_id": {
           "name": "sessions_id",
-          "columns": [
-            "id"
-          ]
+          "columns": ["id"]
         }
       },
       "uniqueConstraints": {
         "sessions_token_hash_unique": {
           "name": "sessions_token_hash_unique",
-          "columns": [
-            "token_hash"
-          ]
+          "columns": ["token_hash"]
         }
       },
       "checkConstraint": {}
@@ -2540,9 +2311,7 @@
       "compositePrimaryKeys": {
         "settings_key": {
           "name": "settings_key",
-          "columns": [
-            "key"
-          ]
+          "columns": ["key"]
         }
       },
       "uniqueConstraints": {},
@@ -2599,9 +2368,7 @@
       "indexes": {
         "tour_addons_tour_idx": {
           "name": "tour_addons_tour_idx",
-          "columns": [
-            "tour_id"
-          ],
+          "columns": ["tour_id"],
           "isUnique": false
         }
       },
@@ -2609,9 +2376,7 @@
       "compositePrimaryKeys": {
         "tour_addons_id": {
           "name": "tour_addons_id",
-          "columns": [
-            "id"
-          ]
+          "columns": ["id"]
         }
       },
       "uniqueConstraints": {},
@@ -2652,10 +2417,7 @@
       "indexes": {
         "tour_blocked_dates_tour_date_unique": {
           "name": "tour_blocked_dates_tour_date_unique",
-          "columns": [
-            "tour_id",
-            "date"
-          ],
+          "columns": ["tour_id", "date"],
           "isUnique": true
         }
       },
@@ -2663,9 +2425,7 @@
       "compositePrimaryKeys": {
         "tour_blocked_dates_id": {
           "name": "tour_blocked_dates_id",
-          "columns": [
-            "id"
-          ]
+          "columns": ["id"]
         }
       },
       "uniqueConstraints": {},
@@ -2695,12 +2455,8 @@
           "name": "tour_date_slots_tour_id_tours_id_fk",
           "tableFrom": "tour_date_slots",
           "tableTo": "tours",
-          "columnsFrom": [
-            "tour_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["tour_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -2708,10 +2464,7 @@
       "compositePrimaryKeys": {
         "tour_date_slots_tour_id_date_pk": {
           "name": "tour_date_slots_tour_id_date_pk",
-          "columns": [
-            "tour_id",
-            "date"
-          ]
+          "columns": ["tour_id", "date"]
         }
       },
       "uniqueConstraints": {},
@@ -2774,10 +2527,7 @@
       "indexes": {
         "tour_images_tour_sort_idx": {
           "name": "tour_images_tour_sort_idx",
-          "columns": [
-            "tour_id",
-            "sort_order"
-          ],
+          "columns": ["tour_id", "sort_order"],
           "isUnique": false
         }
       },
@@ -2786,12 +2536,8 @@
           "name": "tour_images_tour_id_tours_id_fk",
           "tableFrom": "tour_images",
           "tableTo": "tours",
-          "columnsFrom": [
-            "tour_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["tour_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -2799,9 +2545,7 @@
       "compositePrimaryKeys": {
         "tour_images_id": {
           "name": "tour_images_id",
-          "columns": [
-            "id"
-          ]
+          "columns": ["id"]
         }
       },
       "uniqueConstraints": {},
@@ -2849,10 +2593,7 @@
       "indexes": {
         "tour_itinerary_stops_tour_sort_idx": {
           "name": "tour_itinerary_stops_tour_sort_idx",
-          "columns": [
-            "tour_id",
-            "sort_order"
-          ],
+          "columns": ["tour_id", "sort_order"],
           "isUnique": false
         }
       },
@@ -2861,12 +2602,8 @@
           "name": "tour_itinerary_stops_tour_id_tours_id_fk",
           "tableFrom": "tour_itinerary_stops",
           "tableTo": "tours",
-          "columnsFrom": [
-            "tour_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["tour_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -2874,9 +2611,7 @@
       "compositePrimaryKeys": {
         "tour_itinerary_stops_id": {
           "name": "tour_itinerary_stops_id",
-          "columns": [
-            "id"
-          ]
+          "columns": ["id"]
         }
       },
       "uniqueConstraints": {},
@@ -2924,10 +2659,7 @@
       "indexes": {
         "tour_price_tiers_tour_min_idx": {
           "name": "tour_price_tiers_tour_min_idx",
-          "columns": [
-            "tour_id",
-            "min_pax"
-          ],
+          "columns": ["tour_id", "min_pax"],
           "isUnique": false
         }
       },
@@ -2936,12 +2668,8 @@
           "name": "tour_price_tiers_tour_id_tours_id_fk",
           "tableFrom": "tour_price_tiers",
           "tableTo": "tours",
-          "columnsFrom": [
-            "tour_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["tour_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -2949,9 +2677,7 @@
       "compositePrimaryKeys": {
         "tour_price_tiers_id": {
           "name": "tour_price_tiers_id",
-          "columns": [
-            "id"
-          ]
+          "columns": ["id"]
         }
       },
       "uniqueConstraints": {},
@@ -3131,18 +2857,12 @@
       "indexes": {
         "tours_active_featured_idx": {
           "name": "tours_active_featured_idx",
-          "columns": [
-            "is_active",
-            "is_featured",
-            "sort_order"
-          ],
+          "columns": ["is_active", "is_featured", "sort_order"],
           "isUnique": false
         },
         "tours_destination_idx": {
           "name": "tours_destination_idx",
-          "columns": [
-            "destination_id"
-          ],
+          "columns": ["destination_id"],
           "isUnique": false
         }
       },
@@ -3151,12 +2871,8 @@
           "name": "tours_destination_id_destinations_id_fk",
           "tableFrom": "tours",
           "tableTo": "destinations",
-          "columnsFrom": [
-            "destination_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["destination_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -3164,17 +2880,13 @@
       "compositePrimaryKeys": {
         "tours_id": {
           "name": "tours_id",
-          "columns": [
-            "id"
-          ]
+          "columns": ["id"]
         }
       },
       "uniqueConstraints": {
         "tours_slug_unique": {
           "name": "tours_slug_unique",
-          "columns": [
-            "slug"
-          ]
+          "columns": ["slug"]
         }
       },
       "checkConstraint": {}
@@ -3252,10 +2964,7 @@
       "indexes": {
         "transfer_places_active_idx": {
           "name": "transfer_places_active_idx",
-          "columns": [
-            "is_active",
-            "sort_order"
-          ],
+          "columns": ["is_active", "sort_order"],
           "isUnique": false
         }
       },
@@ -3264,12 +2973,8 @@
           "name": "transfer_places_destination_id_destinations_id_fk",
           "tableFrom": "transfer_places",
           "tableTo": "destinations",
-          "columnsFrom": [
-            "destination_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["destination_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -3277,17 +2982,13 @@
       "compositePrimaryKeys": {
         "transfer_places_id": {
           "name": "transfer_places_id",
-          "columns": [
-            "id"
-          ]
+          "columns": ["id"]
         }
       },
       "uniqueConstraints": {
         "transfer_places_name_key_unique": {
           "name": "transfer_places_name_key_unique",
-          "columns": [
-            "name_key"
-          ]
+          "columns": ["name_key"]
         }
       },
       "checkConstraint": {}
@@ -3330,12 +3031,8 @@
           "name": "transfer_route_vehicle_prices_route_id_transfer_routes_id_fk",
           "tableFrom": "transfer_route_vehicle_prices",
           "tableTo": "transfer_routes",
-          "columnsFrom": [
-            "route_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["route_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -3343,12 +3040,8 @@
           "name": "transfer_route_vehicle_prices_vehicle_type_id_vehicle_types_id_fk",
           "tableFrom": "transfer_route_vehicle_prices",
           "tableTo": "vehicle_types",
-          "columnsFrom": [
-            "vehicle_type_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["vehicle_type_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -3356,10 +3049,7 @@
       "compositePrimaryKeys": {
         "transfer_route_vehicle_prices_route_id_vehicle_type_id_pk": {
           "name": "transfer_route_vehicle_prices_route_id_vehicle_type_id_pk",
-          "columns": [
-            "route_id",
-            "vehicle_type_id"
-          ]
+          "columns": ["route_id", "vehicle_type_id"]
         }
       },
       "uniqueConstraints": {},
@@ -3467,18 +3157,12 @@
       "indexes": {
         "transfer_routes_active_idx": {
           "name": "transfer_routes_active_idx",
-          "columns": [
-            "is_active",
-            "sort_order"
-          ],
+          "columns": ["is_active", "sort_order"],
           "isUnique": false
         },
         "transfer_routes_from_to_unique": {
           "name": "transfer_routes_from_to_unique",
-          "columns": [
-            "from_place_id",
-            "to_place_id"
-          ],
+          "columns": ["from_place_id", "to_place_id"],
           "isUnique": true
         }
       },
@@ -3487,12 +3171,8 @@
           "name": "transfer_routes_from_place_id_transfer_places_id_fk",
           "tableFrom": "transfer_routes",
           "tableTo": "transfer_places",
-          "columnsFrom": [
-            "from_place_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["from_place_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -3500,12 +3180,8 @@
           "name": "transfer_routes_to_place_id_transfer_places_id_fk",
           "tableFrom": "transfer_routes",
           "tableTo": "transfer_places",
-          "columnsFrom": [
-            "to_place_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["to_place_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -3513,17 +3189,13 @@
       "compositePrimaryKeys": {
         "transfer_routes_id": {
           "name": "transfer_routes_id",
-          "columns": [
-            "id"
-          ]
+          "columns": ["id"]
         }
       },
       "uniqueConstraints": {
         "transfer_routes_slug_unique": {
           "name": "transfer_routes_slug_unique",
-          "columns": [
-            "slug"
-          ]
+          "columns": ["slug"]
         }
       },
       "checkConstraint": {}
@@ -3596,18 +3268,12 @@
       "indexes": {
         "trip_checkpoints_booking_idx": {
           "name": "trip_checkpoints_booking_idx",
-          "columns": [
-            "booking_id",
-            "checked_at"
-          ],
+          "columns": ["booking_id", "checked_at"],
           "isUnique": false
         },
         "trip_checkpoints_booking_stop_unique": {
           "name": "trip_checkpoints_booking_stop_unique",
-          "columns": [
-            "booking_id",
-            "stop_key"
-          ],
+          "columns": ["booking_id", "stop_key"],
           "isUnique": true
         }
       },
@@ -3616,12 +3282,8 @@
           "name": "trip_checkpoints_booking_id_bookings_id_fk",
           "tableFrom": "trip_checkpoints",
           "tableTo": "bookings",
-          "columnsFrom": [
-            "booking_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["booking_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -3629,12 +3291,8 @@
           "name": "trip_checkpoints_stop_id_tour_itinerary_stops_id_fk",
           "tableFrom": "trip_checkpoints",
           "tableTo": "tour_itinerary_stops",
-          "columnsFrom": [
-            "stop_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["stop_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -3642,12 +3300,8 @@
           "name": "trip_checkpoints_undone_by_drivers_id_fk",
           "tableFrom": "trip_checkpoints",
           "tableTo": "drivers",
-          "columnsFrom": [
-            "undone_by"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["undone_by"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -3655,9 +3309,7 @@
       "compositePrimaryKeys": {
         "trip_checkpoints_id": {
           "name": "trip_checkpoints_id",
-          "columns": [
-            "id"
-          ]
+          "columns": ["id"]
         }
       },
       "uniqueConstraints": {},
@@ -3742,10 +3394,7 @@
       "indexes": {
         "users_role_active_idx": {
           "name": "users_role_active_idx",
-          "columns": [
-            "role",
-            "is_active"
-          ],
+          "columns": ["role", "is_active"],
           "isUnique": false
         }
       },
@@ -3753,17 +3402,13 @@
       "compositePrimaryKeys": {
         "users_id": {
           "name": "users_id",
-          "columns": [
-            "id"
-          ]
+          "columns": ["id"]
         }
       },
       "uniqueConstraints": {
         "users_email_unique": {
           "name": "users_email_unique",
-          "columns": [
-            "email"
-          ]
+          "columns": ["email"]
         }
       },
       "checkConstraint": {}
@@ -3896,11 +3541,7 @@
       "indexes": {
         "vans_active_status_idx": {
           "name": "vans_active_status_idx",
-          "columns": [
-            "is_active",
-            "status",
-            "capacity"
-          ],
+          "columns": ["is_active", "status", "capacity"],
           "isUnique": false
         }
       },
@@ -3909,12 +3550,8 @@
           "name": "vans_vehicle_type_id_vehicle_types_id_fk",
           "tableFrom": "vans",
           "tableTo": "vehicle_types",
-          "columnsFrom": [
-            "vehicle_type_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["vehicle_type_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -3922,17 +3559,13 @@
       "compositePrimaryKeys": {
         "vans_id": {
           "name": "vans_id",
-          "columns": [
-            "id"
-          ]
+          "columns": ["id"]
         }
       },
       "uniqueConstraints": {
         "vans_plate_unique": {
           "name": "vans_plate_unique",
-          "columns": [
-            "plate"
-          ]
+          "columns": ["plate"]
         }
       },
       "checkConstraint": {}
@@ -4009,10 +3642,7 @@
       "indexes": {
         "vehicle_types_active_idx": {
           "name": "vehicle_types_active_idx",
-          "columns": [
-            "is_active",
-            "sort_order"
-          ],
+          "columns": ["is_active", "sort_order"],
           "isUnique": false
         }
       },
@@ -4020,17 +3650,13 @@
       "compositePrimaryKeys": {
         "vehicle_types_id": {
           "name": "vehicle_types_id",
-          "columns": [
-            "id"
-          ]
+          "columns": ["id"]
         }
       },
       "uniqueConstraints": {
         "vehicle_types_slug_unique": {
           "name": "vehicle_types_slug_unique",
-          "columns": [
-            "slug"
-          ]
+          "columns": ["slug"]
         }
       },
       "checkConstraint": {}
