@@ -134,6 +134,24 @@ export function siteTagline(showTours: boolean): string {
   return showTours ? SITE.tagline : TRANSFERS_TAGLINE;
 }
 
+/**
+ * The footer's actual tagline (task 2B): `settings.contact.tagline` is a
+ * short free-text admin field that already existed in the settings schema
+ * and the admin Settings form, but nothing on the public site read it —
+ * the footer called `siteTagline(showTours)` unconditionally instead. When
+ * the admin has entered real text (non-whitespace) it wins; otherwise this
+ * falls back to the existing `siteTagline(showTours)` behaviour exactly as
+ * it works today. Pure and separate from `siteTagline()` itself, which is
+ * left unchanged for any other caller.
+ */
+export function footerTagline(
+  settingsTagline: string | null | undefined,
+  showTours: boolean,
+): string {
+  const trimmed = settingsTagline?.trim();
+  return trimmed ? trimmed : siteTagline(showTours);
+}
+
 /** Builds a wa.me deep link with an optional prefilled message. */
 export function whatsappLink(message?: string) {
   const base = `https://wa.me/${SITE.contact.altPhone.whatsapp}`;

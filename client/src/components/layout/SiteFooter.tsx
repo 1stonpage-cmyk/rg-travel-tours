@@ -5,8 +5,8 @@ import { ViberGlyph, WhatsAppGlyph } from '@/components/common/BrandGlyphs';
 import { useConsent } from '@/lib/consent/useConsent';
 import {
   BUILT_BY,
+  footerTagline,
   SITE,
-  siteTagline,
   telLink,
   viberLink,
   visibleNav,
@@ -126,7 +126,7 @@ export default function SiteFooter() {
           />
           <p className="text-brand-blue-100 mt-3 text-base font-medium sm:text-sm">{SITE.motto}</p>
           <p className="text-brand-blue-200 mt-2 max-w-sm text-base sm:text-sm">
-            {siteTagline(showTours)}
+            {footerTagline(settings?.contact.tagline, showTours)}
           </p>
 
           <ul className="mt-6 space-y-2 text-base sm:text-sm">

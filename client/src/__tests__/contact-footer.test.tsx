@@ -280,16 +280,35 @@ describe('footer hours come from settings, not a second hardcoded copy', () => {
  * `show_tours` is off, via `siteTagline(showTours)` — SiteFooter already
  * reads `settings?.showTours` for `visibleNav` (the T16 nav gate just above
  * this in the test file list), so this needed no new query.
+ *
+ * Task 2B extends this: `settings.contact.tagline` — a short free-text admin
+ * field that already existed in the settings schema and the admin Settings
+ * form, but that nothing on the public site read — now wins over the
+ * `siteTagline(showTours)` fallback whenever the admin has entered real
+ * (non-whitespace) text. `SETTINGS_FIXTURE.contact.tagline` happens to equal
+ * `TOUR_TAGLINE` byte for byte, so every case below that wants to exercise
+ * the FALLBACK must explicitly override `contact.tagline` to `''`/whitespace
+ * — relying on the fixture's own value would pass for the wrong reason (or,
+ * for the show_tours-off fallback case, fail outright, since the fixture's
+ * non-empty tagline would otherwise win over the transfers wording).
  */
-describe('footer tagline follows show_tours (owner decision 2026-11-11, 1C)', () => {
+describe('footer tagline (owner decision 2026-11-11, 1C; wired to settings.contact.tagline, task 2B)', () => {
   // Fixed literal strings, not calls to `siteTagline()` itself — a test that
   // re-derived its expectation from the function under test would pass no
   // matter which branch the implementation returned for which input.
   const TOUR_TAGLINE = 'Cebu day tours and multi-day packages, booked direct.';
   const TRANSFERS_TAGLINE = 'Private airport and island transfers across Cebu, booked direct.';
+  const ADMIN_TAGLINE = 'Door-to-door transfers, Mactan to anywhere in Cebu.';
 
-  it('shows the existing tour-wording tagline when show_tours is on', async () => {
-    mockTrpc({ 'settings.get': settingsWith({ showTours: true }) });
+  function settingsWithTagline(tagline: string, showTours: boolean) {
+    return settingsWith({
+      showTours,
+      contact: { ...SETTINGS_FIXTURE.contact, tagline },
+    });
+  }
+
+  it('falls back to the tour-wording tagline when contact.tagline is empty and show_tours is on', async () => {
+    mockTrpc({ 'settings.get': settingsWithTagline('', true) });
     renderWithTrpc(<SiteFooter />);
 
     const footer = screen.getByRole('contentinfo');
@@ -299,16 +318,47 @@ describe('footer tagline follows show_tours (owner decision 2026-11-11, 1C)', ()
     await within(footer).findByText('GCash');
     expect(within(footer).getByText(TOUR_TAGLINE)).toBeInTheDocument();
     expect(within(footer).queryByText(TRANSFERS_TAGLINE)).not.toBeInTheDocument();
+    expect(within(footer).queryByText(ADMIN_TAGLINE)).not.toBeInTheDocument();
   });
 
-  it('shows the transfers-wording tagline when show_tours is off', async () => {
-    mockTrpc({ 'settings.get': settingsWith({ showTours: false }) });
+  it('falls back to the transfers-wording tagline when contact.tagline is empty and show_tours is off', async () => {
+    mockTrpc({ 'settings.get': settingsWithTagline('', false) });
     renderWithTrpc(<SiteFooter />);
 
     const footer = screen.getByRole('contentinfo');
     await within(footer).findByText('GCash');
     expect(within(footer).getByText(TRANSFERS_TAGLINE)).toBeInTheDocument();
     expect(within(footer).queryByText(TOUR_TAGLINE)).not.toBeInTheDocument();
+    expect(within(footer).queryByText(ADMIN_TAGLINE)).not.toBeInTheDocument();
+  });
+
+  it('falls back the same way when contact.tagline is whitespace-only, not a visible blank line', async () => {
+    mockTrpc({ 'settings.get': settingsWithTagline('   ', false) });
+    renderWithTrpc(<SiteFooter />);
+
+    const footer = screen.getByRole('contentinfo');
+    await within(footer).findByText('GCash');
+    expect(within(footer).getByText(TRANSFERS_TAGLINE)).toBeInTheDocument();
+  });
+
+  it('shows the admin-entered tagline instead of the fallback when show_tours is on', async () => {
+    mockTrpc({ 'settings.get': settingsWithTagline(ADMIN_TAGLINE, true) });
+    renderWithTrpc(<SiteFooter />);
+
+    const footer = screen.getByRole('contentinfo');
+    await within(footer).findByText('GCash');
+    expect(within(footer).getByText(ADMIN_TAGLINE)).toBeInTheDocument();
+    expect(within(footer).queryByText(TOUR_TAGLINE)).not.toBeInTheDocument();
+  });
+
+  it('shows the admin-entered tagline instead of the fallback when show_tours is off', async () => {
+    mockTrpc({ 'settings.get': settingsWithTagline(ADMIN_TAGLINE, false) });
+    renderWithTrpc(<SiteFooter />);
+
+    const footer = screen.getByRole('contentinfo');
+    await within(footer).findByText('GCash');
+    expect(within(footer).getByText(ADMIN_TAGLINE)).toBeInTheDocument();
+    expect(within(footer).queryByText(TRANSFERS_TAGLINE)).not.toBeInTheDocument();
   });
 });
 
