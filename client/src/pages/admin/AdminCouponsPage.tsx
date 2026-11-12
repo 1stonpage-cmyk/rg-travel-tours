@@ -904,10 +904,17 @@ function SignupCouponSettingsForm({ stored }: { stored: unknown }) {
           </div>
         </div>
 
-        {/* This form's own footer is its own region — the page header's
-            primary pill ("Add a coupon") belongs to a different region. */}
+        {/* secondary-pill, not primary-pill: the page's one true primary is
+            the header's "Add a coupon" CRUD action (CLAUDE.md "one primary
+            pill per visible region"), the same precedent AdminPackagesPage.tsx
+            already set for its own always-visible Newsletter-card action. */}
         <div className="flex justify-end">
-          <Button type="button" variant="primary-pill" disabled={write.isPending} onClick={submit}>
+          <Button
+            type="button"
+            variant="secondary-pill"
+            disabled={write.isPending}
+            onClick={submit}
+          >
             {write.isPending ? 'Saving…' : 'Save'}
           </Button>
         </div>
@@ -924,7 +931,7 @@ function subscriberStatusInWords(row: SignupSubscriberRow): string {
     case 'unused':
       return 'Unused';
     case 'used':
-      return `Used on ${row.usedBookingRef}`;
+      return row.usedBookingRef ? `Used on ${row.usedBookingRef}` : 'Used';
     case 'expired':
       return 'Expired';
   }
