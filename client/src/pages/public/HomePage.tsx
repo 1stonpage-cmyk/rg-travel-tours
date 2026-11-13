@@ -5,6 +5,7 @@ import HeroSection from '@/components/home/HeroSection';
 import HowItWorks from '@/components/home/HowItWorks';
 import MostVisited from '@/components/home/MostVisited';
 import PackagesSection from '@/components/home/PackagesSection';
+import PopularTransfers from '@/components/home/PopularTransfers';
 import PromoNewsletter from '@/components/home/PromoNewsletter';
 import ReviewsSection from '@/components/home/ReviewsSection';
 import TrustBar from '@/components/home/TrustBar';
@@ -18,15 +19,16 @@ import { useScrollReveal } from '@/lib/use-scroll-reveal';
  * with one selector rather than wrapping eleven components, so the sections
  * stay plain markup. The hero is excluded — it animates on load instead.
  *
- * #tours, #packages and #reviews are also excluded (spec task 2.9C): each of
- * those owns a card grid that staggers its own cards in individually once they
- * mount from React Query, via useCardStagger inside CatalogPreview /
- * PackagesSection / ReviewsSection. Leaving them in this selector too would
+ * #tours, #packages, #reviews and #popular-transfers are also excluded (spec
+ * task 2.9C, extended by Task 7 / 1D): each of those owns a card grid that
+ * staggers its own cards in individually once they mount from React Query,
+ * via useCardStagger inside CatalogPreview / PackagesSection /
+ * ReviewsSection / PopularTransfers. Leaving them in this selector too would
  * fade the whole section in as one block *and* fade its cards in again
  * inside that block — a visible double animation.
  */
 const REVEAL_SECTIONS =
-  '#main > section:not(:first-child):not(#tours):not(#packages):not(#reviews)';
+  '#main > section:not(:first-child):not(#tours):not(#packages):not(#reviews):not(#popular-transfers)';
 
 /**
  * Home sections in the order given by BUILD_SPEC.md section 4.
@@ -67,6 +69,7 @@ export default function HomePage() {
       <TrustBar />
       {showTours && <CatalogPreview />}
       <HowItWorks />
+      <PopularTransfers />
       <WhyBookDirect />
       {showTours && <MostVisited />}
       {showTours && <PackagesSection />}

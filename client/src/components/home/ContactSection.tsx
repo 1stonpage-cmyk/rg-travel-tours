@@ -1,5 +1,6 @@
 import { Clock, Facebook, Mail, MapPin, Phone } from 'lucide-react';
 import { useState, type FormEvent, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { ViberGlyph, WhatsAppGlyph } from '@/components/common/BrandGlyphs';
 import FieldError from '@/components/common/FieldError';
 import SectionHeading from '@/components/common/SectionHeading';
@@ -56,13 +57,25 @@ const PLACED_INQUIRY_FIELDS: ReadonlySet<string> = new Set([
 
 export default function ContactSection() {
   const [consentError, setConsentError] = useState<string | null>(null);
+  const [searchParams] = useSearchParams();
   /**
    * T17: this form now covers the "existing public inquiry form" the
    * transfers-launch plan's §6 Custom Trip Request flow sends a guest
    * through. `type` picks which `inquiryInput` fields the submit actually
    * sends — see `handleSubmit` below.
+   *
+   * Task 7 (1D): preselected from a `?type=transfer_custom` query param, so
+   * `PopularTransfers.tsx`'s "request a custom trip" link lands with this
+   * radio already chosen. **The link has to put the query string BEFORE the
+   * `#contact` hash** (`/?type=transfer_custom#contact`, never
+   * `/#contact?type=transfer_custom`) — confirmed directly (Task 7 Step 6):
+   * a URL's own parser puts everything after `#` into the hash, so a query
+   * string placed after it never reaches `location.search` at all, and
+   * `useSearchParams()` here reads exactly that.
    */
-  const [requestKind, setRequestKind] = useState<'contact' | 'transfer_custom'>('contact');
+  const [requestKind, setRequestKind] = useState<'contact' | 'transfer_custom'>(() =>
+    searchParams.get('type') === 'transfer_custom' ? 'transfer_custom' : 'contact',
+  );
   /**
    * Cloudflare Turnstile (Task 13; widened to both inquiry types by owner
    * decision 2026-11-11, Task 1A) — gated for every request kind. See

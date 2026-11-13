@@ -167,6 +167,31 @@ export interface TransferRoutePublicRow {
 }
 
 /**
+ * One "Popular transfers" home-page card (owner decision 2026-11-13, Task
+ * 1D). Narrower than `TransferRoutePublicRow` on purpose: a home card shows
+ * one headline price, not every offered vehicle's full price card, and the
+ * price it shows is resolved server-side (`transferRoutes.featured`,
+ * `server/src/routers/public/transfers.ts`) — never recomputed in the
+ * browser (CLAUDE.md: "the server computes all money").
+ *
+ * `cheapestOneWay` is `null` only when NO vehicle type is offered on the
+ * route at all (priced AND sellable) — never a price of zero, since
+ * `transferPriceCentavosSchema.min(1)` makes a zero-priced row structurally
+ * impossible.
+ */
+export interface TransferRouteHomeCard {
+  id: number;
+  fromPlace: { id: number; name: string; placeType: TransferPlaceType };
+  toPlace: { id: number; name: string };
+  estimatedDurationMinutes: number;
+  badge: string | null;
+  shortDescription: string | null;
+  imagePath: string | null;
+  offeredVehicles: { name: string; slug: string }[];
+  cheapestOneWay: { vehicleTypeName: string; priceCentavos: number } | null;
+}
+
+/**
  * What the browser may ask `checkout.quoteTransfer` for (Task T9).
  *
  * **Nothing here is money.** A transfer's price is a flat per-vehicle catalog

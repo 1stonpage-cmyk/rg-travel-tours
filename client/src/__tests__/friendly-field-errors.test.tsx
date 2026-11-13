@@ -644,7 +644,10 @@ describe('Contact form — inquiries.create validation errors', () => {
     const user = userEvent.setup();
     render(
       <TrpcProviders>
-        <ContactSection />
+        {/* Task 7 (1D): ContactSection now reads useSearchParams(). */}
+        <MemoryRouter>
+          <ContactSection />
+        </MemoryRouter>
       </TrpcProviders>,
     );
 
@@ -674,7 +677,10 @@ describe('Contact form — inquiries.create validation errors', () => {
     const user = userEvent.setup();
     render(
       <TrpcProviders>
-        <ContactSection />
+        {/* Task 7 (1D): ContactSection now reads useSearchParams(). */}
+        <MemoryRouter>
+          <ContactSection />
+        </MemoryRouter>
       </TrpcProviders>,
     );
 

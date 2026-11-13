@@ -78,6 +78,10 @@ describe('performance markup', () => {
       'tours.list': TOURS_FIXTURE,
       'packages.list': PACKAGES_FIXTURE,
       'reviews.published': REVIEWS_FIXTURE,
+      // Task 7 (1D): PopularTransfers mounts unconditionally and renders no
+      // images when empty — kept empty here so EXPECTED_HOME_IMAGE_COUNT
+      // below stays about the sections this file already covers.
+      'transferRoutes.featured': [],
     });
   });
 

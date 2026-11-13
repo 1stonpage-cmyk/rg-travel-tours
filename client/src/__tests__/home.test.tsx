@@ -10,6 +10,7 @@ import {
   REVIEWS_FIXTURE,
   SETTINGS_FIXTURE,
   TOURS_FIXTURE,
+  TRANSFER_HOME_CARDS_FIXTURE,
 } from './helpers/fixtures';
 import { mockTrpc } from './helpers/mock-trpc';
 
@@ -39,6 +40,10 @@ describe('home page', () => {
       'tours.list': TOURS_FIXTURE,
       'packages.list': PACKAGES_FIXTURE,
       'reviews.published': REVIEWS_FIXTURE,
+      // Task 7 (1D): PopularTransfers mounts unconditionally on HomePage —
+      // mocked empty (the section renders nothing) so these pre-existing
+      // tests, none of which concern transfers, stay unaffected.
+      'transferRoutes.featured': [],
     });
   });
 
@@ -66,6 +71,31 @@ describe('home page', () => {
     for (const id of ['tours', 'how', 'why', 'places', 'packages', 'reviews', 'faq', 'contact']) {
       expect(container.querySelector(`#${id}`), `missing #${id}`).toBeTruthy();
     }
+  });
+
+  /**
+   * Task 7 (1D): `PopularTransfers` mounts between `HowItWorks` (`#how`)
+   * and `WhyBookDirect` (`#why`), per the plan's section order. Exercised
+   * here with a real featured fixture (the outer `beforeEach` mocks it
+   * empty, which hides the section entirely) so this test's own mock wins.
+   */
+  it('renders #popular-transfers between #how and #why when a route is featured', async () => {
+    mockTrpc({ 'transferRoutes.featured': TRANSFER_HOME_CARDS_FIXTURE });
+    const { container } = renderHome();
+
+    // Waits for real card content, not just the section's own (unconditional) heading.
+    await screen.findAllByRole('link', { name: /book this transfer/i });
+    const how = container.querySelector('#how');
+    const popular = container.querySelector('#popular-transfers');
+    const why = container.querySelector('#why');
+    expect(how).toBeTruthy();
+    expect(popular).toBeTruthy();
+    expect(why).toBeTruthy();
+
+    // DOCUMENT_POSITION_FOLLOWING (4) means the second node comes after the
+    // first in source order.
+    expect(how!.compareDocumentPosition(popular!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(popular!.compareDocumentPosition(why!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('shows three packages, each with a struck-through old price', async () => {
@@ -261,6 +291,7 @@ describe('home page — document title (Task 4, 1D)', () => {
       'tours.list': TOURS_FIXTURE,
       'packages.list': PACKAGES_FIXTURE,
       'reviews.published': REVIEWS_FIXTURE,
+      'transferRoutes.featured': [],
     });
   });
 
@@ -301,6 +332,7 @@ describe('home page — tours hidden (show_tours gate, Task T16)', () => {
       'tours.list': TOURS_FIXTURE,
       'packages.list': PACKAGES_FIXTURE,
       'reviews.published': REVIEWS_FIXTURE,
+      'transferRoutes.featured': [],
     });
   });
 
@@ -353,6 +385,7 @@ describe('home page — tours shown (regression, Task T16)', () => {
       'tours.list': TOURS_FIXTURE,
       'packages.list': PACKAGES_FIXTURE,
       'reviews.published': REVIEWS_FIXTURE,
+      'transferRoutes.featured': [],
     });
   });
 

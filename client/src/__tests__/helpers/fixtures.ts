@@ -54,6 +54,7 @@
  * output-typing machinery, so the server-shape interfaces apply here
  * exactly as declared.
  */
+import type { TransferRouteHomeCard } from '@rg/shared';
 import type { SettingsPayload } from '../../../../server/src/content/settings';
 import type { Destination } from '../../../../server/src/routers/public/destinations';
 import type { PackageListItem } from '../../../../server/src/routers/public/packages';
@@ -636,3 +637,39 @@ export const REVIEWS_FIXTURE: ReviewsPublishedResult = {
   displayAggregate: { average: 4.666666666666667, count: 6 },
   realAggregate: null,
 };
+
+/**
+ * `transferRoutes.featured` (Task 7, 1D) — two "Popular transfers" home
+ * cards. One carries a badge and a van price (the common case); the other
+ * has no badge, no short description and no van among its offered types
+ * (the server's own fallback-to-cheapest-offered-type case), so a test
+ * against this fixture exercises both the "badge present" and "badge
+ * absent" branches without needing a second, bespoke fixture.
+ */
+export const TRANSFER_HOME_CARDS_FIXTURE: TransferRouteHomeCard[] = [
+  {
+    id: 101,
+    fromPlace: { id: 1, name: 'Mactan-Cebu International Airport', placeType: 'airport' },
+    toPlace: { id: 2, name: 'Oslob' },
+    estimatedDurationMinutes: 180,
+    badge: 'Most booked',
+    shortDescription: 'Airport pickup straight to the whale sharks.',
+    imagePath: img('oslob'),
+    offeredVehicles: [
+      { name: 'Van', slug: 'van' },
+      { name: 'SUV', slug: 'suv' },
+    ],
+    cheapestOneWay: { vehicleTypeName: 'Van', priceCentavos: 250_000 },
+  },
+  {
+    id: 102,
+    fromPlace: { id: 1, name: 'Mactan-Cebu International Airport', placeType: 'airport' },
+    toPlace: { id: 3, name: 'Moalboal' },
+    estimatedDurationMinutes: 150,
+    badge: null,
+    shortDescription: null,
+    imagePath: null,
+    offeredVehicles: [{ name: 'SUV', slug: 'suv' }],
+    cheapestOneWay: { vehicleTypeName: 'SUV', priceCentavos: 320_000 },
+  },
+];

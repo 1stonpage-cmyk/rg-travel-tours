@@ -128,6 +128,17 @@ function readInitialRouteId(raw: string | null): number | null {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+/**
+ * Task 7 (1D): general `direction` URL support, so a deep link can
+ * preselect which way a reversible route is travelled, not only which
+ * route. Anything other than the literal `'reverse'` — missing, malformed,
+ * or any other string — reads as `'forward'`, the same permissive default
+ * `readInitialProductType`/`readInitialRouteId` use for their own bad input.
+ */
+function readInitialDirection(raw: string | null): TransferDirection {
+  return raw === 'reverse' ? 'reverse' : 'forward';
+}
+
 /** Mirrors `CheckoutPage.tsx`'s `String(data.get(x) ?? '').trim()` convention
  * — but checked for `null` FIRST. `TransferGuestDetailsForm` conditionally
  * renders `dayUseEndTime`/`flightNumber`/`airline` on `productType`, so a
@@ -201,7 +212,9 @@ export default function TransferBookingPage() {
   const [routeId, setRouteId] = useState<number | null>(() =>
     readInitialRouteId(searchParams.get('routeId')),
   );
-  const [direction, setDirection] = useState<TransferDirection>('forward');
+  const [direction, setDirection] = useState<TransferDirection>(() =>
+    readInitialDirection(searchParams.get('direction')),
+  );
   const [vehicleTypeId, setVehicleTypeId] = useState<number | null>(null);
   const [payMode, setPayMode] = useState<PayMode>('deposit');
 

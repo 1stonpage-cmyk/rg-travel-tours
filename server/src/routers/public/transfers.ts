@@ -40,11 +40,16 @@
  * own shape, for the same reason: a price/fleet read per row would be an
  * N+1 against tables whose whole purpose is to be read beside their parent.
  */
-import type { TransferRoutePublicRow, TransferRoutePublicVehiclePrice } from '@rg/shared';
+import type {
+  TransferRouteHomeCard,
+  TransferRoutePublicRow,
+  TransferRoutePublicVehiclePrice,
+} from '@rg/shared';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/mysql-core';
 import { getDb } from '../../db/client';
 import {
+  destinations,
   transferPlaces,
   transferRouteVehiclePrices,
   transferRoutes,
@@ -165,6 +170,131 @@ export const transferRoutesRouter = router({
         inclusionsText: row.inclusionsText,
         exclusionsText: row.exclusionsText,
         vehiclePrices,
+      };
+    });
+  }),
+
+  /**
+   * "Popular transfers" home-page cards (owner decision 2026-11-13, Task 1D).
+   * Same two active-place/active-route filters as `list`, narrowed further to
+   * `show_on_home_page = true`, ordered by `home_page_order`. The lowest
+   * one-way VAN price is resolved here, server-side — CLAUDE.md: "DO NOT
+   * trust prices... computed in the browser" — falling back to the lowest
+   * OFFERED type's price when no van price exists on this route (never a
+   * price of zero; `transferPriceCentavosSchema.min(1)` makes that
+   * structurally impossible — the fallback is about an ABSENT van row, not a
+   * zero-priced one).
+   */
+  featured: publicProcedure.query(async (): Promise<TransferRouteHomeCard[]> => {
+    const db = getDb();
+    const rows = await db
+      .select({
+        id: transferRoutes.id,
+        fromPlaceId: fromPlace.id,
+        fromPlaceName: fromPlace.name,
+        fromPlaceType: fromPlace.placeType,
+        toPlaceId: toPlace.id,
+        toPlaceName: toPlace.name,
+        toPlaceDestinationId: toPlace.destinationId,
+        estimatedDurationMinutes: transferRoutes.estimatedDurationMinutes,
+        homePageBadge: transferRoutes.homePageBadge,
+        homePageShortDescription: transferRoutes.homePageShortDescription,
+      })
+      .from(transferRoutes)
+      .innerJoin(fromPlace, eq(fromPlace.id, transferRoutes.fromPlaceId))
+      .innerJoin(toPlace, eq(toPlace.id, transferRoutes.toPlaceId))
+      .where(
+        and(
+          eq(transferRoutes.isActive, true),
+          eq(transferRoutes.showOnHomePage, true),
+          eq(fromPlace.isActive, true),
+          eq(toPlace.isActive, true),
+        ),
+      )
+      .orderBy(asc(transferRoutes.homePageOrder), asc(toPlace.name));
+
+    if (rows.length === 0) return [];
+
+    const types = await db
+      .select({ id: vehicleTypes.id, name: vehicleTypes.name, slug: vehicleTypes.slug })
+      .from(vehicleTypes)
+      .where(eq(vehicleTypes.isActive, true))
+      .orderBy(asc(vehicleTypes.sortOrder));
+
+    const priceRows = await db
+      .select({
+        routeId: transferRouteVehiclePrices.routeId,
+        vehicleTypeId: transferRouteVehiclePrices.vehicleTypeId,
+        oneWayPriceCentavos: transferRouteVehiclePrices.oneWayPriceCentavos,
+      })
+      .from(transferRouteVehiclePrices)
+      .where(
+        inArray(
+          transferRouteVehiclePrices.routeId,
+          rows.map((row) => row.id),
+        ),
+      );
+
+    const sellable = await sellableVehiclesByType(db);
+    const vanType = types.find((t) => t.slug === 'van') ?? null;
+
+    // Destination photo lookup — `destinations` is the tour-destinations
+    // table; `toPlace.destinationId` is the nullable, informational-only
+    // cross-link (schema.ts's own note). A card whose `toPlace` has no linked
+    // destination gets `imagePath: null` and the client falls back to a
+    // placeholder — never a fabricated path.
+    const destinationIds = rows
+      .map((row) => row.toPlaceDestinationId)
+      .filter((id): id is number => id !== null);
+    const destinationImages =
+      destinationIds.length === 0
+        ? new Map<number, string | null>()
+        : new Map(
+            (
+              await db
+                .select({ id: destinations.id, imagePath: destinations.imagePath })
+                .from(destinations)
+                .where(inArray(destinations.id, destinationIds))
+            ).map((d) => [d.id, d.imagePath]),
+          );
+
+    return rows.map((row) => {
+      const offered = types
+        .map((type) => {
+          const price = priceRows.find((p) => p.routeId === row.id && p.vehicleTypeId === type.id);
+          if (!price) return null;
+          if ((sellable.get(type.id) ?? 0) < 1) return null;
+          return {
+            vehicleTypeId: type.id,
+            name: type.name,
+            slug: type.slug,
+            priceCentavos: price.oneWayPriceCentavos,
+          };
+        })
+        .filter((x): x is NonNullable<typeof x> => x !== null);
+
+      const vanOffer = vanType ? offered.find((o) => o.vehicleTypeId === vanType.id) : undefined;
+      const cheapestOffer =
+        vanOffer ?? offered.slice().sort((a, b) => a.priceCentavos - b.priceCentavos)[0] ?? null;
+
+      return {
+        id: row.id,
+        fromPlace: { id: row.fromPlaceId, name: row.fromPlaceName, placeType: row.fromPlaceType },
+        toPlace: { id: row.toPlaceId, name: row.toPlaceName },
+        estimatedDurationMinutes: row.estimatedDurationMinutes,
+        badge: row.homePageBadge,
+        shortDescription: row.homePageShortDescription,
+        imagePath:
+          row.toPlaceDestinationId === null
+            ? null
+            : (destinationImages.get(row.toPlaceDestinationId) ?? null),
+        offeredVehicles: offered.map((o) => ({ name: o.name, slug: o.slug })),
+        // Null only when NO vehicle type is offered at all (e.g. fleet fully
+        // booked) — the card's price line then reads "Price unavailable" on
+        // the client, never ₱0.
+        cheapestOneWay: cheapestOffer
+          ? { vehicleTypeName: cheapestOffer.name, priceCentavos: cheapestOffer.priceCentavos }
+          : null,
       };
     });
   }),

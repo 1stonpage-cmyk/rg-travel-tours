@@ -1,6 +1,6 @@
 import { formatPeso, manilaCivilDate } from '@rg/shared';
-import { eq } from 'drizzle-orm';
-import { afterEach, beforeAll, expect, it } from 'vitest';
+import { eq, inArray } from 'drizzle-orm';
+import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
 import { getDb } from '../db/client';
 import {
   destinations,
@@ -8,6 +8,11 @@ import {
   reviews as reviewsTable,
   settings as settingsTable,
   tours as toursTable,
+  transferPlaces,
+  transferRouteVehiclePrices,
+  transferRoutes,
+  vans,
+  vehicleTypes,
 } from '../db/schema';
 import { testContext } from './helpers/ctx';
 import { describeWithDb } from './helpers/db';
@@ -702,5 +707,218 @@ describeWithDb('tours.list / tours.bySlug rating display threshold (Task 1.9, R1
     const r = await caller.reviews.published({ tourId });
     // The two real fixtures count; the seeded is_sample review does not.
     expect(r.realAggregate).toEqual({ average: 5, count: 2 });
+  });
+});
+
+/**
+ * `transferRoutes.featured` (owner decision 2026-11-13, Task 7 / 1D) —
+ * "Popular transfers" home cards. Fixtures are inserted directly against
+ * the tables rather than through `admin.transferRoutes.*` (admin-transfer-
+ * routes.test.ts already proves that router writes these same columns
+ * correctly) — this suite is about what the PUBLIC query does with rows
+ * that already have them set, including the price-resolution rule
+ * (CLAUDE.md: the server computes all money) that is unique to this
+ * procedure.
+ *
+ * CLAUDE.md's dispatch section: "The test database keeps an EMPTY fleet" —
+ * so every "offered" assertion here inserts its own `vans` row and cleans
+ * it up, exactly like `transfer-capacity.test.ts` does, rather than relying
+ * on any ambient fleet.
+ */
+describeWithDb('transferRoutes.featured (public, Task 7 / 1D)', () => {
+  // Reuses the module-level `caller` (same `testContext()`) — a public
+  // query needs no role, so there is nothing a second caller would add.
+  const unique = () => `${Math.floor(Math.random() * 1e9)}_${Date.now()}`;
+
+  const created = {
+    placeIds: [] as number[],
+    routeIds: [] as number[],
+    vanIds: [] as number[],
+  };
+
+  let VAN_ID = 0;
+  let SUV_ID = 0;
+
+  async function vehicleTypeIdBySlug(slug: string): Promise<number> {
+    const [row] = await getDb()
+      .select({ id: vehicleTypes.id })
+      .from(vehicleTypes)
+      .where(eq(vehicleTypes.slug, slug))
+      .limit(1);
+    if (!row) throw new Error(`No vehicle_types row for slug "${slug}" — expected from seedBase.`);
+    return row.id;
+  }
+
+  async function makePlace(opts: { isActive?: boolean } = {}) {
+    const slug = `__pqtplace__${unique()}`;
+    const [row] = await getDb()
+      .insert(transferPlaces)
+      .values({
+        name: slug,
+        nameKey: slug.toLowerCase(),
+        isActive: opts.isActive ?? true,
+        placeType: 'destination',
+      });
+    created.placeIds.push(row.insertId);
+    return row.insertId;
+  }
+
+  /** A route inserted directly, with every home-page column named explicitly. */
+  async function makeRoute(opts: {
+    fromPlaceId?: number;
+    toPlaceId?: number;
+    isActive?: boolean;
+    showOnHomePage?: boolean;
+    homePageOrder?: number;
+    homePageBadge?: string | null;
+    homePageShortDescription?: string | null;
+  }) {
+    const fromPlaceId = opts.fromPlaceId ?? (await makePlace());
+    const toPlaceId = opts.toPlaceId ?? (await makePlace());
+    const [row] = await getDb()
+      .insert(transferRoutes)
+      .values({
+        fromPlaceId,
+        toPlaceId,
+        slug: `pqt-${unique().replace('_', '-')}`,
+        isActive: opts.isActive ?? true,
+        estimatedDurationMinutes: 120,
+        showOnHomePage: opts.showOnHomePage ?? false,
+        homePageOrder: opts.homePageOrder ?? 0,
+        homePageBadge: opts.homePageBadge ?? null,
+        homePageShortDescription: opts.homePageShortDescription ?? null,
+      });
+    created.routeIds.push(row.insertId);
+    return row.insertId;
+  }
+
+  async function makePrice(routeId: number, vehicleTypeId: number, oneWayPriceCentavos: number) {
+    await getDb()
+      .insert(transferRouteVehiclePrices)
+      .values({
+        routeId,
+        vehicleTypeId,
+        oneWayPriceCentavos,
+        dayUsePriceCentavos: oneWayPriceCentavos * 2,
+      });
+  }
+
+  async function makeVan(vehicleTypeId: number) {
+    const suffix = unique();
+    const [row] = await getDb()
+      .insert(vans)
+      .values({
+        plate: `PQ${suffix}`.slice(0, 20),
+        model: 'Featured Query Fixture',
+        capacity: 10,
+        vehicleTypeId,
+        status: 'available',
+        isActive: true,
+      });
+    created.vanIds.push(row.insertId);
+    return row.insertId;
+  }
+
+  beforeAll(async () => {
+    VAN_ID = await vehicleTypeIdBySlug('van');
+    SUV_ID = await vehicleTypeIdBySlug('suv');
+  }, 60_000);
+
+  /*
+   * Vans are cleaned up after EVERY test, not only at the end of the suite
+   * — `sellableVehiclesByType()` counts the WHOLE fleet, with no per-route
+   * scoping, so a van left behind by one test (e.g. "prefers the VAN
+   * price...") would make every vehicle type of that id look sellable to
+   * every later test in this file, including the one that specifically
+   * asserts "not sellable right now". Measured directly: without this,
+   * "omits a vehicle type priced but not sellable..." failed once a VAN_ID
+   * van from an earlier test was still standing. CLAUDE.md: "The test
+   * database keeps an EMPTY fleet" — restored here after each test, exactly
+   * as `transfer-capacity.test.ts`'s own `afterEach(cleanup)` does.
+   */
+  afterEach(async () => {
+    if (created.vanIds.length > 0) {
+      await getDb().delete(vans).where(inArray(vans.id, created.vanIds));
+      created.vanIds.length = 0;
+    }
+  });
+
+  afterAll(async () => {
+    const db = getDb();
+    if (created.routeIds.length > 0) {
+      await db
+        .delete(transferRouteVehiclePrices)
+        .where(inArray(transferRouteVehiclePrices.routeId, created.routeIds));
+      await db.delete(transferRoutes).where(inArray(transferRoutes.id, created.routeIds));
+    }
+    if (created.placeIds.length > 0) {
+      await db.delete(transferPlaces).where(inArray(transferPlaces.id, created.placeIds));
+    }
+  });
+
+  it('returns an empty array when nothing is featured', async () => {
+    // Every route this suite creates defaults to showOnHomePage: false, and
+    // nothing else in this describe block has run yet at this point in
+    // file order — but asserted directly against a route made and
+    // confirmed NOT featured, rather than assumed from suite ordering.
+    const routeId = await makeRoute({ showOnHomePage: false });
+    const result = await caller.transferRoutes.featured();
+    expect(result.find((r) => r.id === routeId)).toBeUndefined();
+  });
+
+  it('returns only active, show-on-home-page routes, ordered by homePageOrder', async () => {
+    const notFeatured = await makeRoute({ showOnHomePage: false });
+    const inactiveButFeatured = await makeRoute({ showOnHomePage: true, isActive: false });
+    const second = await makeRoute({ showOnHomePage: true, homePageOrder: 5 });
+    const first = await makeRoute({ showOnHomePage: true, homePageOrder: 1 });
+
+    const result = await caller.transferRoutes.featured();
+    const ids = result.map((r) => r.id);
+
+    expect(ids).not.toContain(notFeatured);
+    expect(ids).not.toContain(inactiveButFeatured);
+    expect(ids.indexOf(first)).toBeLessThan(ids.indexOf(second));
+  });
+
+  it('prefers the VAN price as the headline figure, even when a cheaper SUV price is also offered', async () => {
+    const routeId = await makeRoute({ showOnHomePage: true, homePageBadge: 'Most booked' });
+    // The van is priced HIGHER than the SUV — if this test passed because
+    // the code simply picked the cheapest offered price, it would pick the
+    // SUV's 150000, not the van's 250000. Both vehicle types have a
+    // sellable unit, so both are genuinely "offered".
+    await makePrice(routeId, VAN_ID, 250_000);
+    await makePrice(routeId, SUV_ID, 150_000);
+    await makeVan(VAN_ID);
+    await makeVan(SUV_ID);
+
+    const result = await caller.transferRoutes.featured();
+    const card = result.find((r) => r.id === routeId);
+    expect(card).toBeDefined();
+    expect(card!.badge).toBe('Most booked');
+    expect(card!.cheapestOneWay).toEqual({ vehicleTypeName: 'Van', priceCentavos: 250_000 });
+  });
+
+  it('falls back to the lowest offered type when no van price row exists', async () => {
+    const routeId = await makeRoute({ showOnHomePage: true });
+    // No van price row at all on this route — only SUV.
+    await makePrice(routeId, SUV_ID, 320_000);
+    await makeVan(SUV_ID);
+
+    const result = await caller.transferRoutes.featured();
+    const card = result.find((r) => r.id === routeId);
+    expect(card).toBeDefined();
+    expect(card!.cheapestOneWay).toEqual({ vehicleTypeName: 'SUV', priceCentavos: 320_000 });
+  });
+
+  it('omits a vehicle type priced but not sellable, and reports "no vehicle" (null) when nothing is sellable at all', async () => {
+    const routeId = await makeRoute({ showOnHomePage: true });
+    // Priced, but no van row inserted — not sellable right now.
+    await makePrice(routeId, VAN_ID, 250_000);
+
+    const result = await caller.transferRoutes.featured();
+    const card = result.find((r) => r.id === routeId);
+    expect(card).toBeDefined();
+    expect(card!.offeredVehicles).toEqual([]);
+    expect(card!.cheapestOneWay).toBeNull();
   });
 });

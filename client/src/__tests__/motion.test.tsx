@@ -27,6 +27,7 @@ import {
   REVIEWS_FIXTURE,
   SETTINGS_FIXTURE,
   TOURS_FIXTURE,
+  TRANSFER_HOME_CARDS_FIXTURE,
 } from './helpers/fixtures';
 import { mockTrpc } from './helpers/mock-trpc';
 
@@ -173,6 +174,12 @@ describe('HomePage — card-grid sections own their own card stagger, not the wh
       'tours.list': TOURS_FIXTURE,
       'packages.list': PACKAGES_FIXTURE,
       'reviews.published': REVIEWS_FIXTURE,
+      // Task 7 (1D): PopularTransfers mounts unconditionally. A non-empty
+      // fixture is used here (not `[]`) so the section actually renders its
+      // own card grid, which is what this test needs to prove the
+      // whole-section reveal skips it too — mirroring #tours/#packages/
+      // #reviews, which also need real fixture data for the same reason.
+      'transferRoutes.featured': TRANSFER_HOME_CARDS_FIXTURE,
     });
   });
 
@@ -180,7 +187,7 @@ describe('HomePage — card-grid sections own their own card stagger, not the wh
     vi.unstubAllGlobals();
   });
 
-  it('never applies the whole-section [data-reveal] to #tours, #packages or #reviews, but does apply it to another section (#how)', async () => {
+  it('never applies the whole-section [data-reveal] to #tours, #packages, #reviews or #popular-transfers, but does apply it to another section (#how)', async () => {
     // HomePage's REVEAL_SECTIONS selector is `#main > section...` — in the
     // real app `#main` is PublicLayout's <main>. HomePage is rendered
     // standalone here, so it needs that same ancestor id for the selector to
@@ -206,10 +213,15 @@ describe('HomePage — card-grid sections own their own card stagger, not the wh
     // #how is a plain, un-excluded section — useScrollReveal must still own it.
     expect(container.querySelector('#how')).toHaveAttribute('data-reveal', '');
 
-    // The three card-grid sections must never get the whole-section treatment
-    // — if they did, their cards would double-animate (the section fading in
-    // as a block while useCardStagger fades its own cards in again inside it).
-    for (const id of ['#tours', '#packages', '#reviews']) {
+    // The card-grid sections must never get the whole-section treatment —
+    // if they did, their cards would double-animate (the section fading in
+    // as a block while useCardStagger fades its own cards in again inside
+    // it). #popular-transfers joins this list in Task 7 (1D).
+    // The heading above renders unconditionally, before the query settles
+    // — wait for a real card (its "Book this transfer" link) to replace
+    // the loading skeleton before checking [data-reveal].
+    await screen.findAllByRole('link', { name: /book this transfer/i });
+    for (const id of ['#tours', '#packages', '#reviews', '#popular-transfers']) {
       expect(container.querySelector(id), `missing ${id}`).not.toHaveAttribute('data-reveal');
     }
 
@@ -664,8 +676,9 @@ describe('.press-brand — scale(0.95) + spring-back for the WhatsApp/Viber pill
  * all in the original diff.
  *
  * ContactSection now reads `settings.openState` (task 3.4), so it needs the
- * tRPC provider and a mocked `settings.get` — it still renders no <Link>,
- * so MemoryRouter stays unnecessary here.
+ * tRPC provider and a mocked `settings.get`. It also now reads
+ * `useSearchParams()` (Task 7, 1D), which needs a Router context —
+ * MemoryRouter is no longer unnecessary here.
  */
 describe('ContactSection — WhatsApp/Viber branding (spec task 2.9I, fix round 1 F1 / BUG-077)', () => {
   beforeEach(() => {
@@ -675,7 +688,9 @@ describe('ContactSection — WhatsApp/Viber branding (spec task 2.9I, fix round 
   function renderContact() {
     return render(
       <TrpcProviders>
-        <ContactSection />
+        <MemoryRouter>
+          <ContactSection />
+        </MemoryRouter>
       </TrpcProviders>,
     );
   }

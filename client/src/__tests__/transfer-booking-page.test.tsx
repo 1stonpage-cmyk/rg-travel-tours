@@ -764,3 +764,77 @@ describe('TransferBookingPage — route picked before type (Task 1F)', () => {
     expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'auto' }));
   });
 });
+
+/**
+ * Task 7 (1D): `direction` joins `productType`/`routeId` as a URL-preselected
+ * field, so a deep link (from `PopularTransfers.tsx`'s "Book this transfer"
+ * card, or any future caller) can land on the reverse leg of a reversible
+ * route, not only the forward one. `readInitialDirection` reads literally
+ * `'reverse'` and defaults anything else — missing, malformed, or a stray
+ * value — to `'forward'`, mirroring `readInitialRouteId`/
+ * `readInitialProductType`'s own permissive-default shape.
+ */
+describe('TransferBookingPage — reads direction from the URL (Task 7, 1D)', () => {
+  it('preselects the REVERSE leg radio and submits direction: "reverse" when the URL says so', async () => {
+    let capturedHoldInput: Record<string, unknown> | undefined;
+    mockTrpc({
+      'transferRoutes.list': [REVERSIBLE],
+      'checkout.quoteTransfer': quoteByVehicleTypeId,
+      'checkout.createHoldTransfer': (input: unknown) => {
+        capturedHoldInput = input as Record<string, unknown>;
+        return HOLD_RESULT;
+      },
+      'settings.get': SETTINGS_FIXTURE,
+    });
+    renderPage('/transfer?productType=transfer_one_way&routeId=5&direction=reverse');
+
+    // The reverse leg's radio (labelled by the TO place, "Cebu City") is
+    // already checked on first render — nobody clicked anything yet.
+    const reverseRadio = await screen.findByRole('radio', { name: /^cebu city/i });
+    expect(reverseRadio).toBeChecked();
+    // And the forward leg's own radio is NOT the one checked.
+    expect(
+      screen.getByRole('radio', { name: /^mactan-cebu international airport/i }),
+    ).not.toBeChecked();
+
+    const user = userEvent.setup();
+    const vanRadio = await screen.findByRole('radio', { name: /^van/i });
+    await waitFor(() => expect(vanRadio).not.toBeDisabled());
+    await user.click(vanRadio);
+
+    const form = await screen.findByRole('form', { name: /transfer booking form/i });
+    fireEvent.change(within(form).getByLabelText(/pickup date/i), {
+      target: { value: '2026-12-15' },
+    });
+    fireEvent.change(within(form).getByLabelText(/pickup time/i), {
+      target: { value: '08:30' },
+    });
+    await user.clear(within(form).getByLabelText(/^passengers$/i));
+    await user.type(within(form).getByLabelText(/^passengers$/i), '2');
+    await user.clear(within(form).getByLabelText(/^bags$/i));
+    await user.type(within(form).getByLabelText(/^bags$/i), '1');
+    await user.type(within(form).getByLabelText(/drop-off address/i), 'Mactan Airport');
+    await user.type(within(form).getByLabelText(/flight number/i), 'PR123');
+    await user.type(within(form).getByLabelText(/airline/i), 'Philippine Airlines');
+    await user.type(within(form).getByLabelText(/full name/i), 'Juan Dela Cruz');
+    await user.type(within(form).getByLabelText(/^email$/i), 'juan@example.com');
+    await user.type(within(form).getByLabelText(/mobile number/i), '0917 123 4567');
+    await user.click(within(form).getByLabelText(/i agree/i));
+    await user.click(within(form).getByRole('button', { name: /book now/i }));
+
+    await screen.findByText(/RG-TRF001/);
+    expect(capturedHoldInput?.routeId).toBe(5);
+    expect(capturedHoldInput?.direction).toBe('reverse');
+  });
+
+  it('defaults to forward when the URL direction is missing, or anything other than the literal "reverse"', async () => {
+    mockTrpc({ 'transferRoutes.list': [REVERSIBLE] });
+    renderPage('/transfer?productType=transfer_one_way&routeId=5&direction=sideways');
+
+    const forwardRadio = await screen.findByRole('radio', {
+      name: /^mactan-cebu international airport/i,
+    });
+    expect(forwardRadio).toBeChecked();
+    expect(screen.getByRole('radio', { name: /^cebu city/i })).not.toBeChecked();
+  });
+});

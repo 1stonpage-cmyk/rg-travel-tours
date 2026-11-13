@@ -9,6 +9,7 @@
  */
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 import ContactSection from '@/components/home/ContactSection';
 import PackagesSection from '@/components/home/PackagesSection';
@@ -18,11 +19,16 @@ import { TrpcProviders } from '@/lib/trpc';
 import { PACKAGES_FIXTURE, SETTINGS_FIXTURE } from './helpers/fixtures';
 import { mockTrpc, mockTrpcError, mockTrpcRateLimited } from './helpers/mock-trpc';
 
-function renderContact() {
+function renderContact(path = '/') {
   mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
   return render(
     <TrpcProviders>
-      <ContactSection />
+      {/* Task 7 (1D): ContactSection now reads useSearchParams() to
+          preselect "Custom trip request" from a query param, so it needs a
+          Router context — it did not before. */}
+      <MemoryRouter initialEntries={[path]}>
+        <ContactSection />
+      </MemoryRouter>
     </TrpcProviders>,
   );
 }
@@ -192,6 +198,32 @@ describe('ContactSection — wired to inquiries.create', () => {
     expect(submitted).not.toHaveProperty('requestedDate');
     expect(submitted).not.toHaveProperty('pax');
     expect(submitted).not.toHaveProperty('routeDescription');
+  });
+
+  /**
+   * Task 7 (1D): `PopularTransfers.tsx`'s "request a custom trip" link lands
+   * on `/?type=transfer_custom#contact` — the query string BEFORE the hash
+   * (confirmed directly: a URL parser puts everything after `#` into the
+   * hash, so a query string placed after it never reaches `location.search`
+   * at all). This proves the receiving half: given that query param,
+   * ContactSection mounts with "Custom trip request" already selected.
+   */
+  it('preselects "Custom trip request" when the URL carries ?type=transfer_custom', async () => {
+    renderContact('/?type=transfer_custom');
+
+    const form = screen.getByRole('form', { name: /contact inquiry/i });
+    expect(within(form).getByLabelText(/custom trip request/i)).toBeChecked();
+    expect(within(form).getByLabelText(/^general message$/i)).not.toBeChecked();
+    // The transfer-only fields are already showing, not only the radio.
+    expect(within(form).getByLabelText(/travel date/i)).toBeInTheDocument();
+  });
+
+  it('defaults to "General message" when the URL carries no type param, or an unrecognised one', async () => {
+    renderContact('/?type=something-else');
+
+    const form = screen.getByRole('form', { name: /contact inquiry/i });
+    expect(within(form).getByLabelText(/^general message$/i)).toBeChecked();
+    expect(within(form).getByLabelText(/custom trip request/i)).not.toBeChecked();
   });
 
   it('disables the submit button while in flight and re-enables after', async () => {
