@@ -32,7 +32,11 @@
  */
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { and, asc, desc, eq, inArray, or } from 'drizzle-orm';
-import type { TransferPlaceType, TransferPriceSnapshot, TransferRouteCreateInput } from '@rg/shared';
+import type {
+  TransferPlaceType,
+  TransferPriceSnapshot,
+  TransferRouteCreateInput,
+} from '@rg/shared';
 import { appRouter } from '../routers/_app';
 import { getDb, getPool } from '../db/client';
 import {
