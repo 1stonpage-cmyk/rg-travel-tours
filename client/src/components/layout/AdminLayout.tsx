@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import { Link, Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { TRPCClientError } from '@trpc/client';
 import { APP_SURFACE_TITLES } from '@rg/shared';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { trpc } from '@/lib/trpc';
@@ -56,6 +57,17 @@ const CHANGE_PASSWORD_PATH = '/admin/change-password';
 /** `role` as `staffAuth.me` returns it (`ADMIN_ROLES`) - title-cased for display. */
 function roleLabel(role: string): string {
   return role.charAt(0).toUpperCase() + role.slice(1);
+}
+
+/**
+ * Task 2 (owner item 1B): true only for a 401/`UNAUTHORIZED` — an expired or
+ * missing session. A 403/`FORBIDDEN` (a valid session, wrong role) must
+ * NEVER match this: those screens already show their own role-denied state,
+ * and sending a correctly-signed-in operator back to the login screen would
+ * be the wrong fix for the wrong problem.
+ */
+function isUnauthorized(error: unknown): boolean {
+  return error instanceof TRPCClientError && error.data?.code === 'UNAUTHORIZED';
 }
 
 const SIDE_LINK =
@@ -177,6 +189,27 @@ export default function AdminLayout() {
   // Held open while a password change is owed or the identity lookup failed,
   // so a phone user can always reach Sign out.
   const drawerOpen = menuOpen || mustChange || me.isError;
+
+  // Task 2 (owner item 1B): an expired or missing session (401/
+  // `UNAUTHORIZED`) sends the operator to sign in again, carrying the path
+  // they were on so they land back there afterward, instead of the dead-end
+  // "Could not confirm your session" sidebar notice. Ordered before the
+  // `mustChange` guard below on purpose — the two are independent checks
+  // (an unauthenticated visitor has no `mustChangePassword` to read either
+  // way) and this keeps each easy to reason about on its own. All hooks
+  // above have already run unconditionally, so this early return — like the
+  // `mustChange` one below it — cannot change the hooks called on a later
+  // render of this same mount.
+  if (me.isError && isUnauthorized(me.error)) {
+    const redirect = `${location.pathname}${location.search}`;
+    return (
+      <Navigate
+        to={`/admin/login?redirect=${encodeURIComponent(redirect)}`}
+        state={{ sessionExpired: true }}
+        replace
+      />
+    );
+  }
 
   // A convenience, not the control: the server already refuses every admin
   // procedure while a password change is owed. This just stops the screens

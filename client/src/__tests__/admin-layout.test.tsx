@@ -1,11 +1,22 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it } from 'vitest';
 import AdminLayout from '@/components/layout/AdminLayout';
+import AdminLoginPage from '@/pages/admin/AdminLoginPage';
 import { TrpcProviders } from '@/lib/trpc';
 import { mockTrpc, mockTrpcError } from './helpers/mock-trpc';
 import { SETTINGS_FIXTURE } from './helpers/fixtures';
+
+/**
+ * Echoes `/admin/login`'s own pathname+search so the redirect test below can
+ * assert the encoded `?redirect=` value actually lands in the URL, not just
+ * that the login screen rendered.
+ */
+function LoginLocationEcho() {
+  const location = useLocation();
+  return <p data-testid="admin-login-location">{location.pathname + location.search}</p>;
+}
 
 /**
  * `AdminLayout` calls `trpc.staffAuth.me`/`.logout` directly (fix round 1:
@@ -30,9 +41,23 @@ function renderAt(path: string) {
     <TrpcProviders>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
+          <Route
+            path="admin/login"
+            element={
+              <>
+                <LoginLocationEcho />
+                <AdminLoginPage />
+              </>
+            }
+          />
           <Route path="admin" element={<AdminLayout />}>
             <Route index element={<p>dashboard body</p>} />
             <Route path="vans" element={<p>vans body</p>} />
+            {/* Catch-all so a deep path (e.g. /admin/bookings/42) still
+                matches this branch and mounts AdminLayout — the redirect
+                guard below runs inside AdminLayout itself, before the
+                Outlet ever renders this placeholder. */}
+            <Route path="*" element={<p>admin child body</p>} />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -104,6 +129,48 @@ describe('AdminLayout', () => {
     // let this assertion pass vacuously before the error ever resolved).
     await screen.findByRole('alert');
     expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument();
+  });
+
+  /**
+   * Task 2 (owner item 1B): an expired/missing session (401/`UNAUTHORIZED`)
+   * must send the operator to sign in again, with the path they were on so
+   * they land back there afterward — not leave them stuck on the dead-end
+   * "Could not confirm your session" sidebar notice above.
+   */
+  it('redirects to /admin/login with the intended path when staffAuth.me is UNAUTHORIZED', async () => {
+    mockTrpcError('staffAuth.me', 'UNAUTHORIZED', 'Admin sign-in required.');
+    renderAt('/admin/bookings/42');
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /staff sign-in/i })).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('admin-login-location').textContent).toBe(
+      '/admin/login?redirect=%2Fadmin%2Fbookings%2F42',
+    );
+  });
+
+  /**
+   * Pins the existing "no redirect on a 500" behavior (the test right above
+   * this one, unchanged) so this task provably does not widen the redirect
+   * to every failure — only a real 401 sends the operator away.
+   */
+  it('does not redirect when staffAuth.me fails with a non-auth error', async () => {
+    mockTrpcError('staffAuth.me', 'INTERNAL_SERVER_ERROR', 'boom');
+    renderAt('/admin/bookings');
+    expect(await screen.findByText(/could not confirm your session/i)).toBeInTheDocument();
+  });
+
+  /**
+   * The sharpest boundary this task has to keep: a valid session with the
+   * wrong role (403/`FORBIDDEN`) is a DIFFERENT, already-handled state, and
+   * must never be sent to the login screen — that would tell a correctly
+   * signed-in operator their session died when it did not. Only a real
+   * 401/`UNAUTHORIZED` redirects; this pins the 403 side of that line.
+   */
+  it('does not redirect when staffAuth.me fails with FORBIDDEN (valid session, wrong role)', async () => {
+    mockTrpcError('staffAuth.me', 'FORBIDDEN', 'Not allowed.');
+    renderAt('/admin/bookings');
+    expect(await screen.findByText(/could not confirm your session/i)).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /staff sign-in/i })).not.toBeInTheDocument();
   });
 
   /**

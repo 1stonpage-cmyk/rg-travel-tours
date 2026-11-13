@@ -37,12 +37,13 @@
  */
 import { useState, type FormEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Eye, EyeOff, Loader2, Lock } from 'lucide-react';
 import TurnstileWidget from '@/components/common/TurnstileWidget';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { sanitizeAdminRedirect } from '@/lib/admin-redirect';
 import { firstValidationMessage } from '@/lib/field-errors';
 import { SITE } from '@/lib/site';
 import { trpc } from '@/lib/trpc';
@@ -61,6 +62,24 @@ export default function AdminLoginPage() {
    */
   const passwordReset =
     (location.state as { passwordReset?: boolean } | null)?.passwordReset === true;
+  /*
+   * Task 2 (owner item 1B). `AdminLayout` redirects here with `?redirect=`
+   * set to the path the operator was on when their session turned out to be
+   * expired/missing — sanitized the same way on arrival as it was encoded
+   * on departure, so a tampered or stale link can never send a successful
+   * sign-in anywhere but `/admin` or somewhere inside `/admin`.
+   */
+  const [searchParams] = useSearchParams();
+  const safeRedirect = sanitizeAdminRedirect(searchParams.get('redirect'));
+  /*
+   * Router STATE, not a query parameter — set by `AdminLayout`'s own
+   * `<Navigate state={{ sessionExpired: true }} />`, for the same reason
+   * `passwordReset` above is state: a one-shot fact about what just
+   * happened in this tab, not a property of a URL anybody might share or
+   * reload into.
+   */
+  const sessionExpired =
+    (location.state as { sessionExpired?: boolean } | null)?.sessionExpired === true;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [revealed, setRevealed] = useState(false);
@@ -73,7 +92,9 @@ export default function AdminLoginPage() {
     onSuccess: (result) => {
       // Whatever the last person on this tab left cached is not this person's.
       queryClient.clear();
-      navigate(result.mustChangePassword ? '/admin/change-password' : '/admin', { replace: true });
+      navigate(result.mustChangePassword ? '/admin/change-password' : (safeRedirect ?? '/admin'), {
+        replace: true,
+      });
     },
     onError: () => {
       setTurnstileToken(undefined);
@@ -118,6 +139,24 @@ export default function AdminLoginPage() {
           <h2 id="staff-login-heading" className="sr-only">
             Sign in to the admin
           </h2>
+
+          {/*
+           * Task 2 (owner item 1B). Shown once, when `AdminLayout` redirected
+           * here because the previous session was expired or missing.
+           * `role="status"`, not `role="alert"`: this is informational, not
+           * a failure of anything the person just did here. Suppressed the
+           * moment a login attempt fails, same as `passwordReset` below, so
+           * the screen never shows this alongside "that email and password
+           * do not match". Identical blue/status style — no red.
+           */}
+          {sessionExpired && !login.isError ? (
+            <p
+              role="status"
+              className="bg-brand-blue-50 text-brand-blue-900 border-brand-blue-200 rounded-xl border p-3 text-sm font-medium"
+            >
+              Your session expired — please sign in again.
+            </p>
+          ) : null}
 
           {/*
            * Task 1C. Shown once, after a self-service reset lands here.
