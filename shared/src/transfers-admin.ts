@@ -276,6 +276,13 @@ export interface TransferPlaceAdminListRow extends TransferPlaceAdminRow {
   sortOrder: number;
   /** The optional, informational-only cross-link to `destinations.id`. */
   destinationId: number | null;
+  /**
+   * How many `transfer_routes` rows reference this place as either
+   * `fromPlaceId` or `toPlaceId`, active or not — a "can I retire this place
+   * without surprising anyone" signal for the admin list (Task 1C). Never
+   * consulted by sellability or capacity.
+   */
+  routeCount: number;
 }
 
 /**

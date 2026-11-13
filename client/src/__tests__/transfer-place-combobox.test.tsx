@@ -31,26 +31,29 @@ afterEach(() => {
 const OSLOB: TransferPlaceAdminListRow = {
   id: 20,
   name: 'Oslob',
-  isAirport: false,
+  placeType: 'destination',
   isActive: true,
   sortOrder: 0,
   destinationId: null,
+  routeCount: 0,
 };
 const MACTAN: TransferPlaceAdminListRow = {
   id: 10,
   name: 'Mactan-Cebu International Airport',
-  isAirport: true,
+  placeType: 'airport',
   isActive: true,
   sortOrder: 1,
   destinationId: null,
+  routeCount: 0,
 };
 const RETIRED_PORT: TransferPlaceAdminListRow = {
   id: 30,
   name: 'Hagnaya Port',
-  isAirport: false,
+  placeType: 'pier',
   isActive: false,
   sortOrder: 2,
   destinationId: null,
+  routeCount: 0,
 };
 
 /**
@@ -87,17 +90,18 @@ function renderHarness(extra: Record<string, unknown> = {}, initialValue: number
     'admin.transferPlaces.list': () => places,
     'admin.transferPlaces.create': (input: {
       name: string;
-      isAirport: boolean;
+      placeType: TransferPlaceAdminListRow['placeType'];
       destinationId: number | null;
     }) => {
       const id = 90 + places.length;
       places.push({
         id,
         name: input.name,
-        isAirport: input.isAirport,
+        placeType: input.placeType,
         isActive: true,
         sortOrder: places.length,
         destinationId: input.destinationId,
+        routeCount: 0,
       });
       return { id };
     },
@@ -178,22 +182,22 @@ describe('TransferPlaceCombobox', () => {
     expect(places).toHaveLength(startCount + 1);
     expect(places.at(-1)).toMatchObject({
       name: 'Hilutungan',
-      isAirport: false,
+      placeType: 'destination',
       destinationId: null,
     });
   });
 
-  it('marking "Is an airport" in the inline create reaches the mutation', async () => {
+  it('choosing a place type in the inline create reaches the mutation', async () => {
     const { places } = renderHarness();
     const input = screen.getByLabelText('From place');
     await user.click(input);
     await user.type(input, 'New Airport');
     await user.click(screen.getByRole('button', { name: /\+ add new place/i }));
-    await user.click(screen.getByLabelText(/is an airport/i));
+    await user.selectOptions(screen.getByLabelText(/place type/i), 'airport');
     await user.click(screen.getByRole('button', { name: /^add place$/i }));
 
     await screen.findByDisplayValue('New Airport');
-    expect(places.at(-1)).toMatchObject({ name: 'New Airport', isAirport: true });
+    expect(places.at(-1)).toMatchObject({ name: 'New Airport', placeType: 'airport' });
   });
 
   it('shows a create failure inline, without losing the typed name', async () => {
@@ -216,14 +220,6 @@ describe('TransferPlaceCombobox', () => {
     expect(screen.getByLabelText(/new place name/i)).toHaveValue('Bad Place');
   });
 
-  /**
-   * The checkbox input itself is excluded: this project's own convention
-   * (`AdminToursPage.tsx`'s "Per person"/"Active" checkboxes) puts
-   * `tap-target` on the WRAPPING `<label>`, not the 16px native checkbox box
-   * — the label is what gives the control its 44px hit area. Checking the
-   * raw checkbox input here would fail against an established, intentional
-   * pattern rather than a real gap.
-   */
   /**
    * CLAUDE.md: "No form, public or admin, may show raw Zod JSON." A
    * server-side input validation failure (the name exceeding
@@ -256,17 +252,12 @@ describe('TransferPlaceCombobox', () => {
     const input = screen.getByLabelText('From place');
     await user.click(input);
     await user.click(screen.getByRole('button', { name: /\+ add new place/i }));
-    const controls = Array.from(document.querySelectorAll<HTMLElement>('button, input')).filter(
-      (control) =>
-        control.getAttribute('aria-hidden') !== 'true' &&
-        control.getAttribute('type') !== 'checkbox',
-    );
+    const controls = Array.from(
+      document.querySelectorAll<HTMLElement>('button, input, select'),
+    ).filter((control) => control.getAttribute('aria-hidden') !== 'true');
     expect(controls.length).toBeGreaterThan(0);
     for (const control of controls) {
       expect(control.className).toMatch(/tap-target/);
     }
-    // The checkbox's own label carries the tap target instead.
-    const checkboxLabel = screen.getByText(/is an airport/i).closest('label');
-    expect(checkboxLabel?.className).toMatch(/tap-target/);
   });
 });

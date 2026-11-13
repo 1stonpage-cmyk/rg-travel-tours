@@ -40,7 +40,7 @@ import { asc, eq } from 'drizzle-orm';
 import type { Transaction } from '../../db/client';
 import { getDb } from '../../db/client';
 import { isDuplicateKeyError } from '../../db/duplicate-key';
-import { destinations, transferPlaces } from '../../db/schema';
+import { destinations, transferPlaces, transferRoutes } from '../../db/schema';
 import { writeAudit } from '../../services/audit';
 import { adminProcedure, router } from '../../trpc';
 
@@ -79,7 +79,7 @@ async function assertDestinationExists(tx: Transaction, destinationId: number | 
 type TransferPlaceSelect = typeof transferPlaces.$inferSelect;
 type TransferPlaceInsert = typeof transferPlaces.$inferInsert;
 
-function toRow(row: TransferPlaceSelect): TransferPlaceAdminListRow {
+function toRow(row: TransferPlaceSelect, routeCount: number): TransferPlaceAdminListRow {
   return {
     id: row.id,
     name: row.name,
@@ -87,17 +87,37 @@ function toRow(row: TransferPlaceSelect): TransferPlaceAdminListRow {
     isActive: row.isActive,
     sortOrder: row.sortOrder,
     destinationId: row.destinationId,
+    routeCount,
   };
 }
 
 export const adminTransferPlacesRouter = router({
-  /** Every place, inactive ones included. */
+  /** Every place, inactive ones included, with how many routes reference it. */
   list: adminProcedure('toursPricing').query(async (): Promise<TransferPlaceAdminListRow[]> => {
-    const rows = await getDb()
-      .select()
-      .from(transferPlaces)
-      .orderBy(asc(transferPlaces.sortOrder), asc(transferPlaces.name));
-    return rows.map(toRow);
+    const db = getDb();
+    const [rows, routeEndpoints] = await Promise.all([
+      db
+        .select()
+        .from(transferPlaces)
+        .orderBy(asc(transferPlaces.sortOrder), asc(transferPlaces.name)),
+      db
+        .select({ fromPlaceId: transferRoutes.fromPlaceId, toPlaceId: transferRoutes.toPlaceId })
+        .from(transferRoutes),
+    ]);
+
+    // Tallied in JS rather than a correlated subquery per place — a route
+    // can never self-reference (`fromPlaceId !== toPlaceId` is enforced at
+    // create), so counting both ends can never double-count the same route
+    // against the same place. Active and inactive routes both count: this is
+    // a "can I retire this place" signal, not a sellability question.
+    const routeCountByPlaceId = new Map<number, number>();
+    for (const endpoint of routeEndpoints) {
+      for (const placeId of [endpoint.fromPlaceId, endpoint.toPlaceId]) {
+        routeCountByPlaceId.set(placeId, (routeCountByPlaceId.get(placeId) ?? 0) + 1);
+      }
+    }
+
+    return rows.map((row) => toRow(row, routeCountByPlaceId.get(row.id) ?? 0));
   }),
 
   create: adminProcedure('toursPricing')

@@ -1,8 +1,14 @@
-import { CheckCircle2, Clock, MapPin, Plane } from 'lucide-react';
-import { formatPeso, type TransferDirection, type TransferRoutePublicRow } from '@rg/shared';
+import { CheckCircle2, Clock } from 'lucide-react';
+import {
+  formatPeso,
+  type TransferDirection,
+  type TransferPlaceType,
+  type TransferRoutePublicRow,
+} from '@rg/shared';
 import FieldError from '@/components/common/FieldError';
 import { Skeleton } from '@/components/common/Skeleton';
 import { friendlyDuration } from '@/lib/duration-words';
+import { PLACE_TYPE_ICON, PLACE_TYPE_LABEL } from '@/lib/place-types';
 import { cn } from '@/lib/utils';
 
 /**
@@ -68,7 +74,7 @@ type RouteLeg = {
   direction: TransferDirection;
   fromName: string;
   toName: string;
-  touchesAirport: boolean;
+  fromPlaceType: TransferPlaceType;
 };
 
 /**
@@ -81,14 +87,14 @@ function legsFor(route: TransferRoutePublicRow): RouteLeg[] {
     direction: 'forward',
     fromName: route.fromPlace.name,
     toName: route.toPlace.name,
-    touchesAirport: route.fromPlace.isAirport || route.toPlace.isAirport,
+    fromPlaceType: route.fromPlace.placeType,
   };
   if (!route.reverseEnabled) return [forward];
   const reverse: RouteLeg = {
     direction: 'reverse',
     fromName: route.toPlace.name,
     toName: route.fromPlace.name,
-    touchesAirport: forward.touchesAirport,
+    fromPlaceType: route.toPlace.placeType,
   };
   return [forward, reverse];
 }
@@ -141,18 +147,16 @@ export default function RoutePicker({ routes, value, onChange, isLoading, error 
                 />
                 <div className="min-w-0 flex-1">
                   <span className="text-brand-blue-900 flex min-w-0 flex-wrap items-center gap-1.5 text-sm font-semibold">
-                    <MapPin className="size-3.5 shrink-0" aria-hidden="true" />
+                    {(() => {
+                      const Icon = PLACE_TYPE_ICON[leg.fromPlaceType];
+                      return <Icon className="size-3.5 shrink-0" aria-hidden="true" />;
+                    })()}
                     <span className="min-w-0 break-words">
                       {leg.fromName}
                       {' → '}
                       {leg.toName}
                     </span>
-                    {leg.touchesAirport && (
-                      <span className="inline-flex shrink-0 items-center">
-                        <Plane className="size-3.5" aria-hidden="true" />
-                        <span className="sr-only">Airport pickup or drop-off</span>
-                      </span>
-                    )}
+                    <span className="sr-only">{PLACE_TYPE_LABEL[leg.fromPlaceType]} pickup</span>
                     {selected && (
                       <CheckCircle2
                         className="text-brand-blue-700 size-4 shrink-0"

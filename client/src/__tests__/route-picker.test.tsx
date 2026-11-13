@@ -16,8 +16,8 @@ import RoutePicker from '@/components/transfer/RoutePicker';
 
 const MACTAN: TransferRoutePublicRow = {
   id: 1,
-  fromPlace: { id: 10, name: 'Mactan-Cebu International Airport', isAirport: true },
-  toPlace: { id: 11, name: 'Moalboal', isAirport: false },
+  fromPlace: { id: 10, name: 'Mactan-Cebu International Airport', placeType: 'airport' },
+  toPlace: { id: 11, name: 'Moalboal', placeType: 'destination' },
   reverseEnabled: false,
   slug: 'mactan-airport-moalboal',
   estimatedDurationMinutes: 45,
@@ -44,8 +44,8 @@ const MACTAN: TransferRoutePublicRow = {
 
 const OSLOB: TransferRoutePublicRow = {
   id: 2,
-  fromPlace: { id: 10, name: 'Mactan-Cebu International Airport', isAirport: true },
-  toPlace: { id: 12, name: 'Oslob', isAirport: false },
+  fromPlace: { id: 10, name: 'Mactan-Cebu International Airport', placeType: 'airport' },
+  toPlace: { id: 12, name: 'Oslob', placeType: 'destination' },
   reverseEnabled: false,
   slug: 'oslob',
   estimatedDurationMinutes: 180,
@@ -58,8 +58,8 @@ const OSLOB: TransferRoutePublicRow = {
 /** A reversible route — Mactan ↔ Cebu City — used only by the direction tests below. */
 const REVERSIBLE: TransferRoutePublicRow = {
   id: 3,
-  fromPlace: { id: 10, name: 'Mactan-Cebu International Airport', isAirport: true },
-  toPlace: { id: 13, name: 'Cebu City', isAirport: false },
+  fromPlace: { id: 10, name: 'Mactan-Cebu International Airport', placeType: 'airport' },
+  toPlace: { id: 13, name: 'Cebu City', placeType: 'destination' },
   reverseEnabled: true,
   slug: 'mactan-cebu-city',
   estimatedDurationMinutes: 30,

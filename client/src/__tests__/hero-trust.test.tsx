@@ -49,8 +49,8 @@ function renderTrustBar() {
 
 const MACTAN: TransferRoutePublicRow = {
   id: 1,
-  fromPlace: { id: 10, name: 'Mactan-Cebu International Airport', isAirport: true },
-  toPlace: { id: 11, name: 'Moalboal', isAirport: false },
+  fromPlace: { id: 10, name: 'Mactan-Cebu International Airport', placeType: 'airport' },
+  toPlace: { id: 11, name: 'Moalboal', placeType: 'destination' },
   // Single-direction here on purpose — these tests exercise the HERO
   // TEASER's route dropdown, not direction picking (that is RoutePicker's
   // own test file's job), and a reversible route would put two options

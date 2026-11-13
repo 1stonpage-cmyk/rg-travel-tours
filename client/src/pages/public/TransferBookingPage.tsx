@@ -267,9 +267,13 @@ export default function TransferBookingPage() {
   const flightDetailsRequirement: FlightDetailsRequirement = (() => {
     if (!selectedRoute) return 'hidden';
     const pickupIsAirport =
-      direction === 'forward' ? selectedRoute.fromPlace.isAirport : selectedRoute.toPlace.isAirport;
+      direction === 'forward'
+        ? selectedRoute.fromPlace.placeType === 'airport'
+        : selectedRoute.toPlace.placeType === 'airport';
     const dropoffIsAirport =
-      direction === 'forward' ? selectedRoute.toPlace.isAirport : selectedRoute.fromPlace.isAirport;
+      direction === 'forward'
+        ? selectedRoute.toPlace.placeType === 'airport'
+        : selectedRoute.fromPlace.placeType === 'airport';
     if (pickupIsAirport) return 'required';
     if (dropoffIsAirport) return 'optional';
     return 'hidden';

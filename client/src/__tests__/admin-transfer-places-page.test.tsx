@@ -18,7 +18,7 @@ import { mockTrpc, mockTrpcError, resetTrpcMock } from './helpers/mock-trpc';
 
 const user = userEvent.setup();
 
-/* The "Is an airport"/"Linked destination" fields are Radix `Select`s. */
+/* The "Linked destination" field is a Radix `Select`. */
 beforeAll(() => {
   const proto = window.Element.prototype as unknown as Record<string, unknown>;
   proto.hasPointerCapture = () => false;
@@ -36,18 +36,20 @@ const DESTINATIONS = [{ id: 5, name: 'Oslob', slug: 'oslob' }];
 const AIRPORT = {
   id: 10,
   name: 'Mactan-Cebu International Airport',
-  isAirport: true,
+  placeType: 'airport',
   isActive: true,
   sortOrder: 0,
   destinationId: null,
+  routeCount: 3,
 };
 const OSLOB_PLACE = {
   id: 20,
   name: 'Oslob',
-  isAirport: false,
+  placeType: 'destination',
   isActive: false,
   sortOrder: 1,
   destinationId: 5,
+  routeCount: 0,
 };
 
 function renderPage(extra: Record<string, unknown> = {}) {
@@ -67,10 +69,12 @@ function renderPage(extra: Record<string, unknown> = {}) {
 }
 
 describe('AdminTransferPlacesPage', () => {
-  it('renders every place, active and inactive, with its airport flag and linked destination', async () => {
+  it('renders every place, active and inactive, with its place type, route count and linked destination', async () => {
     renderPage();
     await screen.findAllByText('Mactan-Cebu International Airport');
     expect(screen.getAllByText('Oslob').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Airport').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Destination').length).toBeGreaterThan(0);
 
     const states = screen.getAllByText(/^(Active|Inactive)$/).map((node) => node.textContent);
     expect(states).toContain('Active');
@@ -78,15 +82,23 @@ describe('AdminTransferPlacesPage', () => {
 
     expect(screen.getAllByText('Linked to Oslob').length).toBeGreaterThan(0);
     expect(screen.getAllByText('No linked destination').length).toBeGreaterThan(0);
+
+    // The new Routes column/line — AIRPORT carries 3, OSLOB_PLACE carries 0.
+    expect(screen.getAllByText('3').length).toBeGreaterThan(0);
   });
 
-  it('labels every input with a real <label>', async () => {
+  it('labels every input with a real <label>, and shows the place-type pills', async () => {
     renderPage();
     await screen.findAllByText('Mactan-Cebu International Airport');
     await user.click(screen.getByRole('button', { name: /add a transfer place/i }));
-    for (const name of ['Name', 'Is an airport']) {
-      expect(screen.getByLabelText(new RegExp(name, 'i'))).toBeTruthy();
+    expect(screen.getByLabelText(/^name/i)).toBeTruthy();
+
+    // The pill selector replaces the old "Is an airport" Yes/No dropdown —
+    // every place type shows as its own labelled, pressable pill.
+    for (const label of ['Airport', 'Pier / port', 'City / hotel area', 'Destination']) {
+      expect(screen.getByRole('button', { name: label })).toBeTruthy();
     }
+
     // `destinationId` and `sortOrder` are optional, so `EntityForm` tucks
     // them behind "More details" (progressive disclosure).
     await user.click(screen.getByRole('button', { name: /more details/i }));
@@ -138,7 +150,7 @@ describe('AdminTransferPlacesPage', () => {
 
     await screen.findByText(/transfer place added/i);
     expect(createCalls).toHaveLength(1);
-    expect(createCalls[0]).toMatchObject({ isAirport: false, destinationId: null });
+    expect(createCalls[0]).toMatchObject({ placeType: 'destination', destinationId: null });
   });
 
   it('shows a duplicate-name CONFLICT as a banner, not raw JSON', async () => {

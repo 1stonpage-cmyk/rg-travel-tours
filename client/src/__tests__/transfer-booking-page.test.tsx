@@ -21,8 +21,8 @@ import { mockTrpc, trpcError } from './helpers/mock-trpc';
 
 const MACTAN: TransferRoutePublicRow = {
   id: 1,
-  fromPlace: { id: 10, name: 'Mactan-Cebu International Airport', isAirport: true },
-  toPlace: { id: 11, name: 'Moalboal', isAirport: false },
+  fromPlace: { id: 10, name: 'Mactan-Cebu International Airport', placeType: 'airport' },
+  toPlace: { id: 11, name: 'Moalboal', placeType: 'destination' },
   reverseEnabled: false,
   slug: 'mactan-airport-moalboal',
   estimatedDurationMinutes: 45,
@@ -51,7 +51,7 @@ const MACTAN: TransferRoutePublicRow = {
 const REVERSIBLE: TransferRoutePublicRow = {
   ...MACTAN,
   id: 5,
-  toPlace: { id: 13, name: 'Cebu City', isAirport: false },
+  toPlace: { id: 13, name: 'Cebu City', placeType: 'destination' },
   reverseEnabled: true,
   slug: 'mactan-cebu-city',
 };
@@ -297,8 +297,8 @@ describe('TransferBookingPage — flight details, decision 3 (pickup-only, direc
   const DROPOFF_AIRPORT_ONLY: TransferRoutePublicRow = {
     ...MACTAN,
     id: 6,
-    fromPlace: { id: 20, name: 'Talisay City', isAirport: false },
-    toPlace: { id: 10, name: 'Mactan-Cebu International Airport', isAirport: true },
+    fromPlace: { id: 20, name: 'Talisay City', placeType: 'destination' },
+    toPlace: { id: 10, name: 'Mactan-Cebu International Airport', placeType: 'airport' },
     reverseEnabled: false,
     slug: 'talisay-mactan-airport',
   };
@@ -307,8 +307,8 @@ describe('TransferBookingPage — flight details, decision 3 (pickup-only, direc
   const NEITHER_AIRPORT: TransferRoutePublicRow = {
     ...MACTAN,
     id: 7,
-    fromPlace: { id: 21, name: 'Lapu-Lapu City', isAirport: false },
-    toPlace: { id: 22, name: 'Talisay City', isAirport: false },
+    fromPlace: { id: 21, name: 'Lapu-Lapu City', placeType: 'destination' },
+    toPlace: { id: 22, name: 'Talisay City', placeType: 'destination' },
     reverseEnabled: false,
     slug: 'lapu-lapu-talisay',
   };
@@ -317,8 +317,8 @@ describe('TransferBookingPage — flight details, decision 3 (pickup-only, direc
   const AIRPORT_ON_REVERSE_PICKUP: TransferRoutePublicRow = {
     ...MACTAN,
     id: 8,
-    fromPlace: { id: 23, name: 'Carcar City', isAirport: false },
-    toPlace: { id: 10, name: 'Mactan-Cebu International Airport', isAirport: true },
+    fromPlace: { id: 23, name: 'Carcar City', placeType: 'destination' },
+    toPlace: { id: 10, name: 'Mactan-Cebu International Airport', placeType: 'airport' },
     reverseEnabled: true,
     slug: 'carcar-mactan-airport',
   };
@@ -367,7 +367,7 @@ describe('TransferBookingPage — flight details, decision 3 (pickup-only, direc
    * answer DIFFERENTLY: the forward leg's pickup (`fromPlace`, Carcar City)
    * is not an airport, so flight details are optional; picking the SAME
    * route's reverse leg flips pickup to `toPlace` (the airport), making
-   * them required. A page that read `fromPlace.isAirport` regardless of
+   * them required. A page that read `fromPlace.placeType` regardless of
    * `direction` (the bug decision 3 exists to prevent) would show
    * 'optional' on both legs and never redden this.
    */

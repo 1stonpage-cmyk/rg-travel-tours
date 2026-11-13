@@ -39,26 +39,29 @@ beforeAll(() => {
 const MACTAN_AIRPORT = {
   id: 10,
   name: 'Mactan-Cebu International Airport',
-  isAirport: true,
+  placeType: 'airport',
   isActive: true,
   sortOrder: 0,
   destinationId: null,
+  routeCount: 2,
 };
 const OSLOB = {
   id: 20,
   name: 'Oslob',
-  isAirport: false,
+  placeType: 'destination',
   isActive: true,
   sortOrder: 1,
   destinationId: 5,
+  routeCount: 1,
 };
 const CEBU_CITY = {
   id: 30,
   name: 'Cebu City',
-  isAirport: false,
+  placeType: 'destination',
   isActive: false,
   sortOrder: 2,
   destinationId: 6,
+  routeCount: 1,
 };
 
 const PLACES = [MACTAN_AIRPORT, OSLOB, CEBU_CITY];
@@ -95,8 +98,13 @@ const VEHICLE_TYPES = [VAN_TYPE, SUV_TYPE, MPV_TYPE];
 
 const AIRPORT_OSLOB_ROUTE = {
   id: 1,
-  fromPlace: { id: 10, name: 'Mactan-Cebu International Airport', isAirport: true, isActive: true },
-  toPlace: { id: 20, name: 'Oslob', isAirport: false, isActive: true },
+  fromPlace: {
+    id: 10,
+    name: 'Mactan-Cebu International Airport',
+    placeType: 'airport',
+    isActive: true,
+  },
+  toPlace: { id: 20, name: 'Oslob', placeType: 'destination', isActive: true },
   reverseEnabled: true,
   slug: 'mactan-oslob',
   isActive: true,
@@ -123,8 +131,13 @@ const AIRPORT_OSLOB_ROUTE = {
 
 const AIRPORT_CEBU_ROUTE = {
   id: 2,
-  fromPlace: { id: 10, name: 'Mactan-Cebu International Airport', isAirport: true, isActive: true },
-  toPlace: { id: 30, name: 'Cebu City', isAirport: false, isActive: false },
+  fromPlace: {
+    id: 10,
+    name: 'Mactan-Cebu International Airport',
+    placeType: 'airport',
+    isActive: true,
+  },
+  toPlace: { id: 30, name: 'Cebu City', placeType: 'destination', isActive: false },
   reverseEnabled: false,
   slug: 'mactan-cebu-city',
   isActive: true,

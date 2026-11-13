@@ -68,6 +68,7 @@ import TransferPlaceCombobox from '@/components/admin/TransferPlaceCombobox';
 import { exactDuration } from '@/lib/duration-words';
 import { centavosToPesosInput, pesosToCentavos } from '@/lib/money-input';
 import { firstValidationMessage, splitFieldErrors } from '@/lib/field-errors';
+import { PLACE_TYPE_ICON } from '@/lib/place-types';
 import { trpc } from '@/lib/trpc';
 
 const CARD = 'border-brand-blue-100 rounded-[14px] border bg-white';
@@ -132,6 +133,24 @@ function priceSummaryWords(route: TransferRouteAdminRow): string {
   if (total === 0) return 'No active vehicle types yet';
   const priced = route.prices.filter((p) => p.price !== null).length;
   return `${priced} of ${total} vehicle types priced`;
+}
+
+/**
+ * "{fromIcon} {fromName} → {toIcon} {toName}" — shared by the mobile card
+ * and the desktop table so the two surfaces cannot drift (Task 1C).
+ */
+function RouteFromTo({ route }: { route: TransferRouteAdminRow }) {
+  const FromIcon = PLACE_TYPE_ICON[route.fromPlace.placeType];
+  const ToIcon = PLACE_TYPE_ICON[route.toPlace.placeType];
+  return (
+    <span className="inline-flex items-center gap-1">
+      <FromIcon className="size-3.5 shrink-0" aria-hidden="true" />
+      {route.fromPlace.name}
+      {' → '}
+      <ToIcon className="size-3.5 shrink-0" aria-hidden="true" />
+      {route.toPlace.name}
+    </span>
+  );
 }
 
 /** Which of the route's two places are inactive, in words — or `null` when both are active. */
@@ -794,7 +813,7 @@ function TransferRoutesAdmin() {
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0 max-w-full">
                     <p className="text-brand-ink max-w-full break-words font-semibold">
-                      {route.fromPlace.name} → {route.toPlace.name}
+                      <RouteFromTo route={route} />
                     </p>
                     <p className="text-brand-error break-all text-xs">{route.slug}</p>
                   </div>
@@ -855,7 +874,7 @@ function TransferRoutesAdmin() {
                   >
                     <td className="text-brand-ink px-4 py-3 font-semibold">
                       <span className="block">
-                        {route.fromPlace.name} → {route.toPlace.name}
+                        <RouteFromTo route={route} />
                       </span>
                       <span className="text-brand-error block text-xs">{route.slug}</span>
                     </td>

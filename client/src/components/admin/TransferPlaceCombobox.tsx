@@ -15,7 +15,7 @@
  *
  * The task brief is explicit: adding a place from inside the route form must
  * not leave the route form. Choosing the last option in the list opens a
- * small inline panel (name + "Is an airport" + Add/Cancel) in place of the
+ * small inline panel (name + Place type + Add/Cancel) in place of the
  * list, which calls `admin.transferPlaces.create` itself and, on success,
  * invalidates `admin.transferPlaces.list` (so every other open combobox and
  * the Places admin screen see the new row) and calls `onChange` with the new
@@ -43,8 +43,9 @@ import { useId, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import type { TransferPlaceAdminListRow } from '@rg/shared';
+import type { TransferPlaceAdminListRow, TransferPlaceType } from '@rg/shared';
 import { firstValidationMessage } from '@/lib/field-errors';
+import { PLACE_TYPE_ICON, PLACE_TYPE_OPTIONS } from '@/lib/place-types';
 import { trpc } from '@/lib/trpc';
 
 const FIELD = 'tap-target border-brand-blue-200 rounded-[10px] bg-white';
@@ -88,7 +89,7 @@ export default function TransferPlaceCombobox({
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
-  const [newIsAirport, setNewIsAirport] = useState(false);
+  const [newPlaceType, setNewPlaceType] = useState<TransferPlaceType>('destination');
   const [createError, setCreateError] = useState<string | null>(null);
 
   const create = trpc.admin.transferPlaces.create.useMutation({
@@ -97,7 +98,7 @@ export default function TransferPlaceCombobox({
       onChange(result.id);
       setCreating(false);
       setNewName('');
-      setNewIsAirport(false);
+      setNewPlaceType('destination');
       setCreateError(null);
       setOpen(false);
       setQuery('');
@@ -147,7 +148,7 @@ export default function TransferPlaceCombobox({
       setCreateError('Enter a name for the new place.');
       return;
     }
-    create.mutate({ name, isAirport: newIsAirport, destinationId: null });
+    create.mutate({ name, placeType: newPlaceType, destinationId: null });
   }
 
   const describedBy = [hint ? hintId : null, error ? errorId : null].filter(Boolean).join(' ');
@@ -192,19 +193,23 @@ export default function TransferPlaceCombobox({
 
       {open && !creating ? (
         <ul role="listbox" id={listboxId} className={LISTBOX}>
-          {filtered.map((place) => (
-            <li key={place.id}>
-              <button
-                type="button"
-                role="option"
-                aria-selected={place.id === value}
-                className={OPTION}
-                onClick={() => selectPlace(place)}
-              >
-                {placeLabel(place)}
-              </button>
-            </li>
-          ))}
+          {filtered.map((place) => {
+            const Icon = PLACE_TYPE_ICON[place.placeType];
+            return (
+              <li key={place.id}>
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={place.id === value}
+                  className={`${OPTION} flex items-center gap-1.5`}
+                  onClick={() => selectPlace(place)}
+                >
+                  <Icon className="size-4 shrink-0" aria-hidden="true" />
+                  {placeLabel(place)}
+                </button>
+              </li>
+            );
+          })}
           {filtered.length === 0 ? (
             <li className="text-brand-error px-3 py-2 text-sm">No matching places.</li>
           ) : null}
@@ -227,18 +232,21 @@ export default function TransferPlaceCombobox({
               onChange={(event) => setNewName(event.target.value)}
             />
           </div>
-          <label
-            className="tap-target flex items-center gap-2 text-sm"
-            htmlFor={`${idPrefix}-new-airport`}
-          >
-            <input
-              id={`${idPrefix}-new-airport`}
-              type="checkbox"
-              checked={newIsAirport}
-              onChange={(event) => setNewIsAirport(event.target.checked)}
-            />
-            Is an airport
-          </label>
+          <div className="space-y-1.5">
+            <Label htmlFor={`${idPrefix}-new-place-type`}>Place type</Label>
+            <select
+              id={`${idPrefix}-new-place-type`}
+              className={`${FIELD} w-full px-3 text-sm`}
+              value={newPlaceType}
+              onChange={(event) => setNewPlaceType(event.target.value as TransferPlaceType)}
+            >
+              {PLACE_TYPE_OPTIONS.map(({ value: optionValue, label }) => (
+                <option key={optionValue} value={optionValue}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </div>
           {createError ? (
             <p role="alert" className={ROW_ERROR}>
               {createError}

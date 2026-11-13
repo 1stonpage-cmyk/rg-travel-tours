@@ -23,8 +23,8 @@ import RoutePicker from '@/components/transfer/RoutePicker';
 /** Deliberately long place names, matching the QA report's example. */
 const LONG_NAMES_ROUTE: TransferRoutePublicRow = {
   id: 99,
-  fromPlace: { id: 1, name: 'Mactan-Cebu International Airport', isAirport: true },
-  toPlace: { id: 2, name: 'Cebu City', isAirport: false },
+  fromPlace: { id: 1, name: 'Mactan-Cebu International Airport', placeType: 'airport' },
+  toPlace: { id: 2, name: 'Cebu City', placeType: 'destination' },
   reverseEnabled: false,
   slug: 'mactan-airport-cebu-city-long',
   estimatedDurationMinutes: 40,

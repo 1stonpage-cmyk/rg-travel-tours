@@ -40,6 +40,7 @@ import {
   transferPlaceCreateInputSchema,
   transferPlaceUpdateInputSchema,
   type TransferPlaceAdminListRow,
+  type TransferPlaceType,
 } from '@rg/shared';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -48,6 +49,8 @@ import AdminPageHeader from '@/components/admin/AdminPageHeader';
 import EntityForm, { type EntityFormField } from '@/components/admin/EntityForm';
 import FormActions from '@/components/admin/FormActions';
 import { firstValidationMessage, splitFieldErrors } from '@/lib/field-errors';
+import { PLACE_TYPE_ICON, PLACE_TYPE_LABEL, PLACE_TYPE_OPTIONS } from '@/lib/place-types';
+import { cn } from '@/lib/utils';
 import { trpc } from '@/lib/trpc';
 
 const CARD = 'border-brand-blue-100 rounded-[14px] border bg-white';
@@ -106,12 +109,13 @@ function destinationWords(
 
 const TRANSFER_PLACE_FIELD_NAMES: ReadonlySet<string> = new Set([
   'name',
-  'isAirport',
+  'placeType',
   'destinationId',
   'sortOrder',
 ]);
 
-function scalarFields(destinations: readonly DestinationOption[]): EntityFormField[] {
+/** Just the Name field — rendered first, so the pill selector that follows reads as "Name, then Place Type." */
+function nameField(): EntityFormField[] {
   return [
     {
       name: 'name',
@@ -120,16 +124,12 @@ function scalarFields(destinations: readonly DestinationOption[]): EntityFormFie
       required: true,
       hint: 'e.g. Mactan-Cebu International Airport.',
     },
-    {
-      name: 'isAirport',
-      label: 'Is an airport',
-      type: 'select',
-      required: true,
-      options: [
-        { value: 'false', label: 'No' },
-        { value: 'true', label: 'Yes' },
-      ],
-    },
+  ];
+}
+
+/** The rest of the scalar fields — both optional, so `EntityForm` tucks them behind "More details." */
+function restFields(destinations: readonly DestinationOption[]): EntityFormField[] {
+  return [
     {
       name: 'destinationId',
       label: 'Linked destination (optional)',
@@ -153,14 +153,12 @@ function valuesFromPlace(place: TransferPlaceAdminListRow | null): Record<string
   if (!place) {
     return {
       name: '',
-      isAirport: 'false',
       destinationId: NO_DESTINATION_VALUE,
       sortOrder: '0',
     };
   }
   return {
     name: place.name,
-    isAirport: String(place.isAirport),
     destinationId:
       place.destinationId === null ? NO_DESTINATION_VALUE : String(place.destinationId),
     sortOrder: String(place.sortOrder),
@@ -195,6 +193,9 @@ function TransferPlaceForm({
 }) {
   const utils = trpc.useUtils();
   const [values, setValues] = useState<Record<string, string>>(() => valuesFromPlace(initial));
+  const [placeType, setPlaceType] = useState<TransferPlaceType>(
+    initial?.placeType ?? 'destination',
+  );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [banner, setBanner] = useState<string | null>(null);
 
@@ -231,7 +232,7 @@ function TransferPlaceForm({
     const destinationRaw = value('destinationId');
     const payload = {
       name: value('name'),
-      isAirport: value('isAirport') === 'true',
+      placeType,
       destinationId:
         destinationRaw === NO_DESTINATION_VALUE || destinationRaw === ''
           ? null
@@ -265,7 +266,54 @@ function TransferPlaceForm({
       ) : null}
 
       <EntityForm
-        fields={scalarFields(destinations)}
+        fields={nameField()}
+        values={values}
+        errors={errors}
+        pending={pending}
+        submitLabel={mode === 'edit' ? 'Save changes' : 'Add place'}
+        onChange={(name, next) => setValues((current) => ({ ...current, [name]: next }))}
+        onSubmit={submit}
+        hideSubmit
+      />
+
+      <fieldset className="space-y-2">
+        <legend className="text-sm font-medium">Place type</legend>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {PLACE_TYPE_OPTIONS.map(({ value: optionValue, label }) => {
+            const Icon = PLACE_TYPE_ICON[optionValue];
+            const selected = placeType === optionValue;
+            return (
+              <button
+                key={optionValue}
+                type="button"
+                onClick={() => setPlaceType(optionValue)}
+                aria-pressed={selected}
+                className={cn(
+                  'tap-target flex flex-col items-center gap-1.5 rounded-xl border-2 p-3 text-xs font-medium transition-colors',
+                  selected
+                    ? 'border-brand-blue-600 text-brand-blue-700 bg-brand-blue-50'
+                    : 'border-brand-blue-100 text-brand-ink hover:bg-brand-blue-50/50 bg-white',
+                )}
+              >
+                <Icon className="size-5" aria-hidden="true" />
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        <p className="text-brand-error text-xs">
+          Airport = flight fields required on pickup. Pier / port = optional ferry name and arrival
+          time.
+        </p>
+        {errors.placeType ? (
+          <p role="alert" className="text-brand-gold-800 text-xs font-medium">
+            {errors.placeType}
+          </p>
+        ) : null}
+      </fieldset>
+
+      <EntityForm
+        fields={restFields(destinations)}
         values={values}
         errors={errors}
         pending={pending}
@@ -486,29 +534,36 @@ function TransferPlacesAdmin() {
         <>
           {/* Phone: one card per place. */}
           <ul className="space-y-3 md:hidden">
-            {places.map((place) => (
-              <li key={place.id} className={`${CARD} p-4 text-sm`}>
-                <div className="flex flex-wrap items-start justify-between gap-2">
-                  <div className="min-w-0 max-w-full">
-                    <p className="text-brand-ink max-w-full break-all font-semibold">
-                      {place.name}
-                    </p>
-                    <p className="text-brand-error text-xs">
-                      {place.isAirport ? 'Airport' : 'Not an airport'}
-                    </p>
+            {places.map((place) => {
+              const Icon = PLACE_TYPE_ICON[place.placeType];
+              return (
+                <li key={place.id} className={`${CARD} p-4 text-sm`}>
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0 max-w-full">
+                      <p className="text-brand-ink flex max-w-full items-center gap-1.5 break-all font-semibold">
+                        <Icon className="size-4 shrink-0" aria-hidden="true" />
+                        {place.name}
+                      </p>
+                      <p className="text-brand-error text-xs">
+                        {PLACE_TYPE_LABEL[place.placeType]}
+                      </p>
+                    </div>
+                    <Badge className={STATUS_BADGE_CLASS[statusLabel(place.isActive)]}>
+                      {statusLabel(place.isActive)}
+                    </Badge>
                   </div>
-                  <Badge className={STATUS_BADGE_CLASS[statusLabel(place.isActive)]}>
-                    {statusLabel(place.isActive)}
-                  </Badge>
-                </div>
-                <p className="text-brand-ink mt-2">
-                  {destinationWords(place.destinationId, destinations)}
-                </p>
-                <div className="mt-3">
-                  <PlaceActions place={place} onEdit={() => setEditingId(place.id)} />
-                </div>
-              </li>
-            ))}
+                  <p className="text-brand-ink mt-2">
+                    {destinationWords(place.destinationId, destinations)}
+                  </p>
+                  <p className="text-brand-error mt-1 text-xs">
+                    {place.routeCount} {place.routeCount === 1 ? 'route' : 'routes'}
+                  </p>
+                  <div className="mt-3">
+                    <PlaceActions place={place} onEdit={() => setEditingId(place.id)} />
+                  </div>
+                </li>
+              );
+            })}
           </ul>
 
           {/* Laptop and up: the table, inside its own horizontal scroll container. */}
@@ -523,10 +578,13 @@ function TransferPlacesAdmin() {
                     Name
                   </th>
                   <th scope="col" className="px-4 py-3 font-semibold">
-                    Airport
+                    Type
                   </th>
                   <th scope="col" className="px-4 py-3 font-semibold">
                     Linked destination
+                  </th>
+                  <th scope="col" className="px-4 py-3 font-semibold">
+                    Routes
                   </th>
                   <th scope="col" className="px-4 py-3 font-semibold">
                     Status
@@ -537,26 +595,37 @@ function TransferPlacesAdmin() {
                 </tr>
               </thead>
               <tbody>
-                {places.map((place) => (
-                  <tr
-                    key={place.id}
-                    className="border-brand-blue-100 hover:bg-brand-blue-50/50 border-b transition-colors last:border-0"
-                  >
-                    <td className="text-brand-ink px-4 py-3 font-semibold">{place.name}</td>
-                    <td className="text-brand-ink px-4 py-3">{place.isAirport ? 'Yes' : 'No'}</td>
-                    <td className="text-brand-ink px-4 py-3">
-                      {destinationWords(place.destinationId, destinations)}
-                    </td>
-                    <td className="px-4 py-3">
-                      <Badge className={STATUS_BADGE_CLASS[statusLabel(place.isActive)]}>
-                        {statusLabel(place.isActive)}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <PlaceActions place={place} onEdit={() => setEditingId(place.id)} />
-                    </td>
-                  </tr>
-                ))}
+                {places.map((place) => {
+                  const Icon = PLACE_TYPE_ICON[place.placeType];
+                  return (
+                    <tr
+                      key={place.id}
+                      className="border-brand-blue-100 hover:bg-brand-blue-50/50 border-b transition-colors last:border-0"
+                    >
+                      <td className="text-brand-ink px-4 py-3 font-semibold">
+                        <span className="flex items-center gap-1.5">
+                          <Icon className="size-4 shrink-0" aria-hidden="true" />
+                          {place.name}
+                        </span>
+                      </td>
+                      <td className="text-brand-ink px-4 py-3">
+                        {PLACE_TYPE_LABEL[place.placeType]}
+                      </td>
+                      <td className="text-brand-ink px-4 py-3">
+                        {destinationWords(place.destinationId, destinations)}
+                      </td>
+                      <td className="text-brand-ink px-4 py-3">{place.routeCount}</td>
+                      <td className="px-4 py-3">
+                        <Badge className={STATUS_BADGE_CLASS[statusLabel(place.isActive)]}>
+                          {statusLabel(place.isActive)}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <PlaceActions place={place} onEdit={() => setEditingId(place.id)} />
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
