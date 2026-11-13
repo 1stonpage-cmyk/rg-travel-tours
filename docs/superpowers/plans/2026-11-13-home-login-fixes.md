@@ -38,12 +38,14 @@
 This is pure schema + migration. No application code reads the new columns yet (that is Tasks 3–7); this task only adds them and retires `is_airport`, following the exact two-stage additive/subtractive shape `0023`/`0024` already established for this schema (see that file's own header comment: splitting additive from subtractive avoids `drizzle-kit generate`'s column-rename heuristic firing on an enum swap).
 
 **Files:**
+
 - Modify: `shared/src/transfers.ts` (add `TRANSFER_PLACE_TYPES`/`TransferPlaceType`, update `TransferPlacePublicRow`)
 - Modify: `server/src/db/schema.ts` (`transferPlaces`, `transferRoutes`, `bookingTransferDetails`)
 - Create: `server/src/db/migrations/0027_<drizzle-generated-name>.sql` (additive)
 - Create: `server/src/db/migrations/0028_<drizzle-generated-name>.sql` (subtractive)
 
 **Interfaces:**
+
 - Produces: `TRANSFER_PLACE_TYPES = ['airport', 'pier', 'city', 'destination'] as const`, `type TransferPlaceType`, DB column `transfer_places.place_type` (enum, NOT NULL, default `'destination'`), `transfer_routes.show_on_home_page` (boolean NOT NULL default false), `transfer_routes.home_page_badge` (varchar(20), nullable), `transfer_routes.home_page_order` (int NOT NULL default 0), `transfer_routes.home_page_short_description` (varchar(120), nullable), `booking_transfer_details.ferry_vessel_name` (varchar(120), nullable), `booking_transfer_details.ferry_arrival_time` (varchar(5), nullable). Every later task consumes these exact names.
 
 - [ ] **Step 1: Add the shared place-type vocabulary**
@@ -195,6 +197,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 Client-only. No change to session lifetime, cookie flags, or server auth logic.
 
 **Files:**
+
 - Create: `client/src/lib/admin-redirect.ts`
 - Modify: `client/src/components/layout/AdminLayout.tsx`
 - Modify: `client/src/pages/admin/AdminLoginPage.tsx`
@@ -202,6 +205,7 @@ Client-only. No change to session lifetime, cookie flags, or server auth logic.
 - Test: `client/src/__tests__/admin-login-redirect.test.tsx` (new)
 
 **Interfaces:**
+
 - Produces: `sanitizeAdminRedirect(raw: string | null): string | null` — exported from `client/src/lib/admin-redirect.ts`. Task 2 is the only consumer; no other task depends on it.
 
 - [ ] **Step 1: Write the failing tests first**
@@ -375,7 +379,8 @@ Inside the component, beside the existing `passwordReset` read:
 ```tsx
 const [searchParams] = useSearchParams();
 const safeRedirect = sanitizeAdminRedirect(searchParams.get('redirect'));
-const sessionExpired = (location.state as { sessionExpired?: boolean } | null)?.sessionExpired === true;
+const sessionExpired =
+  (location.state as { sessionExpired?: boolean } | null)?.sessionExpired === true;
 ```
 
 Change the login mutation's `onSuccess`:
@@ -392,14 +397,16 @@ onSuccess: (result) => {
 Add a banner, directly above the existing `passwordReset` banner block, using the identical `role="status"` blue style:
 
 ```tsx
-{sessionExpired && !login.isError ? (
-  <p
-    role="status"
-    className="bg-brand-blue-50 text-brand-blue-900 border-brand-blue-200 rounded-xl border p-3 text-sm font-medium"
-  >
-    Your session expired — please sign in again.
-  </p>
-) : null}
+{
+  sessionExpired && !login.isError ? (
+    <p
+      role="status"
+      className="bg-brand-blue-50 text-brand-blue-900 border-brand-blue-200 rounded-xl border p-3 text-sm font-medium"
+    >
+      Your session expired — please sign in again.
+    </p>
+  ) : null;
+}
 ```
 
 - [ ] **Step 6: Run the tests, confirm they pass**
@@ -426,6 +433,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 Combined review (with Tasks 4–8) happens after Task 8. This task makes the schema change from Task 1 actually load-bearing: every place that reads or writes `isAirport` moves to `placeType`.
 
 **Files — production code (every file a repo-wide grep for `isAirport` found, server side):**
+
 - Modify: `shared/src/transfers-admin.ts` (`TransferPlaceAdminRow.isAirport` → `placeType`; `transferPlaceFieldsSchema.isAirport` → `placeType`)
 - Modify: `server/src/db/seed-data.ts` (`SeedTransferPlace.isAirport` → `placeType`; `SEED_TRANSFER_PLACES` entries)
 - Modify: `server/src/db/seed.ts` and/or `server/src/db/seed-demo.ts` (whichever function actually consumes `SEED_TRANSFER_PLACES` — grep `SEED_TRANSFER_PLACES` to find it; update its `isAirport` read)
@@ -436,6 +444,7 @@ Combined review (with Tasks 4–8) happens after Task 8. This task makes the sch
 - Test: `server/src/__tests__/transfer-create-booking.test.ts`, `admin-reports.test.ts`, `seed-demo-transfer-bookings.test.ts`, `admin-transfer-routes.test.ts`, `driver-transfer-trip.test.ts`, `admin-transfer-places.test.ts` (every server test file the grep found — update fixtures from `isAirport: true/false` to `placeType: 'airport'/'destination'`)
 
 **Interfaces:**
+
 - Consumes: `TRANSFER_PLACE_TYPES`/`TransferPlaceType` from Task 1.
 - Produces: `TransferPlaceAdminRow { id: number; name: string; placeType: TransferPlaceType; isActive: boolean }`, `TransferPlaceAdminListRow` (same, plus `sortOrder`, `destinationId`), `transferPlaceFieldsSchema` with `placeType: z.enum(TRANSFER_PLACE_TYPES)` replacing `isAirport: z.boolean()`. Task 4 (admin UI) and Task 6 (public UI) both consume these exact shapes.
 
@@ -599,6 +608,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 ## Task 4: Owner item 1C (client half) — Place Type pills, icons, list columns
 
 **Files:**
+
 - Modify: `client/src/pages/admin/AdminTransferPlacesPage.tsx`
 - Modify: `client/src/components/admin/TransferPlaceCombobox.tsx`
 - Modify: `client/src/pages/admin/AdminTransferRoutesPage.tsx` (route list icons, Routes-count column prerequisite — see note in Step 5)
@@ -607,6 +617,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 - Test: `client/src/__tests__/admin-transfer-places-page.test.tsx`, `route-picker.test.tsx`, `admin-transfer-routes-page.test.tsx`, `transfer-place-combobox.test.tsx` (every client test the grep found)
 
 **Interfaces:**
+
 - Consumes: `TransferPlaceAdminRow`/`TransferPlaceAdminListRow` with `placeType` (Task 3), `TransferPlacePublicRow` with `placeType` (Task 1).
 - Produces: `PLACE_TYPE_ICON: Record<TransferPlaceType, LucideIcon>` and `PLACE_TYPE_LABEL: Record<TransferPlaceType, string>`, exported from a new small file `client/src/lib/place-types.ts` so every surface (admin places list, admin route list, public route picker, public place combobox) shares one icon/label mapping rather than four independent `switch` statements drifting apart.
 
@@ -683,7 +694,7 @@ Render the pill selector between the Name field and the destination dropdown (i.
             'tap-target flex flex-col items-center gap-1.5 rounded-xl border-2 p-3 text-xs font-medium transition-colors',
             selected
               ? 'border-brand-blue-600 text-brand-blue-700 bg-brand-blue-50'
-              : 'border-brand-blue-100 text-brand-ink bg-white hover:bg-brand-blue-50/50',
+              : 'border-brand-blue-100 text-brand-ink hover:bg-brand-blue-50/50 bg-white',
           )}
         >
           <Icon className="size-5" aria-hidden="true" />
@@ -693,8 +704,7 @@ Render the pill selector between the Name field and the destination dropdown (i.
     })}
   </div>
   <p className="text-brand-error text-xs">
-    Airport = flight fields required on pickup. Pier / port = optional ferry name and arrival
-    time.
+    Airport = flight fields required on pickup. Pier / port = optional ferry name and arrival time.
   </p>
   {errors.placeType ? (
     <p role="alert" className="text-brand-gold-800 text-xs font-medium">
@@ -724,6 +734,7 @@ Update `valuesFromPlace()` — it no longer needs to seed `isAirport` into the s
 The list's data source, `admin.transferPlaces.list`, does **not** currently return a per-place route count. Add it: in `server/src/routers/admin/transfer-places.ts`'s list query, add a `routeCount` computed via a `COUNT(*)` subquery or a second grouped query against `transferRoutes` counting rows where `fromPlaceId = place.id OR toPlaceId = place.id`, and add `routeCount: number` to `TransferPlaceAdminListRow` in `shared/src/transfers-admin.ts`.
 
 In the mobile card list (line ~488-511) and the desktop table (line ~519-562) of `AdminTransferPlacesPage.tsx`:
+
 - Replace the `{place.isAirport ? 'Airport' : 'Not an airport'}` mobile line and the `{place.isAirport ? 'Yes' : 'No'}` desktop cell with the icon + `PLACE_TYPE_LABEL[place.placeType]`.
 - Add a `Routes` column/line showing `place.routeCount`.
 - Add the icon before the place name itself (mobile card's name `<p>` and the desktop table's Name `<td>`), per the spec's "The icon also shows before place names in the admin route list and the public /transfer route picker" (this line is about the ROUTE list and the public picker specifically, but showing it beside the name on the PLACES list too is the natural reading of "icon before each name" from the places-list bullet — do both).
@@ -739,19 +750,21 @@ Add the icon (from `PLACE_TYPE_ICON[place.placeType]`) before each option's rend
 In `AdminTransferRoutesPage.tsx`, both the mobile card (`{route.fromPlace.name} → {route.toPlace.name}`, line ~796) and the desktop table cell (line ~857), add the two places' icons before their respective names:
 
 ```tsx
-{(() => {
-  const FromIcon = PLACE_TYPE_ICON[route.fromPlace.placeType];
-  const ToIcon = PLACE_TYPE_ICON[route.toPlace.placeType];
-  return (
-    <span className="inline-flex items-center gap-1">
-      <FromIcon className="size-3.5 shrink-0" aria-hidden="true" />
-      {route.fromPlace.name}
-      {' → '}
-      <ToIcon className="size-3.5 shrink-0" aria-hidden="true" />
-      {route.toPlace.name}
-    </span>
-  );
-})()}
+{
+  (() => {
+    const FromIcon = PLACE_TYPE_ICON[route.fromPlace.placeType];
+    const ToIcon = PLACE_TYPE_ICON[route.toPlace.placeType];
+    return (
+      <span className="inline-flex items-center gap-1">
+        <FromIcon className="size-3.5 shrink-0" aria-hidden="true" />
+        {route.fromPlace.name}
+        {' → '}
+        <ToIcon className="size-3.5 shrink-0" aria-hidden="true" />
+        {route.toPlace.name}
+      </span>
+    );
+  })();
+}
 ```
 
 (Replace the inline IIFE with two small locals if preferred — either is fine; `TransferRouteAdminRow.fromPlace`/`.toPlace` are `TransferPlaceAdminRow`, which Task 3 already gave a `placeType` field.)
@@ -839,6 +852,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 Builds directly on Task 1's new columns and Task 3's `placeType` plumbing. Mirrors the flight-details pattern throughout, with two deliberate differences (confirmed during research, not assumptions): **"ferry arrival time" is a civil `HH:mm` clock field** (there is no existing "flight time" field to copy — the closest analog is `pickupTime`/`dayUseEndTime`, not `flightNumber`/`airline`), and the gate is `placeType === 'pier'` on the PICKUP place (mirroring the narrowed, direction-aware airport rule from owner decision 3, 2026-11-09 — not the older "either end" rule).
 
 **Files:**
+
 - Modify: `shared/src/transfers-checkout.ts` (`createHoldTransferInput` — new fields + `superRefine`)
 - Modify: `shared/src/transfers-admin.ts` (`transferQuoteConvertInput` — new optional fields, mirroring `flightNumber`/`airline`)
 - Modify: `server/src/services/transfers/create-booking.ts` (new `TRANSFER_BOOKING_SHAPE_PROBLEMS` member, `CreateTransferBookingInput` fields, the pier check beside the airport check from Task 3 Step 4, the INSERT)
@@ -852,6 +866,7 @@ Builds directly on Task 1's new columns and Task 3's `placeType` plumbing. Mirro
 - Test: new assertions alongside the existing flight-field tests in `transfer-create-booking.test.ts`, `transfer-booking-page.test.tsx`, plus one new display test per the five display surfaces (can be added to each surface's existing test file)
 
 **Interfaces:**
+
 - Consumes: `TransferPlaceType`, `placeType` (Tasks 1/3), `bookingTransferDetails.ferryVesselName`/`ferryArrivalTime` columns (Task 1).
 - Produces: `CreateTransferBookingInput.ferryVesselName: string | null`, `.ferryArrivalTime: string | null`; `TripDetail.ferryVesselName: string | null`, `.ferryArrivalTime: string | null` — read by Task 5's own display steps only (no other task depends on these).
 
@@ -997,39 +1012,41 @@ const ferryArrivalTimeError = fieldErrors?.ferryArrivalTime;
 Render a new block, structurally identical to the flight block (line ~292-338) but gated on `isOneWay && ferryDetailsVisible`, with both fields always optional:
 
 ```tsx
-{isOneWay && ferryDetailsVisible && (
-  <div className="space-y-2">
-    <p className="text-muted-foreground text-xs">
-      This trip touches a pier — if you know it, share the ferry details (optional).
-    </p>
-    <div className="grid gap-4 sm:grid-cols-2">
-      <div className="space-y-1.5">
-        <Label htmlFor="transfer-ferry-vessel-name">Ferry / vessel name (optional)</Label>
-        <Input
-          id="transfer-ferry-vessel-name"
-          name="ferryVesselName"
-          maxLength={120}
-          aria-describedby={ferryVesselNameError ? FERRY_VESSEL_NAME_ERROR_ID : undefined}
-          aria-invalid={ferryVesselNameError ? true : undefined}
-          className="tap-target"
-        />
-        <FieldError id={FERRY_VESSEL_NAME_ERROR_ID} message={ferryVesselNameError} />
-      </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="transfer-ferry-arrival-time">Ferry arrival time (optional)</Label>
-        <Input
-          id="transfer-ferry-arrival-time"
-          name="ferryArrivalTime"
-          type="time"
-          aria-describedby={ferryArrivalTimeError ? FERRY_ARRIVAL_TIME_ERROR_ID : undefined}
-          aria-invalid={ferryArrivalTimeError ? true : undefined}
-          className="tap-target"
-        />
-        <FieldError id={FERRY_ARRIVAL_TIME_ERROR_ID} message={ferryArrivalTimeError} />
+{
+  isOneWay && ferryDetailsVisible && (
+    <div className="space-y-2">
+      <p className="text-muted-foreground text-xs">
+        This trip touches a pier — if you know it, share the ferry details (optional).
+      </p>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <Label htmlFor="transfer-ferry-vessel-name">Ferry / vessel name (optional)</Label>
+          <Input
+            id="transfer-ferry-vessel-name"
+            name="ferryVesselName"
+            maxLength={120}
+            aria-describedby={ferryVesselNameError ? FERRY_VESSEL_NAME_ERROR_ID : undefined}
+            aria-invalid={ferryVesselNameError ? true : undefined}
+            className="tap-target"
+          />
+          <FieldError id={FERRY_VESSEL_NAME_ERROR_ID} message={ferryVesselNameError} />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="transfer-ferry-arrival-time">Ferry arrival time (optional)</Label>
+          <Input
+            id="transfer-ferry-arrival-time"
+            name="ferryArrivalTime"
+            type="time"
+            aria-describedby={ferryArrivalTimeError ? FERRY_ARRIVAL_TIME_ERROR_ID : undefined}
+            aria-invalid={ferryArrivalTimeError ? true : undefined}
+            className="tap-target"
+          />
+          <FieldError id={FERRY_ARRIVAL_TIME_ERROR_ID} message={ferryArrivalTimeError} />
+        </div>
       </div>
     </div>
-  </div>
-)}
+  );
+}
 ```
 
 (This matches Step 3's design: both fields are optional everywhere, so the copy says "if you know it" rather than warning of a requirement — there is no case where the server refuses a submission for a blank vessel name.)
@@ -1041,8 +1058,9 @@ Beside the existing `flightDetailsRequirement` computation (line ~267-276), add:
 ```ts
 const ferryDetailsVisible =
   selectedRoute !== null &&
-  (direction === 'forward' ? selectedRoute.fromPlace.placeType : selectedRoute.toPlace.placeType) ===
-    'pier';
+  (direction === 'forward'
+    ? selectedRoute.fromPlace.placeType
+    : selectedRoute.toPlace.placeType) === 'pier';
 ```
 
 Add `'ferryVesselName'`/`'ferryArrivalTime'` to `PLACED_HOLD_FIELDS` (line ~156-177).
@@ -1079,54 +1097,62 @@ ferryArrivalTime: string | null;
 `DriverTripPage.tsx` (after the existing flight block, line ~224):
 
 ```tsx
-{trip.ferryVesselName === null && trip.ferryArrivalTime === null ? null : (
-  <p className="text-brand-blue-900 text-base">
-    Ferry {trip.ferryVesselName ?? '(vessel not given)'}
-    {trip.ferryArrivalTime === null ? null : ` — arriving ${trip.ferryArrivalTime}`}
-  </p>
-)}
+{
+  trip.ferryVesselName === null && trip.ferryArrivalTime === null ? null : (
+    <p className="text-brand-blue-900 text-base">
+      Ferry {trip.ferryVesselName ?? '(vessel not given)'}
+      {trip.ferryArrivalTime === null ? null : ` — arriving ${trip.ferryArrivalTime}`}
+    </p>
+  );
+}
 ```
 
 `AdminBookingDetailPage.tsx` (after the existing flight block, line ~244):
 
 ```tsx
-{booking.ferryVesselName === null && booking.ferryArrivalTime === null ? null : (
-  <div className="flex gap-2">
-    <dt className="text-brand-error w-28 shrink-0">Ferry</dt>
-    <dd className="text-brand-ink font-medium">
-      {booking.ferryVesselName ?? '(vessel not given)'}
-      {booking.ferryArrivalTime === null ? null : ` — arriving ${booking.ferryArrivalTime}`}
-    </dd>
-  </div>
-)}
+{
+  booking.ferryVesselName === null && booking.ferryArrivalTime === null ? null : (
+    <div className="flex gap-2">
+      <dt className="text-brand-error w-28 shrink-0">Ferry</dt>
+      <dd className="text-brand-ink font-medium">
+        {booking.ferryVesselName ?? '(vessel not given)'}
+        {booking.ferryArrivalTime === null ? null : ` — arriving ${booking.ferryArrivalTime}`}
+      </dd>
+    </div>
+  );
+}
 ```
 
 `PortalBookingPage.tsx` (after the existing flight block, line ~200):
 
 ```tsx
-{booking.ferryVesselName === null && booking.ferryArrivalTime === null ? null : (
-  <div className="flex justify-between gap-4">
-    <dt className="text-muted-foreground">Ferry</dt>
-    <dd className="text-brand-blue-900 font-semibold">
-      {booking.ferryVesselName ?? '(vessel not given)'}
-      {booking.ferryArrivalTime === null ? null : ` — arriving ${booking.ferryArrivalTime}`}
-    </dd>
-  </div>
-)}
+{
+  booking.ferryVesselName === null && booking.ferryArrivalTime === null ? null : (
+    <div className="flex justify-between gap-4">
+      <dt className="text-muted-foreground">Ferry</dt>
+      <dd className="text-brand-blue-900 font-semibold">
+        {booking.ferryVesselName ?? '(vessel not given)'}
+        {booking.ferryArrivalTime === null ? null : ` — arriving ${booking.ferryArrivalTime}`}
+      </dd>
+    </div>
+  );
+}
 ```
 
 `BookingStatusPage.tsx` (after the existing flight block, line ~317):
 
 ```tsx
-{data.ferryVesselName !== null && (
-  <div className="flex items-center justify-between gap-3">
-    <dt className="text-muted-foreground">Ferry</dt>
-    <dd className="text-brand-blue-900 font-medium">
-      {data.ferryVesselName}
-      {data.ferryArrivalTime !== null ? ` — arriving ${data.ferryArrivalTime}` : ''}
-    </dd>
-  </div>
-)}
+{
+  data.ferryVesselName !== null && (
+    <div className="flex items-center justify-between gap-3">
+      <dt className="text-muted-foreground">Ferry</dt>
+      <dd className="text-brand-blue-900 font-medium">
+        {data.ferryVesselName}
+        {data.ferryArrivalTime !== null ? ` — arriving ${data.ferryArrivalTime}` : ''}
+      </dd>
+    </div>
+  );
+}
 ```
 
 `ManualQrPage.tsx` (after the existing flight block, line ~209): identical shape to `BookingStatusPage.tsx` above, reading `booking.ferryVesselName`/`booking.ferryArrivalTime`.
@@ -1156,12 +1182,14 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 ## Task 6: Owner item 1D — "Show on home page" admin fields + preview
 
 **Files:**
+
 - Modify: `shared/src/transfers-admin.ts` (`transferRouteFieldsSchema`, `TransferRouteAdminRow`)
 - Modify: `server/src/routers/admin/transfer-routes.ts` (select/map the four new columns)
 - Modify: `client/src/pages/admin/AdminTransferRoutesPage.tsx` (new dashed-border section + live preview)
 - Test: `admin-transfer-routes.test.ts`, `admin-transfer-routes-page.test.tsx`
 
 **Interfaces:**
+
 - Consumes: Task 1's four `transfer_routes` columns.
 - Produces: `TransferRouteAdminRow.showOnHomePage/homePageBadge/homePageOrder/homePageShortDescription` — consumed by Task 7's public router.
 
@@ -1209,7 +1237,7 @@ const [homePageShortDescription, setHomePageShortDescription] = useState<string>
 Render a new dashed-border section, after the price-card section (after line ~574, before `<FormActions>`):
 
 ```tsx
-<div className="rounded-xl border-2 border-dashed border-brand-blue-200 p-4">
+<div className="border-brand-blue-200 rounded-xl border-2 border-dashed p-4">
   <h3 className="text-brand-ink text-sm font-bold">Show on home page</h3>
   <label className="tap-target mt-2 flex items-center gap-2 text-sm" htmlFor="route-show-on-home">
     <input
@@ -1308,7 +1336,7 @@ export default function HomeTransferCardPreview({
   const Icon = PLACE_TYPE_ICON[fromPlaceType];
   return (
     <div className="border-brand-blue-100 relative max-w-xs overflow-hidden rounded-xl border bg-white">
-      <div className="bg-brand-blue-50 relative flex h-24 items-center justify-center text-xs text-brand-blue-400">
+      <div className="bg-brand-blue-50 text-brand-blue-400 relative flex h-24 items-center justify-center text-xs">
         Photo
         {badge ? (
           <span className="absolute left-2 top-2 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-900">
@@ -1326,7 +1354,9 @@ export default function HomeTransferCardPreview({
           <Icon className="size-3.5 shrink-0" aria-hidden="true" />
           {fromName} → {toName}
         </p>
-        {shortDescription ? <p className="text-brand-error mt-1 text-xs">{shortDescription}</p> : null}
+        {shortDescription ? (
+          <p className="text-brand-error mt-1 text-xs">{shortDescription}</p>
+        ) : null}
         <p className="text-brand-error mt-2 text-xs">One-way from ₱X per van</p>
       </div>
     </div>
@@ -1369,6 +1399,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 ## Task 7: Owner item 1D — Public "Popular transfers" home section
 
 **Files:**
+
 - Modify: `server/src/routers/public/transfers.ts` (new `featured` query, or extend `list` — see Step 1)
 - Modify: `shared/src/transfers.ts` (new `TransferRouteHomeCard` type)
 - Create: `client/src/components/home/PopularTransfers.tsx`
@@ -1378,6 +1409,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 - Test: new server test for the featured-route query; new client test for the home section
 
 **Interfaces:**
+
 - Consumes: `TransferRouteAdminRow`'s home-page fields via the DB (Task 6), `vehicleImageFor`/destination `imagePath` (existing), `PLACE_TYPE_ICON` (Task 4).
 - Produces: nothing consumed by a later task — this is the last public-facing piece of 1D.
 
@@ -1564,13 +1596,20 @@ export default function PopularTransfers() {
           subtitle="Fixed price per vehicle, door to door. Book online in a minute."
         />
 
-        <QueryBoundary query={query} skeleton={<PopularTransfersSkeleton />} errorTitle="Transfers could not load">
+        <QueryBoundary
+          query={query}
+          skeleton={<PopularTransfersSkeleton />}
+          errorTitle="Transfers could not load"
+        >
           {(routes) => (
             <ul ref={gridRef} className="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
               {routes.map((route) => {
                 const Icon = PLACE_TYPE_ICON[route.fromPlace.placeType];
                 return (
-                  <li key={route.id} className="border-brand-blue-100 overflow-hidden rounded-xl border bg-white">
+                  <li
+                    key={route.id}
+                    className="border-brand-blue-100 overflow-hidden rounded-xl border bg-white"
+                  >
                     <div className="bg-brand-blue-50 relative h-36 w-full">
                       {route.imagePath ? (
                         <img src={route.imagePath} alt="" className="size-full object-cover" />
@@ -1592,7 +1631,9 @@ export default function PopularTransfers() {
                         {route.toPlace.name}
                       </p>
                       {route.shortDescription ? (
-                        <p className="text-muted-foreground mt-1.5 text-sm">{route.shortDescription}</p>
+                        <p className="text-muted-foreground mt-1.5 text-sm">
+                          {route.shortDescription}
+                        </p>
                       ) : null}
                       {route.offeredVehicles.length > 0 ? (
                         <div className="mt-3 flex flex-wrap gap-1.5">
@@ -1622,8 +1663,11 @@ export default function PopularTransfers() {
                         </span>
                       </div>
                       <Button asChild size="lg" className="tap-target mt-3 w-full">
-                        <Link to={`/transfer?productType=transfer_one_way&routeId=${route.id}&direction=forward`}>
-                          Book this transfer <ArrowRight className="ml-1 size-4" aria-hidden="true" />
+                        <Link
+                          to={`/transfer?productType=transfer_one_way&routeId=${route.id}&direction=forward`}
+                        >
+                          Book this transfer{' '}
+                          <ArrowRight className="ml-1 size-4" aria-hidden="true" />
                         </Link>
                       </Button>
                     </div>
@@ -1636,7 +1680,10 @@ export default function PopularTransfers() {
 
         <p className="text-muted-foreground mt-8 text-center text-sm">
           Going somewhere else?{' '}
-          <Link to="/transfer" className="text-brand-blue-700 underline underline-offset-4 hover:no-underline">
+          <Link
+            to="/transfer"
+            className="text-brand-blue-700 underline underline-offset-4 hover:no-underline"
+          >
             See all routes
           </Link>{' '}
           or{' '}
@@ -1657,7 +1704,7 @@ function PopularTransfersSkeleton() {
   return (
     <ul className="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
       {Array.from({ length: 3 }, (_, i) => (
-        <li key={i} className="h-80 animate-pulse rounded-xl bg-brand-blue-50" />
+        <li key={i} className="bg-brand-blue-50 h-80 animate-pulse rounded-xl" />
       ))}
     </ul>
   );
@@ -1741,6 +1788,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 ## Task 8: Owner item 1A — Hide empty reviews section + nav link
 
 **Files:**
+
 - Modify: `server/src/content/settings.ts` (`SettingsPayload`, `toSettingsPayload`, `getSettingsPayload`)
 - Modify: `client/src/components/home/ReviewsSection.tsx` (render nothing when `hasRealReviews` is false)
 - Modify: `client/src/pages/public/HomePage.tsx` (don't mount `<ReviewsSection>` at all when hidden — mirrors the existing `showTours` pattern)
@@ -1750,6 +1798,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 - Test: `server/src/__tests__/public-queries.test.ts` or a new settings test (server), `layout.test.tsx` + `home.test.tsx` (client)
 
 **Interfaces:**
+
 - Consumes: `realAggregate()` from `server/src/services/ratings.ts` (existing).
 - Produces: `SettingsPayload.hasRealReviews: boolean`, `visibleNav(showTours: boolean, hasRealReviews: boolean)`.
 
@@ -1827,10 +1876,12 @@ const nav = visibleNav(settings?.showTours ?? false, settings?.hasRealReviews ??
 Mirror the existing `showTours`-gated sections exactly: in `HomePage.tsx`, read `settings?.hasRealReviews ?? false` and wrap the mount:
 
 ```tsx
-{settings?.hasRealReviews && <ReviewsSection />}
+{
+  settings?.hasRealReviews && <ReviewsSection />;
+}
 ```
 
-This makes `ReviewsSection.tsx` itself simpler, not more complex — it no longer needs to handle a "zero reviews" render path at all for the SITE-WIDE case, since it is never mounted when `hasRealReviews` is false. Its existing `EmptyState` fallback (`isEmpty={(data) => data.items.length === 0}`) stays exactly as is for a narrower, legitimate edge case: `hasRealReviews` is true (at least one real review exists SITE-WIDE) but a tour-scoped call to this same component (if one exists elsewhere, e.g. a tour detail page's own reviews block uses a *different* component, `ReviewsBlock.tsx`, per the research — confirm `ReviewsSection.tsx` really is home-page-only before deciding whether to touch its empty-state fallback at all; if it is home-page-only, the `EmptyState` branch becomes dead code once this section is conditionally mounted, and may be deleted — but only if a direct repo-wide usage check confirms `ReviewsSection` has no caller besides `HomePage.tsx`).
+This makes `ReviewsSection.tsx` itself simpler, not more complex — it no longer needs to handle a "zero reviews" render path at all for the SITE-WIDE case, since it is never mounted when `hasRealReviews` is false. Its existing `EmptyState` fallback (`isEmpty={(data) => data.items.length === 0}`) stays exactly as is for a narrower, legitimate edge case: `hasRealReviews` is true (at least one real review exists SITE-WIDE) but a tour-scoped call to this same component (if one exists elsewhere, e.g. a tour detail page's own reviews block uses a _different_ component, `ReviewsBlock.tsx`, per the research — confirm `ReviewsSection.tsx` really is home-page-only before deciding whether to touch its empty-state fallback at all; if it is home-page-only, the `EmptyState` branch becomes dead code once this section is conditionally mounted, and may be deleted — but only if a direct repo-wide usage check confirms `ReviewsSection` has no caller besides `HomePage.tsx`).
 
 ```bash
 grep -rln "ReviewsSection" client/src/
@@ -1873,6 +1924,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 Dispatch a dedicated review pass (per `superpowers:requesting-code-review`/`receiving-code-review`) covering every change from Task 3 through Task 8 — the owner's instruction is "one combined Sonnet review for the rest," i.e. everything except the migration (Task 1) and the admin-session redirect (Task 2), which already had their own dedicated Opus reviews.
 
 Particular things to verify, flagged during planning:
+
 - Every `isAirport` reference is gone (not just renamed in the files this plan named — run `grep -rln "isAirport" server/ client/ shared/` and confirm zero production-code hits; test-file hits are expected to be gone too after Task 3/4's cleanup).
 - The ferry-vessel-name field really is optional end-to-end (Task 5 Step 3's explicit design choice, matching the spec's own word "optional") — confirm no pier-required enum member, message, or throw site was added anywhere.
 - `TRANSFER_BOOKING_SHAPE_PROBLEMS`/`TRANSFER_SHAPE_MESSAGES` stay in lockstep (TypeScript's own `Record<...>` typing should already force this, but confirm `pnpm typecheck` was actually green, not merely assumed).

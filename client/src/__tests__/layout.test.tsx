@@ -242,9 +242,7 @@ describe('nav hides "Reviews" while hasRealReviews is false, in all three places
     const user = userEvent.setup();
 
     const desktopNav = screen.getByRole('navigation', { name: /^main$/i });
-    expect(
-      await within(desktopNav).findByRole('link', { name: /^reviews$/i }),
-    ).toBeInTheDocument();
+    expect(await within(desktopNav).findByRole('link', { name: /^reviews$/i })).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /open menu/i }));
     const mobileNav = screen.getByRole('navigation', { name: /^mobile$/i });
