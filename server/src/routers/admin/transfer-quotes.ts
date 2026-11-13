@@ -268,6 +268,8 @@ export const adminTransferQuotesRouter = router({
             dropoffMapUrl: input.dropoffMapUrl ?? null,
             flightNumber: input.flightNumber ?? null,
             airline: input.airline ?? null,
+            ferryVesselName: input.ferryVesselName ?? null,
+            ferryArrivalTime: input.ferryArrivalTime ?? null,
             leadPhone: input.leadPhone,
             priceCentavos: input.priceCentavos,
           },

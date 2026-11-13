@@ -235,6 +235,14 @@ export interface CreateTransferBookingInput {
   /** One-way only (an airport trip in practice — see {@link assertBookableShape}). */
   flightNumber: string | null;
   airline: string | null;
+  /**
+   * One-way only (a pier/port trip in practice). Unlike `flightNumber`/
+   * `airline`, there is no corresponding required-on-pier-pickup check —
+   * both fields are optional everywhere; the only refusal is the day-use
+   * mirror in {@link assertBookableShape}.
+   */
+  ferryVesselName: string | null;
+  ferryArrivalTime: string | null;
   requests: string | null;
   payMode: PayMode;
   couponCode?: string;
@@ -315,6 +323,15 @@ export const TRANSFER_BOOKING_SHAPE_PROBLEMS = [
    * ternary in `createTransferBooking()` where this is thrown.
    */
   'flight_details_required_for_airport_route',
+  /**
+   * A day-use hire that carries ferry details — mirrors
+   * `flight_details_on_day_use` exactly, and checked from the input alone,
+   * before the transaction opens. Unlike the flight pair, there is no
+   * pier-pickup counterpart to `flight_details_required_for_airport_route`:
+   * both ferry fields stay optional everywhere, so this is the only new
+   * refusal this reason's pair introduces.
+   */
+  'ferry_details_on_day_use',
 ] as const;
 export type TransferBookingShapeProblem = (typeof TRANSFER_BOOKING_SHAPE_PROBLEMS)[number];
 
@@ -585,6 +602,9 @@ export function assertBookableShape(input: CreateTransferBookingInput): ParsedTi
   }
   if (input.flightNumber !== null || input.airline !== null) {
     refuse('flight_details_on_day_use', 'a day-use hire carries no flight');
+  }
+  if (input.ferryVesselName !== null || input.ferryArrivalTime !== null) {
+    refuse('ferry_details_on_day_use', 'a day-use hire carries no ferry leg');
   }
 
   return { pickupTimeMinutes, dayUseEndTimeMinutes };
@@ -906,6 +926,8 @@ export async function createTransferBooking(
           luggageCount: input.luggageCount,
           flightNumber: input.flightNumber,
           airline: input.airline,
+          ferryVesselName: input.ferryVesselName,
+          ferryArrivalTime: input.ferryArrivalTime,
           customRouteDescription: input.customRouteDescription,
           // Both frozen from the exact values the checks above were made with.
           bufferMinutesUsed: operations.bufferMinutes,

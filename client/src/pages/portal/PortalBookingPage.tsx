@@ -198,6 +198,17 @@ export default function PortalBookingPage() {
                 </dd>
               </div>
             )}
+            {booking.ferryVesselName === null && booking.ferryArrivalTime === null ? null : (
+              <div className="flex justify-between gap-4">
+                <dt className="text-muted-foreground">Ferry</dt>
+                <dd className="text-brand-blue-900 font-semibold">
+                  {booking.ferryVesselName ?? '(vessel not given)'}
+                  {booking.ferryArrivalTime === null
+                    ? null
+                    : ` — arriving ${booking.ferryArrivalTime}`}
+                </dd>
+              </div>
+            )}
           </dl>
         </section>
       )}

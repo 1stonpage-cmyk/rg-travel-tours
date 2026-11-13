@@ -283,6 +283,8 @@ type TransferGuestFields = {
   dropoffAddress: string | null;
   flightNumber: string | null;
   airline: string | null;
+  ferryVesselName: string | null;
+  ferryArrivalTime: string | null;
   vehicleTypeLabel: string | null;
 };
 
@@ -604,6 +606,8 @@ const TRANSFER_SHAPE_MESSAGES: Record<TransferBookingShapeProblem, string> = {
   day_use_end_time_on_one_way: 'A one-way transfer has no end time — please leave it blank.',
   flight_details_on_day_use:
     'A day-use hire carries no flight — please leave the flight details blank.',
+  ferry_details_on_day_use:
+    'A day-use hire carries no ferry leg — please leave the ferry details blank.',
   pax_not_positive: 'Enter how many passengers are travelling.',
   luggage_count_negative: 'Enter how many bags you are bringing (0 if none).',
   staff_price_not_whole_centavos: 'We could not price that transfer. Please contact us.',
@@ -1214,6 +1218,8 @@ export const checkoutRouter = router({
           dropoffMapUrl: input.dropoffMapUrl ?? null,
           flightNumber: input.flightNumber ?? null,
           airline: input.airline ?? null,
+          ferryVesselName: input.ferryVesselName ?? null,
+          ferryArrivalTime: input.ferryArrivalTime ?? null,
           requests: input.requests ?? null,
           payMode: input.payMode,
           couponCode: input.couponCode,
@@ -1486,6 +1492,8 @@ export const checkoutRouter = router({
             dropoffAddress: bookingTransferDetails.dropoffAddress,
             flightNumber: bookingTransferDetails.flightNumber,
             airline: bookingTransferDetails.airline,
+            ferryVesselName: bookingTransferDetails.ferryVesselName,
+            ferryArrivalTime: bookingTransferDetails.ferryArrivalTime,
             customRouteDescription: bookingTransferDetails.customRouteDescription,
             direction: bookingTransferDetails.direction,
             fromPlaceName: checkoutFromPlace.name,
@@ -1530,6 +1538,8 @@ export const checkoutRouter = router({
           dropoffAddress: booking.dropoffAddress,
           flightNumber: booking.flightNumber,
           airline: booking.airline,
+          ferryVesselName: booking.ferryVesselName,
+          ferryArrivalTime: booking.ferryArrivalTime,
           vehicleTypeLabel: booking.vehicleTypeLabel,
           // `bookings.tour_date` reads back as a `Date` at UTC midnight of
           // the civil date (`create-hold.ts`'s own note: the pool runs at
@@ -1616,6 +1626,8 @@ export const checkoutRouter = router({
             dropoffAddress: bookingTransferDetails.dropoffAddress,
             flightNumber: bookingTransferDetails.flightNumber,
             airline: bookingTransferDetails.airline,
+            ferryVesselName: bookingTransferDetails.ferryVesselName,
+            ferryArrivalTime: bookingTransferDetails.ferryArrivalTime,
             customRouteDescription: bookingTransferDetails.customRouteDescription,
             direction: bookingTransferDetails.direction,
             fromPlaceName: checkoutFromPlace.name,
@@ -1662,6 +1674,8 @@ export const checkoutRouter = router({
           dropoffAddress: booking.dropoffAddress,
           flightNumber: booking.flightNumber,
           airline: booking.airline,
+          ferryVesselName: booking.ferryVesselName,
+          ferryArrivalTime: booking.ferryArrivalTime,
           vehicleTypeLabel: booking.vehicleTypeLabel,
           date: manilaCivilDate(booking.tourDate),
           pax: booking.pax,

@@ -479,6 +479,8 @@ describeWithDb('portal.booking — the rest of the page', () => {
       'driver',
       'dropoffAddress',
       'dropoffMapsUrl',
+      'ferryArrivalTime',
+      'ferryVesselName',
       'flightNumber',
       'holdExpiresAt',
       'leadName',

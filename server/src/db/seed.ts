@@ -812,6 +812,8 @@ export async function upsertDemoTransferBookings(db: Db, now: Date = new Date())
         dropoffMapUrl: null,
         flightNumber: recipe.flightNumber,
         airline: recipe.airline,
+        ferryVesselName: null,
+        ferryArrivalTime: null,
         requests: null,
         payMode: 'deposit',
         lead: {

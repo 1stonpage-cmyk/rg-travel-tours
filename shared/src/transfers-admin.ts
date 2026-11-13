@@ -615,6 +615,11 @@ export const transferQuoteConvertInput = z
     /** One-way only, refused on a day-use hire by the `superRefine` below. */
     flightNumber: z.string().max(20, 'Enter a shorter flight number.').optional(),
     airline: z.string().max(80, 'Enter a shorter airline name.').optional(),
+    ferryVesselName: z.string().max(120, 'Enter a shorter vessel name.').optional(),
+    ferryArrivalTime: z
+      .string()
+      .regex(CLOCK_TIME_PATTERN, 'Enter an arrival time as HH:mm, like 14:30.')
+      .optional(),
     /**
      * A phone number staff can call, even when the guest gave none — see this
      * schema's own header note. Normalises exactly as `createHoldInput.lead`'s
@@ -664,7 +669,12 @@ export const transferQuoteConvertInput = z
           message: 'The end time must be later than the pickup time.',
         });
       }
-      for (const field of ['flightNumber', 'airline'] as const) {
+      for (const field of [
+        'flightNumber',
+        'airline',
+        'ferryVesselName',
+        'ferryArrivalTime',
+      ] as const) {
         if (value[field] !== undefined) {
           ctx.addIssue({
             code: 'custom',

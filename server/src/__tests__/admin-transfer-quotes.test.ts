@@ -289,6 +289,8 @@ function serviceInput(
     dropoffMapUrl: null,
     flightNumber: null,
     airline: null,
+    ferryVesselName: null,
+    ferryArrivalTime: null,
     leadPhone: '09171234567',
     priceCentavos: 450_000,
     ...over,

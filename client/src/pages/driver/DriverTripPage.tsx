@@ -222,6 +222,13 @@ function TripScreen({
             {trip.airline === null ? null : ` (${trip.airline})`}
           </p>
         )}
+        {/* Pier/port pickups only (1E, mirroring the flight block above) — null otherwise. */}
+        {trip.ferryVesselName === null && trip.ferryArrivalTime === null ? null : (
+          <p className="text-brand-blue-900 text-base">
+            Ferry {trip.ferryVesselName ?? '(vessel not given)'}
+            {trip.ferryArrivalTime === null ? null : ` — arriving ${trip.ferryArrivalTime}`}
+          </p>
+        )}
         {/* Null for a tour; every transfer carries a count, zero included (T22). */}
         {trip.luggageCount === null ? null : (
           <p className="text-brand-blue-900 text-base">

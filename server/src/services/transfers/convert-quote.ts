@@ -62,6 +62,8 @@ export interface ConvertTransferQuoteInput {
   dropoffMapUrl: string | null;
   flightNumber: string | null;
   airline: string | null;
+  ferryVesselName: string | null;
+  ferryArrivalTime: string | null;
   /**
    * Pre-filled from `inquiries.phone` by the client when present (Task T20),
    * typed by staff otherwise — see `transferQuoteConvertInput`'s own header
@@ -234,6 +236,8 @@ export async function convertTransferQuote(
       dropoffMapUrl: input.dropoffMapUrl,
       flightNumber: input.flightNumber,
       airline: input.airline,
+      ferryVesselName: input.ferryVesselName,
+      ferryArrivalTime: input.ferryArrivalTime,
       requests: inquiry.message,
       // Nobody is at checkout yet — §6 step 5's own description of what
       // happens next ("deposit online/QR or wait for cash collection").

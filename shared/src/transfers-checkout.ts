@@ -163,6 +163,16 @@ export const createHoldTransferInput = quoteTransferInput
      */
     flightNumber: z.string().max(20, 'Enter a shorter flight number.').optional(),
     airline: z.string().max(80, 'Enter a shorter airline name.').optional(),
+    /**
+     * One-way only, refused on a day-use hire by the `superRefine` below —
+     * the pier/port counterpart of `flightNumber`/`airline`. Optional at this
+     * Zod layer even on a one-way trip to a pier, for the same reason
+     * `flightNumber` is: whether the pickup is actually a pier is resolved
+     * server-side, after the catalog read.
+     */
+    ferryVesselName: z.string().max(120, 'Enter a shorter vessel name.').optional(),
+    /** Civil `HH:mm`, Asia/Manila — same pattern as `pickupTime`/`dayUseEndTime`, not a copy of `flightNumber`. */
+    ferryArrivalTime: clockTimeField('Enter an arrival time as HH:mm, like 14:30.').optional(),
     requests: z
       .string()
       .max(2000, 'Please shorten your notes (up to 2,000 characters).')
@@ -232,6 +242,15 @@ export const createHoldTransferInput = quoteTransferInput
             code: 'custom',
             path: [field],
             message: 'A day-use hire carries no flight — please leave the flight details blank.',
+          });
+        }
+      }
+      for (const field of ['ferryVesselName', 'ferryArrivalTime'] as const) {
+        if (value[field] !== undefined) {
+          ctx.addIssue({
+            code: 'custom',
+            path: [field],
+            message: 'A day-use hire carries no ferry leg — please leave the ferry details blank.',
           });
         }
       }

@@ -45,6 +45,7 @@ function show(
   productType: 'transfer_one_way' | 'transfer_day_use',
   error?: unknown,
   flightDetailsRequirement: 'required' | 'optional' | 'hidden' = 'optional',
+  ferryDetailsVisible = false,
 ) {
   return render(
     <TransferGuestDetailsForm
@@ -53,6 +54,7 @@ function show(
       onPayModeChange={() => {}}
       amountDueNowCentavos={AMOUNT_DUE_NOW}
       flightDetailsRequirement={flightDetailsRequirement}
+      ferryDetailsVisible={ferryDetailsVisible}
       error={error}
     />,
   );
@@ -96,6 +98,7 @@ describe('TransferGuestDetailsForm', () => {
         onPayModeChange={onPayModeChange}
         amountDueNowCentavos={AMOUNT_DUE_NOW}
         flightDetailsRequirement="optional"
+        ferryDetailsVisible={false}
       />,
     );
     await user.click(screen.getByLabelText(/pay in full/i));

@@ -359,6 +359,9 @@ export interface TripDetail {
   /** Airport pickups only. NULL for a tour, a day-use hire, or a non-airport one-way leg. */
   flightNumber: string | null;
   airline: string | null;
+  /** Pier/port pickups only. NULL otherwise. */
+  ferryVesselName: string | null;
+  ferryArrivalTime: string | null;
   /** `booking_notes.note`, oldest first. Text only. */
   officeNotes: string[];
   payment: PaymentBoxState;

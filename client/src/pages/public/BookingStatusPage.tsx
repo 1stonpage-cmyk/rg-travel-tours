@@ -315,6 +315,17 @@ export default function BookingStatusPage() {
                             </dd>
                           </div>
                         )}
+                        {data.ferryVesselName !== null && (
+                          <div className="flex items-center justify-between gap-3">
+                            <dt className="text-muted-foreground">Ferry</dt>
+                            <dd className="text-brand-blue-900 font-medium">
+                              {data.ferryVesselName}
+                              {data.ferryArrivalTime !== null
+                                ? ` — arriving ${data.ferryArrivalTime}`
+                                : ''}
+                            </dd>
+                          </div>
+                        )}
                       </dl>
                     </CardContent>
                   </Card>

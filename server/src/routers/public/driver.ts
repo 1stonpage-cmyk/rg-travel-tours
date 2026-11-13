@@ -326,6 +326,8 @@ async function loadDriverTrip(driverId: number, bookingId: number) {
       luggageCount: bookingTransferDetails.luggageCount,
       flightNumber: bookingTransferDetails.flightNumber,
       airline: bookingTransferDetails.airline,
+      ferryVesselName: bookingTransferDetails.ferryVesselName,
+      ferryArrivalTime: bookingTransferDetails.ferryArrivalTime,
       customRouteDescription: bookingTransferDetails.customRouteDescription,
       direction: bookingTransferDetails.direction,
       fromPlaceName: driverFromPlace.name,
@@ -467,6 +469,8 @@ export async function driverTripDetail(driverId: number, bookingId: number): Pro
     luggageCount: trip.luggageCount,
     flightNumber: trip.flightNumber,
     airline: trip.airline,
+    ferryVesselName: trip.ferryVesselName,
+    ferryArrivalTime: trip.ferryArrivalTime,
     officeNotes: notes.map((row) => row.note),
     payment,
     /** Task 3's answer, unchanged — `total` counts the trip-start stop. */

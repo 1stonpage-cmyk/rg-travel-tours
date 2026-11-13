@@ -238,6 +238,8 @@ function serviceInput(inquiryId: number): ConvertTransferQuoteInput {
     dropoffMapUrl: null,
     flightNumber: null,
     airline: null,
+    ferryVesselName: null,
+    ferryArrivalTime: null,
     leadPhone: '09171234567',
     priceCentavos: 500_000,
   };

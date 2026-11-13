@@ -242,6 +242,17 @@ export default function AdminBookingDetailPage() {
                 </dd>
               </div>
             )}
+            {booking.ferryVesselName === null && booking.ferryArrivalTime === null ? null : (
+              <div className="flex gap-2">
+                <dt className="text-brand-error w-28 shrink-0">Ferry</dt>
+                <dd className="text-brand-ink font-medium">
+                  {booking.ferryVesselName ?? '(vessel not given)'}
+                  {booking.ferryArrivalTime === null
+                    ? null
+                    : ` — arriving ${booking.ferryArrivalTime}`}
+                </dd>
+              </div>
+            )}
           </dl>
         </section>
       )}

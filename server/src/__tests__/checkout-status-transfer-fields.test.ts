@@ -156,6 +156,8 @@ function baseInput(over: Partial<CreateTransferBookingInput> = {}): CreateTransf
     dropoffMapUrl: null,
     flightNumber: '5J456',
     airline: 'Cebu Pacific',
+    ferryVesselName: null,
+    ferryArrivalTime: null,
     requests: null,
     payMode: 'deposit',
     lead: {

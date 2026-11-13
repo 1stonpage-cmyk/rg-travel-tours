@@ -93,6 +93,32 @@ describe('transferQuoteConvertInput', () => {
     }
   });
 
+  /** Task 5 (owner item 1E) — the ferry counterpart of the flight test above. */
+  it('refuses a day-use request that carries ferry details', () => {
+    const result = transferQuoteConvertInput.safeParse(
+      dayUsePayload({ ferryVesselName: 'MV Starlite', ferryArrivalTime: '14:30' }),
+    );
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const paths = result.error.issues.map((issue) => issue.path.join('.'));
+      expect(paths).toContain('ferryVesselName');
+      expect(paths).toContain('ferryArrivalTime');
+    }
+  });
+
+  /**
+   * Unlike the flight pair, there is no required-on-pier-route counterpart
+   * to prove here — a one-way request with ferry details and no route-type
+   * gate at all is simply accepted, which this proves by acceptance rather
+   * than refusal.
+   */
+  it('accepts a one-way request carrying ferry details', () => {
+    const result = transferQuoteConvertInput.safeParse(
+      oneWayPayload({ ferryVesselName: 'MV Starlite', ferryArrivalTime: '14:30' }),
+    );
+    expect(result.success).toBe(true);
+  });
+
   it('refuses a one-way request that carries a dayUseEndTime', () => {
     const result = transferQuoteConvertInput.safeParse(oneWayPayload({ dayUseEndTime: '18:00' }));
     expect(result.success).toBe(false);

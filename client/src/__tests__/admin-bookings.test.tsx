@@ -88,6 +88,8 @@ const DETAIL = {
   luggageCount: null,
   flightNumber: null,
   airline: null,
+  ferryVesselName: null,
+  ferryArrivalTime: null,
   tourDate: '2026-12-25',
   pax: 3,
   payMode: 'full',
@@ -184,6 +186,16 @@ const TRANSFER_DETAIL = {
   luggageCount: 2,
   flightNumber: '5J123',
   airline: 'Cebu Pacific',
+};
+
+/** Task 5 (owner item 1E) — a pier pickup, ferry fields set. */
+const PIER_TRANSFER_DETAIL = {
+  ...TRANSFER_DETAIL,
+  ref: 'RG-DDDDD4',
+  flightNumber: null,
+  airline: null,
+  ferryVesselName: 'MV Starlite',
+  ferryArrivalTime: '14:30',
 };
 
 function renderList() {
@@ -360,6 +372,21 @@ describe('AdminBookingDetailPage', () => {
     );
     expect(within(section).getByText('2 bags')).toBeInTheDocument();
     expect(within(section).getByText('5J123 (Cebu Pacific)')).toBeInTheDocument();
+    expect(within(section).queryByText(/^MV Starlite/)).not.toBeInTheDocument();
+  });
+
+  /** Task 5 (owner item 1E) — the ferry counterpart of the flight assertion above. */
+  it('shows the ferry vessel name and arrival time for a pier pickup, and no flight line', async () => {
+    mockTrpc({
+      'admin.bookings.detail': PIER_TRANSFER_DETAIL,
+      'staffAuth.me': { userId: 1, role: 'owner' },
+    });
+    renderDetail();
+
+    await screen.findByRole('heading', { name: 'RG-DDDDD4' });
+    const section = screen.getByRole('region', { name: 'Transfer' });
+    expect(within(section).getByText('MV Starlite — arriving 14:30')).toBeInTheDocument();
+    expect(within(section).queryByText(/^5J123/)).not.toBeInTheDocument();
   });
 
   it('draws no transfer section for a tour booking', async () => {

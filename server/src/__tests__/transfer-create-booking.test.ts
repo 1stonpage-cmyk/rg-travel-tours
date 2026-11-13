@@ -367,6 +367,8 @@ function transferInput(over: {
   luggageCount?: number;
   flightNumber?: string | null;
   airline?: string | null;
+  ferryVesselName?: string | null;
+  ferryArrivalTime?: string | null;
   payMode?: PayMode;
   couponCode?: string;
   email?: string;
@@ -400,6 +402,8 @@ function transferInput(over: {
     dropoffMapUrl: null,
     flightNumber: over.flightNumber === undefined ? '5J 561' : over.flightNumber,
     airline: over.airline === undefined ? 'Cebu Pacific' : over.airline,
+    ferryVesselName: over.ferryVesselName === undefined ? null : over.ferryVesselName,
+    ferryArrivalTime: over.ferryArrivalTime === undefined ? null : over.ferryArrivalTime,
     requests: 'One child seat please.',
     payMode: over.payMode ?? 'deposit',
     ...(over.couponCode ? { couponCode: over.couponCode } : {}),
@@ -799,6 +803,8 @@ describeWithDb('createTransferBooking', () => {
           [{ dayUseEndTime: '08:00' }, 'day_use_end_time_not_after_pickup'],
           [{ dayUseEndTime: 'later' }, 'day_use_end_time_unreadable'],
           [{ flightNumber: '5J 561' }, 'flight_details_on_day_use'],
+          [{ ferryVesselName: 'MV Starlite' }, 'ferry_details_on_day_use'],
+          [{ ferryArrivalTime: '14:30' }, 'ferry_details_on_day_use'],
         ] as const
       ).map(async ([over, expected]) => {
         const error = await createTransferBooking(
@@ -809,6 +815,8 @@ describeWithDb('createTransferBooking', () => {
             dayUseEndTime: '17:00',
             flightNumber: null,
             airline: null,
+            ferryVesselName: null,
+            ferryArrivalTime: null,
             ...over,
           }),
           NOW,
@@ -951,6 +959,61 @@ describeWithDb('createTransferBooking', () => {
       }),
     );
     expect((await bookingRow(result.bookingId)).status).toBe('pending_payment');
+  });
+
+  /**
+   * Task 5 (owner item 1E) — the ferry counterpart, and deliberately NOT a
+   * mirror of the "required" test above: both fields stay optional even
+   * when the pickup is a pier, so this is a plain happy-path storage
+   * assertion, not an acceptance-after-a-refusal test.
+   */
+  it('stores ferry vessel name and arrival time on a pier pickup', async () => {
+    const routeId = await makeRoute({ fromPlaceType: 'pier' });
+    await makeFleet(2);
+
+    const result = await hold(
+      transferInput({
+        routeId,
+        flightNumber: null,
+        airline: null,
+        ferryVesselName: 'MV Starlite',
+        ferryArrivalTime: '14:30',
+        payMode: 'full',
+      }),
+    );
+
+    expect((await bookingRow(result.bookingId)).status).toBe('pending_payment');
+    const details = await detailsRow(result.bookingId);
+    expect(details.ferryVesselName).toBe('MV Starlite');
+    expect(details.ferryArrivalTime).toBe('14:30');
+  });
+
+  /**
+   * The flip side of the same optionality: a pier pickup with NEITHER ferry
+   * field given is accepted exactly as an airport pickup with no flight
+   * details would be REFUSED — proving there is no hidden
+   * `ferry_details_required_for_pier_route`-shaped check anywhere on this
+   * path.
+   */
+  it('accepts a pier pickup with no ferry details at all', async () => {
+    const routeId = await makeRoute({ fromPlaceType: 'pier' });
+    await makeFleet(2);
+
+    const result = await hold(
+      transferInput({
+        routeId,
+        flightNumber: null,
+        airline: null,
+        ferryVesselName: null,
+        ferryArrivalTime: null,
+        payMode: 'full',
+      }),
+    );
+
+    expect((await bookingRow(result.bookingId)).status).toBe('pending_payment');
+    const details = await detailsRow(result.bookingId);
+    expect(details.ferryVesselName).toBeNull();
+    expect(details.ferryArrivalTime).toBeNull();
   });
 
   // -------------------------------------------------------------------------

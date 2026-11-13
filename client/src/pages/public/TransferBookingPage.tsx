@@ -170,6 +170,8 @@ const PLACED_HOLD_FIELDS: ReadonlySet<string> = new Set([
   'dropoffMapUrl',
   'flightNumber',
   'airline',
+  'ferryVesselName',
+  'ferryArrivalTime',
   'requests',
   'payMode',
   'consent',
@@ -278,6 +280,18 @@ export default function TransferBookingPage() {
     if (dropoffIsAirport) return 'optional';
     return 'hidden';
   })();
+
+  /**
+   * Direction-dependent the same way `flightDetailsRequirement` is above —
+   * the PICKUP place flips with `direction` — but a plain boolean, since
+   * ferry details are never required (owner spec, 1E): always optional,
+   * shown only when the pickup is a pier.
+   */
+  const ferryDetailsVisible =
+    selectedRoute !== null &&
+    (direction === 'forward'
+      ? selectedRoute.fromPlace.placeType
+      : selectedRoute.toPlace.placeType) === 'pier';
 
   const vehicleOptions = selectedRoute?.vehiclePrices ?? [];
   const vehiclePricingEnabled = productType !== null && routeId !== null;
@@ -481,6 +495,8 @@ export default function TransferBookingPage() {
       dropoffMapUrl: optionalField(data, 'dropoffMapUrl'),
       flightNumber: optionalField(data, 'flightNumber'),
       airline: optionalField(data, 'airline'),
+      ferryVesselName: optionalField(data, 'ferryVesselName'),
+      ferryArrivalTime: optionalField(data, 'ferryArrivalTime'),
       requests: optionalField(data, 'requests'),
       payMode,
       lead: {
@@ -609,6 +625,7 @@ export default function TransferBookingPage() {
                 onPayModeChange={setPayMode}
                 amountDueNowCentavos={selectedQuote.amountDueNowCentavos}
                 flightDetailsRequirement={flightDetailsRequirement}
+                ferryDetailsVisible={ferryDetailsVisible}
                 error={createHoldTransfer.isError ? createHoldTransfer.error : null}
               />
 

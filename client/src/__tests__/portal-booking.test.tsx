@@ -35,6 +35,8 @@ const BASE = {
   luggageCount: null as number | null,
   flightNumber: null as string | null,
   airline: null as string | null,
+  ferryVesselName: null as string | null,
+  ferryArrivalTime: null as string | null,
   vehicleTypeLabel: null as string | null,
   tourDate: '2026-12-25',
   pax: 4,
@@ -217,6 +219,25 @@ describe('PortalBookingPage — a transfer booking', () => {
     );
     expect(within(section).getByText('2 bags')).toBeInTheDocument();
     expect(within(section).getByText('5J123 (Cebu Pacific)')).toBeInTheDocument();
+    expect(within(section).queryByText(/^MV Starlite/)).not.toBeInTheDocument();
+  });
+
+  /** Task 5 (owner item 1E) — the ferry counterpart of the flight assertion above. */
+  it('shows the ferry vessel name and arrival time for a pier pickup, and no flight line', async () => {
+    mockTrpc({
+      'portal.booking': {
+        ...TRANSFER,
+        flightNumber: null,
+        airline: null,
+        ferryVesselName: 'MV Starlite',
+        ferryArrivalTime: '14:30',
+      },
+    });
+    renderPage();
+
+    const section = await screen.findByRole('region', { name: 'Your transfer' });
+    expect(within(section).getByText('MV Starlite — arriving 14:30')).toBeInTheDocument();
+    expect(within(section).queryByText(/^5J123/)).not.toBeInTheDocument();
   });
 
   it('draws no transfer section for a tour booking', async () => {

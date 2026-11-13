@@ -558,6 +558,8 @@ export const adminBookingsRouter = router({
           luggageCount: bookingTransferDetails.luggageCount,
           flightNumber: bookingTransferDetails.flightNumber,
           airline: bookingTransferDetails.airline,
+          ferryVesselName: bookingTransferDetails.ferryVesselName,
+          ferryArrivalTime: bookingTransferDetails.ferryArrivalTime,
           customRouteDescription: bookingTransferDetails.customRouteDescription,
           direction: bookingTransferDetails.direction,
           fromPlaceName: bookingsFromPlace.name,

@@ -207,6 +207,17 @@ export default function ManualQrPage() {
                 </dd>
               </div>
             )}
+            {booking.ferryVesselName !== null && (
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-muted-foreground">Ferry</dt>
+                <dd className="text-brand-blue-900 font-medium">
+                  {booking.ferryVesselName}
+                  {booking.ferryArrivalTime !== null
+                    ? ` — arriving ${booking.ferryArrivalTime}`
+                    : ''}
+                </dd>
+              </div>
+            )}
           </dl>
         </section>
       )}

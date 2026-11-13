@@ -402,6 +402,65 @@ describe('TransferBookingPage — flight details, decision 3 (pickup-only, direc
   });
 });
 
+/**
+ * Task 5 (owner item 1E) — the ferry counterpart of the flight-details
+ * describe blocks above, but with no "required" state to prove: both
+ * ferry fields stay optional everywhere, so there are only two states
+ * (shown vs. hidden), gated the same pickup-only, direction-dependent way
+ * `flightDetailsRequirement` is.
+ */
+describe('TransferBookingPage — ferry fields on a pier route', () => {
+  /** The pickup place (`fromPlace`, forward direction) is a pier. */
+  const PIER_PICKUP: TransferRoutePublicRow = {
+    ...MACTAN,
+    id: 9,
+    fromPlace: { id: 30, name: 'Cebu Pier 1', placeType: 'pier' },
+    toPlace: { id: 11, name: 'Moalboal', placeType: 'destination' },
+    reverseEnabled: false,
+    slug: 'cebu-pier-moalboal',
+  };
+
+  it('shows the ferry fields when the pickup place is a pier', async () => {
+    mockTrpc({
+      'transferRoutes.list': [PIER_PICKUP],
+      'checkout.quoteTransfer': quoteByVehicleTypeId,
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('radio', { name: /airport transfer/i }));
+    await user.click(await screen.findByRole('radio', { name: /^cebu pier 1/i }));
+    const vanRadio = await screen.findByRole('radio', { name: /^van/i });
+    await waitFor(() => expect(vanRadio).not.toBeDisabled());
+    await user.click(vanRadio);
+
+    const form = await screen.findByRole('form', { name: /transfer booking form/i });
+    expect(within(form).getByLabelText(/ferry \/ vessel name/i)).toBeInTheDocument();
+    expect(within(form).getByLabelText(/ferry arrival time/i)).toBeInTheDocument();
+    // Never required, unlike the flight pair — this is the whole point of 1E.
+    expect(within(form).getByLabelText(/ferry \/ vessel name/i)).not.toBeRequired();
+    expect(within(form).getByLabelText(/ferry arrival time/i)).not.toBeRequired();
+  });
+
+  it('hides the ferry fields when the pickup place is not a pier', async () => {
+    mockTrpc({
+      'transferRoutes.list': [MACTAN],
+      'checkout.quoteTransfer': quoteByVehicleTypeId,
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await selectTypeAndRoute(user);
+    const vanRadio = await screen.findByRole('radio', { name: /^van/i });
+    await waitFor(() => expect(vanRadio).not.toBeDisabled());
+    await user.click(vanRadio);
+
+    const form = await screen.findByRole('form', { name: /transfer booking form/i });
+    expect(within(form).queryByLabelText(/ferry \/ vessel name/i)).not.toBeInTheDocument();
+    expect(within(form).queryByLabelText(/ferry arrival time/i)).not.toBeInTheDocument();
+  });
+});
+
 describe('TransferBookingPage — vehicle unavailable for this route', () => {
   it('renders the SUV card as unavailable, without blanking the rest of the page, while Van prices normally', async () => {
     mockTrpc({

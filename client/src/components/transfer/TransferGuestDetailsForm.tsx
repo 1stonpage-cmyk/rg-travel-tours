@@ -93,6 +93,8 @@ type Props = {
    * `'hidden'`; this component takes the answer, never the inputs.
    */
   flightDetailsRequirement: FlightDetailsRequirement;
+  /** Whether the selected route's resolved PICKUP place is a pier/port. */
+  ferryDetailsVisible: boolean;
   /** `createHoldTransfer`'s raw rejection, read via `field-errors.ts`. */
   error?: unknown;
 };
@@ -118,6 +120,8 @@ const DROPOFF_ADDRESS_ERROR_ID = 'transfer-dropoff-address-error';
 const DROPOFF_MAP_ERROR_ID = 'transfer-dropoff-map-error';
 const FLIGHT_NUMBER_ERROR_ID = 'transfer-flight-number-error';
 const AIRLINE_ERROR_ID = 'transfer-airline-error';
+const FERRY_VESSEL_NAME_ERROR_ID = 'transfer-ferry-vessel-name-error';
+const FERRY_ARRIVAL_TIME_ERROR_ID = 'transfer-ferry-arrival-time-error';
 const REQUESTS_ERROR_ID = 'transfer-requests-error';
 const PAY_MODE_ERROR_ID = 'transfer-pay-mode-error';
 
@@ -127,6 +131,7 @@ export default function TransferGuestDetailsForm({
   onPayModeChange,
   amountDueNowCentavos,
   flightDetailsRequirement,
+  ferryDetailsVisible,
   error,
 }: Props) {
   const leadNameError = getNestedFieldError(error, 'lead.name');
@@ -144,6 +149,8 @@ export default function TransferGuestDetailsForm({
   const dropoffMapError = fieldErrors?.dropoffMapUrl;
   const flightNumberError = fieldErrors?.flightNumber;
   const airlineError = fieldErrors?.airline;
+  const ferryVesselNameError = fieldErrors?.ferryVesselName;
+  const ferryArrivalTimeError = fieldErrors?.ferryArrivalTime;
   const requestsError = fieldErrors?.requests;
   const payModeError = fieldErrors?.payMode;
   const consentError = fieldErrors?.consent;
@@ -332,6 +339,45 @@ export default function TransferGuestDetailsForm({
                 className="tap-target"
               />
               <FieldError id={AIRLINE_ERROR_ID} message={airlineError} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/*
+       * One-way only, and both fields always optional (unlike the flight
+       * pair above) — there is no pier-required-field enforcement on the
+       * server, so this block never warns of a requirement.
+       */}
+      {isOneWay && ferryDetailsVisible && (
+        <div className="space-y-2">
+          <p className="text-muted-foreground text-xs">
+            This trip touches a pier — if you know it, share the ferry details (optional).
+          </p>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="transfer-ferry-vessel-name">Ferry / vessel name (optional)</Label>
+              <Input
+                id="transfer-ferry-vessel-name"
+                name="ferryVesselName"
+                maxLength={120}
+                aria-describedby={ferryVesselNameError ? FERRY_VESSEL_NAME_ERROR_ID : undefined}
+                aria-invalid={ferryVesselNameError ? true : undefined}
+                className="tap-target"
+              />
+              <FieldError id={FERRY_VESSEL_NAME_ERROR_ID} message={ferryVesselNameError} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="transfer-ferry-arrival-time">Ferry arrival time (optional)</Label>
+              <Input
+                id="transfer-ferry-arrival-time"
+                name="ferryArrivalTime"
+                type="time"
+                aria-describedby={ferryArrivalTimeError ? FERRY_ARRIVAL_TIME_ERROR_ID : undefined}
+                aria-invalid={ferryArrivalTimeError ? true : undefined}
+                className="tap-target"
+              />
+              <FieldError id={FERRY_ARRIVAL_TIME_ERROR_ID} message={ferryArrivalTimeError} />
             </div>
           </div>
         </div>

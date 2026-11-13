@@ -117,6 +117,8 @@ function trip(
     luggageCount?: number | null;
     flightNumber?: string | null;
     airline?: string | null;
+    ferryVesselName?: string | null;
+    ferryArrivalTime?: string | null;
   } = {},
 ): TripDetail {
   const status = overrides.status ?? 'in_progress';
@@ -139,6 +141,8 @@ function trip(
     luggageCount: null as number | null,
     flightNumber: null as string | null,
     airline: null as string | null,
+    ferryVesselName: null as string | null,
+    ferryArrivalTime: null as string | null,
     ...overrides,
   };
   return {
@@ -161,6 +165,8 @@ function trip(
     luggageCount: fields.luggageCount,
     flightNumber: fields.flightNumber,
     airline: fields.airline,
+    ferryVesselName: fields.ferryVesselName,
+    ferryArrivalTime: fields.ferryArrivalTime,
     officeNotes: ['Guest is waiting at the second gate.'],
     payment: overrides.payment ?? ({ kind: 'collect_cash', amountCentavos: 150_000 } as const),
     progress: {
@@ -322,6 +328,42 @@ describe('DriverTripPage — the manifest', () => {
     renderTrip();
 
     expect(await screen.findByText('Flight 5J 561 (Cebu Pacific)')).toBeInTheDocument();
+  });
+
+  /** Pier/port pickups only (Task 5, 1E) — mirrors the flight test above. */
+  it('shows the ferry vessel name and arrival time for a pier pickup', async () => {
+    mockTrpc({
+      'driver.trip': trip({
+        tourTitle: null,
+        transferRouteLabel: 'Custom transfer',
+        pickupTime: '05:00',
+        dropoffAddress: 'A hotel in Cebu City',
+        ferryVesselName: 'MV Starlite',
+        ferryArrivalTime: '14:30',
+        stops: [STOPS[0]!],
+      }),
+      'driver.trips': tripsRow(),
+    });
+    renderTrip();
+
+    expect(await screen.findByText('Ferry MV Starlite — arriving 14:30')).toBeInTheDocument();
+  });
+
+  it('does not show a ferry line when neither ferry field is set', async () => {
+    mockTrpc({
+      'driver.trip': trip({
+        tourTitle: null,
+        transferRouteLabel: 'Custom transfer',
+        pickupTime: '05:00',
+        dropoffAddress: 'A hotel in Cebu City',
+        stops: [STOPS[0]!],
+      }),
+      'driver.trips': tripsRow(),
+    });
+    renderTrip();
+
+    await screen.findByText('05:00');
+    expect(screen.queryByText(/^Ferry /)).not.toBeInTheDocument();
   });
 
   it('shows the luggage count, including zero', async () => {

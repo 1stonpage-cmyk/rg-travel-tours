@@ -199,6 +199,8 @@ function baseInput(over: Partial<CreateTransferBookingInput> = {}): CreateTransf
     dropoffMapUrl: 'https://maps.example.test/argao-resort',
     flightNumber: null,
     airline: null,
+    ferryVesselName: null,
+    ferryArrivalTime: null,
     requests: null,
     payMode: 'deposit',
     lead: {
