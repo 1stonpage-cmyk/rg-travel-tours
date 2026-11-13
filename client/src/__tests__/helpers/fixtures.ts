@@ -259,6 +259,13 @@ export const SETTINGS_FIXTURE: SettingsPayload = {
    * environment.
    */
   onlinePaymentEnabled: true,
+  /*
+   * TRUE — the least disruptive default (Task 1A): every existing test that
+   * doesn't care about this flag keeps seeing the reviews section and the
+   * "Reviews" nav link exactly as before. Flipped to `false` only in the
+   * tests that specifically exercise the hidden case.
+   */
+  hasRealReviews: true,
   legal: {
     privacy: {
       markdown:

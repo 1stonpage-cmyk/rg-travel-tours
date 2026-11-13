@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { getDb, getPool } from '../db/client';
-import { settings } from '../db/schema';
+import { destinations, reviews, settings, tours } from '../db/schema';
 import {
   getSettingsPayload,
   readSettings,
@@ -241,7 +241,7 @@ const ALL_METHODS_DISABLED = [
 
 describe('toSettingsPayload() — onlinePaymentEnabled (task A5)', () => {
   it('is TRUE when PayMongo is configured and at least one method is enabled', () => {
-    const payload = toSettingsPayload(blocksFixture(), NOW, true);
+    const payload = toSettingsPayload(blocksFixture(), NOW, true, true);
     expect(payload.paymentMethods.length).toBeGreaterThan(0);
     expect(payload.onlinePaymentEnabled).toBe(true);
   });
@@ -251,6 +251,7 @@ describe('toSettingsPayload() — onlinePaymentEnabled (task A5)', () => {
       blocksFixture({ payment_methods: ALL_METHODS_DISABLED }),
       NOW,
       true,
+      true,
     );
     // The same enabled-only list the browser is shown is what the flag reads.
     expect(payload.paymentMethods).toEqual([]);
@@ -258,7 +259,7 @@ describe('toSettingsPayload() — onlinePaymentEnabled (task A5)', () => {
   });
 
   it('is FALSE when a method is enabled but PayMongo is NOT configured', () => {
-    const payload = toSettingsPayload(blocksFixture(), NOW, false);
+    const payload = toSettingsPayload(blocksFixture(), NOW, false, true);
     expect(payload.paymentMethods.length).toBeGreaterThan(0);
     expect(payload.onlinePaymentEnabled).toBe(false);
   });
@@ -268,6 +269,7 @@ describe('toSettingsPayload() — onlinePaymentEnabled (task A5)', () => {
       blocksFixture({ payment_methods: ALL_METHODS_DISABLED }),
       NOW,
       false,
+      true,
     );
     expect(payload.onlinePaymentEnabled).toBe(false);
   });
@@ -279,7 +281,7 @@ describe('toSettingsPayload() — onlinePaymentEnabled (task A5)', () => {
    * on the server.
    */
   it('publishes the boolean only — no key, no reason, no per-method `enabled` flag', () => {
-    const payload = toSettingsPayload(blocksFixture(), NOW, true);
+    const payload = toSettingsPayload(blocksFixture(), NOW, true, true);
     const serialised = JSON.stringify(payload);
     expect(serialised).toContain('"onlinePaymentEnabled":true');
     expect(serialised).not.toContain('PAYMONGO');
@@ -289,6 +291,24 @@ describe('toSettingsPayload() — onlinePaymentEnabled (task A5)', () => {
     for (const method of payload.paymentMethods) {
       expect(Object.keys(method).sort()).toEqual(['key', 'label']);
     }
+  });
+});
+
+/**
+ * `toSettingsPayload` is pure, so the threading of `hasRealReviews` straight
+ * into the payload is provable with no database — this is the "the browser
+ * is only told what it's told" half; `getSettingsPayload() — hasRealReviews`
+ * further down is the half that proves `realAggregate()` actually feeds it.
+ */
+describe('toSettingsPayload() — hasRealReviews threading (Task 1A)', () => {
+  it('publishes hasRealReviews: true exactly as given', () => {
+    const payload = toSettingsPayload(blocksFixture(), NOW, true, true);
+    expect(payload.hasRealReviews).toBe(true);
+  });
+
+  it('publishes hasRealReviews: false exactly as given', () => {
+    const payload = toSettingsPayload(blocksFixture(), NOW, true, false);
+    expect(payload.hasRealReviews).toBe(false);
   });
 });
 
@@ -576,5 +596,87 @@ describeWithDb('show_tours fallback (Task T15)', () => {
     const payload = await getSettingsPayload(NOW);
     expect(payload.showTours).toBe(false);
     expect(payload.contact.email.length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * The DB-backed half of Task 1A: `getSettingsPayload()` actually wires
+ * `hasRealReviews` to `realAggregate()` — the SAME function the JSON-LD
+ * `aggregateRating` key is gated on (`server/src/services/ratings.ts`). A
+ * fixture tour/destination is used, mirroring `ratings.test.ts`'s own
+ * fixture pattern, rather than depending on the seeded baseline's review
+ * mix — this proves the flag flips on live DB state, not on what today's
+ * seed happens to contain.
+ */
+describeWithDb('getSettingsPayload() — hasRealReviews (Task 1A)', () => {
+  let destinationId = 0;
+  let tourId = 0;
+  const reviewIds: number[] = [];
+
+  beforeEach(async () => {
+    const db = getDb();
+    const unique = `__settings_reviews__${Date.now() % 1e9}`;
+    const [destination] = await db
+      .insert(destinations)
+      .values({ name: unique, slug: unique, isActive: false });
+    destinationId = destination.insertId;
+    const [tour] = await db
+      .insert(tours)
+      .values({ slug: unique, title: `Fixture tour ${unique}`, destinationId, isActive: false });
+    tourId = tour.insertId;
+  });
+
+  afterEach(async () => {
+    const db = getDb();
+    for (const id of reviewIds.splice(0)) {
+      await db.delete(reviews).where(eq(reviews.id, id));
+    }
+    if (tourId) await db.delete(tours).where(eq(tours.id, tourId));
+    if (destinationId) await db.delete(destinations).where(eq(destinations.id, destinationId));
+  });
+
+  it('reports hasRealReviews: false when no published, non-sample review exists', async () => {
+    const payload = await getSettingsPayload(NOW);
+    expect(payload.hasRealReviews).toBe(false);
+  });
+
+  it('reports hasRealReviews: true once one is published', async () => {
+    const db = getDb();
+    const [result] = await db.insert(reviews).values({
+      tourId,
+      name: 'Fixture Reviewer',
+      rating: 5,
+      body: 'Fixture review body.',
+      status: 'published',
+      isSample: false,
+    });
+    reviewIds.push(result.insertId);
+
+    const payload = await getSettingsPayload(NOW);
+    expect(payload.hasRealReviews).toBe(true);
+  });
+
+  it('stays false for a published SAMPLE review, or a real review that is pending/hidden', async () => {
+    const db = getDb();
+    const [sample] = await db.insert(reviews).values({
+      tourId,
+      name: 'Fixture Reviewer',
+      rating: 5,
+      body: 'Fixture review body.',
+      status: 'published',
+      isSample: true,
+    });
+    const [pending] = await db.insert(reviews).values({
+      tourId,
+      name: 'Fixture Reviewer',
+      rating: 5,
+      body: 'Fixture review body.',
+      status: 'pending',
+      isSample: false,
+    });
+    reviewIds.push(sample.insertId, pending.insertId);
+
+    const payload = await getSettingsPayload(NOW);
+    expect(payload.hasRealReviews).toBe(false);
   });
 });

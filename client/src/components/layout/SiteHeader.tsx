@@ -43,7 +43,7 @@ export default function SiteHeader() {
    * conservative, deliberate choice here.
    */
   const { data: settings } = trpc.settings.get.useQuery();
-  const nav = visibleNav(settings?.showTours ?? false);
+  const nav = visibleNav(settings?.showTours ?? false, settings?.hasRealReviews ?? false);
 
   // Header shrink/solidify (spec task 2.9F). Deliberately does not animate
   // `height`, or change it at all, in either direction: the box below is

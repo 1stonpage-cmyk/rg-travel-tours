@@ -54,6 +54,16 @@ export default function HomePage() {
   const { data: settings } = trpc.settings.get.useQuery();
   const showTours = settings?.showTours ?? false;
   /*
+   * `hasRealReviews` gate (owner decision 2026-11-13, Task 1A — no fake
+   * social proof). `ReviewsSection` is not mounted at all while no real
+   * (published, non-sample) review exists site-wide, rather than mounting
+   * and letting it render its own "no reviews yet" empty state — the same
+   * "don't even mount it" treatment `showTours` gets above. Hidden by
+   * default before `settings.get` resolves: never show a reviews link or
+   * section before the server has confirmed one exists.
+   */
+  const hasRealReviews = settings?.hasRealReviews ?? false;
+  /*
    * Task 4 (1D): `settings.site_seo.title` is already a complete string
    * (e.g. "TravelSugbo — Cebu Airport & Island Transfers") — the server
    * injects it verbatim on a cold load, so this re-asserts the same string
@@ -73,7 +83,7 @@ export default function HomePage() {
       <WhyBookDirect />
       {showTours && <MostVisited />}
       {showTours && <PackagesSection />}
-      <ReviewsSection />
+      {hasRealReviews && <ReviewsSection />}
       <PromoNewsletter />
       <FaqSection />
       <ContactSection />

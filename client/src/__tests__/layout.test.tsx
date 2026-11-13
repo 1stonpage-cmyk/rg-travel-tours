@@ -229,6 +229,56 @@ describe('nav hides "Tours" and "Packages" while show_tours is off, in all three
 });
 
 /**
+ * `hasRealReviews` gate (owner decision 2026-11-13, Task 1A — no fake social
+ * proof). Same shape as the `show_tours` block just above: "Reviews" is
+ * rendered identically in three places from the one shared `visibleNav()`
+ * helper, so it is proven here through `PublicLayout` rather than against
+ * `SiteHeader`/`SiteFooter` in isolation.
+ */
+describe('nav hides "Reviews" while hasRealReviews is false, in all three places', () => {
+  it('shows Reviews in desktop nav, mobile nav, and the footer when hasRealReviews is true', async () => {
+    mockTrpc({ 'settings.get': SETTINGS_FIXTURE }); // SETTINGS_FIXTURE.hasRealReviews is true.
+    renderLayout();
+    const user = userEvent.setup();
+
+    const desktopNav = screen.getByRole('navigation', { name: /^main$/i });
+    expect(
+      await within(desktopNav).findByRole('link', { name: /^reviews$/i }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /open menu/i }));
+    const mobileNav = screen.getByRole('navigation', { name: /^mobile$/i });
+    expect(within(mobileNav).getByRole('link', { name: /^reviews$/i })).toBeInTheDocument();
+
+    const footerNav = screen.getByRole('navigation', { name: /^footer$/i });
+    expect(within(footerNav).getByRole('link', { name: /^reviews$/i })).toBeInTheDocument();
+  });
+
+  it('hides Reviews from all three when hasRealReviews is false', async () => {
+    mockTrpc({ 'settings.get': { ...SETTINGS_FIXTURE, hasRealReviews: false } });
+    renderLayout();
+    const user = userEvent.setup();
+
+    const desktopNav = screen.getByRole('navigation', { name: /^main$/i });
+    // Wait for the resolved (false) state rather than asserting on the
+    // transient pre-resolution render, which also hides Reviews by default
+    // — use a neighbouring link that stays present either way as the signal
+    // that settings.get has resolved.
+    expect(
+      await within(desktopNav).findByRole('link', { name: /^transfers$/i }),
+    ).toBeInTheDocument();
+    expect(within(desktopNav).queryByRole('link', { name: /^reviews$/i })).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: /open menu/i }));
+    const mobileNav = screen.getByRole('navigation', { name: /^mobile$/i });
+    expect(within(mobileNav).queryByRole('link', { name: /^reviews$/i })).toBeNull();
+
+    const footerNav = screen.getByRole('navigation', { name: /^footer$/i });
+    expect(within(footerNav).queryByRole('link', { name: /^reviews$/i })).toBeNull();
+  });
+});
+
+/**
  * DEMO POLISH task 1B (owner decision 1): FloatingWhatsApp's mobile sticky
  * bottom bar carries a CTA beside the WhatsApp control — "Book a tour" while
  * tours are visible — which must drop to "Book a transfer" → /transfer while

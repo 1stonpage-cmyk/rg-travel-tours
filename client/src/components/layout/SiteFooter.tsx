@@ -102,7 +102,7 @@ export default function SiteFooter() {
   // `show_tours` gate (transfers-launch plan, Task T16) — see `visibleNav`'s
   // own comment. Hidden by default before this resolves, same as SiteHeader.
   const showTours = settings?.showTours ?? false;
-  const nav = visibleNav(showTours);
+  const nav = visibleNav(showTours, settings?.hasRealReviews ?? false);
   const paymentMethods = settings?.paymentMethods ?? [];
   /** BUG-100 — same source as ContactSection's hours. See the Clock row below. */
   const hoursNote = settings?.contact.hoursNote ?? null;

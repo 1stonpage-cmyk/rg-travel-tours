@@ -107,14 +107,19 @@ export const BUILT_BY = {
  * `SITE.nav`, minus "Tours" and "Packages" while `show_tours` is off
  * (transfers-launch plan Task T16; extended to Packages by owner decision
  * 2026-11-10, Decision 2 — packages now follow the same gate as tours,
- * server-side AND here). One shared filter rather than three independent
- * `SITE.nav.map(...)` calls each re-deriving the same rule — `SiteHeader.tsx`
- * (desktop nav and mobile nav) and `SiteFooter.tsx` (footer nav) all read
- * this instead.
+ * server-side AND here), and minus "Reviews" whenever `hasRealReviews` is
+ * false (owner decision 2026-11-13, Task 1A — no fake social proof: a nav
+ * link to a reviews section that doesn't exist is not offered). One shared
+ * filter rather than three independent `SITE.nav.map(...)` calls each
+ * re-deriving the same rule — `SiteHeader.tsx` (desktop nav and mobile nav)
+ * and `SiteFooter.tsx` (footer nav) all read this instead.
  */
-export function visibleNav(showTours: boolean) {
+export function visibleNav(showTours: boolean, hasRealReviews: boolean) {
   const hiddenWhileToursOff = new Set(['/tours', '/#packages']);
-  return SITE.nav.filter((item) => !hiddenWhileToursOff.has(item.href) || showTours);
+  return SITE.nav.filter((item) => {
+    if (item.href === '/#reviews') return hasRealReviews;
+    return !hiddenWhileToursOff.has(item.href) || showTours;
+  });
 }
 
 /**

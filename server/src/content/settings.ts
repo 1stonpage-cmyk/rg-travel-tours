@@ -38,6 +38,7 @@ import { getDb, type Transaction } from '../db/client';
 import { settings } from '../db/schema';
 import { resolveOpenState, type OpenState } from '../services/hours';
 import { isPaymongoConfigured } from '../services/payments/paymongo';
+import { realAggregate } from '../services/ratings';
 import { isWithinWindow } from '../services/schedule';
 import {
   SETTING_KEYS,
@@ -434,6 +435,15 @@ export interface SettingsPayload {
    * anyone.
    */
   onlinePaymentEnabled: boolean;
+  /**
+   * Whether at least one real review (published, `is_sample = 0`) exists
+   * (owner decision 2026-11-13, Task 1A) — reuses `realAggregate()`, the
+   * SAME function the JSON-LD `aggregateRating` key is gated on, so the two
+   * can never disagree about what "a real review" means. Drives whether the
+   * public "What guests say" section and the "Reviews" nav link exist at
+   * all, not merely whether they show an empty state.
+   */
+  hasRealReviews: boolean;
   legal: {
     privacy: SettingsBlocks['legal_privacy'];
     terms: SettingsBlocks['legal_terms'];
@@ -499,6 +509,7 @@ export function toSettingsPayload(
   blocks: SettingsBlocks,
   now: Date,
   paymongoConfigured: boolean,
+  hasRealReviews: boolean,
 ): SettingsPayload {
   const enabledPaymentMethods = resolvePaymentMethods(blocks.payment_methods);
   return {
@@ -527,6 +538,7 @@ export function toSettingsPayload(
      * the list the browser is shown must be the same answer.
      */
     onlinePaymentEnabled: paymongoConfigured && enabledPaymentMethods.length > 0,
+    hasRealReviews,
     legal: { privacy: blocks.legal_privacy, terms: blocks.legal_terms },
     signupCoupon: { discountPercent: blocks.signup_coupon.discountPercent },
   };
@@ -535,5 +547,9 @@ export function toSettingsPayload(
 /** `readSettings()` + `toSettingsPayload()` against the current instant — what `settings.get` calls. */
 export async function getSettingsPayload(now: Date = new Date()): Promise<SettingsPayload> {
   // The only real caller, and so the one place the environment is consulted.
-  return toSettingsPayload(await readSettings(), now, isPaymongoConfigured());
+  const [blocks, hasRealReviews] = await Promise.all([
+    readSettings(),
+    realAggregate().then((aggregate) => (aggregate?.count ?? 0) > 0),
+  ]);
+  return toSettingsPayload(blocks, now, isPaymongoConfigured(), hasRealReviews);
 }

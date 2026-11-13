@@ -158,6 +158,12 @@ describe('home page', () => {
     // this test.
     expect(REVIEWS_FIXTURE.items.length).toBe(6);
     const { container } = renderHome();
+    // Task 1A: ReviewsSection is now gated on `settings.get` resolving
+    // `hasRealReviews: true` (SETTINGS_FIXTURE's default), so `#reviews`
+    // does not exist on the first, pre-resolution render — wait for the
+    // section's own heading first, same as the packages/tours sections
+    // elsewhere in this file.
+    await screen.findByRole('heading', { name: /what guests say/i });
     const reviews = container.querySelector('#reviews') as HTMLElement;
     expect(reviews).toBeTruthy();
     await within(reviews).findByText(REVIEWS_FIXTURE.items[0]!.name);
@@ -396,5 +402,55 @@ describe('home page — tours shown (regression, Task T16)', () => {
     ).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /most visited places/i })).toBeInTheDocument();
     expect(await screen.findByRole('heading', { name: /^packages$/i })).toBeInTheDocument();
+  });
+});
+
+/**
+ * `hasRealReviews` gate (owner decision 2026-11-13, Task 1A — no fake social
+ * proof). `ReviewsSection` is not mounted at all when no real review exists
+ * site-wide, same "don't even mount it" treatment as `showTours` above.
+ */
+describe('home page — reviews hidden (hasRealReviews gate, Task 1A)', () => {
+  beforeEach(() => {
+    mockTrpc({
+      'settings.get': { ...SETTINGS_FIXTURE, hasRealReviews: false },
+      'destinations.list': DESTINATIONS_FIXTURE,
+      'tours.list': TOURS_FIXTURE,
+      'packages.list': PACKAGES_FIXTURE,
+      'reviews.published': REVIEWS_FIXTURE,
+      'transferRoutes.featured': [],
+    });
+  });
+
+  it('does not render the reviews section when hasRealReviews is false', async () => {
+    renderHome();
+
+    // Wait for settings.get to actually resolve before asserting absence.
+    await screen.findByRole('heading', { level: 1 });
+
+    expect(screen.queryByRole('heading', { name: /what guests say/i })).not.toBeInTheDocument();
+    expect(document.querySelector('#reviews')).toBeNull();
+  });
+});
+
+/**
+ * The regression half of the pair above, with the baseline
+ * (`hasRealReviews: true`) fixture.
+ */
+describe('home page — reviews shown (regression, Task 1A)', () => {
+  beforeEach(() => {
+    mockTrpc({
+      'settings.get': SETTINGS_FIXTURE,
+      'destinations.list': DESTINATIONS_FIXTURE,
+      'tours.list': TOURS_FIXTURE,
+      'packages.list': PACKAGES_FIXTURE,
+      'reviews.published': REVIEWS_FIXTURE,
+      'transferRoutes.featured': [],
+    });
+  });
+
+  it('renders the reviews section when hasRealReviews is true', async () => {
+    renderHome();
+    expect(await screen.findByRole('heading', { name: /what guests say/i })).toBeInTheDocument();
   });
 });
