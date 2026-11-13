@@ -107,6 +107,7 @@ import {
   transferPriceSnapshotSchema,
   type PayMode,
   type TransferDirection,
+  type TransferPlaceType,
   type TransferPriceSnapshot,
   type TransferPriceSource,
   type TransferProductType,
@@ -417,8 +418,8 @@ function blank(value: string | null): boolean {
 /** What {@link loadRouteShape} answers about a resolved catalog route. */
 interface RouteShape {
   reverseEnabled: boolean;
-  fromIsAirport: boolean;
-  toIsAirport: boolean;
+  fromPlaceType: TransferPlaceType;
+  toPlaceType: TransferPlaceType;
 }
 
 /**
@@ -441,8 +442,8 @@ async function loadRouteShape(tx: Transaction, routeId: number): Promise<RouteSh
   const [row] = await tx
     .select({
       reverseEnabled: transferRoutes.reverseEnabled,
-      fromIsAirport: fromPlace.isAirport,
-      toIsAirport: toPlace.isAirport,
+      fromPlaceType: fromPlace.placeType,
+      toPlaceType: toPlace.placeType,
     })
     .from(transferRoutes)
     .innerJoin(fromPlace, eq(fromPlace.id, transferRoutes.fromPlaceId))
@@ -721,11 +722,11 @@ export async function createTransferBooking(
            * still be given and are stored, just not demanded — see
            * `TRANSFER_BOOKING_SHAPE_PROBLEMS`'s doc comment on this reason).
            */
-          const pickupIsAirport =
-            input.direction === 'forward' ? routeShape.fromIsAirport : routeShape.toIsAirport;
+          const pickupPlaceType =
+            input.direction === 'forward' ? routeShape.fromPlaceType : routeShape.toPlaceType;
           if (
             input.productType === 'transfer_one_way' &&
-            pickupIsAirport &&
+            pickupPlaceType === 'airport' &&
             (blank(input.flightNumber) || blank(input.airline))
           ) {
             throw new TransferBookingShapeError(

@@ -32,7 +32,7 @@
  */
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { and, asc, desc, eq, inArray, or } from 'drizzle-orm';
-import type { TransferPriceSnapshot, TransferRouteCreateInput } from '@rg/shared';
+import type { TransferPlaceType, TransferPriceSnapshot, TransferRouteCreateInput } from '@rg/shared';
 import { appRouter } from '../routers/_app';
 import { getDb, getPool } from '../db/client';
 import {
@@ -83,7 +83,7 @@ async function makeStaff(role: 'owner' | 'dispatcher' | 'finance') {
 }
 
 /** A pickup/drop-off place with nothing else attached — what a route runs between. */
-async function makePlace(opts: { isActive?: boolean; isAirport?: boolean } = {}) {
+async function makePlace(opts: { isActive?: boolean; placeType?: TransferPlaceType } = {}) {
   const slug = `__adtrplace__${unique()}`;
   const [row] = await getDb()
     .insert(transferPlaces)
@@ -91,7 +91,7 @@ async function makePlace(opts: { isActive?: boolean; isAirport?: boolean } = {})
       name: slug,
       nameKey: slug.toLowerCase(),
       isActive: opts.isActive ?? true,
-      isAirport: opts.isAirport ?? false,
+      placeType: opts.placeType ?? 'destination',
     });
   created.placeIds.push(row.insertId);
   return row.insertId;

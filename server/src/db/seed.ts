@@ -491,7 +491,7 @@ function transferPlaceNameKey(name: string): string {
  * UNIQUE.
  *
  * Idempotent like the rest of `seedDemo`: a re-run restates the same
- * name/isAirport/sortOrder rather than drifting. Returns the name-key -> id
+ * name/placeType/sortOrder rather than drifting. Returns the name-key -> id
  * map `upsertDemoTransferRoutes` needs.
  */
 export async function upsertDemoTransferPlaces(db: Db): Promise<Map<string, number>> {
@@ -506,7 +506,7 @@ export async function upsertDemoTransferPlaces(db: Db): Promise<Map<string, numb
     if (existing) {
       await db
         .update(schema.transferPlaces)
-        .set({ name: place.name, isAirport: place.isAirport, sortOrder: place.sortOrder })
+        .set({ name: place.name, placeType: place.placeType, sortOrder: place.sortOrder })
         .where(eq(schema.transferPlaces.id, existing.id));
       idByNameKey.set(nameKey, existing.id);
       continue;
@@ -515,7 +515,7 @@ export async function upsertDemoTransferPlaces(db: Db): Promise<Map<string, numb
     const [result] = await db.insert(schema.transferPlaces).values({
       name: place.name,
       nameKey,
-      isAirport: place.isAirport,
+      placeType: place.placeType,
       sortOrder: place.sortOrder,
     });
     idByNameKey.set(nameKey, result.insertId);

@@ -14,6 +14,7 @@
  */
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { and, asc, eq, inArray } from 'drizzle-orm';
+import type { TransferPlaceType } from '@rg/shared';
 import { appRouter } from '../routers/_app';
 import { getDb, getPool } from '../db/client';
 import { auditLog, destinations, transferPlaces, users } from '../db/schema';
@@ -68,7 +69,7 @@ const ownerApi = () => appRouter.createCaller(staffContext(ownerId, 'owner') as 
 function validInput(overrides: Partial<{ name: string }> = {}) {
   return {
     name: `__adtpplace__${unique()}`,
-    isAirport: false,
+    placeType: 'destination' as TransferPlaceType,
     destinationId: null,
     ...overrides,
   };
@@ -157,7 +158,7 @@ describeWithDb('admin.transferPlaces', () => {
     const id = await createPlace({ ...input, destinationId: null });
 
     const row = (await ownerApi().admin.transferPlaces.list()).find((r) => r.id === id);
-    expect(row).toMatchObject({ name: input.name, isAirport: false, isActive: true });
+    expect(row).toMatchObject({ name: input.name, placeType: 'destination', isActive: true });
     expect(row?.destinationId).toBeNull();
   });
 
@@ -261,7 +262,7 @@ describeWithDb('admin.transferPlaces', () => {
 
   it('writes an audit row naming the actor on every change', async () => {
     const id = await createPlace();
-    await ownerApi().admin.transferPlaces.update({ id, patch: { isAirport: true } });
+    await ownerApi().admin.transferPlaces.update({ id, patch: { placeType: 'airport' } });
     await ownerApi().admin.transferPlaces.setActive({ id, isActive: false });
 
     const rows = await auditRowsFor(id);

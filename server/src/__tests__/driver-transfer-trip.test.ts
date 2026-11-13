@@ -43,6 +43,7 @@
  */
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
+import type { TransferPlaceType } from '@rg/shared';
 import { getDb, getPool } from '../db/client';
 import {
   bookingTransferDetails,
@@ -99,10 +100,10 @@ async function vehicleTypeIdBySlug(slug: string): Promise<number> {
   return row.id;
 }
 
-async function makePlace(name: string, isAirport = false) {
+async function makePlace(name: string, placeType: TransferPlaceType = 'destination') {
   const [row] = await getDb()
     .insert(transferPlaces)
-    .values({ name, nameKey: `${name}-${unique()}`.toLowerCase(), isActive: true, isAirport });
+    .values({ name, nameKey: `${name}-${unique()}`.toLowerCase(), isActive: true, placeType });
   created.placeIds.push(row.insertId);
   return row.insertId;
 }

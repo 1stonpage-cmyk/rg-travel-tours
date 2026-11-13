@@ -40,7 +40,8 @@
  */
 import { z } from 'zod';
 import { civilDateSchema, phPhoneSchema } from './checkout';
-import { TRANSFER_PRODUCT_TYPES } from './transfers';
+import { TRANSFER_PLACE_TYPES, TRANSFER_PRODUCT_TYPES } from './transfers';
+import type { TransferPlaceType } from './transfers';
 import { MAX_CENTAVOS } from './tours-admin';
 
 /**
@@ -261,7 +262,7 @@ export interface TransferRouteAdminVehiclePrice {
 export interface TransferPlaceAdminRow {
   id: number;
   name: string;
-  isAirport: boolean;
+  placeType: TransferPlaceType;
   isActive: boolean;
 }
 
@@ -377,7 +378,7 @@ export interface VehicleTypeAdminRow {
 const transferPlaceFieldsSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
-    isAirport: z.boolean(),
+    placeType: z.enum(TRANSFER_PLACE_TYPES),
     sortOrder: z.number().int().min(0).max(9999).optional(),
     destinationId: z.number().int().positive().nullable(),
   })

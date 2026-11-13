@@ -24,6 +24,7 @@
  * until real bookings exist, never faked (CLAUDE.md: no fake numbers).
  * Permit numbers are null: never invent an accreditation number.
  */
+import type { TransferPlaceType } from '@rg/shared';
 import type { SettingsBlocks } from '../content/settings-schema';
 
 const placeholderImage = (slug: string) => `/placeholders/${slug}.svg`;
@@ -898,7 +899,7 @@ export const SEED_VEHICLE_TYPES: SeedVehicleType[] = [
  */
 export interface SeedTransferPlace {
   name: string;
-  isAirport: boolean;
+  placeType: TransferPlaceType;
   sortOrder: number;
 }
 
@@ -906,11 +907,11 @@ export interface SeedTransferPlace {
 export const SEED_TRANSFER_AIRPORT_NAME = 'Mactan-Cebu International Airport';
 
 export const SEED_TRANSFER_PLACES: SeedTransferPlace[] = [
-  { name: SEED_TRANSFER_AIRPORT_NAME, isAirport: true, sortOrder: 0 },
-  { name: 'Cebu City', isAirport: false, sortOrder: 1 },
-  { name: 'Moalboal', isAirport: false, sortOrder: 2 },
-  { name: 'Oslob', isAirport: false, sortOrder: 3 },
-  { name: 'Hagnaya Port', isAirport: false, sortOrder: 4 },
+  { name: SEED_TRANSFER_AIRPORT_NAME, placeType: 'airport', sortOrder: 0 },
+  { name: 'Cebu City', placeType: 'city', sortOrder: 1 },
+  { name: 'Moalboal', placeType: 'destination', sortOrder: 2 },
+  { name: 'Oslob', placeType: 'destination', sortOrder: 3 },
+  { name: 'Hagnaya Port', placeType: 'pier', sortOrder: 4 },
 ];
 
 /** One vehicle type's price pair on one demo route, in PESOS — converted to centavos at the call site. */

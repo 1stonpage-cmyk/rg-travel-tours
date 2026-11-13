@@ -83,7 +83,7 @@ function toRow(row: TransferPlaceSelect): TransferPlaceAdminListRow {
   return {
     id: row.id,
     name: row.name,
-    isAirport: row.isAirport,
+    placeType: row.placeType,
     isActive: row.isActive,
     sortOrder: row.sortOrder,
     destinationId: row.destinationId,
@@ -109,7 +109,7 @@ export const adminTransferPlacesRouter = router({
           const [result] = await tx.insert(transferPlaces).values({
             name: input.name,
             nameKey: nameKeyFor(input.name),
-            isAirport: input.isAirport,
+            placeType: input.placeType,
             sortOrder: input.sortOrder ?? 0,
             destinationId: input.destinationId,
           });
@@ -120,7 +120,7 @@ export const adminTransferPlacesRouter = router({
             action: 'transfer_place_created',
             entity: 'transfer_place',
             entityId: id,
-            data: { name: input.name, isAirport: input.isAirport },
+            data: { name: input.name, placeType: input.placeType },
           });
           return { id };
         });
@@ -146,7 +146,7 @@ export const adminTransferPlacesRouter = router({
             setValues.name = input.patch.name;
             setValues.nameKey = nameKeyFor(input.patch.name);
           }
-          if (input.patch.isAirport !== undefined) setValues.isAirport = input.patch.isAirport;
+          if (input.patch.placeType !== undefined) setValues.placeType = input.patch.placeType;
           if (input.patch.sortOrder !== undefined) setValues.sortOrder = input.patch.sortOrder;
           if (input.patch.destinationId !== undefined) {
             setValues.destinationId = input.patch.destinationId;

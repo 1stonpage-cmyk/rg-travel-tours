@@ -33,6 +33,7 @@ import {
   type PayMode,
   type PriceSnapshot,
   type TransferDirection,
+  type TransferPlaceType,
 } from '@rg/shared';
 import { getDb, getPool } from '../db/client';
 import {
@@ -157,7 +158,7 @@ async function makeDestination(opts: { isActive?: boolean } = {}) {
 }
 
 /** An admin-managed pickup/drop-off place — a route's `from`/`to` endpoint. */
-async function makePlace(opts: { isActive?: boolean; isAirport?: boolean } = {}) {
+async function makePlace(opts: { isActive?: boolean; placeType?: TransferPlaceType } = {}) {
   const slug = `__xferhold__${unique()}`;
   const [row] = await getDb()
     .insert(transferPlaces)
@@ -165,7 +166,7 @@ async function makePlace(opts: { isActive?: boolean; isAirport?: boolean } = {})
       name: slug,
       nameKey: slug.toLowerCase(),
       isActive: opts.isActive ?? true,
-      isAirport: opts.isAirport ?? false,
+      placeType: opts.placeType ?? 'destination',
     });
   created.placeIds.push(row.insertId);
   return row.insertId;
@@ -191,17 +192,17 @@ async function makeRoute(
     isActive?: boolean;
     destinationActive?: boolean;
     reverseEnabled?: boolean;
-    fromIsAirport?: boolean;
-    toIsAirport?: boolean;
+    fromPlaceType?: TransferPlaceType;
+    toPlaceType?: TransferPlaceType;
     vehicleTypeIds?: number[];
     oneWayPriceCentavos?: number;
     dayUsePriceCentavos?: number;
   } = {},
 ) {
-  const fromPlaceId = await makePlace({ isAirport: opts.fromIsAirport ?? false });
+  const fromPlaceId = await makePlace({ placeType: opts.fromPlaceType ?? 'destination' });
   const toPlaceId = await makePlace({
     isActive: opts.destinationActive ?? true,
-    isAirport: opts.toIsAirport ?? false,
+    placeType: opts.toPlaceType ?? 'destination',
   });
   const slug = `xferhold-${unique()}`;
   const [row] = await getDb()
@@ -888,7 +889,7 @@ describeWithDb('createTransferBooking', () => {
   });
 
   it('refuses a one-way transfer touching an airport place with no flight details, and writes nothing', async () => {
-    const routeId = await makeRoute({ fromIsAirport: true });
+    const routeId = await makeRoute({ fromPlaceType: 'airport' });
     await makeFleet(2);
     const before = await writtenRowCounts();
 
@@ -908,7 +909,7 @@ describeWithDb('createTransferBooking', () => {
     // A guest's form can post '' rather than omit the field entirely — the
     // check must not pass vacuously on a value that is technically non-null
     // but carries no usable flight detail (owner/Opus review finding).
-    const routeId = await makeRoute({ fromIsAirport: true });
+    const routeId = await makeRoute({ fromPlaceType: 'airport' });
     await makeFleet(2);
     const before = await writtenRowCounts();
 
@@ -925,20 +926,20 @@ describeWithDb('createTransferBooking', () => {
   });
 
   /**
-   * **Retargeted from `toIsAirport: true` (owner decision 3, 2026-11-09).**
-   * Under the pre-2026-11-09 "either end" rule this test's `toIsAirport`
+   * **Retargeted from `toPlaceType: 'airport'` (owner decision 3, 2026-11-09).**
+   * Under the pre-2026-11-09 "either end" rule this test's `toPlaceType`
    * fixture still proved acceptance once flight details were given — but it
    * no longer exercises the REQUIRED path at all under the new,
-   * pickup-only rule: with `toIsAirport: true` and the default forward
+   * pickup-only rule: with `toPlaceType: 'airport'` and the default forward
    * direction, the pickup place (`fromPlace`) is not an airport, so flight
    * details are merely optional there now (see the new
    * "drop-off is an airport but pickup is not" test below, which is what
-   * now covers that fixture shape). Retargeted to `fromIsAirport: true` so
+   * now covers that fixture shape). Retargeted to `fromPlaceType: 'airport'` so
    * this test keeps proving what it always meant to: a REQUIRED-and-satisfied
    * hold succeeds.
    */
   it('accepts a one-way airport transfer once flight details are given', async () => {
-    const routeId = await makeRoute({ fromIsAirport: true });
+    const routeId = await makeRoute({ fromPlaceType: 'airport' });
     await makeFleet(2);
 
     const result = await hold(
@@ -960,7 +961,7 @@ describeWithDb('createTransferBooking', () => {
 
   it('does NOT require flight details when only the DROP-OFF is an airport (forward direction)', async () => {
     // forward: pickup = fromPlace (not an airport), drop-off = toPlace (is).
-    const routeId = await makeRoute({ toIsAirport: true });
+    const routeId = await makeRoute({ toPlaceType: 'airport' });
     await makeFleet(2);
 
     const result = await hold(
@@ -985,7 +986,7 @@ describeWithDb('createTransferBooking', () => {
    */
   it('does NOT require flight details when only the DROP-OFF is an airport (reverse direction)', async () => {
     // reverse: pickup = toPlace (not an airport), drop-off = fromPlace (is).
-    const routeId = await makeRoute({ fromIsAirport: true, reverseEnabled: true });
+    const routeId = await makeRoute({ fromPlaceType: 'airport', reverseEnabled: true });
     await makeFleet(2);
 
     const result = await hold(
@@ -1003,12 +1004,12 @@ describeWithDb('createTransferBooking', () => {
   /**
    * Proves `direction` is actually read, not just accepted — the airport is
    * on `toPlace`, which is only the PICKUP when travelling in reverse. A
-   * ternary that ignored direction (always reading `fromIsAirport`) would
+   * ternary that ignored direction (always reading `fromPlaceType`) would
    * wrongly accept this hold without flight details; a ternary reading the
    * wrong branch (swapped forward/reverse) would also wrongly accept it.
    */
   it('requires flight details when the PICKUP is an airport via REVERSE direction', async () => {
-    const routeId = await makeRoute({ toIsAirport: true, reverseEnabled: true });
+    const routeId = await makeRoute({ toPlaceType: 'airport', reverseEnabled: true });
     await makeFleet(2);
     const before = await writtenRowCounts();
 
@@ -1026,7 +1027,7 @@ describeWithDb('createTransferBooking', () => {
 
   /** Flight details are stored, even though optional, when the guest volunteers them anyway. */
   it('stores flight details that were given but not required (drop-off-only airport)', async () => {
-    const routeId = await makeRoute({ toIsAirport: true });
+    const routeId = await makeRoute({ toPlaceType: 'airport' });
     await makeFleet(2);
 
     const result = await hold(
@@ -1045,7 +1046,7 @@ describeWithDb('createTransferBooking', () => {
     // The airport rule is scoped to `transfer_one_way` only (design note §2) —
     // a day-use hire has no flight to meet, and `assertBookableShape` already
     // refuses flight fields on a day-use request regardless.
-    const routeId = await makeRoute({ fromIsAirport: true });
+    const routeId = await makeRoute({ fromPlaceType: 'airport' });
     await makeFleet(2);
 
     const result = await hold(

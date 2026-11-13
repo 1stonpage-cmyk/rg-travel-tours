@@ -509,7 +509,7 @@ async function makePlace(): Promise<{ id: number; name: string }> {
   const name = `__adminreports_place__${unique()}`;
   const [row] = await getDb()
     .insert(transferPlaces)
-    .values({ name, nameKey: name.toLowerCase(), isActive: true, isAirport: false });
+    .values({ name, nameKey: name.toLowerCase(), isActive: true, placeType: 'destination' });
   created.placeIds.push(row.insertId);
   return { id: row.insertId, name };
 }

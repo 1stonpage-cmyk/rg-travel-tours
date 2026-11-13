@@ -160,7 +160,7 @@ describeWithDb('db/seed.ts — upsertDemoTransferBookings / upsertDemoTripReques
     const [airport] = await db.insert(transferPlaces).values({
       name: 'Mactan-Cebu International Airport',
       nameKey: '__seeddemo__airport',
-      isAirport: true,
+      placeType: 'airport',
     });
     created.placeIds.push(airport.insertId);
 
@@ -176,7 +176,7 @@ describeWithDb('db/seed.ts — upsertDemoTransferBookings / upsertDemoTripReques
       const toName = destNames[slug]!;
       const [place] = await db
         .insert(transferPlaces)
-        .values({ name: toName, nameKey: `__seeddemo__${slug}`, isAirport: false });
+        .values({ name: toName, nameKey: `__seeddemo__${slug}`, placeType: 'destination' });
       created.placeIds.push(place.insertId);
 
       const [route] = await db.insert(transferRoutes).values({
