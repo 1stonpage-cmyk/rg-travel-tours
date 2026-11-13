@@ -24,6 +24,10 @@ describe('sanitizeAdminRedirect', () => {
     expect(sanitizeAdminRedirect('/checkout')).toBeNull();
   });
 
+  it('refuses a path-traversal attempt that would walk outside /admin', () => {
+    expect(sanitizeAdminRedirect('/admin/../checkout')).toBeNull();
+  });
+
   it('refuses null and empty input', () => {
     expect(sanitizeAdminRedirect(null)).toBeNull();
     expect(sanitizeAdminRedirect('')).toBeNull();
