@@ -35,7 +35,15 @@ export default function PopularTransfers() {
   const gridRef = useRef<HTMLUListElement>(null);
   useCardStagger(gridRef, 'li', query.data?.length ?? 0);
 
-  if (query.data && query.data.length === 0) return null;
+  // Hidden while pending, errored, or resolved empty — not only the last of
+  // those (finding I3, final review). `query.data` is `undefined` in both
+  // the pending and the errored-with-no-stale-data cases, so this single
+  // check covers "nothing to show yet" and "nothing to show" the same way:
+  // the spec says "hide the whole section if none," and a brief flash of
+  // the heading plus three skeleton cards before disappearing — the
+  // default state of this whole section, since no route is featured by
+  // default — does not satisfy that.
+  if (!query.data || query.data.length === 0) return null;
 
   return (
     <section id="popular-transfers" className="bg-background">
@@ -55,6 +63,7 @@ export default function PopularTransfers() {
             <ul ref={gridRef} className="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
               {routes.map((route) => {
                 const Icon = PLACE_TYPE_ICON[route.fromPlace.placeType];
+                const cheapest = route.cheapestOneWay;
                 return (
                   <li
                     key={route.id}
@@ -70,7 +79,7 @@ export default function PopularTransfers() {
                         </span>
                       ) : null}
                       <span className="absolute bottom-3 left-3 rounded-full bg-black/60 px-2.5 py-1 text-xs font-semibold text-white">
-                        About {friendlyDuration(route.estimatedDurationMinutes)}
+                        {friendlyDuration(route.estimatedDurationMinutes)}
                       </span>
                     </div>
                     <div className="p-4">
@@ -99,13 +108,16 @@ export default function PopularTransfers() {
                       ) : null}
                       <div className="mt-3 flex items-center justify-between border-t pt-3">
                         <span className="text-sm">
-                          {route.cheapestOneWay ? (
+                          {cheapest ? (
                             <>
                               <span className="text-muted-foreground">One-way from </span>
                               <span className="text-brand-blue-900 font-bold">
-                                {formatPeso(route.cheapestOneWay.priceCentavos)}
+                                {formatPeso(cheapest.priceCentavos)}
                               </span>
-                              <span className="text-muted-foreground"> per van</span>
+                              <span className="text-muted-foreground">
+                                {' '}
+                                per {cheapest.vehicleTypeName.toLowerCase()}
+                              </span>
                             </>
                           ) : (
                             <span className="text-muted-foreground">Price unavailable</span>
@@ -150,6 +162,13 @@ export default function PopularTransfers() {
   );
 }
 
+// `QueryBoundary`'s `skeleton` prop is required, and the pending/error
+// branches it would otherwise render are unreachable here now that the
+// guard above returns `null` before `QueryBoundary` ever mounts for a
+// pending or data-less-errored query — this component simply has nothing
+// to show in either case (finding I3). Kept rather than deleted: removing
+// it would mean faking a prop `QueryBoundary` still requires, which is
+// scope creep beyond I3's fix.
 function PopularTransfersSkeleton() {
   return (
     <ul className="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">

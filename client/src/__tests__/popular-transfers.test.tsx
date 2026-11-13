@@ -7,6 +7,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 import PopularTransfers from '@/components/home/PopularTransfers';
+import { friendlyDuration } from '@/lib/duration-words';
 import { TrpcProviders } from '@/lib/trpc';
 import { TRANSFER_HOME_CARDS_FIXTURE } from './helpers/fixtures';
 import { mockTrpc } from './helpers/mock-trpc';
@@ -26,9 +27,19 @@ describe('PopularTransfers', () => {
     mockTrpc({ 'transferRoutes.featured': [] });
     const { container } = renderSection();
 
-    // Waits for the query to actually settle (it starts out `isPending`,
-    // which renders the skeleton, not null), then asserts the section never
-    // mounts at all — not merely that it is visually hidden.
+    // Finding I3 (final review): the section must be absent on the VERY
+    // FIRST render too, while the query is still `isPending` — not only
+    // once it later settles to an empty array. The old guard
+    // (`query.data && query.data.length === 0`) only caught the settled
+    // case, so every default-state page load flashed the heading plus
+    // three skeleton cards before this component disappeared. Checked
+    // synchronously, before any `await`, so a regression back to the old
+    // guard fails this line immediately rather than only via the `waitFor`
+    // below (which a stale "it starts out `isPending`" expectation could
+    // otherwise rationalize as correct).
+    expect(container.querySelector('#popular-transfers')).toBeNull();
+
+    // Then confirm the section still never mounts once the query settles.
     await waitFor(() => expect(container.querySelector('#popular-transfers')).toBeNull());
     expect(screen.queryByText(/popular transfers/i)).not.toBeInTheDocument();
   });
@@ -37,13 +48,16 @@ describe('PopularTransfers', () => {
     mockTrpc({ 'transferRoutes.featured': TRANSFER_HOME_CARDS_FIXTURE });
     renderSection();
 
+    // Finding I3 (final review): with the fixed guard this component
+    // renders nothing at all until `transferRoutes.featured` resolves, so
+    // the heading itself only appears once real data has replaced the
+    // (now-dead) loading skeleton — `findByRole` already awaits that.
     const heading = await screen.findByRole('heading', {
       name: /private van transfers across cebu/i,
     });
     const container = heading.closest('section') as HTMLElement;
-    // The heading above renders unconditionally, before the query settles
-    // — wait for real card content (the badge, present only once real data
-    // has replaced the loading skeleton) before counting cards.
+    // Wait for real card content (the badge, present only once real data
+    // has mounted) before counting cards.
     await within(container).findByText('Most booked');
 
     const cards = within(container).getAllByRole('listitem');
@@ -59,6 +73,21 @@ describe('PopularTransfers', () => {
     expect(within(first).getByText('Van')).toBeInTheDocument();
     expect(within(first).getByText('SUV')).toBeInTheDocument();
     expect(within(first).getByText(/₱2,500/)).toBeInTheDocument();
+    expect(within(first).getByText(/per van/i)).toBeInTheDocument();
+
+    // Finding I1 (final review): the duration badge renders
+    // `friendlyDuration()`'s own string ALONE — no literal "About " prefix
+    // duplicating the "about" the helper already prepends. Exact string
+    // match (not a substring regex): a regex like `/about 3 hr/i` would
+    // still match the broken doubled text "About about 3 hr", which is
+    // exactly the bug this assertion exists to catch. The explicit
+    // negative below pins that the doubled form specifically is gone.
+    expect(
+      within(first).getByText(
+        friendlyDuration(TRANSFER_HOME_CARDS_FIXTURE[0]!.estimatedDurationMinutes),
+      ),
+    ).toBeInTheDocument();
+    expect(within(first).queryByText(/about about/i)).not.toBeInTheDocument();
 
     // Card 2: no badge, no short description, one vehicle chip, and the
     // server's own fallback price (SUV, since no van is offered on it).
@@ -67,6 +96,12 @@ describe('PopularTransfers', () => {
     expect(within(second).getByText('SUV')).toBeInTheDocument();
     expect(within(second).queryByText('Van')).not.toBeInTheDocument();
     expect(within(second).getByText(/₱3,200/)).toBeInTheDocument();
+    // Finding I2 (final review): card 2's cheapest offer falls back to SUV
+    // (no van is offered on this route), so the price tail must say "per
+    // suv" — never the hardcoded "per van" the old code always rendered,
+    // which would have misrepresented this exact card.
+    expect(within(second).getByText(/per suv/i)).toBeInTheDocument();
+    expect(within(second).queryByText(/per van/i)).not.toBeInTheDocument();
   });
 
   it('the Book button links to /transfer with productType, routeId and direction preselected', async () => {
