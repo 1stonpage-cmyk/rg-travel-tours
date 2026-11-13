@@ -41,6 +41,17 @@ export const TRANSFER_DIRECTIONS = ['forward', 'reverse'] as const;
 export type TransferDirection = (typeof TRANSFER_DIRECTIONS)[number];
 
 /**
+ * What a pickup/drop-off place IS — replaces the old `isAirport` boolean
+ * (owner decision 2026-11-13). `'airport'` keeps every existing flight-field
+ * rule unchanged (it is the same gate `isAirport === true` used to be);
+ * `'pier'` is new and gates the ferry fields (Task 1E); `'city'` and
+ * `'destination'` carry no special field requirements today but exist so a
+ * place's type is always a real fact, never a residual "false".
+ */
+export const TRANSFER_PLACE_TYPES = ['airport', 'pier', 'city', 'destination'] as const;
+export type TransferPlaceType = (typeof TRANSFER_PLACE_TYPES)[number];
+
+/**
  * What a booking IS — the `bookings.product_type` discriminator.
  *
  * `'tour'` is first and is the column's default, because every booking that
@@ -104,7 +115,7 @@ export interface TransferVehiclePriceRow {
 export interface TransferPlacePublicRow {
   id: number;
   name: string;
-  isAirport: boolean;
+  placeType: TransferPlaceType;
 }
 
 /**

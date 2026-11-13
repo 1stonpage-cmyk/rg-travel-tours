@@ -190,6 +190,20 @@
       "when": 1794516348292,
       "tag": "0026_happy_mister_sinister",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "5",
+      "when": 1794579050084,
+      "tag": "0027_rapid_nighthawk",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "5",
+      "when": 1794579080497,
+      "tag": "0028_nasty_vampiro",
+      "breakpoints": true
     }
   ]
 }

@@ -36,6 +36,7 @@ import {
   PAY_MODES,
   PRODUCT_TYPES,
   TRANSFER_DIRECTIONS,
+  TRANSFER_PLACE_TYPES,
   type BookingPriceSnapshot,
 } from '@rg/shared';
 
@@ -271,7 +272,7 @@ export const transferPlaces = mysqlTable(
     id: int('id').autoincrement().primaryKey(),
     name: varchar('name', { length: 120 }).notNull(),
     nameKey: varchar('name_key', { length: 160 }).notNull().unique(),
-    isAirport: boolean('is_airport').notNull().default(false),
+    placeType: mysqlEnum('place_type', TRANSFER_PLACE_TYPES).notNull().default('destination'),
     isActive: boolean('is_active').notNull().default(true),
     sortOrder: int('sort_order').notNull().default(0),
     destinationId: int('destination_id').references(() => destinations.id),
@@ -335,6 +336,20 @@ export const transferRoutes = mysqlTable(
     freeCancelHours: int('free_cancel_hours').notNull().default(24),
     inclusionsText: text('inclusions_text'),
     exclusionsText: text('exclusions_text'),
+    /**
+     * "Popular transfers" home-page card (owner decision 2026-11-13, Task 1D).
+     * Independent of `isActive`/`sortOrder` — a route can be sellable without
+     * being featured, and vice versa is refused nowhere (an inactive route
+     * simply never reaches the public list `homeFeaturedTransferRoutes()`
+     * reads, same as it never reaches `transferRoutes.list`).
+     */
+    showOnHomePage: boolean('show_on_home_page').notNull().default(false),
+    /** Short label shown as an amber pill on the card, e.g. "Most booked". Optional. */
+    homePageBadge: varchar('home_page_badge', { length: 20 }),
+    /** Where this route sorts among OTHER featured routes, lowest first. Not the same ordering as `sortOrder`. */
+    homePageOrder: int('home_page_order').notNull().default(0),
+    /** Optional card copy, shown under the From → To title. */
+    homePageShortDescription: varchar('home_page_short_description', { length: 120 }),
     createdAt: datetime('created_at', { mode: 'date' })
       .notNull()
       .$defaultFn(() => new Date()),
@@ -1650,6 +1665,10 @@ export const bookingTransferDetails = mysqlTable('booking_transfer_details', {
   flightNumber: varchar('flight_number', { length: 20 }),
   /** Airport transfers only. */
   airline: varchar('airline', { length: 80 }),
+  /** Pier/port pickups or drop-offs only — the ferry-leg counterpart of `flightNumber`. */
+  ferryVesselName: varchar('ferry_vessel_name', { length: 120 }),
+  /** "HH:mm" civil label, Asia/Manila — same convention as `pickupTime`. Pier/port only. */
+  ferryArrivalTime: varchar('ferry_arrival_time', { length: 5 }),
   /** Set only when `bookings.route_id` is NULL (a staff-quoted custom trip). */
   customRouteDescription: varchar('custom_route_description', { length: 300 }),
   /**
