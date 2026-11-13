@@ -17,7 +17,7 @@ import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { TransferPlaceType } from '@rg/shared';
 import { appRouter } from '../routers/_app';
 import { getDb, getPool } from '../db/client';
-import { auditLog, destinations, transferPlaces, users } from '../db/schema';
+import { auditLog, destinations, transferPlaces, transferRoutes, users } from '../db/schema';
 import { customerContext, staffContext, testContext } from './helpers/ctx';
 import { describeWithDb } from './helpers/db';
 
@@ -27,6 +27,7 @@ const created = {
   userIds: [] as number[],
   placeIds: [] as number[],
   destIds: [] as number[],
+  routeIds: [] as number[],
 };
 
 async function makeStaff(role: 'owner' | 'dispatcher' | 'finance') {
@@ -83,6 +84,27 @@ async function createPlace(
   return id;
 }
 
+/**
+ * A real `transfer_routes` row directly via Drizzle, not through
+ * `admin.transferRoutes.create` — that mutation also requires a full price
+ * card keyed by live vehicle-type ids, which is irrelevant noise for a test
+ * that only needs a route to EXIST, referencing two real places, so
+ * `admin.transferPlaces.list`'s `routeCount` tally has something real to
+ * count.
+ */
+async function makeRoute(fromPlaceId: number, toPlaceId: number) {
+  const [row] = await getDb()
+    .insert(transferRoutes)
+    .values({
+      fromPlaceId,
+      toPlaceId,
+      slug: `__adtproute__${unique()}`,
+      estimatedDurationMinutes: 30,
+    });
+  created.routeIds.push(row.insertId);
+  return row.insertId;
+}
+
 beforeAll(async () => {
   ownerId = await makeStaff('owner');
   dispatcherId = await makeStaff('dispatcher');
@@ -101,6 +123,12 @@ afterAll(async () => {
     await pool.query('DELETE FROM users WHERE id = ?', [id]);
   }
 
+  // Routes first — `transfer_routes.from_place_id`/`.to_place_id` are
+  // RESTRICT foreign keys against `transfer_places`, so a route referencing
+  // a place this suite created would block that place's own delete below.
+  if (created.routeIds.length > 0) {
+    await db.delete(transferRoutes).where(inArray(transferRoutes.id, created.routeIds));
+  }
   if (created.placeIds.length > 0) {
     await db
       .delete(auditLog)
@@ -167,6 +195,34 @@ describeWithDb('admin.transferPlaces', () => {
     const id = await createPlace({ destinationId } as never);
     const row = (await ownerApi().admin.transferPlaces.list()).find((r) => r.id === id);
     expect(row?.destinationId).toBe(destinationId);
+  });
+
+  /**
+   * `routeCount` (Task 1C, client review follow-up) is computed in
+   * `admin.transferPlaces.list` by tallying BOTH `fromPlaceId` and
+   * `toPlaceId` across every real `transfer_routes` row — never asserted
+   * against real routes anywhere else in the suite before this. Place A is
+   * deliberately BOTH a `fromPlaceId` (route A→B) and a `toPlaceId` (route
+   * C→A), so a tally that only reads one column would under-count it; place
+   * D gets no route at all, so a tally that defaults to something other
+   * than 0 would over-count it.
+   */
+  it("counts a place's routes from either end, and zero when it has none", async () => {
+    const placeA = await createPlace();
+    const placeB = await createPlace();
+    const placeC = await createPlace();
+    const placeD = await createPlace();
+
+    await makeRoute(placeA, placeB); // A is fromPlaceId here.
+    await makeRoute(placeC, placeA); // A is toPlaceId here — the other end.
+
+    const rows = await ownerApi().admin.transferPlaces.list();
+    const routeCountOf = (id: number) => rows.find((r) => r.id === id)?.routeCount;
+
+    expect(routeCountOf(placeA)).toBe(2);
+    expect(routeCountOf(placeB)).toBe(1);
+    expect(routeCountOf(placeC)).toBe(1);
+    expect(routeCountOf(placeD)).toBe(0);
   });
 
   it('refuses an unknown destinationId with BAD_REQUEST, not a foreign-key 500', async () => {
