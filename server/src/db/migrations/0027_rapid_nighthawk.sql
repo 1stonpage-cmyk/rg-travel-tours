@@ -15,8 +15,11 @@ ALTER TABLE `transfer_routes` ADD `show_on_home_page` boolean DEFAULT false NOT 
 ALTER TABLE `transfer_routes` ADD `home_page_badge` varchar(20);--> statement-breakpoint
 ALTER TABLE `transfer_routes` ADD `home_page_order` int DEFAULT 0 NOT NULL;--> statement-breakpoint
 ALTER TABLE `transfer_routes` ADD `home_page_short_description` varchar(120);--> statement-breakpoint
--- Backfill (owner decision 2026-11-13). A no-op on an empty `transfer_places`
--- table — mirrors 0023/0024's own "no-op on a fresh/empty table" backfills.
+-- Backfill (owner decision 2026-11-13). NOT a no-op on this project's
+-- existing data — `transfer_places` already holds rows (seeded by
+-- migration 0023's own backfill), and this UPDATE sequence rewrites
+-- `place_type` on whichever of them match a rule below. It is a no-op
+-- only on a genuinely fresh/empty `transfer_places` table.
 UPDATE `transfer_places` SET `place_type` = 'airport' WHERE `is_airport` = true;--> statement-breakpoint
 -- Owner-named overrides, by the normalized `name_key` (never a literal id —
 -- same discipline `upsertTransferPlace()` uses). No-op if the named row
