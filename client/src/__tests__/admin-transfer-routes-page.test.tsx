@@ -453,6 +453,102 @@ describe('AdminTransferRoutesPage', () => {
     expect(screen.queryByText(/"code":/)).toBeNull();
   });
 
+  /*
+   * -------------------------------------------------------------------- *
+   * Task 1D — "Show on home page" section + live preview.
+   * -------------------------------------------------------------------- */
+
+  it('shows the home-page section fields only when the toggle is on', async () => {
+    renderPage();
+    await openAddForm();
+
+    expect(screen.getByLabelText(/Adds this route to/i)).not.toBeChecked();
+    expect(screen.queryByLabelText('Badge (optional)')).toBeNull();
+    expect(screen.queryByLabelText('Order on home page')).toBeNull();
+    expect(screen.queryByLabelText(/Short description/)).toBeNull();
+
+    await user.click(screen.getByLabelText(/Adds this route to/i));
+
+    expect(screen.getByLabelText('Badge (optional)')).toBeInTheDocument();
+    expect(screen.getByLabelText('Order on home page')).toBeInTheDocument();
+    expect(screen.getByLabelText(/Short description/)).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText(/Adds this route to/i));
+    expect(screen.queryByLabelText('Badge (optional)')).toBeNull();
+  });
+
+  it('shows a live preview reflecting the typed badge and description', async () => {
+    renderPage();
+    await openAddForm();
+    await user.click(screen.getByLabelText(/Adds this route to/i));
+
+    await pickPlace('From place', 'Mactan', 'Mactan-Cebu International Airport');
+    await pickPlace('To place', 'Oslob', 'Oslob');
+
+    await user.type(screen.getByLabelText('Badge (optional)'), 'Most booked');
+    await user.type(screen.getByLabelText(/Short description/), 'Fast and comfortable.');
+
+    // Both typed into the LOCAL form state, with no save and no tRPC call —
+    // the preview is a pure function of the unsaved form, not a query.
+    // `{ selector: 'p' }` on the description: jsdom mirrors a <textarea>'s
+    // live value into its own textContent, so a bare `getByText` would also
+    // match the textarea itself as a second, ambiguous node.
+    expect(await screen.findByText('Most booked')).toBeInTheDocument();
+    expect(screen.getByText('Fast and comfortable.', { selector: 'p' })).toBeInTheDocument();
+
+    // Clearing the badge removes it from the preview immediately.
+    await user.clear(screen.getByLabelText('Badge (optional)'));
+    expect(screen.queryByText('Most booked')).toBeNull();
+  });
+
+  it('posts the home-page fields on save, null when left blank', async () => {
+    const sent: unknown[] = [];
+    renderPage({
+      'admin.transferRoutes.create': (input: unknown) => {
+        sent.push(input);
+        return { id: 99 };
+      },
+    });
+    await screen.findAllByText(/Mactan-Cebu International Airport → Oslob/);
+    await openAddForm();
+
+    await pickPlace('From place', 'Mactan', 'Mactan-Cebu International Airport');
+    await pickPlace('To place', 'Oslob', 'Oslob');
+    await user.type(screen.getByLabelText('Slug'), 'mactan-oslob-home');
+    await user.clear(screen.getByLabelText('Duration — minutes'));
+    await user.type(screen.getByLabelText('Duration — hours'), '2');
+    await user.clear(screen.getByLabelText('Free cancellation window (hours)'));
+    await user.type(screen.getByLabelText('Free cancellation window (hours)'), '24');
+    await user.type(
+      screen.getByLabelText('One-way (pesos)', { selector: '#route-price-1-oneway' }),
+      '1500.00',
+    );
+    await user.type(
+      screen.getByLabelText('Day-use (pesos)', { selector: '#route-price-1-dayuse' }),
+      '3500.00',
+    );
+
+    await user.click(screen.getByLabelText(/Adds this route to/i));
+    await user.type(screen.getByLabelText('Badge (optional)'), 'Most booked');
+    const orderInput = screen.getByLabelText('Order on home page');
+    await user.clear(orderInput);
+    await user.type(orderInput, '5');
+
+    await user.click(screen.getByRole('button', { name: /^add route$/i }));
+
+    await waitFor(() => expect(sent).toHaveLength(1));
+    const payload = sent[0] as {
+      showOnHomePage: boolean;
+      homePageBadge: string | null;
+      homePageOrder: number;
+      homePageShortDescription: string | null;
+    };
+    expect(payload.showOnHomePage).toBe(true);
+    expect(payload.homePageBadge).toBe('Most booked');
+    expect(payload.homePageOrder).toBe(5);
+    expect(payload.homePageShortDescription).toBeNull();
+  });
+
   it('shows the denied state, not a blank screen, when the role is refused', async () => {
     renderPage({ 'staffAuth.me': { userId: 2, role: 'dispatcher', mustChangePassword: false } });
     expect(

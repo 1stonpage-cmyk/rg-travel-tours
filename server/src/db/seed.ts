@@ -597,6 +597,11 @@ export async function upsertDemoTransferRoutes(
         freeCancelHours: 24,
         inclusionsText: null,
         exclusionsText: null,
+        // Seed content stays off the home-page card (Task 1D) — an owner
+        // opts a route in from the admin screen, not from the seed.
+        showOnHomePage: false,
+        homePageBadge: null,
+        homePageShortDescription: null,
         prices,
       });
     }

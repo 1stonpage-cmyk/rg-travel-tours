@@ -152,6 +152,9 @@ function routeInput(
     freeCancelHours: 24,
     inclusionsText: 'Fuel, driver, tolls',
     exclusionsText: 'Meals',
+    showOnHomePage: false,
+    homePageBadge: null,
+    homePageShortDescription: null,
     prices: fullPrices(),
     ...overrides,
   };
@@ -954,6 +957,74 @@ describeWithDb('admin.transferRoutes', () => {
     expect(row?.exclusionsText).toBeNull();
     // And the prices are still there — a null-clearing edit is still a save.
     expect(row?.prices.find((p) => p.vehicleTypeId === VAN_ID)?.price).toEqual(VALID_PRICES.van);
+  });
+
+  /*
+   * -------------------------------------------------------------------- *
+   * Task 1D — the four "show on home page" scalars. Plain fields, no
+   * sparse-card contract: unlike `prices`, each behaves like `sortOrder`
+   * already does, present or absent.
+   * -------------------------------------------------------------------- */
+
+  it('stores the home-page fields on create, and a patch naming only one leaves the other three untouched', async () => {
+    const { id } = await createRoute({
+      showOnHomePage: true,
+      homePageBadge: 'Most booked',
+      homePageOrder: 5,
+      homePageShortDescription: 'Fast and comfortable.',
+    });
+
+    const created = (await ownerApi().admin.transferRoutes.list()).find((r) => r.id === id);
+    expect(created).toMatchObject({
+      showOnHomePage: true,
+      homePageBadge: 'Most booked',
+      homePageOrder: 5,
+      homePageShortDescription: 'Fast and comfortable.',
+    });
+
+    // A patch naming ONLY the badge must not touch the other three.
+    await ownerApi().admin.transferRoutes.update({
+      id,
+      patch: { homePageBadge: 'New badge' },
+    });
+    const afterPatch = (await ownerApi().admin.transferRoutes.list()).find((r) => r.id === id);
+    expect(afterPatch).toMatchObject({
+      showOnHomePage: true,
+      homePageBadge: 'New badge',
+      homePageOrder: 5,
+      homePageShortDescription: 'Fast and comfortable.',
+    });
+  });
+
+  it('defaults the home-page fields to off/unset when a create never mentions them explicitly', async () => {
+    const { id } = await createRoute();
+    const row = (await ownerApi().admin.transferRoutes.list()).find((r) => r.id === id);
+    expect(row).toMatchObject({
+      showOnHomePage: false,
+      homePageBadge: null,
+      homePageOrder: 0,
+      homePageShortDescription: null,
+    });
+  });
+
+  it('refuses a home-page badge longer than 20 characters', async () => {
+    const fromPlaceId = await makePlace();
+    const toPlaceId = await makePlace();
+    await expect(
+      ownerApi().admin.transferRoutes.create(
+        routeInput(fromPlaceId, toPlaceId, { homePageBadge: 'x'.repeat(21) }),
+      ),
+    ).rejects.toThrow(/20 characters/i);
+  });
+
+  it('refuses a home-page short description longer than 120 characters', async () => {
+    const fromPlaceId = await makePlace();
+    const toPlaceId = await makePlace();
+    await expect(
+      ownerApi().admin.transferRoutes.create(
+        routeInput(fromPlaceId, toPlaceId, { homePageShortDescription: 'x'.repeat(121) }),
+      ),
+    ).rejects.toThrow(/120 characters/i);
   });
 
   it('refuses an empty patch instead of writing an audit row for nothing', async () => {

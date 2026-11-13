@@ -106,6 +106,10 @@ export const adminTransferRoutesRouter = router({
         freeCancelHours: transferRoutes.freeCancelHours,
         inclusionsText: transferRoutes.inclusionsText,
         exclusionsText: transferRoutes.exclusionsText,
+        showOnHomePage: transferRoutes.showOnHomePage,
+        homePageBadge: transferRoutes.homePageBadge,
+        homePageOrder: transferRoutes.homePageOrder,
+        homePageShortDescription: transferRoutes.homePageShortDescription,
       })
       .from(transferRoutes)
       .innerJoin(fromPlace, eq(fromPlace.id, transferRoutes.fromPlaceId))
@@ -176,6 +180,10 @@ export const adminTransferRoutesRouter = router({
         freeCancelHours: row.freeCancelHours,
         inclusionsText: row.inclusionsText,
         exclusionsText: row.exclusionsText,
+        showOnHomePage: row.showOnHomePage,
+        homePageBadge: row.homePageBadge,
+        homePageOrder: row.homePageOrder,
+        homePageShortDescription: row.homePageShortDescription,
         prices,
       };
     });
@@ -257,6 +265,10 @@ export const adminTransferRoutesRouter = router({
             freeCancelHours: transferRoutes.freeCancelHours,
             inclusionsText: transferRoutes.inclusionsText,
             exclusionsText: transferRoutes.exclusionsText,
+            showOnHomePage: transferRoutes.showOnHomePage,
+            homePageBadge: transferRoutes.homePageBadge,
+            homePageOrder: transferRoutes.homePageOrder,
+            homePageShortDescription: transferRoutes.homePageShortDescription,
           })
           .from(transferRoutes)
           .where(eq(transferRoutes.id, input.id))

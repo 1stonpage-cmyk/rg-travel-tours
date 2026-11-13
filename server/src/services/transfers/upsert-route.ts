@@ -269,6 +269,14 @@ export function mergeTransferRoutePatch(
       patch.inclusionsText !== undefined ? patch.inclusionsText : stored.inclusionsText,
     exclusionsText:
       patch.exclusionsText !== undefined ? patch.exclusionsText : stored.exclusionsText,
+    showOnHomePage:
+      patch.showOnHomePage !== undefined ? patch.showOnHomePage : stored.showOnHomePage,
+    homePageBadge: patch.homePageBadge !== undefined ? patch.homePageBadge : stored.homePageBadge,
+    homePageOrder: patch.homePageOrder !== undefined ? patch.homePageOrder : stored.homePageOrder,
+    homePageShortDescription:
+      patch.homePageShortDescription !== undefined
+        ? patch.homePageShortDescription
+        : stored.homePageShortDescription,
     /*
      * The money line. An absent `prices` keeps the STORED card in full —
      * every vehicle type that was offered — so the delete-then-reinsert
@@ -297,6 +305,14 @@ function routeValues(params: TransferRouteUpsertParams) {
     freeCancelHours: params.freeCancelHours,
     inclusionsText: params.inclusionsText,
     exclusionsText: params.exclusionsText,
+    showOnHomePage: params.showOnHomePage,
+    homePageBadge: params.homePageBadge,
+    // Same `?? 0` fallback `sortOrder` uses above, for the same reason: a
+    // bare `create` whose input never named it hits the column's own
+    // `DEFAULT 0`. `update` never hits this default in practice either —
+    // see `sortOrder`'s own comment.
+    homePageOrder: params.homePageOrder ?? 0,
+    homePageShortDescription: params.homePageShortDescription,
     /*
      * `isActive` is absent on purpose, not forgotten: it is not on the input
      * (see `shared/src/transfers-admin.ts`), so `setActive` stays the only

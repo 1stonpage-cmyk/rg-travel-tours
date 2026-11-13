@@ -64,6 +64,7 @@ import { Label } from '@/components/ui/label';
 import AdminPageHeader from '@/components/admin/AdminPageHeader';
 import EntityForm, { type EntityFormField } from '@/components/admin/EntityForm';
 import FormActions from '@/components/admin/FormActions';
+import HomeTransferCardPreview from '@/components/admin/HomeTransferCardPreview';
 import TransferPlaceCombobox from '@/components/admin/TransferPlaceCombobox';
 import { exactDuration } from '@/lib/duration-words';
 import { centavosToPesosInput, pesosToCentavos } from '@/lib/money-input';
@@ -185,6 +186,9 @@ const TRANSFER_ROUTE_FIELD_NAMES: ReadonlySet<string> = new Set([
   'freeCancelHours',
   'inclusionsText',
   'exclusionsText',
+  'homePageBadge',
+  'homePageOrder',
+  'homePageShortDescription',
 ]);
 
 function scalarFields(): EntityFormField[] {
@@ -279,6 +283,10 @@ function formFieldFor(path: readonly PropertyKey[]): string | null {
     'freeCancelHours',
     'inclusionsText',
     'exclusionsText',
+    'showOnHomePage',
+    'homePageBadge',
+    'homePageOrder',
+    'homePageShortDescription',
   ]);
   return typeof first === 'string' && SCALAR.has(first) ? first : null;
 }
@@ -321,6 +329,12 @@ function TransferRouteForm({
   const [fromPlaceId, setFromPlaceId] = useState<number | null>(initial?.fromPlace.id ?? null);
   const [toPlaceId, setToPlaceId] = useState<number | null>(initial?.toPlace.id ?? null);
   const [reverseEnabled, setReverseEnabled] = useState<boolean>(initial?.reverseEnabled ?? true);
+  const [showOnHomePage, setShowOnHomePage] = useState<boolean>(initial?.showOnHomePage ?? false);
+  const [homePageBadge, setHomePageBadge] = useState<string>(initial?.homePageBadge ?? '');
+  const [homePageOrder, setHomePageOrder] = useState<string>(String(initial?.homePageOrder ?? 0));
+  const [homePageShortDescription, setHomePageShortDescription] = useState<string>(
+    initial?.homePageShortDescription ?? '',
+  );
   const initialDuration = initial ? hoursAndMinutesFrom(initial.estimatedDurationMinutes) : null;
   const [durationHours, setDurationHours] = useState<string>(initialDuration?.hours ?? '');
   const [durationMinutes, setDurationMinutes] = useState<string>(initialDuration?.minutes ?? '0');
@@ -425,6 +439,11 @@ function TransferRouteForm({
       freeCancelHours: Number(value('freeCancelHours')),
       inclusionsText: value('inclusionsText') === '' ? null : value('inclusionsText'),
       exclusionsText: value('exclusionsText') === '' ? null : value('exclusionsText'),
+      showOnHomePage,
+      homePageBadge: homePageBadge.trim() === '' ? null : homePageBadge.trim(),
+      homePageOrder: homePageOrder.trim() === '' ? undefined : Number(homePageOrder.trim()),
+      homePageShortDescription:
+        homePageShortDescription.trim() === '' ? null : homePageShortDescription.trim(),
       prices,
     };
 
@@ -588,6 +607,86 @@ function TransferRouteForm({
                 </div>
               );
             })}
+          </div>
+        )}
+      </div>
+
+      <div className="border-brand-blue-200 rounded-xl border-2 border-dashed p-4">
+        <h3 className="text-brand-ink text-sm font-bold">Show on home page</h3>
+        <label
+          className="tap-target mt-2 flex items-center gap-2 text-sm"
+          htmlFor="route-show-on-home"
+        >
+          <input
+            id="route-show-on-home"
+            type="checkbox"
+            checked={showOnHomePage}
+            onChange={(event) => setShowOnHomePage(event.target.checked)}
+          />
+          Adds this route to &ldquo;Popular transfers&rdquo;
+        </label>
+
+        {showOnHomePage && (
+          <div className="mt-3 space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="route-home-badge">Badge (optional)</Label>
+              <Input
+                id="route-home-badge"
+                maxLength={20}
+                placeholder="Most booked"
+                className={`${FIELD} w-full`}
+                value={homePageBadge}
+                onChange={(event) => setHomePageBadge(event.target.value)}
+              />
+              {errors.homePageBadge ? <p className={ROW_ERROR}>{errors.homePageBadge}</p> : null}
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="route-home-order">Order on home page</Label>
+              <Input
+                id="route-home-order"
+                type="number"
+                min={0}
+                className={`${FIELD} w-full`}
+                value={homePageOrder}
+                onChange={(event) => setHomePageOrder(event.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="route-home-description">
+                Short description (optional, 120 characters)
+              </Label>
+              <textarea
+                id="route-home-description"
+                maxLength={120}
+                rows={2}
+                className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                value={homePageShortDescription}
+                onChange={(event) => setHomePageShortDescription(event.target.value)}
+              />
+              {errors.homePageShortDescription ? (
+                <p className={ROW_ERROR}>{errors.homePageShortDescription}</p>
+              ) : null}
+            </div>
+
+            <div>
+              <p className="text-brand-ink text-xs font-semibold uppercase tracking-wide">
+                Preview
+              </p>
+              <p className="text-brand-error mb-2 text-xs">
+                Price and photo are automatic: lowest van price on this route, and the
+                destination&apos;s photo.
+              </p>
+              <HomeTransferCardPreview
+                fromName={places.find((p) => p.id === fromPlaceId)?.name ?? 'From'}
+                toName={places.find((p) => p.id === toPlaceId)?.name ?? 'To'}
+                fromPlaceType={places.find((p) => p.id === fromPlaceId)?.placeType ?? 'destination'}
+                durationMinutes={totalMinutesFrom(durationHours, durationMinutes) ?? 0}
+                badge={homePageBadge.trim() === '' ? null : homePageBadge.trim()}
+                shortDescription={
+                  homePageShortDescription.trim() === '' ? null : homePageShortDescription.trim()
+                }
+              />
+            </div>
           </div>
         )}
       </div>

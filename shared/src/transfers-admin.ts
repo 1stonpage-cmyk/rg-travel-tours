@@ -165,6 +165,26 @@ const transferRouteFieldsSchema = z
     freeCancelHours: z.number().int().min(0).max(168),
     inclusionsText: z.string().trim().max(5000).nullable(),
     exclusionsText: z.string().trim().max(5000).nullable(),
+    /**
+     * "Popular transfers" home-page card (owner decision 2026-11-13, Task
+     * 1D). Independent of `isActive`/`sortOrder` — see `db/schema.ts`'s own
+     * comment on the columns these four fields map onto. Plain scalars, with
+     * no "sparse but complete card" contract: unlike `prices`, each of these
+     * four behaves exactly like `sortOrder`/`inclusionsText` already do —
+     * present or absent on a patch, no special merge semantics.
+     */
+    showOnHomePage: z.boolean(),
+    homePageBadge: z
+      .string()
+      .trim()
+      .max(20, 'Keep the badge to 20 characters or fewer.')
+      .nullable(),
+    homePageOrder: z.number().int().min(0).max(9999).optional(),
+    homePageShortDescription: z
+      .string()
+      .trim()
+      .max(120, 'Keep the description to 120 characters or fewer.')
+      .nullable(),
     prices: transferRoutePricesInputSchema,
   })
   .strict();
@@ -454,6 +474,11 @@ export interface TransferRouteAdminRow {
   freeCancelHours: number;
   inclusionsText: string | null;
   exclusionsText: string | null;
+  /** "Popular transfers" home-page card — see `transferRouteFieldsSchema`'s own comment. */
+  showOnHomePage: boolean;
+  homePageBadge: string | null;
+  homePageOrder: number;
+  homePageShortDescription: string | null;
   /** Every ACTIVE vehicle type, in sort order. `price: null` means "not offered". */
   prices: TransferRouteAdminVehiclePrice[];
 }
