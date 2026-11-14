@@ -175,15 +175,21 @@ export default function HeroSection() {
             skeleton={<HeroCopySkeleton />}
             errorTitle="Content could not load"
           >
-            {({ trust, hero, permits }) => {
+            {({ trust, hero, permits, hasRealReviews }) => {
               // ratingCount is nullable: no client-supplied review count
               // exists yet, so the "from N guest reviews" clause only
               // renders once a real count is supplied (no fabricated social
               // proof). ratingAverage/guestsServed are independently
               // nullable — each item is omitted entirely, not rendered as
-              // "0" or "—", when its value is null.
+              // "0" or "—", when its value is null. The rating item also
+              // requires `hasRealReviews` (same boolean the JSON-LD
+              // `aggregateRating` key and the "What guests say" section
+              // gate on) — an admin-entered average with zero real reviews
+              // behind it is exactly the fake social proof this rule
+              // forbids, so the figure itself is withheld, not just its
+              // review-count clause.
               const trustItems: ReactNode[] = [];
-              if (trust.ratingAverage !== null) {
+              if (trust.ratingAverage !== null && hasRealReviews) {
                 trustItems.push(
                   <li key="rating" className="flex items-center gap-1.5">
                     <span className="text-brand-gold-300 font-bold">

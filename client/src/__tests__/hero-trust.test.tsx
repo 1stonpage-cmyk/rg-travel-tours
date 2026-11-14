@@ -180,6 +180,35 @@ describe('HeroSection — settings-driven', () => {
     expect(screen.getByText(/guests served/i)).toBeInTheDocument();
   });
 
+  it('omits the rating badge when hasRealReviews is false, even with ratingAverage set (no fake social proof)', async () => {
+    const settings = {
+      ...SETTINGS_FIXTURE,
+      trust: { ...SETTINGS_FIXTURE.trust, ratingAverage: 4.9 },
+      hasRealReviews: false,
+    };
+    mockTrpc({ 'settings.get': settings, 'destinations.list': DESTINATIONS_FIXTURE });
+    const { container } = renderHero();
+
+    await screen.findByRole('heading', { level: 1 });
+    expect(container.textContent).not.toMatch(/★/);
+    expect(container.textContent).not.toMatch(/\bnull\b/i);
+    // The other trust-line items must still render.
+    expect(screen.getByText(/guests served/i)).toBeInTheDocument();
+  });
+
+  it('shows the rating badge when hasRealReviews is true and ratingAverage is set (regression)', async () => {
+    const settings = {
+      ...SETTINGS_FIXTURE,
+      trust: { ...SETTINGS_FIXTURE.trust, ratingAverage: 4.9 },
+      hasRealReviews: true,
+    };
+    mockTrpc({ 'settings.get': settings, 'destinations.list': DESTINATIONS_FIXTURE });
+    renderHero();
+
+    await screen.findByRole('heading', { level: 1 });
+    expect(screen.getByText('4.9★')).toBeInTheDocument();
+  });
+
   it('omits the guests-served item when guestsServed is null', async () => {
     const settings = {
       ...SETTINGS_FIXTURE,
