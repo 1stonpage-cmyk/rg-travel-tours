@@ -501,6 +501,29 @@ describe('AdminTransferRoutesPage', () => {
     expect(screen.queryByText('Most booked')).toBeNull();
   });
 
+  /**
+   * Task 1B: the preview's photo tile is the brand-gradient fallback —
+   * naming the TO place and its OWN place-type icon, not the from-place's.
+   * Oslob ('destination' -> MapPin) is picked as the To place against
+   * Mactan airport ('airport' -> Plane) as the From place specifically so a
+   * regression that wired `fromPlaceType` into the tile instead of
+   * `toPlaceType` would show the wrong icon and fail this test.
+   */
+  it('shows the fallback tile with the To place’s name and its own place-type icon', async () => {
+    renderPage();
+    await openAddForm();
+    await user.click(screen.getByLabelText(/Adds this route to/i));
+
+    await pickPlace('From place', 'Mactan', 'Mactan-Cebu International Airport');
+    await pickPlace('To place', 'Oslob', 'Oslob');
+
+    const previewSection = screen.getByText('Preview').closest('div') as HTMLElement;
+    expect(within(previewSection).getByText('Oslob')).toBeInTheDocument();
+    // Oslob is a 'destination' place -> MapPin, never the From place's own
+    // 'airport' -> Plane icon.
+    expect(previewSection.querySelector('svg.lucide-map-pin')).not.toBeNull();
+  });
+
   it('posts the home-page fields on save, null when left blank', async () => {
     const sent: unknown[] = [];
     renderPage({

@@ -135,6 +135,33 @@ describe('PopularTransfers', () => {
     expect(link).toHaveAttribute('href', '/?type=transfer_custom#contact');
   });
 
+  /**
+   * Task 1B: a route whose `toPlace` has no linked destination photo (or
+   * whose linked destination has no `imagePath`) used to render a bare
+   * `null` here, leaving only the plain `bg-brand-blue-50` fill showing — a
+   * blank box. It must now show a brand-gradient fallback tile naming the
+   * destination and its place-type icon, and never attempt a real `<img>`.
+   */
+  it('shows a brand-gradient fallback tile, not a blank box, when a card has no imagePath', async () => {
+    mockTrpc({ 'transferRoutes.featured': TRANSFER_HOME_CARDS_FIXTURE });
+    renderSection();
+
+    const heading = await screen.findByRole('heading', {
+      name: /private van transfers across cebu/i,
+    });
+    const container = heading.closest('section') as HTMLElement;
+    await within(container).findByText('Most booked');
+
+    const cards = within(container).getAllByRole('listitem');
+    // Card 2 (Moalboal) is the fixture entry with `imagePath: null`.
+    const second = cards[1] as HTMLElement;
+
+    expect(within(second).getByText('Moalboal')).toBeInTheDocument();
+    // Moalboal's `toPlace.placeType` is 'destination' -> the MapPin icon.
+    expect(second.querySelector('svg.lucide-map-pin')).not.toBeNull();
+    expect(second.querySelector('img')).toBeNull();
+  });
+
   it('renders "Price unavailable" rather than ₱0 when a card has no sellable vehicle at all', async () => {
     mockTrpc({
       'transferRoutes.featured': [

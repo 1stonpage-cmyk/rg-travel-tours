@@ -72,7 +72,17 @@ export default function PopularTransfers() {
                     <div className="bg-brand-blue-50 relative h-36 w-full">
                       {route.imagePath ? (
                         <img src={route.imagePath} alt="" className="size-full object-cover" />
-                      ) : null}
+                      ) : (
+                        <div className="from-brand-blue-700 to-brand-blue-950 flex size-full flex-col items-center justify-center gap-1.5 bg-gradient-to-br text-white">
+                          {(() => {
+                            const ToIcon = PLACE_TYPE_ICON[route.toPlace.placeType];
+                            return <ToIcon className="size-6" aria-hidden="true" />;
+                          })()}
+                          <span className="px-2 text-center text-xs font-semibold">
+                            {route.toPlace.name}
+                          </span>
+                        </div>
+                      )}
                       {route.badge ? (
                         <span className="absolute left-3 top-3 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-900">
                           {route.badge}

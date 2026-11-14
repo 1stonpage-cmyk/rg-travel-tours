@@ -196,6 +196,7 @@ export const transferRoutesRouter = router({
         fromPlaceType: fromPlace.placeType,
         toPlaceId: toPlace.id,
         toPlaceName: toPlace.name,
+        toPlaceType: toPlace.placeType,
         toPlaceDestinationId: toPlace.destinationId,
         estimatedDurationMinutes: transferRoutes.estimatedDurationMinutes,
         homePageBadge: transferRoutes.homePageBadge,
@@ -279,7 +280,7 @@ export const transferRoutesRouter = router({
       return {
         id: row.id,
         fromPlace: { id: row.fromPlaceId, name: row.fromPlaceName, placeType: row.fromPlaceType },
-        toPlace: { id: row.toPlaceId, name: row.toPlaceName },
+        toPlace: { id: row.toPlaceId, name: row.toPlaceName, placeType: row.toPlaceType },
         estimatedDurationMinutes: row.estimatedDurationMinutes,
         badge: row.homePageBadge,
         shortDescription: row.homePageShortDescription,

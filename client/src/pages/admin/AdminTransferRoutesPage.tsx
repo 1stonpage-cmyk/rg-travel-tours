@@ -680,6 +680,7 @@ function TransferRouteForm({
                 fromName={places.find((p) => p.id === fromPlaceId)?.name ?? 'From'}
                 toName={places.find((p) => p.id === toPlaceId)?.name ?? 'To'}
                 fromPlaceType={places.find((p) => p.id === fromPlaceId)?.placeType ?? 'destination'}
+                toPlaceType={places.find((p) => p.id === toPlaceId)?.placeType ?? 'destination'}
                 durationMinutes={totalMinutesFrom(durationHours, durationMinutes) ?? 0}
                 badge={homePageBadge.trim() === '' ? null : homePageBadge.trim()}
                 shortDescription={

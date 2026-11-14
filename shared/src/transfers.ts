@@ -182,7 +182,7 @@ export interface TransferRoutePublicRow {
 export interface TransferRouteHomeCard {
   id: number;
   fromPlace: { id: number; name: string; placeType: TransferPlaceType };
-  toPlace: { id: number; name: string };
+  toPlace: { id: number; name: string; placeType: TransferPlaceType };
   estimatedDurationMinutes: number;
   badge: string | null;
   shortDescription: string | null;

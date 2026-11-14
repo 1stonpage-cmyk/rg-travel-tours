@@ -8,12 +8,21 @@
  * badge or description the admin is still editing shows up here before the
  * Save button is ever pressed.
  *
- * The price and photo are deliberately NOT previewed: both are computed on
- * the public page from data this form does not carry (the lowest van price
- * across vehicle types, and the destination's own photo) — Task 7's public
- * router, not this admin screen. Saying so in the surrounding section's own
- * copy (`AdminTransferRoutesPage.tsx`) is what keeps this placeholder from
- * reading as a bug.
+ * The price is deliberately NOT previewed: it is computed on the public
+ * page from data this form does not carry (the lowest van price across
+ * vehicle types) — Task 7's public router, not this admin screen. Saying so
+ * in the surrounding section's own copy (`AdminTransferRoutesPage.tsx`) is
+ * what keeps this placeholder from reading as a bug.
+ *
+ * The photo tile is ALWAYS the brand-gradient fallback (Task 1B), never a
+ * real `<img>` — unlike the live card, which shows a real photo whenever
+ * `toPlace.destinationId` resolves to a destination with an `imagePath`.
+ * This preview genuinely has no destination photo to fetch (this form
+ * carries no destination row, only a `toPlaceId`), so there is nothing to
+ * preview beyond the fallback that the chosen toPlace's own icon and name
+ * would show. A blue-only gradient, never blue-to-gold — the gold-contrast
+ * risk this project has already measured (CLAUDE.md) — with white text,
+ * which is unambiguously safe.
  */
 import { PLACE_TYPE_ICON } from '@/lib/place-types';
 import { friendlyDuration } from '@/lib/duration-words';
@@ -23,6 +32,7 @@ export default function HomeTransferCardPreview({
   fromName,
   toName,
   fromPlaceType,
+  toPlaceType,
   durationMinutes,
   badge,
   shortDescription,
@@ -30,15 +40,20 @@ export default function HomeTransferCardPreview({
   fromName: string;
   toName: string;
   fromPlaceType: TransferPlaceType;
+  toPlaceType: TransferPlaceType;
   durationMinutes: number;
   badge: string | null;
   shortDescription: string | null;
 }) {
   const Icon = PLACE_TYPE_ICON[fromPlaceType];
+  const ToIcon = PLACE_TYPE_ICON[toPlaceType];
   return (
     <div className="border-brand-blue-100 relative max-w-xs overflow-hidden rounded-xl border bg-white">
-      <div className="bg-brand-blue-50 text-brand-blue-900 relative flex h-24 items-center justify-center text-xs">
-        Photo
+      <div className="relative h-24 overflow-hidden">
+        <div className="from-brand-blue-700 to-brand-blue-950 flex size-full flex-col items-center justify-center gap-1.5 bg-gradient-to-br text-white">
+          <ToIcon className="size-6" aria-hidden="true" />
+          <span className="px-2 text-center text-xs font-semibold">{toName}</span>
+        </div>
         {badge ? (
           <span className="absolute left-2 top-2 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-900">
             {badge}
