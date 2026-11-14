@@ -896,7 +896,7 @@ describeWithDb('transferRoutes.featured (public, Task 7 / 1D)', () => {
     expect(card!.cheapestOneWay).toEqual({ vehicleTypeName: 'SUV', priceCentavos: 570_000 });
   });
 
-  it('falls back to the lowest offered type when no van price row exists', async () => {
+  it("returns the one offered type's price when only one vehicle type is priced", async () => {
     const routeId = await makeRoute({ showOnHomePage: true });
     // No van price row at all on this route — only SUV.
     await makePrice(routeId, SUV_ID, 320_000);

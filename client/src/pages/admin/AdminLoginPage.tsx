@@ -73,7 +73,7 @@ export default function AdminLoginPage() {
   const safeRedirect = sanitizeAdminRedirect(searchParams.get('redirect'));
   /*
    * Router STATE, not a query parameter — set by `AdminLayout`'s own
-   * `<Navigate state={{ sessionExpired: true }} />`, for the same reason
+   * `<Navigate state={{ sessionExpired: hadAdminSessionBefore() }} />`, for the same reason
    * `passwordReset` above is state: a one-shot fact about what just
    * happened in this tab, not a property of a URL anybody might share or
    * reload into.

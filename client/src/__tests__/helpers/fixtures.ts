@@ -649,9 +649,10 @@ export const REVIEWS_FIXTURE: ReviewsPublishedResult = {
  * `transferRoutes.featured` (Task 7, 1D) — two "Popular transfers" home
  * cards. One carries a badge and a van price (the common case); the other
  * has no badge, no short description and no van among its offered types
- * (the server's own fallback-to-cheapest-offered-type case), so a test
- * against this fixture exercises both the "badge present" and "badge
- * absent" branches without needing a second, bespoke fixture.
+ * (the server's own genuine-minimum-across-offered-types logic operating
+ * over a one-element offered set), so a test against this fixture exercises
+ * both the "badge present" and "badge absent" branches without needing a
+ * second, bespoke fixture.
  */
 export const TRANSFER_HOME_CARDS_FIXTURE: TransferRouteHomeCard[] = [
   {

@@ -673,8 +673,8 @@ function TransferRouteForm({
                 Preview
               </p>
               <p className="text-brand-error mb-2 text-xs">
-                Price and photo are automatic: lowest van price on this route, and the
-                destination&apos;s photo.
+                Price and photo are automatic: the lowest price across offered vehicle types,
+                and the destination&apos;s photo when one is linked.
               </p>
               <HomeTransferCardPreview
                 fromName={places.find((p) => p.id === fromPlaceId)?.name ?? 'From'}

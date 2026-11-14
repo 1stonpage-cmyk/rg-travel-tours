@@ -1,7 +1,7 @@
 /**
  * Task 2 (owner item 1B). `AdminLayout` sends an expired/missing session to
  * `/admin/login?redirect=<encoded path>`, with router state
- * `{ sessionExpired: true }` (see `admin-layout.test.tsx`'s own redirect
+ * `{ sessionExpired: hadAdminSessionBefore() }` (see `admin-layout.test.tsx`'s own redirect
  * tests for that half). This file covers what `AdminLoginPage` does with
  * both: it round-trips a SAFE `?redirect=` back to the browser on a
  * successful sign-in, refuses to round-trip an unsafe one (the open-redirect

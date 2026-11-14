@@ -9,8 +9,8 @@
  * Save button is ever pressed.
  *
  * The price is deliberately NOT previewed: it is computed on the public
- * page from data this form does not carry (the lowest van price across
- * vehicle types) — Task 7's public router, not this admin screen. Saying so
+ * page from data this form does not carry (the genuine minimum across every
+ * offered vehicle type) — Task 7's public router, not this admin screen. Saying so
  * in the surrounding section's own copy (`AdminTransferRoutesPage.tsx`) is
  * what keeps this placeholder from reading as a bug.
  *
