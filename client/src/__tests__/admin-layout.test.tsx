@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it } from 'vitest';
 import AdminLayout from '@/components/layout/AdminLayout';
+import { recordAdminSessionConfirmed } from '@/lib/admin-session-marker';
 import AdminLoginPage from '@/pages/admin/AdminLoginPage';
 import { TrpcProviders } from '@/lib/trpc';
 import { mockTrpc, mockTrpcError } from './helpers/mock-trpc';
@@ -27,6 +28,10 @@ function LoginLocationEcho() {
  * workarounds instead of being fixed here, where the gap actually was).
  */
 beforeEach(() => {
+  // Clears the `ts-admin-had-session` marker (admin-session-marker.ts)
+  // between tests, so a prior test's "this browser had a session" write
+  // never leaks into a later test that expects a fresh browser.
+  localStorage.clear();
   // `settings.get` defaults to `SETTINGS_FIXTURE` (showTours: true) so the
   // "which links are drawn" tests below see the UNFADED "Tours" label by
   // default — the Hidden-tag describe block below overrides this per test.
@@ -171,6 +176,28 @@ describe('AdminLayout', () => {
     renderAt('/admin/bookings');
     expect(await screen.findByText(/could not confirm your session/i)).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: /staff sign-in/i })).not.toBeInTheDocument();
+  });
+
+  /**
+   * QA 1E: the server cannot tell "never signed in" apart from "a session
+   * expired" — both surface as the same UNAUTHORIZED error — so the
+   * distinction is made client-side via `ts-admin-had-session`
+   * (admin-session-marker.ts). A browser that has never confirmed a session
+   * must not be told its session "expired".
+   */
+  it('shows no session-expired message when this browser never had a session', async () => {
+    mockTrpcError('staffAuth.me', 'UNAUTHORIZED', 'Admin sign-in required.');
+    renderAt('/admin/bookings');
+    await screen.findByRole('heading', { name: /staff sign-in/i });
+    expect(screen.queryByText(/your session expired/i)).not.toBeInTheDocument();
+  });
+
+  it('shows the session-expired message when this browser had a session before', async () => {
+    recordAdminSessionConfirmed(); // simulate a prior successful sign-in
+    mockTrpcError('staffAuth.me', 'UNAUTHORIZED', 'Admin sign-in required.');
+    renderAt('/admin/bookings');
+    await screen.findByRole('heading', { name: /staff sign-in/i });
+    expect(screen.getByText(/your session expired/i)).toBeInTheDocument();
   });
 
   /**

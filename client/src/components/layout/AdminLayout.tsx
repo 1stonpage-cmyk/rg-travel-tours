@@ -12,11 +12,12 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { TRPCClientError } from '@trpc/client';
 import { APP_SURFACE_TITLES } from '@rg/shared';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
+import { hadAdminSessionBefore, recordAdminSessionConfirmed } from '@/lib/admin-session-marker';
 import { trpc } from '@/lib/trpc';
 import { type AdminNavGroup, groupedNavFor, navFor } from './admin-nav';
 
@@ -155,6 +156,15 @@ export default function AdminLayout() {
    */
   useDocumentTitle(APP_SURFACE_TITLES['/admin']);
   const me = trpc.staffAuth.me.useQuery(undefined, { retry: false });
+
+  // Records "this browser has had a valid admin session" once `staffAuth.me`
+  // resolves successfully — the marker the redirect guard below reads to
+  // tell "expired" apart from "never signed in" (React Query v5 has no
+  // per-query `onSuccess` callback, hence the effect).
+  useEffect(() => {
+    if (me.isSuccess) recordAdminSessionConfirmed();
+  }, [me.isSuccess]);
+
   const mustChange = me.data?.mustChangePassword === true;
   const role = me.data?.role;
   const nav = navFor(role);
@@ -205,7 +215,7 @@ export default function AdminLayout() {
     return (
       <Navigate
         to={`/admin/login?redirect=${encodeURIComponent(redirect)}`}
-        state={{ sessionExpired: true }}
+        state={{ sessionExpired: hadAdminSessionBefore() }}
         replace
       />
     );
