@@ -58,7 +58,7 @@ export default function HomeTransferCardPreview({
         {shortDescription ? (
           <p className="text-brand-error mt-1 text-xs">{shortDescription}</p>
         ) : null}
-        <p className="text-brand-error mt-2 text-xs">One-way from ₱X per van</p>
+        <p className="text-brand-error mt-2 text-xs">One-way from ₱X per vehicle</p>
       </div>
     </div>
   );

@@ -880,14 +880,12 @@ describeWithDb('transferRoutes.featured (public, Task 7 / 1D)', () => {
     expect(ids.indexOf(first)).toBeLessThan(ids.indexOf(second));
   });
 
-  it('prefers the VAN price as the headline figure, even when a cheaper SUV price is also offered', async () => {
+  it('picks the genuine lowest price across every offered type, not the van specifically', async () => {
     const routeId = await makeRoute({ showOnHomePage: true, homePageBadge: 'Most booked' });
-    // The van is priced HIGHER than the SUV — if this test passed because
-    // the code simply picked the cheapest offered price, it would pick the
-    // SUV's 150000, not the van's 250000. Both vehicle types have a
-    // sellable unit, so both are genuinely "offered".
-    await makePrice(routeId, VAN_ID, 250_000);
-    await makePrice(routeId, SUV_ID, 150_000);
+    // Van priced HIGHER than SUV — the server must pick the SUV's lower price,
+    // not prefer the van just because a van is offered (owner QA, 2026-11-14).
+    await makePrice(routeId, VAN_ID, 620_000);
+    await makePrice(routeId, SUV_ID, 570_000);
     await makeVan(VAN_ID);
     await makeVan(SUV_ID);
 
@@ -895,7 +893,7 @@ describeWithDb('transferRoutes.featured (public, Task 7 / 1D)', () => {
     const card = result.find((r) => r.id === routeId);
     expect(card).toBeDefined();
     expect(card!.badge).toBe('Most booked');
-    expect(card!.cheapestOneWay).toEqual({ vehicleTypeName: 'Van', priceCentavos: 250_000 });
+    expect(card!.cheapestOneWay).toEqual({ vehicleTypeName: 'SUV', priceCentavos: 570_000 });
   });
 
   it('falls back to the lowest offered type when no van price row exists', async () => {

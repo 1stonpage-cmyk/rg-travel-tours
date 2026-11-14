@@ -178,12 +178,13 @@ export const transferRoutesRouter = router({
    * "Popular transfers" home-page cards (owner decision 2026-11-13, Task 1D).
    * Same two active-place/active-route filters as `list`, narrowed further to
    * `show_on_home_page = true`, ordered by `home_page_order`. The lowest
-   * one-way VAN price is resolved here, server-side — CLAUDE.md: "DO NOT
-   * trust prices... computed in the browser" — falling back to the lowest
-   * OFFERED type's price when no van price exists on this route (never a
-   * price of zero; `transferPriceCentavosSchema.min(1)` makes that
-   * structurally impossible — the fallback is about an ABSENT van row, not a
-   * zero-priced one).
+   * one-way price is resolved here, server-side — CLAUDE.md: "DO NOT trust
+   * prices... computed in the browser" — as the genuine minimum across every
+   * priced-and-sellable OFFERED vehicle type on this route, full stop: no
+   * van preference, no fallback framing, matching `RoutePicker.tsx`'s own
+   * `cheapestOneWay()` on the booking page for the identical data (owner QA,
+   * 2026-11-14). Never a price of zero; `transferPriceCentavosSchema.min(1)`
+   * makes that structurally impossible.
    */
   featured: publicProcedure.query(async (): Promise<TransferRouteHomeCard[]> => {
     const db = getDb();
@@ -236,7 +237,6 @@ export const transferRoutesRouter = router({
       );
 
     const sellable = await sellableVehiclesByType(db);
-    const vanType = types.find((t) => t.slug === 'van') ?? null;
 
     // Destination photo lookup — `destinations` is the tour-destinations
     // table; `toPlace.destinationId` is the nullable, informational-only
@@ -273,9 +273,8 @@ export const transferRoutesRouter = router({
         })
         .filter((x): x is NonNullable<typeof x> => x !== null);
 
-      const vanOffer = vanType ? offered.find((o) => o.vehicleTypeId === vanType.id) : undefined;
       const cheapestOffer =
-        vanOffer ?? offered.slice().sort((a, b) => a.priceCentavos - b.priceCentavos)[0] ?? null;
+        offered.slice().sort((a, b) => a.priceCentavos - b.priceCentavos)[0] ?? null;
 
       return {
         id: row.id,
