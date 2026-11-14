@@ -31,11 +31,13 @@
 ## Task 1A: Popular Transfers card — genuine lowest price, not van-preferred
 
 **Files:**
+
 - Modify: `server/src/routers/public/transfers.ts` (the `featured` procedure's price-selection logic)
 - Modify: `client/src/components/admin/HomeTransferCardPreview.tsx` (static preview copy only)
 - Modify: `server/src/__tests__/public-queries.test.ts` (the `transferRoutes.featured` describe block)
 
 **Interfaces:**
+
 - No shape change: `TransferRouteHomeCard.cheapestOneWay` stays `{ vehicleTypeName: string; priceCentavos: number } | null` (`shared/src/transfers.ts`). The client (`PopularTransfers.tsx`) already renders `per {cheapest.vehicleTypeName.toLowerCase()}` — confirmed by direct read, **no client change needed** for the real card.
 
 **The bug, exactly:** `server/src/routers/public/transfers.ts` (around line 276-278) currently does:
@@ -126,6 +128,7 @@ Write **✅ DONE 1A**.
 ## Task 1B: Brand-gradient fallback tile when a featured route has no photo
 
 **Files:**
+
 - Modify: `server/src/routers/public/transfers.ts` (`featured` procedure — add `toPlace.placeType` to the row it returns)
 - Modify: `shared/src/transfers.ts` (`TransferRouteHomeCard.toPlace` — add `placeType`)
 - Modify: `client/src/components/home/PopularTransfers.tsx` (the photo tile's "no imagePath" branch)
@@ -134,6 +137,7 @@ Write **✅ DONE 1A**.
 - Test: `client/src/__tests__/popular-transfers.test.tsx`, `client/src/__tests__/admin-transfer-routes-page.test.tsx`
 
 **Interfaces:**
+
 - Produces: `TransferRouteHomeCard.toPlace: { id: number; name: string; placeType: TransferPlaceType }` (adds `placeType`, matching `fromPlace`'s existing shape — `TransferRouteHomeCard.fromPlace` already carries it).
 
 **The bug, exactly:** `PopularTransfers.tsx` renders nothing when `route.imagePath` is `null` (confirmed — the ternary's false branch is a bare `null`), leaving only the plain `bg-brand-blue-50` div fill showing — the "blank grey box" the owner describes. This happens whenever the featured route's `toPlace` has no linked `destinations` row (or that row has no `imagePath`).
@@ -145,7 +149,11 @@ Invoke **ui-ux-pro-max** before writing the fallback tile's markup/classes.
 In `shared/src/transfers.ts`, change `TransferRouteHomeCard`'s `toPlace` field:
 
 ```ts
-toPlace: { id: number; name: string; placeType: TransferPlaceType };
+toPlace: {
+  id: number;
+  name: string;
+  placeType: TransferPlaceType;
+}
 ```
 
 In `server/src/routers/public/transfers.ts`'s `featured` procedure: add `toPlaceType: toPlace.placeType` to the `select` (the query already selects `toPlace.id`/`toPlace.name`/`toPlace.destinationId` as `toPlaceId`/`toPlaceName`/`toPlaceDestinationId` — add the sibling `toPlaceType: toPlace.placeType` the same way), and update the returned row's `toPlace` object to include `placeType: row.toPlaceType`.
@@ -155,17 +163,19 @@ In `server/src/routers/public/transfers.ts`'s `featured` procedure: add `toPlace
 Replace the "no imagePath" branch (currently a bare `null` inside the ternary at the top of the photo `<div>`) with a brand-gradient tile. Use a blue-only gradient (not blue-to-gold) to sidestep this project's own documented gold-contrast risk (CLAUDE.md: `brand-gold-600` fails AA for normal text on several backgrounds) — white text on a dark blue gradient is unambiguously safe:
 
 ```tsx
-{route.imagePath ? (
-  <img src={route.imagePath} alt="" className="size-full object-cover" />
-) : (
-  <div className="flex size-full flex-col items-center justify-center gap-1.5 bg-gradient-to-br from-brand-blue-700 to-brand-blue-950 text-white">
-    {(() => {
-      const ToIcon = PLACE_TYPE_ICON[route.toPlace.placeType];
-      return <ToIcon className="size-6" aria-hidden="true" />;
-    })()}
-    <span className="px-2 text-center text-xs font-semibold">{route.toPlace.name}</span>
-  </div>
-)}
+{
+  route.imagePath ? (
+    <img src={route.imagePath} alt="" className="size-full object-cover" />
+  ) : (
+    <div className="from-brand-blue-700 to-brand-blue-950 flex size-full flex-col items-center justify-center gap-1.5 bg-gradient-to-br text-white">
+      {(() => {
+        const ToIcon = PLACE_TYPE_ICON[route.toPlace.placeType];
+        return <ToIcon className="size-6" aria-hidden="true" />;
+      })()}
+      <span className="px-2 text-center text-xs font-semibold">{route.toPlace.name}</span>
+    </div>
+  );
+}
 ```
 
 (`PLACE_TYPE_ICON` is already imported in this file from `@/lib/place-types` for the from-place label — reuse the same import.)
@@ -175,7 +185,7 @@ Replace the "no imagePath" branch (currently a bare `null` inside the ternary at
 This component currently renders a plain "Photo" text placeholder regardless of real data (it's a static mockup — no real image/destination is ever resolved here). Add a `toPlaceType: TransferPlaceType` prop (new, alongside the existing `fromPlaceType` prop) and render the identical gradient tile treatment, using `toName` (already a prop) as the label:
 
 ```tsx
-<div className="flex size-full flex-col items-center justify-center gap-1.5 bg-gradient-to-br from-brand-blue-700 to-brand-blue-950 text-white">
+<div className="from-brand-blue-700 to-brand-blue-950 flex size-full flex-col items-center justify-center gap-1.5 bg-gradient-to-br text-white">
   {(() => {
     const ToIcon = PLACE_TYPE_ICON[toPlaceType];
     return <ToIcon className="size-6" aria-hidden="true" />;
@@ -241,6 +251,7 @@ Write **✅ DONE 1C** (meaning: investigated, confirmed settings-stored, reporte
 ## Task 1D: Hide the hero rating badge when there are zero real reviews
 
 **Files:**
+
 - Modify: `client/src/components/home/HeroSection.tsx`
 - Test: `client/src/__tests__/hero-trust.test.tsx`
 
@@ -273,6 +284,7 @@ Reusing the exact existing boolean — do not add a second condition or re-deriv
 - [ ] **Step 2: Tests**
 
 `hero-trust.test.tsx` already has rating-related tests (confirmed via grep, around lines 157-171). Add two cases:
+
 - `hasRealReviews: false` with `trust.ratingAverage` set (e.g. `4.9`) → the `★` badge text is absent.
 - `hasRealReviews: true` with the same `trust.ratingAverage` set → the badge renders (regression — confirms the existing passing behavior survives the added condition).
 
@@ -298,11 +310,13 @@ Write **✅ DONE 1D**.
 ## Task 1E: "Your session expired" only when a session genuinely existed before
 
 **Files:**
+
 - Create: `client/src/lib/admin-session-marker.ts`
 - Modify: `client/src/components/layout/AdminLayout.tsx`
 - Test: `client/src/__tests__/admin-layout.test.tsx`
 
 **Interfaces:**
+
 - Produces: `recordAdminSessionConfirmed(): void` and `hadAdminSessionBefore(): boolean`, exported from `client/src/lib/admin-session-marker.ts`.
 
 **The bug, exactly:** `AdminLayout.tsx`'s redirect guard unconditionally sets `state={{ sessionExpired: true }}` on every `UNAUTHORIZED` redirect — including a visitor who has never signed in at all. The server cannot distinguish "never had a session" from "had one, it expired" (both are the identical `UNAUTHORIZED` error), so the distinction must be made client-side via a persistent marker, following this codebase's existing `localStorage`-helper convention (mirrors `client/src/lib/consent/storage.ts`'s shape: one key constant, a getter, a setter).
