@@ -569,11 +569,18 @@ describe('AdminTransferRoutesPage', () => {
       homePageBadge: string | null;
       homePageOrder: number;
       homePageShortDescription: string | null;
+      minPayingPax: number | undefined;
     };
     expect(payload.showOnHomePage).toBe(true);
     expect(payload.homePageBadge).toBe('Most booked');
     expect(payload.homePageOrder).toBe(5);
     expect(payload.homePageShortDescription).toBeNull();
+    // The other half of "minPayingPax posts only while per-person pricing
+    // is selected" (the per-person half is pinned in its own test below):
+    // this form never left the default per-vehicle mode, so the field is
+    // absent from the payload entirely, not a stray typed-then-abandoned
+    // value from the hidden box.
+    expect(payload.minPayingPax).toBeUndefined();
   });
 
   /*
