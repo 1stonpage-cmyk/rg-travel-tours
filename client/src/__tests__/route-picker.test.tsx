@@ -176,6 +176,49 @@ describe('RoutePicker', () => {
     });
   });
 
+  /**
+   * Final whole-branch review, Finding 4 (per-person pricing plan): this
+   * picker showed a bare "from ₱800" with no unit word, so a per-person
+   * route read as a whole-vehicle price. It now mirrors
+   * `PopularTransfers.tsx`'s already-corrected label exactly — "per person"
+   * for a per-person route, otherwise the real name of the vehicle type
+   * providing the cheapest figure, with the admin's own casing preserved.
+   * `pricingMode` is route-level and already on `TransferRoutePublicRow`,
+   * so no new data is needed.
+   */
+  describe('price unit label (final review, Finding 4)', () => {
+    /** MACTAN's two offered types, charged per head instead of per vehicle. */
+    const PER_PERSON: TransferRoutePublicRow = {
+      ...MACTAN,
+      id: 4,
+      slug: 'mactan-airport-moalboal-per-person',
+      pricingMode: 'per_person',
+    };
+
+    it("names the cheapest vehicle type, in the admin's own casing, for a per-vehicle route", () => {
+      render(<RoutePicker routes={[MACTAN]} value={null} onChange={() => {}} />);
+      // Van (₱1,500) is cheaper than SUV (₱2,000), so Van is the unit named.
+      expect(screen.getByText('per Van')).toBeInTheDocument();
+      // Case-sensitive on purpose: "per van" would be the `.toLowerCase()`
+      // bug this branch already fixed on the home-page card.
+      expect(screen.queryByText('per van')).not.toBeInTheDocument();
+      expect(screen.queryByText('per person')).not.toBeInTheDocument();
+    });
+
+    it('says "per person" for a per-person route, whichever vehicle is cheapest', () => {
+      render(<RoutePicker routes={[PER_PERSON]} value={null} onChange={() => {}} />);
+      expect(screen.getByText('per person')).toBeInTheDocument();
+      expect(screen.queryByText('per Van')).not.toBeInTheDocument();
+      expect(screen.queryByText('per SUV')).not.toBeInTheDocument();
+    });
+
+    it('names no unit at all when no vehicle type is offered', () => {
+      render(<RoutePicker routes={[OSLOB]} value={null} onChange={() => {}} />);
+      expect(screen.getByText(/price unavailable/i)).toBeInTheDocument();
+      expect(screen.queryByText(/^per /)).not.toBeInTheDocument();
+    });
+  });
+
   describe('duration is shown as a friendly estimate (Decision 6)', () => {
     it('shows "about 45 min" and "about 3 hr" for the two seeded durations', () => {
       render(<RoutePicker routes={[MACTAN, OSLOB]} value={null} onChange={() => {}} />);

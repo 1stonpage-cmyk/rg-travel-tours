@@ -31,8 +31,10 @@ import { cn } from '@/lib/utils';
  * Presentational only: `routes` arrives already active-filtered from
  * `trpc.transferRoutes.list.useQuery()` (the page's job), and this component
  * does no pricing — just "which of the OFFERED vehicle types' one-way rate is
- * smallest" (`cheapestOneWay` below), read directly off the catalog's own
- * `vehiclePrices` array, never summed with a coupon or a deposit percentage
+ * smallest, and which type that is" (`cheapestOneWay` below, whose second
+ * half names the UNIT beside the figure — final whole-branch review, Finding
+ * 4), read directly off the catalog's own `vehiclePrices` array, never
+ * summed with a coupon or a deposit percentage
  * (that only ever happens through `quoteTransfer`, read by
  * `VehicleOptionCard`). Direction does not change the figure — a reversed
  * trip costs and takes exactly as long as the forward one.
@@ -59,14 +61,31 @@ function radioValue(routeId: number, direction: TransferDirection): string {
 }
 
 /**
- * The cheapest OFFERED vehicle type's one-way rate for a route, or `null`
- * when nothing is offered right now (never fabricated — see
- * `TransferRoutePublicVehiclePrice`'s own note: an unlisted type simply isn't
- * in this array).
+ * The cheapest OFFERED vehicle type's one-way rate for a route — and WHICH
+ * type that is — or `null` when nothing is offered right now (never
+ * fabricated: an unlisted type simply isn't in this array, see
+ * `TransferRoutePublicVehiclePrice`'s own note).
+ *
+ * The vehicle type's NAME rides along (final whole-branch review, Finding 4)
+ * because the unit word beside the figure is either "person" (a per-person
+ * route) or that type's own name — the same two-way choice
+ * `PopularTransfers.tsx` makes from the server's own `cheapestOneWay`, whose
+ * shape this mirrors. The admin's casing is kept exactly as entered ("SUV",
+ * never "suv").
  */
-function cheapestOneWay(route: TransferRoutePublicRow): number | null {
-  const prices = route.vehiclePrices.map((price) => price.oneWayPriceCentavos);
-  return prices.length > 0 ? Math.min(...prices) : null;
+type CheapestOffer = { priceCentavos: number; vehicleTypeName: string };
+
+function cheapestOneWay(route: TransferRoutePublicRow): CheapestOffer | null {
+  let cheapest: CheapestOffer | null = null;
+  for (const price of route.vehiclePrices) {
+    if (cheapest === null || price.oneWayPriceCentavos < cheapest.priceCentavos) {
+      cheapest = {
+        priceCentavos: price.oneWayPriceCentavos,
+        vehicleTypeName: price.vehicleTypeName,
+      };
+    }
+  }
+  return cheapest;
 }
 
 /** One selectable row: a route travelled in one particular direction. */
@@ -175,7 +194,23 @@ export default function RoutePicker({ routes, value, onChange, isLoading, error 
                   ) : (
                     <>
                       <span className="text-muted-foreground">from </span>
-                      <span className="text-brand-blue-900 font-bold">{formatPeso(fromPrice)}</span>
+                      <span className="text-brand-blue-900 font-bold">
+                        {formatPeso(fromPrice.priceCentavos)}
+                      </span>
+                      {/*
+                       * The unit word (final review, Finding 4). On its OWN
+                       * line, unlike `PopularTransfers.tsx`'s inline version:
+                       * this column is `shrink-0` and sits beside place names
+                       * that already overflowed 360px once
+                       * (`route-picker-overflow.test.tsx`), so appending "per
+                       * Coaster Bus" inline would widen a column that cannot
+                       * shrink. Stacked, the column's width stays bounded by
+                       * the price itself and the unit wraps inside it.
+                       */}
+                      <span className="text-muted-foreground block text-xs">
+                        per{' '}
+                        {route.pricingMode === 'per_person' ? 'person' : fromPrice.vehicleTypeName}
+                      </span>
                     </>
                   )}
                 </span>
