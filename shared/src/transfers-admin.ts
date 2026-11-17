@@ -40,8 +40,8 @@
  */
 import { z } from 'zod';
 import { civilDateSchema, phPhoneSchema } from './checkout';
-import { TRANSFER_PLACE_TYPES, TRANSFER_PRODUCT_TYPES } from './transfers';
-import type { TransferPlaceType } from './transfers';
+import { TRANSFER_PLACE_TYPES, TRANSFER_PRICING_MODES, TRANSFER_PRODUCT_TYPES } from './transfers';
+import type { TransferPlaceType, TransferPricingMode } from './transfers';
 import { MAX_CENTAVOS } from './tours-admin';
 
 /**
@@ -185,6 +185,19 @@ const transferRouteFieldsSchema = z
       .trim()
       .max(120, 'Keep the description to 120 characters or fewer.')
       .nullable(),
+    /**
+     * `transfer_routes.pricing_mode`/`min_paying_pax` (owner decision
+     * 2026-11-18, per-person pricing plan). Both optional with no default
+     * STATED here — the same `sortOrder` pattern above: the columns' own
+     * `DEFAULT 'per_vehicle'`/`DEFAULT 1` are what fill them in on create,
+     * via `upsertTransferRoute`'s `params.pricingMode ?? 'per_vehicle'` /
+     * `params.minPayingPax ?? 1` (`services/transfers/upsert-route.ts`), so
+     * an owner who never touches either field gets the same "priced per
+     * vehicle, no passenger minimum" behaviour every route had before these
+     * fields existed.
+     */
+    pricingMode: z.enum(TRANSFER_PRICING_MODES).optional(),
+    minPayingPax: z.number().int().min(1).max(30).optional(),
     prices: transferRoutePricesInputSchema,
   })
   .strict();
@@ -479,6 +492,9 @@ export interface TransferRouteAdminRow {
   homePageBadge: string | null;
   homePageOrder: number;
   homePageShortDescription: string | null;
+  /** `transfer_routes.pricing_mode`/`min_paying_pax` — see `transferRouteFieldsSchema`'s own comment. */
+  pricingMode: TransferPricingMode;
+  minPayingPax: number;
   /** Every ACTIVE vehicle type, in sort order. `price: null` means "not offered". */
   prices: TransferRouteAdminVehiclePrice[];
 }

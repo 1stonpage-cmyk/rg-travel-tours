@@ -8,11 +8,17 @@
  * badge or description the admin is still editing shows up here before the
  * Save button is ever pressed.
  *
- * The price is deliberately NOT previewed: it is computed on the public
- * page from data this form does not carry (the genuine minimum across every
- * offered vehicle type) — Task 7's public router, not this admin screen. Saying so
- * in the surrounding section's own copy (`AdminTransferRoutesPage.tsx`) is
- * what keeps this placeholder from reading as a bug.
+ * **The price IS now previewed (owner decision 2026-11-18, per-person
+ * pricing plan), and it is still the form's own typed state, never a second
+ * source of truth.** `lowestOneWayCentavos` is the lowest non-blank one-way
+ * price box across every active vehicle type, computed by
+ * `TransferRouteForm` itself from the same `priceValuesFor()` the price
+ * table renders — this component does no parsing of its own. `null` means
+ * no box has a valid price typed yet, and renders as "No price entered
+ * yet" rather than a fabricated figure. The live public card
+ * (`PopularTransfers.tsx`) computes its own cheapest price server-side from
+ * the STORED card, which can genuinely differ from this preview until Save
+ * is pressed — that is the nature of previewing unsaved input, not a bug.
  *
  * The photo tile is ALWAYS the brand-gradient fallback (Task 1B), never a
  * real `<img>` — unlike the live card, which shows a real photo whenever
@@ -26,7 +32,7 @@
  */
 import { PLACE_TYPE_ICON } from '@/lib/place-types';
 import { friendlyDuration } from '@/lib/duration-words';
-import type { TransferPlaceType } from '@rg/shared';
+import { formatPeso, type TransferPlaceType, type TransferPricingMode } from '@rg/shared';
 
 export default function HomeTransferCardPreview({
   fromName,
@@ -36,6 +42,8 @@ export default function HomeTransferCardPreview({
   durationMinutes,
   badge,
   shortDescription,
+  lowestOneWayCentavos,
+  pricingMode,
 }: {
   fromName: string;
   toName: string;
@@ -44,6 +52,9 @@ export default function HomeTransferCardPreview({
   durationMinutes: number;
   badge: string | null;
   shortDescription: string | null;
+  /** The form's own lowest typed one-way price, in centavos — `null` when no box has a valid price yet. */
+  lowestOneWayCentavos: number | null;
+  pricingMode: TransferPricingMode;
 }) {
   const Icon = PLACE_TYPE_ICON[fromPlaceType];
   const ToIcon = PLACE_TYPE_ICON[toPlaceType];
@@ -73,7 +84,13 @@ export default function HomeTransferCardPreview({
         {shortDescription ? (
           <p className="text-brand-error mt-1 text-xs">{shortDescription}</p>
         ) : null}
-        <p className="text-brand-error mt-2 text-xs">One-way from ₱X per vehicle</p>
+        <p className="text-brand-error mt-2 text-xs">
+          {lowestOneWayCentavos === null
+            ? 'No price entered yet'
+            : `One-way from ${formatPeso(lowestOneWayCentavos)} per ${
+                pricingMode === 'per_person' ? 'person' : 'vehicle'
+              }`}
+        </p>
       </div>
     </div>
   );

@@ -277,6 +277,8 @@ export function mergeTransferRoutePatch(
       patch.homePageShortDescription !== undefined
         ? patch.homePageShortDescription
         : stored.homePageShortDescription,
+    pricingMode: patch.pricingMode !== undefined ? patch.pricingMode : stored.pricingMode,
+    minPayingPax: patch.minPayingPax !== undefined ? patch.minPayingPax : stored.minPayingPax,
     /*
      * The money line. An absent `prices` keeps the STORED card in full —
      * every vehicle type that was offered — so the delete-then-reinsert
@@ -313,6 +315,14 @@ function routeValues(params: TransferRouteUpsertParams) {
     // see `sortOrder`'s own comment.
     homePageOrder: params.homePageOrder ?? 0,
     homePageShortDescription: params.homePageShortDescription,
+    // Same `??` fallback pattern as `sortOrder`/`homePageOrder` above, for
+    // the same reason: a bare `create` whose input never named either field
+    // hits the column's own `DEFAULT 'per_vehicle'`/`DEFAULT 1` (owner
+    // decision 2026-11-18, per-person pricing plan). `update` never hits
+    // either default in practice — `mergeTransferRoutePatch` always hands
+    // this function a complete, already-resolved value for both.
+    pricingMode: params.pricingMode ?? 'per_vehicle',
+    minPayingPax: params.minPayingPax ?? 1,
     /*
      * `isActive` is absent on purpose, not forgotten: it is not on the input
      * (see `shared/src/transfers-admin.ts`), so `setActive` stays the only

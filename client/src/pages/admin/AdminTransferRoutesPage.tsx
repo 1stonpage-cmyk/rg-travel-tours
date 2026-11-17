@@ -189,6 +189,8 @@ const TRANSFER_ROUTE_FIELD_NAMES: ReadonlySet<string> = new Set([
   'homePageBadge',
   'homePageOrder',
   'homePageShortDescription',
+  'pricingMode',
+  'minPayingPax',
 ]);
 
 function scalarFields(): EntityFormField[] {
@@ -287,6 +289,8 @@ function formFieldFor(path: readonly PropertyKey[]): string | null {
     'homePageBadge',
     'homePageOrder',
     'homePageShortDescription',
+    'pricingMode',
+    'minPayingPax',
   ]);
   return typeof first === 'string' && SCALAR.has(first) ? first : null;
 }
@@ -335,6 +339,10 @@ function TransferRouteForm({
   const [homePageShortDescription, setHomePageShortDescription] = useState<string>(
     initial?.homePageShortDescription ?? '',
   );
+  const [pricingMode, setPricingMode] = useState<'per_vehicle' | 'per_person'>(
+    initial?.pricingMode ?? 'per_vehicle',
+  );
+  const [minPayingPax, setMinPayingPax] = useState<string>(String(initial?.minPayingPax ?? 1));
   const initialDuration = initial ? hoursAndMinutesFrom(initial.estimatedDurationMinutes) : null;
   const [durationHours, setDurationHours] = useState<string>(initialDuration?.hours ?? '');
   const [durationMinutes, setDurationMinutes] = useState<string>(initialDuration?.minutes ?? '0');
@@ -351,6 +359,18 @@ function TransferRouteForm({
   function priceValuesFor(type: VehicleTypeAdminRow): { oneWay: string; dayUse: string } {
     return priceOverrides[String(type.id)] ?? storedPriceStrings(type, initial);
   }
+
+  /**
+   * The lowest non-blank one-way price typed across every active vehicle
+   * type, in centavos — `null` when no box holds a valid price yet. Feeds
+   * `HomeTransferCardPreview` directly; the component does no parsing of
+   * its own (see its own header comment).
+   */
+  const typedOneWayCentavos = activeVehicleTypes
+    .map((type) => pesosToCentavos(priceValuesFor(type).oneWay.trim()))
+    .filter((value): value is number => value !== null);
+  const lowestOneWayCentavos =
+    typedOneWayCentavos.length === 0 ? null : Math.min(...typedOneWayCentavos);
 
   function reportSaveError(error: unknown, fallback: string) {
     const validation = splitFieldErrors(error, TRANSFER_ROUTE_FIELD_NAMES);
@@ -444,6 +464,19 @@ function TransferRouteForm({
       homePageOrder: homePageOrder.trim() === '' ? undefined : Number(homePageOrder.trim()),
       homePageShortDescription:
         homePageShortDescription.trim() === '' ? null : homePageShortDescription.trim(),
+      pricingMode,
+      // Blank -> undefined, the same `homePageOrder` spelling above: absent
+      // means "default to 1 on create, keep the stored value on an edit"
+      // (`routeValues()`'s own `?? 1` fallback, `mergeTransferRoutePatch`'s
+      // own `!== undefined` merge). The box is hidden entirely while
+      // `pricingMode` is `'per_vehicle'`, so nothing typed into it before
+      // switching modes is ever posted for a route priced per vehicle.
+      minPayingPax:
+        pricingMode === 'per_person'
+          ? minPayingPax.trim() === ''
+            ? undefined
+            : Number(minPayingPax.trim())
+          : undefined,
       prices,
     };
 
@@ -543,7 +576,56 @@ function TransferRouteForm({
 
       <div className={SECTION}>
         <h3 className="text-brand-ink text-sm font-bold">Prices per vehicle type</h3>
-        <p className="text-brand-error mt-1 text-xs">
+        <fieldset className="mt-2 space-y-2">
+          <legend className="text-brand-ink text-sm font-semibold">Pricing</legend>
+          <div className="flex flex-wrap gap-4">
+            <label
+              className="tap-target flex items-center gap-2 text-sm"
+              htmlFor="route-pricing-per-vehicle"
+            >
+              <input
+                id="route-pricing-per-vehicle"
+                type="radio"
+                name="pricingMode"
+                checked={pricingMode === 'per_vehicle'}
+                onChange={() => setPricingMode('per_vehicle')}
+              />
+              Per vehicle
+            </label>
+            <label
+              className="tap-target flex items-center gap-2 text-sm"
+              htmlFor="route-pricing-per-person"
+            >
+              <input
+                id="route-pricing-per-person"
+                type="radio"
+                name="pricingMode"
+                checked={pricingMode === 'per_person'}
+                onChange={() => setPricingMode('per_person')}
+              />
+              Per person
+            </label>
+          </div>
+          {pricingMode === 'per_person' && (
+            <div className="space-y-1.5">
+              <Label htmlFor="route-min-paying-pax">Minimum paying passengers</Label>
+              <Input
+                id="route-min-paying-pax"
+                type="number"
+                min={1}
+                className={`${FIELD} w-24`}
+                value={minPayingPax}
+                onChange={(event) => setMinPayingPax(event.target.value)}
+              />
+              {errors.minPayingPax ? (
+                <p role="alert" className={ROW_ERROR}>
+                  {errors.minPayingPax}
+                </p>
+              ) : null}
+            </div>
+          )}
+        </fieldset>
+        <p className="text-brand-error mt-3 text-xs">
           Leave both boxes blank for a vehicle type not offered on this route.
         </p>
         {vehicleTypesLoading ? (
@@ -565,7 +647,9 @@ function TransferRouteForm({
                   <p className="text-brand-ink text-sm font-semibold">{type.name}</p>
                   <div className="mt-2 flex flex-wrap gap-3">
                     <div className="min-w-0 flex-[1_1_160px] space-y-1">
-                      <Label htmlFor={`route-price-${key}-oneway`}>One-way (pesos)</Label>
+                      <Label htmlFor={`route-price-${key}-oneway`}>
+                        {`One-way (pesos / ${pricingMode === 'per_person' ? 'person' : 'vehicle'})`}
+                      </Label>
                       <Input
                         id={`route-price-${key}-oneway`}
                         type="text"
@@ -582,7 +666,9 @@ function TransferRouteForm({
                       />
                     </div>
                     <div className="min-w-0 flex-[1_1_160px] space-y-1">
-                      <Label htmlFor={`route-price-${key}-dayuse`}>Day-use (pesos)</Label>
+                      <Label htmlFor={`route-price-${key}-dayuse`}>
+                        {`Day-use (pesos / ${pricingMode === 'per_person' ? 'person' : 'vehicle'})`}
+                      </Label>
                       <Input
                         id={`route-price-${key}-dayuse`}
                         type="text"
@@ -686,6 +772,8 @@ function TransferRouteForm({
                 shortDescription={
                   homePageShortDescription.trim() === '' ? null : homePageShortDescription.trim()
                 }
+                lowestOneWayCentavos={lowestOneWayCentavos}
+                pricingMode={pricingMode}
               />
             </div>
           </div>

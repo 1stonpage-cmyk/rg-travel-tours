@@ -113,6 +113,8 @@ const AIRPORT_OSLOB_ROUTE = {
   freeCancelHours: 24,
   inclusionsText: 'Fuel, driver, tolls',
   exclusionsText: 'Meals',
+  pricingMode: 'per_vehicle',
+  minPayingPax: 1,
   prices: [
     {
       vehicleTypeId: 1,
@@ -146,6 +148,8 @@ const AIRPORT_CEBU_ROUTE = {
   freeCancelHours: 24,
   inclusionsText: null,
   exclusionsText: null,
+  pricingMode: 'per_vehicle',
+  minPayingPax: 1,
   prices: [
     {
       vehicleTypeId: 1,
@@ -260,11 +264,11 @@ describe('AdminTransferRoutesPage', () => {
     await user.type(screen.getByLabelText('Free cancellation window (hours)'), '24');
     // Only Van is priced — SUV's two boxes are left blank on purpose.
     await user.type(
-      screen.getByLabelText('One-way (pesos)', { selector: '#route-price-1-oneway' }),
+      screen.getByLabelText('One-way (pesos / vehicle)', { selector: '#route-price-1-oneway' }),
       '1500.00',
     );
     await user.type(
-      screen.getByLabelText('Day-use (pesos)', { selector: '#route-price-1-dayuse' }),
+      screen.getByLabelText('Day-use (pesos / vehicle)', { selector: '#route-price-1-dayuse' }),
       '3500.00',
     );
 
@@ -353,7 +357,7 @@ describe('AdminTransferRoutesPage', () => {
 
     // Change the VAN's one-way price; leave its day-use and the SUV's whole
     // card untouched.
-    const vanOneWay = screen.getByLabelText('One-way (pesos)', {
+    const vanOneWay = screen.getByLabelText('One-way (pesos / vehicle)', {
       selector: '#route-price-1-oneway',
     });
     await user.clear(vanOneWay);
@@ -543,11 +547,11 @@ describe('AdminTransferRoutesPage', () => {
     await user.clear(screen.getByLabelText('Free cancellation window (hours)'));
     await user.type(screen.getByLabelText('Free cancellation window (hours)'), '24');
     await user.type(
-      screen.getByLabelText('One-way (pesos)', { selector: '#route-price-1-oneway' }),
+      screen.getByLabelText('One-way (pesos / vehicle)', { selector: '#route-price-1-oneway' }),
       '1500.00',
     );
     await user.type(
-      screen.getByLabelText('Day-use (pesos)', { selector: '#route-price-1-dayuse' }),
+      screen.getByLabelText('Day-use (pesos / vehicle)', { selector: '#route-price-1-dayuse' }),
       '3500.00',
     );
 
@@ -570,6 +574,98 @@ describe('AdminTransferRoutesPage', () => {
     expect(payload.homePageBadge).toBe('Most booked');
     expect(payload.homePageOrder).toBe(5);
     expect(payload.homePageShortDescription).toBeNull();
+  });
+
+  /*
+   * -------------------------------------------------------------------- *
+   * Per-person pricing (owner decision 2026-11-18, per-person pricing
+   * plan) — the pricing-mode radio pair, the minimum-passengers box, the
+   * mode-aware price labels, and the live preview's own computed price.
+   * -------------------------------------------------------------------- */
+
+  it('flips both price labels and shows the minimum-passengers box when switched to per-person pricing', async () => {
+    renderPage();
+    await openAddForm();
+
+    expect(
+      screen.getByLabelText('One-way (pesos / vehicle)', { selector: '#route-price-1-oneway' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText('Day-use (pesos / vehicle)', { selector: '#route-price-1-dayuse' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText('Minimum paying passengers')).toBeNull();
+
+    await user.click(screen.getByLabelText('Per person'));
+
+    expect(
+      screen.getByLabelText('One-way (pesos / person)', { selector: '#route-price-1-oneway' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText('Day-use (pesos / person)', { selector: '#route-price-1-dayuse' }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Minimum paying passengers')).toBeInTheDocument();
+
+    // And back — the box disappears again, the labels revert.
+    await user.click(screen.getByLabelText('Per vehicle'));
+    expect(
+      screen.getByLabelText('One-way (pesos / vehicle)', { selector: '#route-price-1-oneway' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText('Minimum paying passengers')).toBeNull();
+  });
+
+  it('posts pricingMode and minPayingPax, the latter only while per-person pricing is selected', async () => {
+    const sent: unknown[] = [];
+    renderPage({
+      'admin.transferRoutes.create': (input: unknown) => {
+        sent.push(input);
+        return { id: 99 };
+      },
+    });
+    await screen.findAllByText(/Mactan-Cebu International Airport → Oslob/);
+    await openAddForm();
+
+    await pickPlace('From place', 'Mactan', 'Mactan-Cebu International Airport');
+    await pickPlace('To place', 'Oslob', 'Oslob');
+    await user.type(screen.getByLabelText('Slug'), 'mactan-oslob-perperson');
+    await user.clear(screen.getByLabelText('Duration — minutes'));
+    await user.type(screen.getByLabelText('Duration — hours'), '2');
+    await user.clear(screen.getByLabelText('Free cancellation window (hours)'));
+    await user.type(screen.getByLabelText('Free cancellation window (hours)'), '24');
+
+    await user.click(screen.getByLabelText('Per person'));
+    const minPax = screen.getByLabelText('Minimum paying passengers');
+    await user.clear(minPax);
+    await user.type(minPax, '2');
+
+    await user.click(screen.getByRole('button', { name: /^add route$/i }));
+
+    await waitFor(() => expect(sent).toHaveLength(1));
+    const payload = sent[0] as { pricingMode: string; minPayingPax: number | undefined };
+    expect(payload.pricingMode).toBe('per_person');
+    expect(payload.minPayingPax).toBe(2);
+  });
+
+  it('shows a real computed price and the correct unit word in the live preview, in both pricing modes', async () => {
+    renderPage();
+    await openAddForm();
+    await user.click(screen.getByLabelText(/Adds this route to/i));
+
+    const previewSection = () => screen.getByText('Preview').closest('div') as HTMLElement;
+    expect(within(previewSection()).getByText('No price entered yet')).toBeInTheDocument();
+
+    // Typed while still in the default per-vehicle mode.
+    await user.type(
+      screen.getByLabelText('One-way (pesos / vehicle)', { selector: '#route-price-1-oneway' }),
+      '1500.00',
+    );
+    expect(
+      within(previewSection()).getByText('One-way from ₱1,500 per vehicle'),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText('Per person'));
+    expect(
+      within(previewSection()).getByText('One-way from ₱1,500 per person'),
+    ).toBeInTheDocument();
   });
 
   it('shows the denied state, not a blank screen, when the role is refused', async () => {

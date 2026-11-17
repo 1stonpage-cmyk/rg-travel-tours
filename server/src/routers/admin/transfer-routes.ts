@@ -110,6 +110,8 @@ export const adminTransferRoutesRouter = router({
         homePageBadge: transferRoutes.homePageBadge,
         homePageOrder: transferRoutes.homePageOrder,
         homePageShortDescription: transferRoutes.homePageShortDescription,
+        pricingMode: transferRoutes.pricingMode,
+        minPayingPax: transferRoutes.minPayingPax,
       })
       .from(transferRoutes)
       .innerJoin(fromPlace, eq(fromPlace.id, transferRoutes.fromPlaceId))
@@ -184,6 +186,8 @@ export const adminTransferRoutesRouter = router({
         homePageBadge: row.homePageBadge,
         homePageOrder: row.homePageOrder,
         homePageShortDescription: row.homePageShortDescription,
+        pricingMode: row.pricingMode,
+        minPayingPax: row.minPayingPax,
         prices,
       };
     });
@@ -269,6 +273,8 @@ export const adminTransferRoutesRouter = router({
             homePageBadge: transferRoutes.homePageBadge,
             homePageOrder: transferRoutes.homePageOrder,
             homePageShortDescription: transferRoutes.homePageShortDescription,
+            pricingMode: transferRoutes.pricingMode,
+            minPayingPax: transferRoutes.minPayingPax,
           })
           .from(transferRoutes)
           .where(eq(transferRoutes.id, input.id))

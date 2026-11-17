@@ -415,6 +415,52 @@ describeWithDb('admin.transferRoutes', () => {
     expect(rows.indexOf(earlierRow!)).toBeLessThan(rows.indexOf(laterRow!));
   });
 
+  /*
+   * ------------------------------------------------------------------ *
+   * Per-person pricing (owner decision 2026-11-18, per-person pricing
+   * plan) — `pricingMode`/`minPayingPax` round-tripping through the admin
+   * create/list/update surface. The arithmetic itself
+   * (`transferSubtotalCentavos`) is pinned in `services/transfers`'s own
+   * tests; this file only pins that the two columns reach the database and
+   * come back unchanged.
+   * ------------------------------------------------------------------ */
+
+  it('round-trips pricingMode and minPayingPax through create and list', async () => {
+    const { id } = await createRoute({ pricingMode: 'per_person', minPayingPax: 2 });
+
+    const row = (await ownerApi().admin.transferRoutes.list()).find((r) => r.id === id);
+    expect(row).toMatchObject({ pricingMode: 'per_person', minPayingPax: 2 });
+  });
+
+  /**
+   * The proof that the additive default does not disturb an existing
+   * caller: today's fixture shape (`routeInput`) never mentions either
+   * field, exactly as every caller before this plan existed.
+   */
+  it('defaults pricingMode and minPayingPax to per_vehicle/1 when a create never mentions them', async () => {
+    const { id } = await createRoute();
+
+    const row = (await ownerApi().admin.transferRoutes.list()).find((r) => r.id === id);
+    expect(row).toMatchObject({ pricingMode: 'per_vehicle', minPayingPax: 1 });
+  });
+
+  /**
+   * The gap an update's own `stored` read would silently reopen: if that
+   * SELECT forgot either column, `mergeTransferRoutePatch` would merge
+   * against `undefined`, and `routeValues()`'s own `?? 'per_vehicle'` / `??
+   * 1` fallback would then quietly reset a `per_person` route back to
+   * `per_vehicle` on ANY unrelated patch — a slug rename, here, chosen
+   * because it is as unrelated to pricing as a patch can be.
+   */
+  it('keeps pricingMode and minPayingPax across a patch that only renames the slug', async () => {
+    const { id } = await createRoute({ pricingMode: 'per_person', minPayingPax: 2 });
+
+    await ownerApi().admin.transferRoutes.update({ id, patch: { slug: uniqueSlug() } });
+
+    const row = (await ownerApi().admin.transferRoutes.list()).find((r) => r.id === id);
+    expect(row).toMatchObject({ pricingMode: 'per_person', minPayingPax: 2 });
+  });
+
   it('refuses a price of zero, a negative price and a fractional price', async () => {
     const api = ownerApi().admin.transferRoutes;
     const fromPlaceId = await makePlace();
