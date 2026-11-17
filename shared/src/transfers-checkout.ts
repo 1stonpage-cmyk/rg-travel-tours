@@ -113,8 +113,15 @@ export const createHoldTransferInput = quoteTransferInput
      * **It is NOT a capacity check and must not be mistaken for one.** Whether
      * a party FITS the vehicle they picked is dispatch's own soft seat-fit
      * check (pre-task 0C), made later against a specific van's `capacity` and
-     * `luggage_capacity`; a transfer's price does not depend on `pax` at all
-     * (see `quoteTransferInput`'s note).
+     * `luggage_capacity`.
+     *
+     * **It MAY now change the price** (owner decision 2026-11-18, per-person
+     * pricing plan): a `per_vehicle` route still ignores it, but a
+     * `per_person` route multiplies by `max(pax, minPayingPax)`
+     * (`transferSubtotalCentavos()`) — see `quoteTransferInput`'s own note,
+     * which this field mirrors exactly, same bounds and same messages.
+     * Redeclared here rather than reused because of this module's own
+     * import-cycle constraint (see the file header).
      */
     pax: z
       .number()

@@ -893,7 +893,11 @@ describeWithDb('transferRoutes.featured (public, Task 7 / 1D)', () => {
     const card = result.find((r) => r.id === routeId);
     expect(card).toBeDefined();
     expect(card!.badge).toBe('Most booked');
-    expect(card!.cheapestOneWay).toEqual({ vehicleTypeName: 'SUV', priceCentavos: 570_000 });
+    expect(card!.cheapestOneWay).toEqual({
+      vehicleTypeName: 'SUV',
+      priceCentavos: 570_000,
+      pricingMode: 'per_vehicle',
+    });
   });
 
   it("returns the one offered type's price when only one vehicle type is priced", async () => {
@@ -905,7 +909,11 @@ describeWithDb('transferRoutes.featured (public, Task 7 / 1D)', () => {
     const result = await caller.transferRoutes.featured();
     const card = result.find((r) => r.id === routeId);
     expect(card).toBeDefined();
-    expect(card!.cheapestOneWay).toEqual({ vehicleTypeName: 'SUV', priceCentavos: 320_000 });
+    expect(card!.cheapestOneWay).toEqual({
+      vehicleTypeName: 'SUV',
+      priceCentavos: 320_000,
+      pricingMode: 'per_vehicle',
+    });
   });
 
   it('omits a vehicle type priced but not sellable, and reports "no vehicle" (null) when nothing is sellable at all', async () => {

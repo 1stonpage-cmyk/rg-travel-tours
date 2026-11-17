@@ -12,7 +12,7 @@
  */
 import { z } from 'zod';
 import { couponDiscountSchema } from './coupon';
-import { TRANSFER_PRODUCT_TYPES } from './transfers';
+import { TRANSFER_PRICING_MODES, TRANSFER_PRODUCT_TYPES } from './transfers';
 
 /**
  * BUILD_SPEC §5 "Booking statuses", in the spec's own order.
@@ -267,11 +267,16 @@ export type TransferPriceSource = (typeof TRANSFER_PRICE_SOURCES)[number];
  *   - `depositPercent` — the deposit percent in force at booking time, so the
  *     balance owed on the day is computable from the booking alone.
  *
- * `priceCentavos` is the per-vehicle RATE the quote was built from — the
- * transfer's counterpart to the tour snapshot's `tier.pricePerPersonCentavos`,
- * not a duplicate of `subtotalCentavos`. They are equal today because nothing
- * multiplies a flat rate; keeping the rate named separately is what lets a later
- * reader tell "the van cost ₱3,500" from "the subtotal happened to be ₱3,500".
+ * `priceCentavos` is the UNIT RATE the quote was built from — per vehicle or
+ * per person, depending on `pricingMode` — the transfer's counterpart to the
+ * tour snapshot's `tier.pricePerPersonCentavos`, and deliberately not a
+ * duplicate of `subtotalCentavos`. On a `per_vehicle` route (or any snapshot
+ * written before owner decision 2026-11-18) the two are equal, because
+ * nothing multiplies a flat rate. On a `per_person` route `subtotalCentavos`
+ * is `priceCentavos * paxCharged` (`transferSubtotalCentavos()`,
+ * `server/src/services/transfers/pricing.ts`) — keeping the rate named
+ * separately is what lets a later reader tell "the seat cost ₱700" from "the
+ * subtotal happened to be ₱3,500".
  */
 export const transferPriceSnapshotSchema = z
   .object({
@@ -312,7 +317,7 @@ export const transferPriceSnapshotSchema = z
      */
     customRouteDescription: z.string().min(1).nullable(),
     priceSource: z.enum(TRANSFER_PRICE_SOURCES),
-    /** The flat per-vehicle rate the quote was built from. */
+    /** The UNIT rate the quote was built from — see this schema's own doc comment. */
     priceCentavos: z.number().int().nonnegative(),
     /** The coupon applied, or null — the SAME shape a tour snapshot freezes. */
     coupon: snapshotCouponSchema.nullable(),
@@ -324,6 +329,18 @@ export const transferPriceSnapshotSchema = z
     subtotalCentavos: z.number().int().nonnegative(),
     discountCentavos: z.number().int().nonnegative(),
     totalCentavos: z.number().int().nonnegative(),
+    /**
+     * The full per-person-pricing breakdown (owner decision 2026-11-18,
+     * Decision 5) — all three `.optional()` so a row written before this
+     * plan still parses. **Absent means the same thing for all three at
+     * once: "per vehicle, no multiplication"** — a reader that finds one
+     * missing must not assume the other two are present.
+     */
+    pricingMode: z.enum(TRANSFER_PRICING_MODES).optional(),
+    /** The pax `subtotalCentavos` was actually multiplied by — `input.pax` on the staff branch. */
+    paxCharged: z.number().int().positive().optional(),
+    /** The route's `min_paying_pax` at booking time. `1` on the staff branch (flat by definition). */
+    minPayingPax: z.number().int().positive().optional(),
   })
   .refine((s) => s.vehicleTypeId !== undefined || s.vehicleType !== undefined, {
     message: 'A transfer snapshot must carry either a legacy vehicleType or a vehicleTypeId.',

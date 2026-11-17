@@ -1,12 +1,18 @@
 /**
  * Transfers-launch plan, Task T9 — transfer pricing and the quote surface.
  *
- * Four groups, mirroring what the task built:
+ * Five groups, mirroring what the task built:
  *
  *  1. `quoteTransfer()` — the pure arithmetic. No database, no clock. The
  *     load-bearing property is that **no head count enters the formula**: a
  *     transfer is priced per VEHICLE, and the day someone "helpfully" adds a
- *     `pax` multiplication is the day a family of six is quoted six vans.
+ *     `pax` multiplication INSIDE this function is the day a family of six is
+ *     quoted six vans. (Per-person pricing plan, owner decision 2026-11-18:
+ *     the multiplication now genuinely exists, one level up, in
+ *     `transferSubtotalCentavos()` — see group 1b below — which is exactly
+ *     why this function's own "no pax" pin still has to hold.)
+ *  1b. `transferSubtotalCentavos()` — the per-person pricing plan's ONE
+ *     multiply function, also pure and also no database.
  *  2. `vehiclePriceForRouteAndType()` — the catalog read, including every way
  *     it must answer `null` rather than throw.
  *  3. `transferRoutes.list` — the public catalog: active routes only, both
@@ -44,6 +50,7 @@ import {
 import { appRouter } from '../routers/_app';
 import {
   quoteTransfer,
+  transferSubtotalCentavos,
   vehiclePriceForRouteAndType,
   type TransferQuoteInput,
 } from '../services/transfers/pricing';
@@ -171,6 +178,43 @@ describe('quoteTransfer', () => {
     for (const v of [q.subtotalCentavos, q.discountCentavos, q.totalCentavos, q.depositCentavos]) {
       expect(Number.isInteger(v), `${v} is not an integer`).toBe(true);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 1b. transferSubtotalCentavos — the one multiply function (per-person
+// pricing plan). Also pure, also no database.
+// ---------------------------------------------------------------------------
+
+describe('transferSubtotalCentavos', () => {
+  it('per_vehicle ignores pax entirely', () => {
+    const result = transferSubtotalCentavos({
+      pricingMode: 'per_vehicle',
+      unitPriceCentavos: 150_000,
+      pax: 6,
+      minPayingPax: 1,
+    });
+    expect(result).toEqual({ subtotalCentavos: 150_000, paxCharged: 6 });
+  });
+
+  it('per_person multiplies by pax', () => {
+    const result = transferSubtotalCentavos({
+      pricingMode: 'per_person',
+      unitPriceCentavos: 35_000,
+      pax: 3,
+      minPayingPax: 1,
+    });
+    expect(result).toEqual({ subtotalCentavos: 105_000, paxCharged: 3 });
+  });
+
+  it('per_person floors pax at the minimum', () => {
+    const result = transferSubtotalCentavos({
+      pricingMode: 'per_person',
+      unitPriceCentavos: 35_000,
+      pax: 1,
+      minPayingPax: 2,
+    });
+    expect(result).toEqual({ subtotalCentavos: 70_000, paxCharged: 2 });
   });
 });
 
@@ -646,11 +690,12 @@ describeWithDb('transferRoutes.list (public)', () => {
 // ---------------------------------------------------------------------------
 
 describeWithDb('checkout.quoteTransfer', () => {
-  it('quotes a flat per-vehicle rate, with the deposit from the shared trust setting', async () => {
+  it('quotes a flat per-vehicle rate, with the deposit from the shared trust setting — unchanged with pax: 1', async () => {
     const quote = await caller.checkout.quoteTransfer({
       routeId: bothVehicles.id,
       vehicleTypeId: VAN_ID,
       productType: 'transfer_one_way',
+      pax: 1,
     });
 
     // The wire shape, validated against the shared schema rather than by hand.
@@ -660,6 +705,10 @@ describeWithDb('checkout.quoteTransfer', () => {
     // 30% of ₱2,500 — the seeded `trust.depositPercent`, the same one tours use.
     expect(quote.depositCentavos).toBe(75_000);
     expect(quote.freeCancelHours).toBe(24);
+    // Per-person pricing plan: a per_vehicle route's quote is byte-identical
+    // to today's on every pre-existing field, plus the two new ones.
+    expect(quote.pricingMode).toBe('per_vehicle');
+    expect(quote.paxCharged).toBe(1);
     // Unlike the tour quote, there is no replay digest to hand back: T10's hold
     // re-derives the price itself (see quoteTransferResultSchema's note).
     expect(quote).not.toHaveProperty('quoteId');
@@ -671,6 +720,7 @@ describeWithDb('checkout.quoteTransfer', () => {
       routeId: bothVehicles.id,
       vehicleTypeId: SUV_ID,
       productType: 'transfer_day_use',
+      pax: 1,
     });
     expect(quote.totalCentavos).toBe(PRICES.suv.dayUsePriceCentavos);
   });
@@ -681,6 +731,7 @@ describeWithDb('checkout.quoteTransfer', () => {
       routeId: bothVehicles.id,
       vehicleTypeId: VAN_ID,
       productType: 'transfer_one_way',
+      pax: 1,
       couponCode: coupon.code,
     });
     expect(quote.discountCentavos).toBe(25_000);
@@ -693,6 +744,7 @@ describeWithDb('checkout.quoteTransfer', () => {
         routeId: bothVehicles.id,
         vehicleTypeId: VAN_ID,
         productType: 'transfer_one_way',
+        pax: 1,
         couponCode: 'NO-SUCH-T9-CODE',
       }),
     ).rejects.toMatchObject({
@@ -711,6 +763,7 @@ describeWithDb('checkout.quoteTransfer', () => {
         routeId: retiredRoute.id,
         vehicleTypeId: VAN_ID,
         productType: 'transfer_one_way',
+        pax: 1,
       }),
     ).rejects.toMatchObject(expected);
     await expect(
@@ -718,6 +771,7 @@ describeWithDb('checkout.quoteTransfer', () => {
         routeId: vanOnly.id,
         vehicleTypeId: SUV_ID,
         productType: 'transfer_one_way',
+        pax: 1,
       }),
     ).rejects.toMatchObject(expected);
     // The retired DESTINATION gets the same sentence as the retired route
@@ -727,6 +781,7 @@ describeWithDb('checkout.quoteTransfer', () => {
         routeId: retiredDestination.id,
         vehicleTypeId: VAN_ID,
         productType: 'transfer_one_way',
+        pax: 1,
       }),
     ).rejects.toMatchObject(expected);
     await expect(
@@ -734,6 +789,7 @@ describeWithDb('checkout.quoteTransfer', () => {
         routeId: 2_000_000_000,
         vehicleTypeId: VAN_ID,
         productType: 'transfer_one_way',
+        pax: 1,
       }),
     ).rejects.toMatchObject(expected);
   });
@@ -744,6 +800,7 @@ describeWithDb('checkout.quoteTransfer', () => {
         routeId: cheapRoute.id,
         vehicleTypeId: VAN_ID,
         productType: 'transfer_one_way',
+        pax: 1,
       })
       .catch((e: unknown) => e);
 
@@ -759,6 +816,7 @@ describeWithDb('checkout.quoteTransfer', () => {
         routeId: bothVehicles.id,
         vehicleTypeId: VAN_ID,
         productType: 'transfer_one_way',
+        pax: 1,
         couponCode: coupon.code,
       })
       .catch((e: unknown) => e);
@@ -772,6 +830,7 @@ describeWithDb('checkout.quoteTransfer', () => {
         routeId: bothVehicles.id,
         vehicleTypeId: VAN_ID,
         productType: 'transfer_one_way',
+        pax: 1,
         // @ts-expect-error — `.strict()` rejects it, and the type says so too.
         priceCentavos: 1,
       }),

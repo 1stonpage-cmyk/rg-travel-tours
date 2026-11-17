@@ -85,6 +85,8 @@ export const transferRoutesRouter = router({
         freeCancelHours: transferRoutes.freeCancelHours,
         inclusionsText: transferRoutes.inclusionsText,
         exclusionsText: transferRoutes.exclusionsText,
+        pricingMode: transferRoutes.pricingMode,
+        minPayingPax: transferRoutes.minPayingPax,
       })
       .from(transferRoutes)
       // `transfer_routes.from_place_id`/`to_place_id` are both NOT NULL with
@@ -108,7 +110,15 @@ export const transferRoutesRouter = router({
     if (rows.length === 0) return [];
 
     const types = await db
-      .select({ id: vehicleTypes.id, name: vehicleTypes.name, slug: vehicleTypes.slug })
+      .select({
+        id: vehicleTypes.id,
+        name: vehicleTypes.name,
+        slug: vehicleTypes.slug,
+        // Owner decision 2026-11-18, per-person pricing plan — the
+        // guest-facing passenger cap. Read from THIS query, which already
+        // joins `vehicle_types`, rather than a second query against it.
+        defaultSeats: vehicleTypes.defaultSeats,
+      })
       .from(vehicleTypes)
       .where(eq(vehicleTypes.isActive, true))
       .orderBy(asc(vehicleTypes.sortOrder), asc(vehicleTypes.name));
@@ -152,6 +162,7 @@ export const transferRoutesRouter = router({
           vehicleTypeId: type.id,
           vehicleTypeName: type.name,
           slug: type.slug,
+          defaultSeats: type.defaultSeats,
           ...price,
         });
       }
@@ -170,6 +181,8 @@ export const transferRoutesRouter = router({
         inclusionsText: row.inclusionsText,
         exclusionsText: row.exclusionsText,
         vehiclePrices,
+        pricingMode: row.pricingMode,
+        minPayingPax: row.minPayingPax,
       };
     });
   }),
@@ -201,6 +214,10 @@ export const transferRoutesRouter = router({
         estimatedDurationMinutes: transferRoutes.estimatedDurationMinutes,
         homePageBadge: transferRoutes.homePageBadge,
         homePageShortDescription: transferRoutes.homePageShortDescription,
+        // Owner decision 2026-11-18, per-person pricing plan — carried
+        // through to `cheapestOneWay` so `PopularTransfers.tsx` never has
+        // to guess the unit from the vehicle name.
+        pricingMode: transferRoutes.pricingMode,
       })
       .from(transferRoutes)
       .innerJoin(fromPlace, eq(fromPlace.id, transferRoutes.fromPlaceId))
@@ -293,7 +310,11 @@ export const transferRoutesRouter = router({
         // booked) — the card's price line then reads "Price unavailable" on
         // the client, never ₱0.
         cheapestOneWay: cheapestOffer
-          ? { vehicleTypeName: cheapestOffer.name, priceCentavos: cheapestOffer.priceCentavos }
+          ? {
+              vehicleTypeName: cheapestOffer.name,
+              priceCentavos: cheapestOffer.priceCentavos,
+              pricingMode: row.pricingMode,
+            }
           : null,
       };
     });

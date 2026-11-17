@@ -110,6 +110,7 @@ import {
   type TransferPlaceType,
   type TransferPriceSnapshot,
   type TransferPriceSource,
+  type TransferPricingMode,
   type TransferProductType,
 } from '@rg/shared';
 import { readSettingBlockTx, readTransferOperationsSettingsTx } from '../../content/settings';
@@ -134,7 +135,7 @@ import {
 } from '../create-hold';
 import { assessTransferCapacity, type TransferCapacityRefusalReason } from './capacity';
 import { clockTimeToMinutes } from './overlap';
-import { quoteTransfer, vehiclePriceForRouteAndType } from './pricing';
+import { quoteTransfer, transferSubtotalCentavos, vehiclePriceForRouteAndType } from './pricing';
 
 /**
  * Two aliases onto `transfer_places`, mirroring `pricing.ts`'s own (declared
@@ -332,17 +333,38 @@ export const TRANSFER_BOOKING_SHAPE_PROBLEMS = [
    * refusal this reason's pair introduces.
    */
   'ferry_details_on_day_use',
+  /**
+   * `input.pax` exceeds the resolved vehicle type's `default_seats` (owner
+   * decision 2026-11-18, per-person pricing plan, Decision 1 — applies to
+   * BOTH pricing modes and to the staff/custom-route branch too). **A third
+   * exception to "checked before the transaction opens"**, on the same
+   * footing as `reverse_not_enabled_for_route`/
+   * `flight_details_required_for_airport_route`: it needs the RESOLVED
+   * vehicle type's `default_seats`, which does not exist until the catalog
+   * read (or, on the custom-route branch, `loadVehicleType()`) runs inside
+   * the transaction. `default_seats: null` means no cap, and is never
+   * refused.
+   */
+  'pax_exceeds_vehicle_seats',
 ] as const;
 export type TransferBookingShapeProblem = (typeof TRANSFER_BOOKING_SHAPE_PROBLEMS)[number];
 
 /** The request cannot describe a bookable transfer. Nothing was written. */
 export class TransferBookingShapeError extends Error {
   readonly reason: TransferBookingShapeProblem;
+  /**
+   * The vehicle type's `default_seats`, set ONLY on `pax_exceeds_vehicle_seats`
+   * (owner decision 2026-11-18, per-person pricing plan) — the one reason
+   * whose guest-facing sentence needs a number (`seatCapMessage()`,
+   * `@rg/shared`). Every other reason leaves this `undefined`.
+   */
+  readonly seats?: number;
 
-  constructor(reason: TransferBookingShapeProblem, detail: string) {
+  constructor(reason: TransferBookingShapeProblem, detail: string, seats?: number) {
     super(`Transfer booking request is not bookable (${reason}): ${detail}`);
     this.name = 'TransferBookingShapeError';
     this.reason = reason;
+    this.seats = seats;
   }
 }
 
@@ -471,21 +493,28 @@ async function loadRouteShape(tx: Transaction, routeId: number): Promise<RouteSh
 }
 
 /**
- * The vehicle type's current name, for the unreachable-today custom-route
- * branch alone (`catalog` is null there, so `TransferVehiclePrice
- * .vehicleTypeName` is not available) — see `buildTransferSnapshot`'s
- * caller. Answers `null` only for an id that does not exist, which
- * `assertBookableShape`/Zod never let through; kept as a `null` rather than
- * a throw because a frozen snapshot with no name still parses (see
- * `transferPriceSnapshotSchema`'s `.optional()` on this field).
+ * The vehicle type's current name AND `default_seats`, for the
+ * unreachable-today custom-route branch alone (`catalog` is null there, so
+ * `TransferVehiclePrice.vehicleTypeName`/`.defaultSeats` are not available) —
+ * see `buildTransferSnapshot`'s caller and the seat-cap check in
+ * `createTransferBooking()`. Renamed from `loadVehicleTypeName` (owner
+ * decision 2026-11-18, per-person pricing plan) now that it answers the seat
+ * cap too, not only the name. Answers `null` only for an id that does not
+ * exist, which `assertBookableShape`/Zod never let through; kept as a `null`
+ * rather than a throw because a frozen snapshot with no name still parses
+ * (see `transferPriceSnapshotSchema`'s `.optional()` on this field), and a
+ * vehicle type that cannot be resolved has no seat cap to enforce either.
  */
-async function loadVehicleTypeName(tx: Transaction, vehicleTypeId: number): Promise<string | null> {
+async function loadVehicleType(
+  tx: Transaction,
+  vehicleTypeId: number,
+): Promise<{ name: string; defaultSeats: number | null } | null> {
   const [row] = await tx
-    .select({ name: vehicleTypes.name })
+    .select({ name: vehicleTypes.name, defaultSeats: vehicleTypes.defaultSeats })
     .from(vehicleTypes)
     .where(eq(vehicleTypes.id, vehicleTypeId))
     .limit(1);
-  return row?.name ?? null;
+  return row ?? null;
 }
 
 /** Gives up in THIS module's vocabulary after the shared retry is exhausted. */
@@ -757,14 +786,33 @@ export async function createTransferBooking(
         }
 
         /*
-         * The vehicle type's NAME, frozen into the price snapshot (§1.8).
-         * Resolved from the catalog read's own join when there is one
-         * (cheapest — no second query); a dedicated lookup only for the
-         * unreachable-today custom-route branch, which has no catalog row to
-         * carry it.
+         * The vehicle type's NAME, frozen into the price snapshot (§1.8), and
+         * its seat cap (owner decision 2026-11-18, per-person pricing plan,
+         * Decision 1). Both resolved from the SAME source in one branch —
+         * never a second query for one once the other is on hand: the
+         * catalog read's own join when there is one (cheapest), or
+         * `loadVehicleType()` only for the unreachable-today custom-route
+         * branch, which has no catalog row to carry either.
          */
-        const vehicleTypeName =
-          catalog?.vehicleTypeName ?? (await loadVehicleTypeName(tx, input.vehicleTypeId));
+        const vehicleType =
+          catalog === null ? await loadVehicleType(tx, input.vehicleTypeId) : null;
+        const vehicleTypeName = catalog?.vehicleTypeName ?? vehicleType?.name ?? null;
+
+        /*
+         * The seat cap itself. `defaultSeats: null` means no cap and is
+         * never refused — Decision 1 applies the cap to BOTH pricing modes
+         * and to this custom-route/staff branch too, which is why this check
+         * sits here, after the catalog read, rather than only inside the
+         * `catalog` branch below.
+         */
+        const seats = catalog?.defaultSeats ?? vehicleType?.defaultSeats ?? null;
+        if (seats !== null && input.pax > seats) {
+          throw new TransferBookingShapeError(
+            'pax_exceeds_vehicle_seats',
+            `pax ${input.pax} exceeds vehicle type's ${seats} seats`,
+            seats,
+          );
+        }
 
         /*
          * The duration FROZEN onto this booking, and the one the capacity check
@@ -802,9 +850,15 @@ export async function createTransferBooking(
         if (!verdict.ok) throw new TransferCapacityRefusedError(verdict.reason);
 
         /*
-         * 4. The money. The subtotal is the flat per-vehicle rate — from the
-         *    catalog on the guest path, from the staff figure on T19's. Nothing
-         *    multiplies it by `pax`: a van costs what a van costs.
+         * 4. The money. `priceCentavos` is the UNIT RATE — from the catalog
+         *    on the guest path, from the staff figure on T19's (a staff
+         *    quote names one flat total regardless of pax, Decision 2:
+         *    staff conversion is out of scope for this plan and stays flat
+         *    by definition). `transferSubtotalCentavos()` is the one place a
+         *    unit rate and a head count become a subtotal — on the staff
+         *    branch `pricingMode` is forced to `'per_vehicle'`, so it is a
+         *    no-op pass-through there too, exactly as it is for a real
+         *    `per_vehicle` route.
          */
         const priceCentavos =
           input.priceSource.kind === 'staff'
@@ -813,6 +867,16 @@ export async function createTransferBooking(
               // `catalog_price_source_without_route` refusal plus the
               // `TransferRouteNotQuotableError` above.
               catalog!.priceCentavos;
+        const pricingMode: TransferPricingMode =
+          input.priceSource.kind === 'staff' ? 'per_vehicle' : catalog!.pricingMode;
+        const minPayingPax = input.priceSource.kind === 'staff' ? 1 : catalog!.minPayingPax;
+
+        const { subtotalCentavos, paxCharged } = transferSubtotalCentavos({
+          pricingMode,
+          unitPriceCentavos: priceCentavos,
+          pax: input.pax,
+          minPayingPax,
+        });
 
         /*
          * The coupon's RULES, through `tx` and never the pool (the
@@ -820,18 +884,24 @@ export async function createTransferBooking(
          * after the floor because the floor's own figure does not exist until
          * the discount is known; the coupon's row LOCK is still taken last.
          *
+         * **Checked against `subtotalCentavos`, not the unit rate** (owner
+         * decision 2026-11-18) — a minimum-spend rule must see what the
+         * guest is actually being charged, which on a `per_person` route is
+         * the multiplied figure. Equal to the unit rate on a `per_vehicle`
+         * route and on the staff branch, so this is no change there.
+         *
          * `ValidCoupon` is structurally `services/pricing.ts`'s `QuoteCoupon`,
          * so the validated row goes straight into the quote with no conversion
          * and there is no second "load the coupon for pricing" query to drift
          * from this one.
          */
         const coupon: ValidCoupon | null = input.couponCode
-          ? await validateCoupon(input.couponCode, priceCentavos, now, tx, input.lead.email)
+          ? await validateCoupon(input.couponCode, subtotalCentavos, now, tx, input.lead.email)
           : null;
 
         const trust = await readSettingBlockTx(tx, 'trust');
         const quote = quoteTransfer({
-          priceCentavos,
+          priceCentavos: subtotalCentavos,
           coupon,
           depositPercent: trust.depositPercent,
         });
@@ -885,6 +955,9 @@ export async function createTransferBooking(
           freeCancelHours: catalog?.freeCancelHours ?? null,
           vehicleTypeName,
           quote,
+          pricingMode,
+          paxCharged,
+          minPayingPax,
         });
 
         const { id: bookingId, ref } = await insertBookingWithRef(tx, {
@@ -1018,9 +1091,20 @@ function buildTransferSnapshot(
      * `loadVehicleTypeName`'s own doc comment — in which case the snapshot
      * is written with no `vehicleTypeName` at all rather than a fabricated
      * one; `vehicleTypeId` alone still satisfies the schema's `.refine()`.
+     * See `loadVehicleType`'s own doc comment (renamed from
+     * `loadVehicleTypeName`, owner decision 2026-11-18).
      */
     vehicleTypeName: string | null;
     quote: { subtotalCentavos: number; discountCentavos: number; totalCentavos: number };
+    /**
+     * The full per-person-pricing breakdown (owner decision 2026-11-18,
+     * Decision 5) — `pricingMode`/`paxCharged`/`minPayingPax`, frozen
+     * alongside the rest. `'per_vehicle'`/`1` on the staff branch, by
+     * construction (see `createTransferBooking()`'s own money section).
+     */
+    pricingMode: TransferPricingMode;
+    paxCharged: number;
+    minPayingPax: number;
   },
 ): TransferPriceSnapshot {
   return transferPriceSnapshotSchema.parse({
@@ -1034,7 +1118,13 @@ function buildTransferSnapshot(
     routeId: input.routeId,
     customRouteDescription: input.customRouteDescription,
     priceSource: priced.priceSource,
+    // The UNIT rate — per vehicle or per person — never the multiplied
+    // subtotal. See `transferPriceSnapshotSchema`'s own doc comment
+    // (`@rg/shared`) on why the two are kept distinct.
     priceCentavos: priced.priceCentavos,
+    pricingMode: priced.pricingMode,
+    paxCharged: priced.paxCharged,
+    minPayingPax: priced.minPayingPax,
     coupon: priced.coupon
       ? {
           id: priced.coupon.id,

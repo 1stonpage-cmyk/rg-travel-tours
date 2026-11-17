@@ -97,6 +97,7 @@ import {
   PAYMONGO_MIN_CENTAVOS,
   quoteInput,
   quoteTransferInput,
+  seatCapMessage,
   type BookingStatus,
   type PayMode,
   type QuoteResult,
@@ -153,6 +154,7 @@ import { findBookingByCredentials } from '../../services/portal-auth';
 import { loadQuoteInputs, priceQuote, quoteDigest, type QuoteCoupon } from '../../services/pricing';
 import {
   quoteTransfer as quoteTransferPrice,
+  transferSubtotalCentavos,
   vehiclePriceForRouteAndType,
 } from '../../services/transfers/pricing';
 import type { TransferCapacityRefusalReason } from '../../services/transfers/capacity';
@@ -594,8 +596,19 @@ function translateHoldError(error: unknown): TRPCError {
  * standing. `staff_price_not_whole_centavos` cannot arise on this path at all —
  * the guest path is `priceSource: { kind: 'catalog' }` — so it gets the generic
  * "contact us", naming no figure.
+ *
+ * **`pax_exceeds_vehicle_seats` is EXCLUDED from this `Record`** (owner
+ * decision 2026-11-18, per-person pricing plan) — its sentence needs a
+ * number (`seatCapMessage(error.seats)`, `@rg/shared`), which a static
+ * string table cannot carry. `translateHoldTransferError` below branches on
+ * it BEFORE falling into this table, so excluding it here is what keeps the
+ * `Record`'s exhaustiveness check meaningful rather than satisfied by a
+ * placeholder string with no seat count in it.
  */
-const TRANSFER_SHAPE_MESSAGES: Record<TransferBookingShapeProblem, string> = {
+const TRANSFER_SHAPE_MESSAGES: Record<
+  Exclude<TransferBookingShapeProblem, 'pax_exceeds_vehicle_seats'>,
+  string
+> = {
   route_and_custom_route_description: 'Please choose one transfer route.',
   neither_route_nor_custom_route_description: 'Please choose a transfer route.',
   catalog_price_source_without_route: 'Please choose a transfer route.',
@@ -673,6 +686,22 @@ function translateHoldTransferError(error: unknown): TRPCError {
   const coupon = translateCouponError(error);
   if (coupon) return coupon;
   if (error instanceof TransferBookingShapeError) {
+    /*
+     * `pax_exceeds_vehicle_seats` branches BEFORE the `Record` lookup (owner
+     * decision 2026-11-18) — its sentence names a seat count the error
+     * carries (`error.seats`), via the SAME `seatCapMessage()` helper
+     * `checkout.quoteTransfer`'s own refusal below uses, so the two surfaces
+     * say the identical sentence about the identical rule. `error.seats` is
+     * set whenever this reason is thrown (every throw site in
+     * `createTransferBooking()` passes it) — the `undefined` branch is
+     * unreachable in practice but falls through to `internalError()` rather
+     * than fabricate a seat count, the same discipline the unrecognised-error
+     * fallback below is built on.
+     */
+    if (error.reason === 'pax_exceeds_vehicle_seats') {
+      if (error.seats === undefined) return internalError(error);
+      return new TRPCError({ code: 'BAD_REQUEST', message: seatCapMessage(error.seats) });
+    }
     return new TRPCError({ code: 'BAD_REQUEST', message: TRANSFER_SHAPE_MESSAGES[error.reason] });
   }
   if (error instanceof TransferCapacityRefusedError) {
@@ -933,13 +962,16 @@ export const checkoutRouter = router({
    * The PRIVATE-TRANSFER quote (transfers-launch plan, Task T9; Architecture
    * §3) — the same kind of read as `quote` above, over a different product.
    *
-   * **A transfer's price is a flat per-vehicle catalog rate.** The input names
-   * a route, a vehicle type and a product and nothing else (`.strict()`), the
-   * server reads the price from `transfer_route_vehicle_prices`, and no number
-   * on the wire can influence the figure — not even a head count, which is a
-   * capacity question for the hold and never a pricing one (see
-   * `quoteTransferInput`'s own note).
+   * **A transfer's price is a flat per-vehicle rate, OR a per-person rate**
+   * (owner decision 2026-11-18, per-person pricing plan — this paragraph
+   * used to say "flat per-vehicle catalog rate" unconditionally, which this
+   * plan made false). The input names a route, a vehicle type, a product and
+   * a head count (`.strict()`), and no PRICE on the wire can influence the
+   * figure. The head count can, on a `per_person` route
+   * (`transferSubtotalCentavos()`); it also feeds the seat-cap refusal
+   * below, which is a capacity question rather than a pricing one.
    *
+
    * This resolver computes nothing either: `quoteTransfer()`
    * (services/transfers/pricing.ts) does the arithmetic, reusing
    * `discountCentavosFor()` and `depositCentavos()` rather than restating
@@ -990,20 +1022,52 @@ export const checkoutRouter = router({
         }
 
         /*
+         * The seat cap (owner decision 2026-11-18, per-person pricing plan,
+         * Decision 1) — the SAME rule `createTransferBooking()` enforces,
+         * checked here too so a guest previewing a quote is told about an
+         * oversized party before they ever submit a hold, with the identical
+         * sentence (`seatCapMessage()`) `translateHoldTransferError`'s own
+         * `pax_exceeds_vehicle_seats` branch gives. `defaultSeats: null`
+         * means no cap.
+         */
+        if (catalog.defaultSeats !== null && input.pax > catalog.defaultSeats) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: seatCapMessage(catalog.defaultSeats),
+          });
+        }
+
+        /*
+         * The subtotal — the one place a catalog unit rate and a head count
+         * become a figure to charge (owner decision 2026-11-18). A no-op
+         * pass-through on a `per_vehicle` route, exactly as before.
+         */
+        const { subtotalCentavos, paxCharged } = transferSubtotalCentavos({
+          pricingMode: catalog.pricingMode,
+          unitPriceCentavos: catalog.priceCentavos,
+          pax: input.pax,
+          minPayingPax: catalog.minPayingPax,
+        });
+
+        /*
          * `validateCoupon` returns `ValidCoupon`, which is `{ id, code } &
          * CouponDiscount` — structurally the same type `priceQuote`'s
          * `QuoteCoupon` is. No conversion: `loadCoupon()`'s hand-shaping in
          * pricing.ts exists because it builds the union from raw COLUMNS, and
          * this value has already been through that narrowing.
+         *
+         * Checked against `subtotalCentavos`, not the unit rate (owner
+         * decision 2026-11-18) — a minimum-spend rule must see what the
+         * guest is actually being charged.
          */
         let coupon: QuoteCoupon | null = null;
         if (input.couponCode) {
-          coupon = await validateCoupon(input.couponCode, catalog.priceCentavos, new Date());
+          coupon = await validateCoupon(input.couponCode, subtotalCentavos, new Date());
         }
 
         const trust = await readTrustSettings();
         const quote = quoteTransferPrice({
-          priceCentavos: catalog.priceCentavos,
+          priceCentavos: subtotalCentavos,
           coupon,
           depositPercent: trust.depositPercent,
         });
@@ -1018,7 +1082,12 @@ export const checkoutRouter = router({
           });
         }
 
-        return { ...quote, freeCancelHours: catalog.freeCancelHours };
+        return {
+          ...quote,
+          freeCancelHours: catalog.freeCancelHours,
+          pricingMode: catalog.pricingMode,
+          paxCharged,
+        };
       } catch (error) {
         throw translateQuoteTransferError(error);
       }

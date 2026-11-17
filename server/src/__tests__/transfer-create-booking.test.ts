@@ -34,6 +34,7 @@ import {
   type PriceSnapshot,
   type TransferDirection,
   type TransferPlaceType,
+  type TransferPricingMode,
 } from '@rg/shared';
 import { getDb, getPool } from '../db/client';
 import {
@@ -117,6 +118,7 @@ const created = {
   couponIds: [] as number[],
   vanIds: [] as number[],
   driverIds: [] as number[],
+  vehicleTypeIds: [] as number[],
 };
 
 /** Random FIRST, timestamp second — the reasoning is `capacity.test.ts`'s. */
@@ -146,6 +148,28 @@ async function vehicleTypeBySlug(slug: string): Promise<{ id: number; name: stri
     .limit(1);
   if (!row) throw new Error(`No vehicle_types row for slug "${slug}" — expected from seedBase.`);
   return row;
+}
+
+/**
+ * A test-owned `vehicle_types` row — never the shared seeded van/suv, which
+ * carry `defaultSeats: null` and so cannot exercise the seat-cap rule (owner
+ * decision 2026-11-18, per-person pricing plan). `defaultSeats: undefined`
+ * leaves the column NULL ("no cap"), matching `makeDriver`'s own convention.
+ */
+async function makeVehicleType(opts: { defaultSeats?: number | null } = {}) {
+  const suffix = unique();
+  const slug = `__xferhold-vt__${suffix}`.slice(0, 40);
+  const [row] = await getDb()
+    .insert(vehicleTypes)
+    .values({
+      name: `Transfer Hold Fixture VT ${suffix}`,
+      slug,
+      defaultSeats: opts.defaultSeats === undefined ? null : opts.defaultSeats,
+      isActive: true,
+      sortOrder: 999,
+    });
+  created.vehicleTypeIds.push(row.insertId);
+  return row.insertId;
 }
 
 async function makeDestination(opts: { isActive?: boolean } = {}) {
@@ -197,6 +221,9 @@ async function makeRoute(
     vehicleTypeIds?: number[];
     oneWayPriceCentavos?: number;
     dayUsePriceCentavos?: number;
+    /** Owner decision 2026-11-18, per-person pricing plan. Defaults match the column defaults. */
+    pricingMode?: TransferPricingMode;
+    minPayingPax?: number;
   } = {},
 ) {
   const fromPlaceId = await makePlace({ placeType: opts.fromPlaceType ?? 'destination' });
@@ -215,6 +242,8 @@ async function makeRoute(
       estimatedDurationMinutes: opts.durationMinutes ?? DURATION,
       freeCancelHours: opts.freeCancelHours ?? ROUTE_FREE_CANCEL_HOURS,
       isActive: opts.isActive ?? true,
+      pricingMode: opts.pricingMode ?? 'per_vehicle',
+      minPayingPax: opts.minPayingPax ?? 1,
     });
   created.routeIds.push(row.insertId);
 
@@ -278,6 +307,7 @@ async function makeCoupon(
     amountCentavos?: number;
     usageLimit?: number | null;
     restrictedToEmail?: string | null;
+    minSpendCentavos?: number | null;
   } = {},
 ) {
   const code = `__XFER__${unique()}`.toUpperCase().slice(0, 40);
@@ -290,6 +320,7 @@ async function makeCoupon(
       amountCentavos: opts.amountCentavos ?? null,
       usageLimit: opts.usageLimit ?? null,
       restrictedToEmail: opts.restrictedToEmail ?? null,
+      minSpendCentavos: opts.minSpendCentavos ?? null,
       isActive: true,
     });
   created.couponIds.push(row.insertId);
@@ -394,7 +425,7 @@ function transferInput(over: {
           ? '17:00'
           : null
         : over.dayUseEndTime,
-    pax: over.pax ?? 3,
+    pax: over.pax ?? 3, // Load-bearing default: several snapshot/audit assertions below assert paxCharged/pax === 3 by name.
     luggageCount: over.luggageCount ?? 2,
     pickup: 'Mactan-Cebu International Airport, Terminal 2 arrivals',
     pickupMapUrl: null,
@@ -604,6 +635,7 @@ describeWithDb('createTransferBooking', () => {
       routeId,
       customRouteDescription: null,
       priceSource: 'catalog',
+      // The UNIT rate — equal to the subtotal on this per_vehicle route.
       priceCentavos: ONE_WAY_PRICE,
       coupon: null,
       depositPercent: DEPOSIT_PERCENT,
@@ -611,6 +643,11 @@ describeWithDb('createTransferBooking', () => {
       subtotalCentavos: ONE_WAY_PRICE,
       discountCentavos: 0,
       totalCentavos: ONE_WAY_PRICE,
+      // Per-person pricing plan (owner decision 2026-11-18): every new
+      // snapshot carries the full breakdown, even on a per_vehicle route.
+      pricingMode: 'per_vehicle',
+      paxCharged: 3, // transferInput()'s own default pax.
+      minPayingPax: 1,
     });
 
     expect(await auditRowsFor(result.bookingId)).toBe(1);
@@ -699,6 +736,11 @@ describeWithDb('createTransferBooking', () => {
     expect(snapshot.freeCancelHours, 'the catalog route still supplies this').toBe(
       ROUTE_FREE_CANCEL_HOURS,
     );
+    // Decision 2 (per-person pricing plan): a staff quote stays flat by
+    // definition, regardless of the catalog route's own pricingMode.
+    expect(snapshot.pricingMode, 'the staff branch is always per_vehicle').toBe('per_vehicle');
+    expect(snapshot.paxCharged, 'completeness only — never multiplied').toBe(3);
+    expect(snapshot.minPayingPax).toBe(1);
 
     // The duration still comes from the catalog, frozen as usual.
     expect((await detailsRow(result.bookingId)).routeDurationMinutesUsed).toBe(DURATION);
@@ -722,6 +764,182 @@ describeWithDb('createTransferBooking', () => {
     expect(depositCentavos(snapshot.totalCentavos, snapshot.depositPercent)).toBe(
       depositCentavos(ONE_WAY_PRICE, DEPOSIT_PERCENT),
     );
+  });
+
+  // -------------------------------------------------------------------------
+  // Seat cap + per-person pricing (owner decision 2026-11-18)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Decision 1 — the seat cap applies to BOTH pricing modes, on a route with
+   * a catalog price (the `catalog` branch). A test-owned vehicle type is
+   * used throughout this section, never the seeded van/suv (which carry
+   * `defaultSeats: null` and so are never capped — covered separately
+   * below).
+   */
+  it("refuses pax exceeding the vehicle type's default_seats, for a per_vehicle AND a per_person route", async () => {
+    const vehicleTypeId = await makeVehicleType({ defaultSeats: 4 });
+    await makeVan({ vehicleTypeId });
+    await makeDriver({ maxTransferJobsPerDay: 8 });
+
+    for (const pricingMode of ['per_vehicle', 'per_person'] as const) {
+      const routeId = await makeRoute({ pricingMode, vehicleTypeIds: [vehicleTypeId] });
+      const before = await writtenRowCounts();
+
+      const error = await createTransferBooking(
+        transferInput({ routeId, vehicleTypeId, pax: 5 }),
+        NOW,
+      ).catch((e: unknown) => e);
+
+      expect(error, pricingMode).toBeInstanceOf(TransferBookingShapeError);
+      expect((error as TransferBookingShapeError).reason, pricingMode).toBe(
+        'pax_exceeds_vehicle_seats',
+      );
+      expect((error as TransferBookingShapeError).seats, pricingMode).toBe(4);
+      expect(await writtenRowCounts(), pricingMode).toEqual(before);
+    }
+  });
+
+  it("accepts pax exactly AT the vehicle type's default_seats", async () => {
+    const vehicleTypeId = await makeVehicleType({ defaultSeats: 4 });
+    await makeVan({ vehicleTypeId });
+    await makeDriver({ maxTransferJobsPerDay: 8 });
+    const routeId = await makeRoute({ vehicleTypeIds: [vehicleTypeId] });
+
+    const result = await hold(transferInput({ routeId, vehicleTypeId, pax: 4, payMode: 'full' }));
+    expect((await bookingRow(result.bookingId)).status).toBe('pending_payment');
+  });
+
+  /**
+   * `default_seats: null` ("no cap") still works through the STAFF/
+   * custom-route branch, which resolves the vehicle type via
+   * `loadVehicleType()` rather than the catalog join — proving the cap
+   * applies there too (Decision 1) without ever refusing one with no cap set.
+   */
+  it('never caps a vehicle type with default_seats: null, any pax up to the existing max-30 bound — on the catalog branch', async () => {
+    const vehicleTypeId = await makeVehicleType({ defaultSeats: null });
+    await makeVan({ vehicleTypeId });
+    await makeDriver({ maxTransferJobsPerDay: 8 });
+    const routeId = await makeRoute({ vehicleTypeIds: [vehicleTypeId] });
+
+    const result = await hold(transferInput({ routeId, vehicleTypeId, pax: 30, payMode: 'full' }));
+    expect((await bookingRow(result.bookingId)).pax).toBe(30);
+  });
+
+  /**
+   * The SAME "no cap" behaviour on the custom-route/staff branch, which
+   * resolves the vehicle type via `loadVehicleType()` rather than the
+   * catalog join — Decision 1 applies the cap there too, so this proves the
+   * absence of one there as well, not only on the catalog branch above.
+   */
+  it('never caps a vehicle type with default_seats: null — on the custom-route/staff branch', async () => {
+    const vehicleTypeId = await makeVehicleType({ defaultSeats: null });
+    await makeVan({ vehicleTypeId });
+    await makeDriver({ maxTransferJobsPerDay: 8 });
+
+    const result = await hold(
+      transferInput({
+        routeId: null,
+        customRouteDescription: 'Cebu City to a private farm in Balamban',
+        customRouteDurationMinutes: 90,
+        vehicleTypeId,
+        pax: 30,
+        payMode: 'full',
+        priceSource: { kind: 'staff', priceCentavos: 420_000, staffUserId: STAFF_USER_ID },
+      }),
+    );
+    expect((await bookingRow(result.bookingId)).pax).toBe(30);
+  });
+
+  /**
+   * The multiply itself, end to end: a `per_person` route with
+   * `minPayingPax: 2` and a booking of `pax: 1` still charges for two.
+   */
+  it('a per_person route with minPayingPax: 2 charges for the minimum, not the lower pax typed', async () => {
+    const vehicleTypeId = await makeVehicleType({ defaultSeats: null });
+    await makeVan({ vehicleTypeId });
+    await makeDriver({ maxTransferJobsPerDay: 8 });
+    const routeId = await makeRoute({
+      pricingMode: 'per_person',
+      minPayingPax: 2,
+      vehicleTypeIds: [vehicleTypeId],
+      oneWayPriceCentavos: 35_000,
+    });
+
+    const result = await hold(transferInput({ routeId, vehicleTypeId, pax: 1, payMode: 'full' }));
+    const row = await bookingRow(result.bookingId);
+    expect(row.subtotalCentavos).toBe(70_000); // 35_000 * max(1, 2)
+    expect(row.totalCentavos).toBe(70_000);
+
+    const snapshot = transferPriceSnapshotSchema.parse(row.priceSnapshot);
+    expect(snapshot.pricingMode).toBe('per_person');
+    expect(snapshot.paxCharged).toBe(2);
+    expect(snapshot.minPayingPax).toBe(2);
+    // The UNIT rate, kept distinct from the multiplied subtotal.
+    expect(snapshot.priceCentavos).toBe(35_000);
+  });
+
+  /** Deposit is 30% of the MULTIPLIED total, never the unit rate. */
+  it('deposits 30% of the multiplied per-person total, not the unit rate', async () => {
+    const vehicleTypeId = await makeVehicleType({ defaultSeats: null });
+    await makeVan({ vehicleTypeId });
+    await makeDriver({ maxTransferJobsPerDay: 8 });
+    const routeId = await makeRoute({
+      pricingMode: 'per_person',
+      minPayingPax: 1,
+      vehicleTypeIds: [vehicleTypeId],
+      oneWayPriceCentavos: 35_000,
+    });
+
+    const result = await hold(
+      transferInput({ routeId, vehicleTypeId, pax: 3, payMode: 'deposit' }),
+    );
+    const row = await bookingRow(result.bookingId);
+    expect(row.totalCentavos, 'unit 35,000 x 3 pax').toBe(105_000);
+    // 30% of ₱1,050 = ₱315 — the number, not merely "some positive amount".
+    expect(depositCentavos(105_000, DEPOSIT_PERCENT)).toBe(31_500);
+    expect(row.amountPaidCentavos).toBe(0);
+    const snapshot = transferPriceSnapshotSchema.parse(row.priceSnapshot);
+    expect(depositCentavos(snapshot.totalCentavos, snapshot.depositPercent)).toBe(31_500);
+  });
+
+  /**
+   * A coupon with a minimum-spend rule validates against the MULTIPLIED
+   * subtotal, not the unit rate — this is the test that catches a reversion
+   * of Step 5's coupon-ordering fix. Unit rate ₱350 (35_000c), minimum spend
+   * ₱700 (70_000c), pax 3 -> multiplied subtotal ₱1,050 (105_000c): the
+   * minimum sits strictly between the unit price and the multiplied total,
+   * so it is accepted on the real figure and would be refused if the coupon
+   * were (wrongly) checked against the unit rate alone.
+   *
+   * Confirmed able to fail: temporarily reverting the coupon call in
+   * `createTransferBooking()` to validate against the unit rate (`priceCentavos`)
+   * instead of `subtotalCentavos` turns this red with
+   * `CouponMinimumSpendNotMetError` (unit 35_000 < minSpend 70_000), then
+   * restored.
+   */
+  it('a coupon minimum-spend rule validates against the MULTIPLIED subtotal, not the unit rate', async () => {
+    const vehicleTypeId = await makeVehicleType({ defaultSeats: null });
+    await makeVan({ vehicleTypeId });
+    await makeDriver({ maxTransferJobsPerDay: 8 });
+    const routeId = await makeRoute({
+      pricingMode: 'per_person',
+      minPayingPax: 1,
+      vehicleTypeIds: [vehicleTypeId],
+      oneWayPriceCentavos: 35_000,
+    });
+    const coupon = await makeCoupon({ percentBp: 1000, minSpendCentavos: 70_000 });
+    // The premise, so this test cannot pass for the wrong reason: the unit
+    // rate alone would fail the minimum, the multiplied subtotal clears it.
+    expect(35_000).toBeLessThan(70_000);
+    expect(35_000 * 3).toBeGreaterThanOrEqual(70_000);
+
+    const result = await hold(
+      transferInput({ routeId, vehicleTypeId, pax: 3, payMode: 'full', couponCode: coupon.code }),
+    );
+    const row = await bookingRow(result.bookingId);
+    expect(row.couponId).toBe(coupon.id);
+    expect(row.discountCentavos).toBeGreaterThan(0);
   });
 
   // -------------------------------------------------------------------------
@@ -1943,6 +2161,11 @@ async function cleanup() {
   }
   for (const id of created.driverIds) await db.delete(drivers).where(eq(drivers.id, id));
   for (const id of created.vanIds) await db.delete(vans).where(eq(vans.id, id));
+  // Last: test-owned vehicle types, once every van and price row that could
+  // reference one (both already deleted above) is gone.
+  for (const id of created.vehicleTypeIds) {
+    await db.delete(vehicleTypes).where(eq(vehicleTypes.id, id));
+  }
   for (const day of DAYS) {
     await pool.query('DELETE FROM fleet_date_slots WHERE date = ?', [day]);
   }
@@ -1954,4 +2177,5 @@ async function cleanup() {
   created.destinationIds = [];
   created.driverIds = [];
   created.vanIds = [];
+  created.vehicleTypeIds = [];
 }

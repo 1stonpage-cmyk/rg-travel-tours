@@ -63,6 +63,36 @@ describe('transferPriceSnapshotSchema', () => {
     const result = transferPriceSnapshotSchema.safeParse(neither);
     expect(result.success).toBe(false);
   });
+
+  /**
+   * Owner decision 2026-11-18 (per-person pricing plan), Decision 5: a row
+   * written before this plan carries none of `pricingMode`/`paxCharged`/
+   * `minPayingPax` at all, and must still parse — the absence is what tells a
+   * reader "per vehicle, no multiplication" rather than a refusal. `BASE`
+   * itself already carries none of the three, so this is the exact legacy
+   * shape rather than a hand-trimmed approximation of it.
+   */
+  it('parses a snapshot carrying NONE of pricingMode/paxCharged/minPayingPax — pre-per-person-pricing rows', () => {
+    const legacy: unknown = { ...BASE, vehicleTypeId: 7, vehicleTypeName: 'Van' };
+    expect('pricingMode' in (legacy as object)).toBe(false);
+    expect('paxCharged' in (legacy as object)).toBe(false);
+    expect('minPayingPax' in (legacy as object)).toBe(false);
+    const result = transferPriceSnapshotSchema.safeParse(legacy);
+    expect(result.success).toBe(true);
+  });
+
+  it('parses a snapshot carrying the full per-person breakdown', () => {
+    const current: unknown = {
+      ...BASE,
+      vehicleTypeId: 7,
+      vehicleTypeName: 'Van',
+      pricingMode: 'per_person',
+      paxCharged: 4,
+      minPayingPax: 2,
+    };
+    const result = transferPriceSnapshotSchema.safeParse(current);
+    expect(result.success).toBe(true);
+  });
 });
 
 describe('transferSnapshotVehicleTypeLabel', () => {

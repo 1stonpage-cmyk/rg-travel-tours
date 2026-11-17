@@ -141,6 +141,13 @@ export interface TransferRoutePublicVehiclePrice extends TransferVehiclePriceRow
   vehicleTypeId: number;
   vehicleTypeName: string;
   slug: string;
+  /**
+   * `vehicle_types.default_seats` (owner decision 2026-11-18, per-person
+   * pricing plan) — the guest-facing passenger cap for this vehicle type.
+   * `null` means no cap. Carried here, not re-derived, so the booking page
+   * can disable an option a party does not fit without a second query.
+   */
+  defaultSeats: number | null;
 }
 
 /**
@@ -174,6 +181,13 @@ export interface TransferRoutePublicRow {
   inclusionsText: string | null;
   exclusionsText: string | null;
   vehiclePrices: TransferRoutePublicVehiclePrice[];
+  /**
+   * `transfer_routes.pricing_mode`/`min_paying_pax` (owner decision
+   * 2026-11-18, per-person pricing plan) — route-level, not per-vehicle,
+   * because one route prices every offered vehicle type the same way.
+   */
+  pricingMode: TransferPricingMode;
+  minPayingPax: number;
 }
 
 /**
@@ -198,7 +212,17 @@ export interface TransferRouteHomeCard {
   shortDescription: string | null;
   imagePath: string | null;
   offeredVehicles: { name: string; slug: string }[];
-  cheapestOneWay: { vehicleTypeName: string; priceCentavos: number } | null;
+  /**
+   * `pricingMode` rides along here (owner decision 2026-11-18, per-person
+   * pricing plan) so `PopularTransfers.tsx` never has to guess the unit
+   * from the vehicle name — "per person" for a per-person route's cheapest
+   * card, the vehicle name otherwise.
+   */
+  cheapestOneWay: {
+    vehicleTypeName: string;
+    priceCentavos: number;
+    pricingMode: TransferPricingMode;
+  } | null;
 }
 
 /**
@@ -211,10 +235,16 @@ export interface TransferRouteHomeCard {
  * a silently dropped field, the same rule `quoteInput` (`checkout.ts`) is built
  * on.
  *
- * There is also no `pax`, and that absence is load-bearing: a transfer is
- * priced per vehicle, so a head count cannot change the figure. T12's hold
- * input will carry the passenger count for the SEAT-FIT check (pre-task 0C),
- * which is a capacity question, never a pricing one.
+ * **`pax` is required (owner decision 2026-11-18, per-person pricing plan,
+ * Decision 4) — and that is a change from this field's original absence.**
+ * A `per_vehicle` route still ignores it (a head count cannot change a flat
+ * catalog rate), but a `per_person` route multiplies by it
+ * (`transferSubtotalCentavos()`), and either way the SEAT-FIT check needs a
+ * head count to compare against a vehicle type's `defaultSeats` — so the
+ * quote preview and the hold must agree on how many passengers are travelling
+ * before either refuses. Same bounds as the hold input's own `pax` field
+ * (`./transfers-checkout.ts`), which is required to repeat here rather than
+ * reused, for that file's own module-cycle reason.
  *
  * `routeId`, `vehicleType` and `productType` are the three identifiers every
  * later schema in this plan keys on — spelled here so T10/T12 reuse them
@@ -225,6 +255,11 @@ export const quoteTransferInput = z
     routeId: z.number().int().positive(),
     vehicleTypeId: z.number().int().positive(),
     productType: z.enum(TRANSFER_PRODUCT_TYPES),
+    pax: z
+      .number()
+      .int('Enter a whole number of passengers.')
+      .min(1, 'Enter how many passengers are travelling.')
+      .max(30, 'For a party that size, please contact us so we can arrange several vehicles.'),
     /*
      * The ONE field on this input a guest types, and so the one whose bound a
      * guest can trip — the same 40-character bound, and the same guest-facing
@@ -271,5 +306,30 @@ export const quoteTransferResultSchema = z.object({
     deposit: z.number().int().nonnegative(),
   }),
   freeCancelHours: z.number().int().nonnegative(),
+  /** Which rule produced `subtotalCentavos` — owner decision 2026-11-18. */
+  pricingMode: z.enum(TRANSFER_PRICING_MODES),
+  /**
+   * The pax `subtotalCentavos` was actually multiplied by — `max(pax,
+   * minPayingPax)` on a per-person route, `input.pax` unmultiplied on a
+   * per-vehicle one (see `transferSubtotalCentavos()`,
+   * `server/src/services/transfers/pricing.ts`).
+   */
+  paxCharged: z.number().int().positive(),
 });
 export type QuoteTransferResult = z.infer<typeof quoteTransferResultSchema>;
+
+/**
+ * The guest-facing sentence for `pax_exceeds_vehicle_seats` (owner decision
+ * 2026-11-18, per-person pricing plan, Decision 1 — the seat cap applies to
+ * both pricing modes). One function, called by `checkout.quoteTransfer`'s own
+ * refusal AND by `translateHoldTransferError`'s branch for the same reason
+ * (`server/src/routers/public/checkout.ts`), so the two surfaces cannot drift
+ * into two different sentences about one rule — the same discipline
+ * `gatewayMinimumMessage()` (`./checkout.ts`) is built on.
+ */
+export function seatCapMessage(seats: number): string {
+  return (
+    `This vehicle seats up to ${seats} ${seats === 1 ? 'passenger' : 'passengers'}. ` +
+    'Please choose a smaller party or a larger vehicle.'
+  );
+}

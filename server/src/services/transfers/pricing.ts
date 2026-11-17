@@ -8,18 +8,29 @@
  *    exhaustively testable with no connection at all.
  *  - {@link vehiclePriceForRouteAndType} does the one database read that feeds
  *    it, and does no arithmetic.
+ *  - {@link transferSubtotalCentavos} (owner decision 2026-11-18, per-person
+ *    pricing plan) is the OTHER pure arithmetic: the one place a catalog unit
+ *    rate and a head count turn into a subtotal.
  *
- * **A transfer's price is a FLAT PER-VEHICLE rate.** That is the whole
- * difference from the tour formula: there is no tier, no head count and no
- * per-person multiplication anywhere below, because a van costs what a van
- * costs whether one guest or eight ride in it. `quoteTransfer` therefore takes
- * no `pax` parameter at all — the absence is the contract (a test pins it), so
- * a later task needing a passenger count for the seat-fit check (pre-task 0C)
- * must read it where capacity is decided, never here.
+ * **A transfer's price is a flat per-vehicle rate, OR a per-person rate
+ * (owner decision 2026-11-18).** `transferRoutes.pricingMode` picks which: a
+ * `per_vehicle` route still prices exactly as before (a van costs what a van
+ * costs whether one guest or eight ride in it), and a `per_person` route
+ * multiplies the catalog unit rate by `max(pax, minPayingPax)`
+ * ({@link transferSubtotalCentavos}). **`quoteTransfer` itself still takes no
+ * `pax` parameter at all** — the absence is the contract a test still pins —
+ * because the multiplication happens ONE step earlier, in
+ * {@link transferSubtotalCentavos}, and every caller passes ITS OWN result in
+ * as `quoteTransfer`'s `priceCentavos` (a no-op pass-through on a
+ * `per_vehicle` route, where `transferSubtotalCentavos` returns the unit rate
+ * unchanged). Keeping the pax-sensitive arithmetic in its own function, never
+ * folded into `quoteTransfer`, is what lets `quoteTransfer`'s own "no pax"
+ * contract keep meaning something.
  *
- * Architecture §3's formula, verbatim:
+ * Architecture §3's formula, verbatim (now reading "subtotal" as whichever of
+ * the two pricing modes produced it):
  *
- *   subtotal        = vehiclePriceForRouteAndType(route, vehicleType, productType)
+ *   subtotal        = transferSubtotalCentavos(vehiclePriceForRouteAndType(...), pax)
  *   discount        = coupon applied to subtotal (percent or fixed, capped at subtotal)
  *   total           = subtotal - discount
  *   deposit         = depositCentavos(total, deposit_percent)
@@ -35,7 +46,7 @@
  */
 import { and, eq } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/mysql-core';
-import { depositCentavos, type TransferProductType } from '@rg/shared';
+import { depositCentavos, type TransferPricingMode, type TransferProductType } from '@rg/shared';
 import { getDb, type Database, type Transaction } from '../../db/client';
 import {
   transferPlaces,
@@ -118,6 +129,34 @@ export function quoteTransfer(input: TransferQuoteInput): TransferQuoteResult {
   };
 }
 
+/**
+ * The ONE multiply function (owner decision 2026-11-18, per-person pricing
+ * plan) — a catalog unit rate and a head count turn into a subtotal here,
+ * nowhere else. `quoteTransfer()` above deliberately does not do this; every
+ * caller computes this FIRST and passes its `subtotalCentavos` into
+ * `quoteTransfer()` as `priceCentavos` (see this module's header).
+ *
+ * `per_vehicle` ignores `pax` entirely — the unit rate IS the subtotal, byte
+ * for byte, exactly as every route priced before this plan. `per_person`
+ * multiplies by `max(pax, minPayingPax)`, never by `pax` alone: a route with
+ * a minimum of, say, two paying passengers charges for two even when one
+ * guest books alone. `paxCharged` is returned alongside the subtotal so a
+ * caller can freeze it onto the price snapshot — the figure the arithmetic
+ * actually used, not the figure the guest typed.
+ */
+export function transferSubtotalCentavos(args: {
+  pricingMode: TransferPricingMode;
+  unitPriceCentavos: number;
+  pax: number;
+  minPayingPax: number;
+}): { subtotalCentavos: number; paxCharged: number } {
+  if (args.pricingMode === 'per_vehicle') {
+    return { subtotalCentavos: args.unitPriceCentavos, paxCharged: args.pax };
+  }
+  const paxCharged = Math.max(args.pax, args.minPayingPax);
+  return { subtotalCentavos: args.unitPriceCentavos * paxCharged, paxCharged };
+}
+
 /** What the catalog holds for one route + vehicle type, at one product. */
 export interface TransferVehiclePrice {
   priceCentavos: number;
@@ -140,6 +179,21 @@ export interface TransferVehiclePrice {
    * route.
    */
   vehicleTypeName: string;
+  /**
+   * `transfer_routes.pricing_mode`/`min_paying_pax` (owner decision
+   * 2026-11-18, per-person pricing plan) — route-level, read alongside the
+   * price because every caller that reads one needs the other to call
+   * {@link transferSubtotalCentavos}.
+   */
+  pricingMode: TransferPricingMode;
+  minPayingPax: number;
+  /**
+   * `vehicle_types.default_seats` — the guest-facing passenger cap for this
+   * vehicle type (same decision). `null` means no cap. Read here, alongside
+   * the price, because `createTransferBooking()`'s seat-cap check runs right
+   * after this same read and must not query `vehicle_types` a second time.
+   */
+  defaultSeats: number | null;
 }
 
 /**
@@ -201,6 +255,9 @@ export async function vehiclePriceForRouteAndType(
       oneWayPriceCentavos: transferRouteVehiclePrices.oneWayPriceCentavos,
       dayUsePriceCentavos: transferRouteVehiclePrices.dayUsePriceCentavos,
       vehicleTypeName: vehicleTypes.name,
+      pricingMode: transferRoutes.pricingMode,
+      minPayingPax: transferRoutes.minPayingPax,
+      defaultSeats: vehicleTypes.defaultSeats,
     })
     .from(transferRoutes)
     /*
@@ -249,5 +306,8 @@ export async function vehiclePriceForRouteAndType(
     freeCancelHours: row.freeCancelHours,
     routeDurationMinutes: row.routeDurationMinutes,
     vehicleTypeName: row.vehicleTypeName,
+    pricingMode: row.pricingMode,
+    minPayingPax: row.minPayingPax,
+    defaultSeats: row.defaultSeats,
   };
 }
