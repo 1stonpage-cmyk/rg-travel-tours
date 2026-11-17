@@ -4,7 +4,7 @@
 
 **Goal:** Give the admin a "Per vehicle" / "Per person" pricing switch on every transfer route, and a "Per person" / "Per group" display switch on every package, without touching tour pricing, existing bookings, or any money path the server doesn't own.
 
-**Architecture:** Add `pricing_mode` (+ `min_paying_pax`) to `transfer_routes`, and `pricing_mode` to `packages`. One new pure function, `transferSubtotalCentavos()`, is the only place a transfer's unit price is multiplied by a paying head count; every caller computes the subtotal through it *before* handing that number to the existing, unchanged `quoteTransfer()` arithmetic. Packages get no new arithmetic at all — there is no package checkout — only a stored label that swaps "per person" / "per group" copy on two public pages.
+**Architecture:** Add `pricing_mode` (+ `min_paying_pax`) to `transfer_routes`, and `pricing_mode` to `packages`. One new pure function, `transferSubtotalCentavos()`, is the only place a transfer's unit price is multiplied by a paying head count; every caller computes the subtotal through it _before_ handing that number to the existing, unchanged `quoteTransfer()` arithmetic. Packages get no new arithmetic at all — there is no package checkout — only a stored label that swaps "per person" / "per group" copy on two public pages.
 
 **Tech Stack:** Drizzle + MySQL 8, Zod (shared), tRPC, React + TS, Tailwind v4.
 
@@ -77,12 +77,14 @@ export function transferSubtotalCentavos(args: {
 ## Task 1 (brief label: 2A) — Schema + migration
 
 **Files:**
+
 - Modify: `server/src/db/schema.ts` (`transferRoutes`, `packages` table defs; `vehicleTypes.defaultSeats` doc comment)
 - Create: `server/src/db/migrations/0029_<drizzle-generated-name>.sql` (via `pnpm --filter @rg/server db:generate`, not hand-written)
 - Modify: `shared/src/transfers.ts` (new `TRANSFER_PRICING_MODES`/`TransferPricingMode` export — the single vocabulary every later task imports, mirroring how `TRANSFER_PRODUCT_TYPES` is declared there)
 - Modify: `shared/src/packages-admin.ts` (new `PACKAGE_PRICING_MODES`/`PackagePricingMode` export, same pattern as `INQUIRY_TYPES`)
 
 **Interfaces produced (every later task consumes these exact names):**
+
 - `shared/src/transfers.ts`: `export const TRANSFER_PRICING_MODES = ['per_vehicle', 'per_person'] as const; export type TransferPricingMode = (typeof TRANSFER_PRICING_MODES)[number];`
 - `shared/src/packages-admin.ts`: `export const PACKAGE_PRICING_MODES = ['per_person', 'per_group'] as const; export type PackagePricingMode = (typeof PACKAGE_PRICING_MODES)[number];`
 - `schema.ts`: `transferRoutes.pricingMode` (mysqlEnum, NOT NULL, default `'per_vehicle'`), `transferRoutes.minPayingPax` (int, NOT NULL, default `1`), `packages.pricingMode` (mysqlEnum, NOT NULL, default `'per_group'`).
@@ -102,6 +104,7 @@ export function transferSubtotalCentavos(args: {
 **Depends on Task 1's `TransferPricingMode`, `transferRoutes.pricingMode`/`minPayingPax`, `vehicleTypes.defaultSeats`.**
 
 **Files:**
+
 - Modify: `server/src/services/transfers/pricing.ts` — add `transferSubtotalCentavos()` (code above); widen `TransferVehiclePrice` with `pricingMode: TransferPricingMode`, `minPayingPax: number`, `defaultSeats: number | null`; widen `vehiclePriceForRouteAndType()`'s `SELECT` to read the three new columns (joins to `transferRoutes`/`vehicleTypes` already exist — no new query).
 - Modify: `server/src/services/transfers/create-booking.ts` — seat-cap check, reordered multiply, snapshot fields.
 - Modify: `shared/src/booking.ts` — `transferPriceSnapshotSchema` gains `pricingMode`, `paxCharged`, `minPayingPax` (all `.optional()`).
@@ -119,19 +122,28 @@ export function transferSubtotalCentavos(args: {
   describe('transferSubtotalCentavos', () => {
     it('per_vehicle ignores pax entirely', () => {
       const result = transferSubtotalCentavos({
-        pricingMode: 'per_vehicle', unitPriceCentavos: 150_000, pax: 6, minPayingPax: 1,
+        pricingMode: 'per_vehicle',
+        unitPriceCentavos: 150_000,
+        pax: 6,
+        minPayingPax: 1,
       });
       expect(result).toEqual({ subtotalCentavos: 150_000, paxCharged: 6 });
     });
     it('per_person multiplies by pax', () => {
       const result = transferSubtotalCentavos({
-        pricingMode: 'per_person', unitPriceCentavos: 35_000, pax: 3, minPayingPax: 1,
+        pricingMode: 'per_person',
+        unitPriceCentavos: 35_000,
+        pax: 3,
+        minPayingPax: 1,
       });
       expect(result).toEqual({ subtotalCentavos: 105_000, paxCharged: 3 });
     });
     it('per_person floors pax at the minimum', () => {
       const result = transferSubtotalCentavos({
-        pricingMode: 'per_person', unitPriceCentavos: 35_000, pax: 1, minPayingPax: 2,
+        pricingMode: 'per_person',
+        unitPriceCentavos: 35_000,
+        pax: 1,
+        minPayingPax: 2,
       });
       expect(result).toEqual({ subtotalCentavos: 70_000, paxCharged: 2 });
     });
@@ -174,6 +186,7 @@ export function transferSubtotalCentavos(args: {
 **Depends on Task 1/2's schema fields and shared types.**
 
 **Files:**
+
 - Modify: `shared/src/transfers-admin.ts` — `transferRouteFieldsSchema` gains `pricingMode: z.enum(TRANSFER_PRICING_MODES).optional()`, `minPayingPax: z.number().int().min(1).max(30).optional()`; `mergeTransferRoutePatch()` gets the two fields with the `!== undefined` spelling; `TransferRouteAdminRow` gains `pricingMode`, `minPayingPax`.
 - Modify: `server/src/services/transfers/upsert-route.ts` — `routeValues()` gets `pricingMode: params.pricingMode ?? 'per_vehicle', minPayingPax: params.minPayingPax ?? 1`.
 - Modify: `server/src/routers/admin/transfer-routes.ts` — `list`/`detail` (wherever `TransferRouteAdminRow` is assembled) select and return the two new columns.
@@ -189,7 +202,10 @@ export function transferSubtotalCentavos(args: {
   <fieldset className="space-y-2">
     <legend className="text-brand-ink text-sm font-semibold">Pricing</legend>
     <div className="flex flex-wrap gap-4">
-      <label className="tap-target flex items-center gap-2 text-sm" htmlFor="route-pricing-per-vehicle">
+      <label
+        className="tap-target flex items-center gap-2 text-sm"
+        htmlFor="route-pricing-per-vehicle"
+      >
         <input
           id="route-pricing-per-vehicle"
           type="radio"
@@ -199,7 +215,10 @@ export function transferSubtotalCentavos(args: {
         />
         Per vehicle
       </label>
-      <label className="tap-target flex items-center gap-2 text-sm" htmlFor="route-pricing-per-person">
+      <label
+        className="tap-target flex items-center gap-2 text-sm"
+        htmlFor="route-pricing-per-person"
+      >
         <input
           id="route-pricing-per-person"
           type="radio"
@@ -239,6 +258,7 @@ export function transferSubtotalCentavos(args: {
 **Depends on Task 1's `PackagePricingMode`/`packages.pricingMode`.**
 
 **Files:**
+
 - Modify: `shared/src/packages-admin.ts` — `packageFields` gains `pricingMode: z.enum(PACKAGE_PRICING_MODES)` (REQUIRED — this file's every other field is required on a full-replacement create/update); `PackageAdminRow` gains `pricingMode`.
 - Modify: `server/src/routers/admin/packages.ts` — `packageColumns()` gains `pricingMode`; `auditDataFor()` unchanged (not money); `list` SELECT gains the column.
 - Modify: `server/src/routers/public/packages.ts` — `PackageListItem`/`PackageDetail` gain `pricingMode`; both `list` and `bySlug` SELECT/return it.
@@ -273,6 +293,7 @@ export function transferSubtotalCentavos(args: {
 **Depends on Tasks 2, 3, 4's wire shapes.**
 
 **Files:**
+
 - Modify: `client/src/components/home/PopularTransfers.tsx` — remove `.toLowerCase()`; render "per person" for a per-person route's cheapest card instead of the vehicle name.
 - Modify: `client/src/components/transfer/VehicleOptionCard.tsx` — new `seatsExceeded`/seat-count prop and visual state (Addition 6).
 - Modify: `client/src/pages/public/TransferBookingPage.tsx` — move the passenger-count field above vehicle selection; add `pax` to every `quoteTransfer` query call; pass each vehicle option's `defaultSeats` into `VehicleOptionCard`; checkout-summary "× N pax =" line.
@@ -306,7 +327,7 @@ export function transferSubtotalCentavos(args: {
 - [ ] **3A** — `client/src/components/home/PopularTransfers.tsx:129`: remove `.toLowerCase()` (already covered by Task 5 Step 1 if that task ran first — if so, this step is "confirm it's already fixed," not a second edit). Keep the admin-entered vehicle name's original casing ("per SUV").
 - [ ] **3B** — `client/src/components/home/PopularTransfers.tsx:53`: `"Private van transfers across Cebu"` → `"Private transfers across Cebu"`.
 - [ ] **3C** — Footer tagline. First: `grep -rn "Cebu day tours and multi-day packages, booked direct" client/src server/src` to confirm the three known sites (`client/src/lib/site.ts:25`, `server/src/db/seed-data.ts:714`, and `server/src/seo/resolvers.ts:389`'s 404 description uses different wording — adapt, don't copy verbatim: `"This page does not exist. Browse Cebu day tours and multi-day packages on ${BRAND}."` → `"This page does not exist. Browse private airport and island transfers across Cebu on ${BRAND}."`). Change `SITE.tagline` (site.ts:25) and the seed default (seed-data.ts:714) to `'Private airport and island transfers across Cebu, booked direct.'` — these two are pinned equal by `server/src/__tests__/seed-parity.test.ts`, so both must change together or that test fails (which is the point: it proves they're still in sync). **Before editing**, confirm with a read of `client/src/components/layout/SiteFooter.tsx` and `settings.contact.tagline`'s current seeded value whether a STAGING database already has a live `settings.contact.tagline` row (it does, per `insertSettingIfMissing` — base seed is insert-only). State plainly in the task report: editing `seed-data.ts`'s default changes only a FRESH `db:seed` run's inserted value, never an already-seeded database's live row. If the owner wants staging's live footer text changed, the admin field is Settings → Contact → Tagline (owner edits it there; this task does not touch any DB row). Also note in the report: after this change, `siteTagline(true)` and `siteTagline(false)` (`client/src/lib/site.ts`) return the same string — not a bug, just confirm no test currently asserts they differ in a way this would break (grep `site-tagline.test.ts` first).
-- [ ] **3D** — `client/src/components/layout/FloatingWhatsApp.tsx:250`: `` const message = showTours ? `Hi ${SITE.name}! I'd like to ask about a Cebu tour.` : `Hi ${SITE.name}! I'd like to ask about a transfer.`; `` (the `showTours` binding already exists in this component at line 225).
+- [ ] **3D** — `client/src/components/layout/FloatingWhatsApp.tsx:250`: ``const message = showTours ? `Hi ${SITE.name}! I'd like to ask about a Cebu tour.` : `Hi ${SITE.name}! I'd like to ask about a transfer.`;`` (the `showTours` binding already exists in this component at line 225).
 - [ ] **Update tests that pin the old strings**: grep each changed literal across `client/src/__tests__` before editing; update every match in the same commit as its source change (no file left referencing a string that no longer exists). Each test must be run red-then-green on its specific assertion, not just "the suite passes."
 - [ ] **Four commits** (or one commit per lettered item if the implementer prefers — report each as its own `✅ DONE 3X` regardless of commit granularity).
 
