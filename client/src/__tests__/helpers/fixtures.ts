@@ -203,7 +203,7 @@ export const SETTINGS_FIXTURE: SettingsPayload = {
   ],
   contact: {
     address: 'Office address pending — Cebu, Philippines',
-    tagline: 'Cebu day tours and multi-day packages, booked direct.',
+    tagline: 'Private airport and island transfers across Cebu, booked direct.',
     hoursNote: 'Mon–Sun, 7:00 AM – 9:00 PM (PHT)',
     email: 'hello@travelsugbo.com',
     phoneDisplay: '0908 469 6246',

@@ -22,7 +22,7 @@ export const SITE = {
   domain: 'TravelSugbo.com',
   /** The licensed operator. Permits and the copyright notice belong to this name. */
   legalOperator: 'R&G Travel & Tours',
-  tagline: 'Cebu day tours and multi-day packages, booked direct.',
+  tagline: 'Private airport and island transfers across Cebu, booked direct.',
   nav: [
     // Transfers lead (Task T14, owner decision 8) — ahead of Tours, which
     // stays fully reachable, unchanged, right behind it. Tours is not
@@ -124,8 +124,14 @@ export function visibleNav(showTours: boolean, hasRealReviews: boolean) {
 
 /**
  * Transfers-wording tagline shown under the footer wordmark while
- * `show_tours` is off (owner decision 2026-11-11, 1C). `SITE.tagline`'s own
- * tour-wording promise only makes sense while tours are for sale.
+ * `show_tours` is off (owner decision 2026-11-11, 1C). Kept as its own
+ * constant rather than folded away now that it is byte-for-byte identical to
+ * `SITE.tagline` (task 6/3C) — `SITE.tagline` itself used to carry a
+ * tour-only promise that didn't hold while tours were off; it has since been
+ * generalised to transfers wording, so both branches of `siteTagline()`
+ * below currently return the same string. That is not a bug: the day
+ * `SITE.tagline` goes back to naming tours specifically, this constant is
+ * what keeps the "off" branch correct without anyone having to remember why.
  */
 const TRANSFERS_TAGLINE = 'Private airport and island transfers across Cebu, booked direct.';
 

@@ -386,7 +386,7 @@ function packageDescription(pkg: PackageSeoRow): string {
 export function notFoundMeta(pathname: string): PageMeta {
   return {
     title: `Page not found | ${BRAND}`,
-    description: `This page does not exist. Browse Cebu day tours and multi-day packages on ${BRAND}.`,
+    description: `This page does not exist. Browse private airport and island transfers across Cebu on ${BRAND}.`,
     canonical: absoluteUrl(normalisePath(pathname)),
     ogImage: null,
     ogType: 'website',

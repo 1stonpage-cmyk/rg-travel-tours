@@ -285,19 +285,27 @@ describe('footer hours come from settings, not a second hardcoded copy', () => {
  * field that already existed in the settings schema and the admin Settings
  * form, but that nothing on the public site read — now wins over the
  * `siteTagline(showTours)` fallback whenever the admin has entered real
- * (non-whitespace) text. `SETTINGS_FIXTURE.contact.tagline` happens to equal
- * `TOUR_TAGLINE` byte for byte, so every case below that wants to exercise
- * the FALLBACK must explicitly override `contact.tagline` to `''`/whitespace
- * — relying on the fixture's own value would pass for the wrong reason (or,
- * for the show_tours-off fallback case, fail outright, since the fixture's
- * non-empty tagline would otherwise win over the transfers wording).
+ * (non-whitespace) text. `SETTINGS_FIXTURE.contact.tagline` equals
+ * `FALLBACK_TAGLINE` byte for byte, so every case below that wants to
+ * exercise the FALLBACK must explicitly override `contact.tagline` to
+ * `''`/whitespace — relying on the fixture's own value would pass for the
+ * wrong reason.
+ *
+ * Task 6 (3C): `SITE.tagline` was generalised from tour-only wording to
+ * transfers wording, so `siteTagline(true)` and `siteTagline(false)` now
+ * return the SAME string (see the comment above `TRANSFERS_TAGLINE` in
+ * lib/site.ts). `TOUR_TAGLINE` and `TRANSFERS_TAGLINE` collapsed into one
+ * `FALLBACK_TAGLINE` constant below for that reason, and the cross-checks
+ * that used to assert "the OTHER branch's wording is absent" were deleted
+ * rather than updated — with one fallback string, asserting it is present
+ * AND that it (itself) is absent is not a stale expectation, it is a
+ * contradiction that cannot ever pass.
  */
 describe('footer tagline (owner decision 2026-11-11, 1C; wired to settings.contact.tagline, task 2B)', () => {
   // Fixed literal strings, not calls to `siteTagline()` itself — a test that
   // re-derived its expectation from the function under test would pass no
   // matter which branch the implementation returned for which input.
-  const TOUR_TAGLINE = 'Cebu day tours and multi-day packages, booked direct.';
-  const TRANSFERS_TAGLINE = 'Private airport and island transfers across Cebu, booked direct.';
+  const FALLBACK_TAGLINE = 'Private airport and island transfers across Cebu, booked direct.';
   const ADMIN_TAGLINE = 'Door-to-door transfers, Mactan to anywhere in Cebu.';
 
   function settingsWithTagline(tagline: string, showTours: boolean) {
@@ -307,7 +315,7 @@ describe('footer tagline (owner decision 2026-11-11, 1C; wired to settings.conta
     });
   }
 
-  it('falls back to the tour-wording tagline when contact.tagline is empty and show_tours is on', async () => {
+  it('falls back to SITE.tagline when contact.tagline is empty and show_tours is on', async () => {
     mockTrpc({ 'settings.get': settingsWithTagline('', true) });
     renderWithTrpc(<SiteFooter />);
 
@@ -316,19 +324,17 @@ describe('footer tagline (owner decision 2026-11-11, 1C; wired to settings.conta
     // the hours tests above use — the pre-resolution default (showTours
     // false) must not be what either assertion below is actually seeing.
     await within(footer).findByText('GCash');
-    expect(within(footer).getByText(TOUR_TAGLINE)).toBeInTheDocument();
-    expect(within(footer).queryByText(TRANSFERS_TAGLINE)).not.toBeInTheDocument();
+    expect(within(footer).getByText(FALLBACK_TAGLINE)).toBeInTheDocument();
     expect(within(footer).queryByText(ADMIN_TAGLINE)).not.toBeInTheDocument();
   });
 
-  it('falls back to the transfers-wording tagline when contact.tagline is empty and show_tours is off', async () => {
+  it('falls back to the same tagline when contact.tagline is empty and show_tours is off', async () => {
     mockTrpc({ 'settings.get': settingsWithTagline('', false) });
     renderWithTrpc(<SiteFooter />);
 
     const footer = screen.getByRole('contentinfo');
     await within(footer).findByText('GCash');
-    expect(within(footer).getByText(TRANSFERS_TAGLINE)).toBeInTheDocument();
-    expect(within(footer).queryByText(TOUR_TAGLINE)).not.toBeInTheDocument();
+    expect(within(footer).getByText(FALLBACK_TAGLINE)).toBeInTheDocument();
     expect(within(footer).queryByText(ADMIN_TAGLINE)).not.toBeInTheDocument();
   });
 
@@ -338,7 +344,7 @@ describe('footer tagline (owner decision 2026-11-11, 1C; wired to settings.conta
 
     const footer = screen.getByRole('contentinfo');
     await within(footer).findByText('GCash');
-    expect(within(footer).getByText(TRANSFERS_TAGLINE)).toBeInTheDocument();
+    expect(within(footer).getByText(FALLBACK_TAGLINE)).toBeInTheDocument();
   });
 
   it('shows the admin-entered tagline instead of the fallback when show_tours is on', async () => {
@@ -348,7 +354,7 @@ describe('footer tagline (owner decision 2026-11-11, 1C; wired to settings.conta
     const footer = screen.getByRole('contentinfo');
     await within(footer).findByText('GCash');
     expect(within(footer).getByText(ADMIN_TAGLINE)).toBeInTheDocument();
-    expect(within(footer).queryByText(TOUR_TAGLINE)).not.toBeInTheDocument();
+    expect(within(footer).queryByText(FALLBACK_TAGLINE)).not.toBeInTheDocument();
   });
 
   it('shows the admin-entered tagline instead of the fallback when show_tours is off', async () => {
@@ -358,7 +364,7 @@ describe('footer tagline (owner decision 2026-11-11, 1C; wired to settings.conta
     const footer = screen.getByRole('contentinfo');
     await within(footer).findByText('GCash');
     expect(within(footer).getByText(ADMIN_TAGLINE)).toBeInTheDocument();
-    expect(within(footer).queryByText(TRANSFERS_TAGLINE)).not.toBeInTheDocument();
+    expect(within(footer).queryByText(FALLBACK_TAGLINE)).not.toBeInTheDocument();
   });
 });
 

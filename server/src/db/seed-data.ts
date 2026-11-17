@@ -711,7 +711,7 @@ export const SEED_SETTINGS: SettingsBlocks = {
   // server/src/__tests__/seed-parity.test.ts pins these values to it.
   contact: {
     address: 'Office address pending — Cebu, Philippines',
-    tagline: 'Cebu day tours and multi-day packages, booked direct.',
+    tagline: 'Private airport and island transfers across Cebu, booked direct.',
     hoursNote: 'Mon–Sun, 7:00 AM – 9:00 PM (PHT)',
     // site.ts's committed fallback literal (`?? 'hello@travelsugbo.com'`) —
     // deliberately ignores any VITE_CONTACT_EMAIL env override, since this

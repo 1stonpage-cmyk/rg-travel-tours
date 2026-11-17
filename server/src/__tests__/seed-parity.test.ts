@@ -32,6 +32,14 @@ describe('seeded contact settings mirror site.ts', () => {
     expect(contact.motto).toBe(firstQuoted('motto'));
   });
 
+  // Task 6 (3C): added to close a gap — SITE.tagline and the seed's
+  // contact.tagline default were changed together (both to the
+  // transfers-wording string) specifically to stay in sync, but nothing
+  // here was actually pinning that until now.
+  it('matches the tagline', () => {
+    expect(contact.tagline).toBe(firstQuoted('tagline'));
+  });
+
   it('matches both displayed numbers', () => {
     const displays = [...siteTs.matchAll(/display:\s*'([^']*)'/g)].map((m) => m[1]);
     expect(contact.phoneDisplay).toBe(displays[0]);
