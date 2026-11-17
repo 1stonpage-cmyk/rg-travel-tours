@@ -359,9 +359,19 @@ const vehicleTypeFieldsSchema = z
   .object({
     name: z.string().trim().min(1).max(80),
     slug: vehicleTypeSlugSchema,
-    /** Prefill only for the admin "add van" form — never consulted by capacity or dispatch. */
+    /**
+     * Prefill for the admin "add van" form — never consulted by capacity or
+     * dispatch (a van's own `capacity` stays authoritative there).
+     *
+     * **It is NOT prefill-only any more** (owner decision 2026-11-18,
+     * per-person pricing plan, Decision 1): this is also the guest-facing
+     * passenger cap on every TRANSFER BOOKING of this vehicle type — an
+     * enforced refusal (`pax_exceeds_vehicle_seats`, `seatCapMessage()`) in
+     * both `checkout.quoteTransfer` and `createTransferBooking()`. `null`
+     * means no cap.
+     */
     defaultSeats: z.number().int().min(1).max(30).nullable(),
-    /** Prefill only — see `defaultSeats`. */
+    /** Prefill only, with no second job — unlike `defaultSeats` above. */
     defaultLuggage: z.number().int().min(0).max(200).nullable(),
     sortOrder: z.number().int().min(0).max(9999).optional(),
   })

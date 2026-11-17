@@ -172,8 +172,11 @@ function optionalField(data: FormData, name: string): string | undefined {
  * Every top-level field name `createHoldTransferInput` can name, mirroring
  * `CheckoutPage.tsx`'s `PLACED_HOLD_FIELDS`. Every field here genuinely has
  * a box on screen (the pickers take `productType`/`routeId`/`direction`/
- * `vehicleTypeId`, `CouponField` takes `couponCode`, and
- * `TransferGuestDetailsForm` takes the rest) — so `unplacedFieldMessages`
+ * `vehicleTypeId`, `CouponField` takes `couponCode`, this page's own
+ * Passengers/Luggage block takes `pax`/`luggageCount` — page-level state
+ * merged straight into the hold payload since Task 5, not form fields
+ * `TransferGuestDetailsForm` owns any more — and that form takes the rest of
+ * the guest-detail fields) — so `unplacedFieldMessages`
  * below is expected to stay empty in practice. It is kept anyway as the
  * same defensive leftover-catcher `CheckoutPage` uses, so a field added to
  * the schema later without a matching box still surfaces somewhere rather

@@ -17,13 +17,22 @@
  * (`staffAuth.me`), and a refused `admin.vehicleTypes.list` call (a stale
  * session, or a role that changed mid-visit).
  *
- * ## `defaultSeats`/`defaultLuggage` are prefill only
+ * ## `defaultSeats`/`defaultLuggage` are prefill only — with ONE exception
  *
  * Neither number feeds capacity or dispatch — a van's own `capacity`/
  * `luggageCapacity` stay authoritative (`AdminVansPage.tsx`). They exist so
  * the "Add a van" form can suggest a starting number once a type is picked,
  * which is a later task's job; this screen only collects and shows them.
  * Both are nullable, and blank means "no default yet" rather than zero.
+ *
+ * **The exception is `defaultSeats` (owner decision 2026-11-18, per-person
+ * pricing plan, Decision 1): it is ALSO the guest-facing passenger cap on
+ * every TRANSFER BOOKING of this vehicle type** — a real, enforced refusal
+ * (`pax_exceeds_vehicle_seats`, `seatCapMessage()`), raised by both
+ * `checkout.quoteTransfer` and `createTransferBooking()`, not merely a form
+ * prefill. `null` still means "no cap". `defaultLuggage` is unaffected, and
+ * neither number became authoritative for dispatch — that is still a specific
+ * van's own `capacity`.
  *
  * ## There is no delete
  *
@@ -123,7 +132,11 @@ const VEHICLE_TYPE_FIELDS: readonly EntityFormField[] = [
     name: 'defaultSeats',
     label: 'Default seats',
     type: 'number',
-    hint: 'Pre-fills the "Add a van" form only — a van’s own seat count always wins.',
+    hint:
+      'Also the most passengers a guest may book on a transfer of this vehicle type — ' +
+      'a bigger party is refused and asked to pick a larger vehicle. Leave blank for no limit. ' +
+      'For a van’s own capacity and dispatch it is only a pre-fill for the "Add a van" form — ' +
+      'that van’s own seat count always wins.',
   },
   {
     name: 'defaultLuggage',
