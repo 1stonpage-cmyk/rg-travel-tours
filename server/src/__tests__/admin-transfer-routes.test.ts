@@ -30,7 +30,7 @@
  * exactly as it was, and a patch whose price card omits a type that used to
  * be priced genuinely drops it (that is the new contract, not a bug).
  */
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { and, asc, desc, eq, inArray, or } from 'drizzle-orm';
 import type {
   TransferPlaceType,
@@ -1184,6 +1184,75 @@ describeWithDb('admin.transferRoutes', () => {
       reverseEnabled: input.reverseEnabled,
       slug: input.slug,
       prices: input.prices,
+    });
+  });
+
+  /**
+   * Final whole-branch review, Finding 6 (per-person pricing plan): the two
+   * new route columns are money rules — `pricing_mode` decides whether a
+   * guest is charged once or per head, `min_paying_pax` decides the floor —
+   * so they belong in the same audit row the prices already reach. The
+   * create row carries the route's own new values (the stored ones, so a
+   * defaulted create records `per_vehicle`/`1` rather than dropping the keys
+   * for an absent optional input); the update row carries the PREVIOUS
+   * values, beside `previousPrices`, which is the pattern this file already
+   * uses for a price's old figure.
+   */
+  describe('pricing mode in the audit trail (final review, Finding 6)', () => {
+    async function auditDataFor(entityId: number, action: string) {
+      const [row] = await getDb()
+        .select({ data: auditLog.data })
+        .from(auditLog)
+        .where(
+          and(
+            eq(auditLog.entity, 'transfer_route'),
+            eq(auditLog.entityId, entityId),
+            eq(auditLog.action, action),
+          ),
+        )
+        .orderBy(desc(auditLog.id))
+        .limit(1);
+      return row?.data;
+    }
+
+    it('records pricingMode and minPayingPax in the create audit row', async () => {
+      const { id } = await createRoute({ pricingMode: 'per_person', minPayingPax: 2 });
+      expect(await auditDataFor(id, 'transfer_route_created')).toMatchObject({
+        pricingMode: 'per_person',
+        minPayingPax: 2,
+      });
+    });
+
+    it('records the STORED defaults when a create names neither field', async () => {
+      const { id } = await createRoute();
+      expect(await auditDataFor(id, 'transfer_route_created')).toMatchObject({
+        pricingMode: 'per_vehicle',
+        minPayingPax: 1,
+      });
+    });
+
+    it('records previousPricingMode/previousMinPayingPax when a per-person route is repriced', async () => {
+      const { id } = await createRoute({ pricingMode: 'per_person', minPayingPax: 3 });
+      await ownerApi().admin.transferRoutes.update({
+        id,
+        patch: { pricingMode: 'per_vehicle', minPayingPax: 1 },
+      });
+
+      expect(await auditDataFor(id, 'transfer_route_updated')).toMatchObject({
+        patch: { pricingMode: 'per_vehicle', minPayingPax: 1 },
+        previousPricingMode: 'per_person',
+        previousMinPayingPax: 3,
+      });
+    });
+
+    it('records the previous values even when the patch does not mention them', async () => {
+      const { id } = await createRoute({ pricingMode: 'per_person', minPayingPax: 2 });
+      await ownerApi().admin.transferRoutes.update({ id, patch: { freeCancelHours: 48 } });
+
+      expect(await auditDataFor(id, 'transfer_route_updated')).toMatchObject({
+        previousPricingMode: 'per_person',
+        previousMinPayingPax: 2,
+      });
     });
   });
 

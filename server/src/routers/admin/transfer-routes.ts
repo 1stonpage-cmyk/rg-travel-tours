@@ -196,11 +196,21 @@ export const adminTransferRoutesRouter = router({
   /**
    * A new route and its whole price card, in one transaction.
    *
-   * The audit payload names both places, the slug, `reverseEnabled` AND the
-   * prices. The prices are the point: `audit_log` carries "every money
-   * movement, status change, assignment, and price CHANGE", and a route's
-   * creation is the first price it ever had. Nothing here is sensitive —
-   * `transfer_routes` holds no personal data, no hash and no token.
+   * The audit payload names both places, the slug, `reverseEnabled`, the
+   * prices AND how those prices are charged. The prices are the point:
+   * `audit_log` carries "every money movement, status change, assignment, and
+   * price CHANGE", and a route's creation is the first price it ever had.
+   * Nothing here is sensitive — `transfer_routes` holds no personal data, no
+   * hash and no token.
+   *
+   * **`pricingMode`/`minPayingPax` are recorded as the values actually
+   * STORED, not as the input's own optional fields** (final whole-branch
+   * review, Finding 6, per-person pricing plan): both are `.optional()` on
+   * the input, so a bare `input.pricingMode` would drop the key from the JSON
+   * payload entirely on a create that left it out — and "no key" reads as "we
+   * don't know", when in fact we do. The `??` fallbacks are the SAME ones
+   * `routeValues()` (`upsert-route.ts`) applies on the way to the row, so the
+   * audit cannot claim a mode the route was not given.
    */
   create: adminProcedure('toursPricing')
     .input(transferRouteCreateInputSchema)
@@ -219,6 +229,8 @@ export const adminTransferRoutesRouter = router({
             reverseEnabled: input.reverseEnabled,
             slug: input.slug,
             prices: input.prices,
+            pricingMode: input.pricingMode ?? 'per_vehicle',
+            minPayingPax: input.minPayingPax ?? 1,
           },
         });
         return result.id;
@@ -322,6 +334,18 @@ export const adminTransferRoutesRouter = router({
              * new, so it changes no money math.
              */
             previousPrices: storedPrices,
+            /*
+             * Final whole-branch review, Finding 6 (per-person pricing plan):
+             * the same old -> new treatment for the two columns that decide
+             * HOW a price is charged. `stored` above is the locking read the
+             * merge already needs — both fields are already selected for it —
+             * so this reads nothing new either. Recorded unconditionally,
+             * exactly like `previousPrices`: a patch that does not mention
+             * them still changed the route, and "what the mode was at the
+             * time" is what makes the row worth keeping.
+             */
+            previousPricingMode: stored.pricingMode,
+            previousMinPayingPax: stored.minPayingPax,
           },
         });
       });
