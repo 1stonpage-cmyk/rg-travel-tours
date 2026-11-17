@@ -292,6 +292,8 @@ export function transferSubtotalCentavos(args: {
 
 **Depends on Tasks 2, 3, 4's wire shapes.**
 
+**Known red going into this task** (confirmed by Task 3's implementer via `git stash` — these errors exist identically with none of Tasks 2/3's changes applied, so they are Task 1/2's public-type additions outrunning their own consumers, not a regression introduced later): `pnpm --filter @rg/client typecheck` currently fails on `client/src/pages/public/TransferBookingPage.tsx` (missing `pax` on a `quoteTransfer` call — exactly what Step 3 below fixes) and on these test/fixture files, which all need the newer `defaultSeats`/`pricingMode`/`minPayingPax`/`paxCharged` fields added to their literals: `client/src/__tests__/helpers/fixtures.ts`, `client/src/__tests__/route-picker.test.tsx`, `client/src/__tests__/route-picker-overflow.test.tsx`, `client/src/__tests__/hero-trust.test.tsx`, `client/src/__tests__/transfer-booking-page.test.tsx`, `client/src/__tests__/vehicle-option-card.test.tsx`. This task is NOT done until `pnpm --filter @rg/client typecheck` is clean — add these six files to the Files list below.
+
 **Files:**
 
 - Modify: `client/src/components/home/PopularTransfers.tsx` — remove `.toLowerCase()`; render "per person" for a per-person route's cheapest card instead of the vehicle name.
