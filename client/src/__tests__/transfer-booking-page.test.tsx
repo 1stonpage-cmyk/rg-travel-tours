@@ -946,6 +946,56 @@ describe('TransferBookingPage — seat-fit (owner decision 2026-11-18)', () => {
     // of party size.
     expect(vanRadio).not.toBeDisabled();
   });
+
+  /**
+   * Review fix (Important finding #2, per-person pricing plan review,
+   * 2026-11-18). The scenario named verbatim in the review: select a
+   * vehicle while the party fits, then raise `pax` past that SAME
+   * vehicle's own `defaultSeats` — the prior build left `vehicleTypeId`
+   * (and therefore the guest-details form and submit button) pointed at
+   * the now-disabled card, so a guest could fill out the whole form
+   * against a stale, contradictory total and only be refused server-side
+   * at submit time.
+   */
+  it('deselects an already-selected vehicle the instant a pax raise pushes it over its own seat cap, closing the guest-details form it was driving', async () => {
+    mockTrpc({
+      'transferRoutes.list': [SEAT_CAPPED],
+      'checkout.quoteTransfer': quoteByVehicleTypeId,
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await selectTypeAndRoute(user);
+
+    const paxInput = screen.getByLabelText(/^passengers$/i);
+    await user.clear(paxInput);
+    await user.type(paxInput, '2');
+
+    // SUV's cap is 2 — selectable at pax 2.
+    const suvRadio = await screen.findByRole('radio', { name: /^suv/i });
+    await waitFor(() => expect(suvRadio).not.toBeDisabled());
+    await user.click(suvRadio);
+    expect(suvRadio).toBeChecked();
+
+    // Confirm the guest-details form genuinely mounted off this selection
+    // — otherwise its later absence would prove nothing.
+    expect(await screen.findByLabelText(/drop-off address/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /book now/i })).toBeInTheDocument();
+
+    // Raise pax past SUV's own cap while it is still selected.
+    await user.clear(paxInput);
+    await user.type(paxInput, '5');
+
+    await waitFor(() => expect(screen.getByText('Seats up to 2')).toBeInTheDocument());
+
+    // Deselected — never left checked-but-disabled against a stale total.
+    expect(suvRadio).not.toBeChecked();
+    // And nothing downstream of the (now-cleared) selection renders either:
+    // no guest-details form, no stale per-vehicle summary, no submit
+    // button the guest could still press.
+    expect(screen.queryByLabelText(/drop-off address/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /book now/i })).not.toBeInTheDocument();
+  });
 });
 
 /**

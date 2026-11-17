@@ -222,6 +222,16 @@ function prefersReducedMotion(): boolean {
 const PAGE_PAX_ERROR_ID = 'transfer-page-pax-error';
 const PAGE_LUGGAGE_ERROR_ID = 'transfer-page-luggage-count-error';
 
+/**
+ * Owner decision 2026-11-18 (per-person pricing plan, Decision 6), shared by
+ * the per-option `unavailableReason` computation below, the vehicle-reset
+ * effect, and the submit-time guard — one formula, so the three can never
+ * disagree about what "over capacity" means.
+ */
+function isOverSeatCap(defaultSeats: number | null, currentPax: number): boolean {
+  return defaultSeats !== null && currentPax > defaultSeats;
+}
+
 export default function TransferBookingPage() {
   const [searchParams] = useSearchParams();
 
@@ -486,6 +496,30 @@ export default function TransferBookingPage() {
 
   const selectedQuote = vehicleTypeId !== null ? quoteFor(vehicleTypeId) : undefined;
 
+  /**
+   * The selected vehicle's own catalog row — also read by the per-person
+   * summary line below (its unit rate), so this is computed once and
+   * shared rather than re-looked-up in two places (review fix, Minor
+   * finding: a plain variable over an inline IIFE).
+   */
+  const selectedOption =
+    vehicleTypeId !== null
+      ? vehicleOptions.find((option) => option.vehicleTypeId === vehicleTypeId)
+      : undefined;
+
+  /**
+   * Review fix (Important finding #2, same decision as the effect below):
+   * defense in depth, not a substitute for it. The effect above clears
+   * `vehicleTypeId` the instant the selection becomes seat-capped, which
+   * already makes `selectedQuote` `undefined` on the very next render — but
+   * React runs effects AFTER the render that triggered them, so this guard
+   * catches the one render in between (and anything else that might select
+   * an already-over-capacity option) by re-deriving the same seat-cap
+   * question the options loop below answers for every card, instead of
+   * trusting that the effect has already run.
+   */
+  const selectedVehicleSeatCapped = isOverSeatCap(selectedOption?.defaultSeats ?? null, pax);
+
   /*
    * A selected vehicle type that the newly chosen route/product no longer
    * offers is cleared rather than left pointing at nothing — `vehicleOptions`
@@ -498,6 +532,30 @@ export default function TransferBookingPage() {
   useEffect(() => {
     setVehicleTypeId(null);
   }, [routeId, productType]);
+
+  /**
+   * Review fix (Important finding #2, per-person pricing plan review,
+   * 2026-11-18): a `pax` RAISE that pushes the already-selected vehicle over
+   * its own `defaultSeats` must deselect it, the same way a `routeId`/
+   * `productType` change already does above — otherwise the guest can fill
+   * out the entire guest-details form against a stale, now-contradictory
+   * total and only be refused by the server at submit time. Deliberately a
+   * SEPARATE effect from the one above (not merged into its dependency
+   * array): that effect's job is "the vehicle this route even offers
+   * changed", this one's is "the vehicle offered is still the same, but no
+   * longer fits" — different trigger, same `setVehicleTypeId(null)` action.
+   * Guarded on `vehicleTypeId !== null` so it is a no-op once nothing is
+   * selected, which is what keeps it from looping: clearing the selection
+   * makes `selectedOption` undefined on the next run, after which
+   * `isOverSeatCap` is never consulted again until something is reselected.
+   */
+  useEffect(() => {
+    if (vehicleTypeId === null) return;
+    const selectedOption = vehicleOptions.find((option) => option.vehicleTypeId === vehicleTypeId);
+    if (selectedOption && isOverSeatCap(selectedOption.defaultSeats, pax)) {
+      setVehicleTypeId(null);
+    }
+  }, [pax, vehicleOptions, vehicleTypeId]);
 
   const createHoldTransfer = trpc.checkout.createHoldTransfer.useMutation({
     onError: () => {
@@ -722,7 +780,7 @@ export default function TransferBookingPage() {
                      */
                     const unavailableReason: string | null = isLoadingOption
                       ? null
-                      : option.defaultSeats !== null && pax > option.defaultSeats
+                      : isOverSeatCap(option.defaultSeats, pax)
                         ? `Seats up to ${option.defaultSeats}`
                         : quote === undefined
                           ? 'Not available for this route'
@@ -748,83 +806,82 @@ export default function TransferBookingPage() {
             </>
           )}
 
-          {vehicleTypeId !== null && productType !== null && selectedQuote && (
-            <>
-              {/*
-               * Owner decision 2026-11-18 (per-person pricing plan). Every
-               * figure here is a server field, never a client multiplication
-               * — `unitPrice` is the catalog's own already-known per-person
-               * rate (a display of a known rate, not a computed total), and
-               * `paxCharged`/`subtotalCentavos` come straight off the quote.
-               * A `per_vehicle` route renders nothing extra here: its total/
-               * due-now figures already show unchanged on the selected
-               * `VehicleOptionCard` and the pay-mode radios below.
-               */}
-              {selectedQuote.pricingMode === 'per_person' &&
-                (() => {
-                  const selectedOption = vehicleOptions.find(
-                    (option) => option.vehicleTypeId === vehicleTypeId,
-                  );
-                  if (!selectedOption) return null;
-                  // `selectedOption` comes from `vehicleOptions`, which is
-                  // read off `displayRoutes` — this file's own `useMemo`
-                  // already swapped `dayUsePriceCentavos` into this same
-                  // `oneWayPriceCentavos` slot whenever `productType ===
-                  // 'transfer_day_use'`, so this is always the correct
-                  // per-head catalog rate for whichever product is active.
-                  const unitPriceCentavos = selectedOption.oneWayPriceCentavos;
-                  return (
-                    <p className="text-brand-blue-900 text-sm font-semibold">
-                      {formatPeso(unitPriceCentavos)} × {selectedQuote.paxCharged} pax ={' '}
-                      {formatPeso(selectedQuote.subtotalCentavos)}
-                    </p>
-                  );
-                })()}
+          {vehicleTypeId !== null &&
+            productType !== null &&
+            selectedQuote &&
+            !selectedVehicleSeatCapped && (
+              <>
+                {/*
+                 * Owner decision 2026-11-18 (per-person pricing plan). Every
+                 * figure here is a server field, never a client multiplication
+                 * — `unitPrice` is the catalog's own already-known per-person
+                 * rate (a display of a known rate, not a computed total), and
+                 * `paxCharged`/`subtotalCentavos` come straight off the quote.
+                 * A `per_vehicle` route renders nothing extra here: its total/
+                 * due-now figures already show unchanged on the selected
+                 * `VehicleOptionCard` and the pay-mode radios below.
+                 */}
+                {/*
+                 * `selectedOption` (computed once, above, and shared with
+                 * the seat-cap guard) comes from `vehicleOptions`, which is
+                 * read off `displayRoutes` — this file's own `useMemo`
+                 * already swapped `dayUsePriceCentavos` into this same
+                 * `oneWayPriceCentavos` slot whenever `productType ===
+                 * 'transfer_day_use'`, so `oneWayPriceCentavos` is always
+                 * the correct per-head catalog rate for whichever product
+                 * is active.
+                 */}
+                {selectedQuote.pricingMode === 'per_person' && selectedOption && (
+                  <p className="text-brand-blue-900 text-sm font-semibold">
+                    {formatPeso(selectedOption.oneWayPriceCentavos)} × {selectedQuote.paxCharged}{' '}
+                    pax = {formatPeso(selectedQuote.subtotalCentavos)}
+                  </p>
+                )}
 
-              <TransferGuestDetailsForm
-                productType={productType}
-                payMode={payMode}
-                onPayModeChange={setPayMode}
-                amountDueNowCentavos={selectedQuote.amountDueNowCentavos}
-                flightDetailsRequirement={flightDetailsRequirement}
-                ferryDetailsVisible={ferryDetailsVisible}
-                error={createHoldTransfer.isError ? createHoldTransfer.error : null}
-              />
+                <TransferGuestDetailsForm
+                  productType={productType}
+                  payMode={payMode}
+                  onPayModeChange={setPayMode}
+                  amountDueNowCentavos={selectedQuote.amountDueNowCentavos}
+                  flightDetailsRequirement={flightDetailsRequirement}
+                  ferryDetailsVisible={ferryDetailsVisible}
+                  error={createHoldTransfer.isError ? createHoldTransfer.error : null}
+                />
 
-              {consentError && (
-                <p role="alert" className="text-brand-error text-sm font-medium">
-                  {consentError}
-                </p>
-              )}
+                {consentError && (
+                  <p role="alert" className="text-brand-error text-sm font-medium">
+                    {consentError}
+                  </p>
+                )}
 
-              {holdBannerMessages.map((message) => (
-                <p key={message} role="alert" className="text-brand-error text-sm font-medium">
-                  {message}
-                </p>
-              ))}
+                {holdBannerMessages.map((message) => (
+                  <p key={message} role="alert" className="text-brand-error text-sm font-medium">
+                    {message}
+                  </p>
+                ))}
 
-              {/*
-               * Renders nothing when Turnstile is not configured (local dev,
-               * or switched off) — see the component's own note. Remounted
-               * via `key` after any failed submit, since a token is
-               * single-use.
-               */}
-              <TurnstileWidget
-                key={turnstileResetKey}
-                onVerify={setTurnstileToken}
-                onError={() => setTurnstileToken(undefined)}
-              />
+                {/*
+                 * Renders nothing when Turnstile is not configured (local dev,
+                 * or switched off) — see the component's own note. Remounted
+                 * via `key` after any failed submit, since a token is
+                 * single-use.
+                 */}
+                <TurnstileWidget
+                  key={turnstileResetKey}
+                  onVerify={setTurnstileToken}
+                  onError={() => setTurnstileToken(undefined)}
+                />
 
-              <Button
-                type="submit"
-                size="lg"
-                className="tap-target w-full"
-                disabled={createHoldTransfer.isPending}
-              >
-                {createHoldTransfer.isPending ? 'Holding your spot…' : 'Book now, hold my spot'}
-              </Button>
-            </>
-          )}
+                <Button
+                  type="submit"
+                  size="lg"
+                  className="tap-target w-full"
+                  disabled={createHoldTransfer.isPending}
+                >
+                  {createHoldTransfer.isPending ? 'Holding your spot…' : 'Book now, hold my spot'}
+                </Button>
+              </>
+            )}
         </form>
       )}
     </div>
