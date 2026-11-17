@@ -33,10 +33,12 @@ import {
   ADMIN_ROLES,
   BOOKING_STATUSES,
   DISCOUNT_TYPES,
+  PACKAGE_PRICING_MODES,
   PAY_MODES,
   PRODUCT_TYPES,
   TRANSFER_DIRECTIONS,
   TRANSFER_PLACE_TYPES,
+  TRANSFER_PRICING_MODES,
   type BookingPriceSnapshot,
 } from '@rg/shared';
 
@@ -222,6 +224,10 @@ export const tourBlockedDates = mysqlTable(
  * for every capacity and dispatch decision. Both are nullable because the
  * two backfilled rows (`van`, `suv` — migration 0023) have no single honest
  * default to invent; existing vans already carry their own real numbers.
+ * As of the per-person pricing plan (2026-11-18), `defaultSeats` is ALSO the
+ * guest-facing passenger cap on every transfer booking of this vehicle type
+ * (`pax_exceeds_vehicle_seats` refusal) — `null` means no cap. Still not
+ * authoritative for dispatch, which reads a specific van's own `capacity`.
  */
 export const vehicleTypes = mysqlTable(
   'vehicle_types',
@@ -334,6 +340,14 @@ export const transferRoutes = mysqlTable(
      * requires the value explicitly.
      */
     freeCancelHours: int('free_cancel_hours').notNull().default(24),
+    /**
+     * Owner decision 2026-11-18 (per-person pricing plan): a route prices
+     * per vehicle (flat catalog rate, today's behaviour) or per person
+     * (`transferSubtotalCentavos()` multiplies by `max(pax, minPayingPax)`).
+     * Default `per_vehicle`/`1` so every existing route is unchanged.
+     */
+    pricingMode: mysqlEnum('pricing_mode', TRANSFER_PRICING_MODES).notNull().default('per_vehicle'),
+    minPayingPax: int('min_paying_pax').notNull().default(1),
     inclusionsText: text('inclusions_text'),
     exclusionsText: text('exclusions_text'),
     /**
@@ -399,6 +413,12 @@ export const packages = mysqlTable('packages', {
   days: int('days').notNull(),
   oldPriceCentavos: int('old_price_centavos'),
   newPriceCentavos: int('new_price_centavos').notNull(),
+  /**
+   * Display-only — there is no package checkout. Default `per_group`
+   * matches today's hardcoded public copy exactly; an admin may switch a
+   * package to `per_person` any time (owner decision 2026-11-18).
+   */
+  pricingMode: mysqlEnum('pricing_mode', PACKAGE_PRICING_MODES).notNull().default('per_group'),
   description: text('description'),
   imagePath: varchar('image_path', { length: 300 }),
   imageAlt: varchar('image_alt', { length: 300 }),

@@ -97,6 +97,16 @@ export const TRANSFER_PRODUCT_TYPES = [
 export type TransferProductType = (typeof TRANSFER_PRODUCT_TYPES)[number];
 
 /**
+ * `transfer_routes.pricing_mode` (owner decision 2026-11-18, per-person
+ * pricing plan). A route prices per vehicle (flat catalog rate, today's
+ * behaviour) or per person (`transferSubtotalCentavos()` multiplies by
+ * `max(pax, minPayingPax)`). Default `per_vehicle`/`1` so every existing
+ * route is unchanged.
+ */
+export const TRANSFER_PRICING_MODES = ['per_vehicle', 'per_person'] as const;
+export type TransferPricingMode = (typeof TRANSFER_PRICING_MODES)[number];
+
+/**
  * Both of one vehicle type's prices on one route: the one-way fare and the
  * day-use hire, integer centavos (CLAUDE.md, "Money").
  *

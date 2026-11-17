@@ -196,6 +196,15 @@ export interface PackageAdminRow {
   inquiryCount: number;
 }
 
+/**
+ * `packages.pricing_mode` (owner decision 2026-11-18, per-person pricing
+ * plan). Display-only — there is no package checkout. Default `per_group`
+ * matches today's hardcoded public copy exactly; an admin may switch a
+ * package to `per_person` any time.
+ */
+export const PACKAGE_PRICING_MODES = ['per_person', 'per_group'] as const;
+export type PackagePricingMode = (typeof PACKAGE_PRICING_MODES)[number];
+
 /* ----------------------------------------------------------------- Inquiries */
 
 /**
