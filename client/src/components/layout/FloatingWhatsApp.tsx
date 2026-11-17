@@ -247,7 +247,9 @@ export default function FloatingWhatsApp() {
   };
   const endPeek = () => setPeek(false);
 
-  const message = `Hi ${SITE.name}! I'd like to ask about a Cebu tour.`;
+  const message = showTours
+    ? `Hi ${SITE.name}! I'd like to ask about a Cebu tour.`
+    : `Hi ${SITE.name}! I'd like to ask about a transfer.`;
 
   return (
     <>
