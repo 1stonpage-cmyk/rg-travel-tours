@@ -2,6 +2,7 @@ import { keepPreviousData } from '@tanstack/react-query';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
+  formatPeso,
   TRANSFER_PRODUCT_TYPES,
   type PayMode,
   type QuoteTransferResult,
@@ -12,6 +13,7 @@ import {
 import CouponField from '@/components/checkout/CouponField';
 import PaymentOptions from '@/components/checkout/PaymentOptions';
 import HoldCountdown from '@/components/checkout/HoldCountdown';
+import FieldError from '@/components/common/FieldError';
 import TurnstileWidget from '@/components/common/TurnstileWidget';
 import RoutePicker, { type TransferRouteSelection } from '@/components/transfer/RoutePicker';
 import TransferGuestDetailsForm, {
@@ -22,6 +24,8 @@ import TransferTypePicker, {
 } from '@/components/transfer/TransferTypePicker';
 import VehicleOptionCard from '@/components/transfer/VehicleOptionCard';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   firstValidationMessage,
   getFieldErrors,
@@ -105,6 +109,17 @@ import { trpc } from '@/lib/trpc';
  * showing a card's one-way total, still clickable, until the day-use quote
  * resolves. Each card's `isLoading` therefore reads `isPending ||
  * isPlaceholderData`, not `isPending` alone.
+ *
+ * **`pax`/`luggageCount` live here, as page-level state, not as fields
+ * inside `TransferGuestDetailsForm`** (owner decision 2026-11-18,
+ * per-person pricing plan, Task 5/2E). They render between `RoutePicker`
+ * and the vehicle-option grid — a per-person route's price, and the
+ * seat-fit check against each option's `defaultSeats`, both need a head
+ * count before a vehicle is even chosen, so `pax` has to exist before this
+ * page's `quoteTransfer` queries can run. Submitted the same way
+ * `routeId`/`direction`/`vehicleTypeId` already are: merged directly from
+ * state into the hold payload in `handleSubmit`, never read back off
+ * `FormData` (there is no need to — the state IS the value).
  *
  * This page makes no separate vehicle-type request. Every vehicle type a
  * guest can see is already resolved onto `route.vehiclePrices` (id, display
@@ -203,6 +218,10 @@ function prefersReducedMotion(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
+/** Ids for the page-level Passengers/Luggage fields' error messages — see this file's header note. */
+const PAGE_PAX_ERROR_ID = 'transfer-page-pax-error';
+const PAGE_LUGGAGE_ERROR_ID = 'transfer-page-luggage-count-error';
+
 export default function TransferBookingPage() {
   const [searchParams] = useSearchParams();
 
@@ -217,6 +236,12 @@ export default function TransferBookingPage() {
   );
   const [vehicleTypeId, setVehicleTypeId] = useState<number | null>(null);
   const [payMode, setPayMode] = useState<PayMode>('deposit');
+  /**
+   * Lifted from `TransferGuestDetailsForm` (owner decision 2026-11-18,
+   * per-person pricing plan) — see this file's header note.
+   */
+  const [pax, setPax] = useState(1);
+  const [luggageCount, setLuggageCount] = useState(0);
 
   const [couponCode, setCouponCode] = useState<string | undefined>(undefined);
   const [couponInput, setCouponInput] = useState('');
@@ -324,6 +349,7 @@ export default function TransferBookingPage() {
           vehicleTypeId: option.vehicleTypeId,
           productType: productType ?? 'transfer_one_way',
           couponCode,
+          pax,
         },
         { enabled: vehiclePricingEnabled, retry: false, placeholderData: keepPreviousData },
       ),
@@ -346,6 +372,28 @@ export default function TransferBookingPage() {
 
   useEffect(() => {
     setLastGoodQuotes({});
+    /*
+     * **Deliberately NOT `pax` here (disclosed deviation from this task's
+     * brief, owner decision 2026-11-18).** The brief's own text asks for
+     * `pax` to join `routeId`/`productType` in this dependency list,
+     * "mirroring the existing routeId/productType reset" — but that mirror
+     * is exactly what breaks: a `routeId`/`productType` change ALSO resets
+     * `vehicleTypeId` to `null` (the effect below), which makes
+     * `selectedQuote` moot before `quoteFor`'s fallback is ever consulted
+     * for the selected vehicle. `pax` resets neither — the whole point of
+     * lifting it here is that the guest's already-selected vehicle survives
+     * a passenger-count edit — so clearing this map the instant `pax`
+     * changes removes the ONLY thing standing between a transient
+     * non-success render (re-keying `quoteTransfer` on `pax`, same
+     * measured-not-assumed one-tick gap `quoteFor`'s own note documents for
+     * a coupon change) and `<TransferGuestDetailsForm>` unmounting and
+     * wiping every field the guest already typed — reproduced directly by
+     * writing this task's own re-query test. Leaving `pax` out keeps this
+     * map's entries alive across a pax edit so `quoteFor`'s (now
+     * unconditional, see its own note) fallback can serve the last good
+     * quote for exactly as long as the new pax's quote takes to resolve —
+     * self-healing the instant it does, via the merge effect below.
+     */
   }, [routeId, productType]);
 
   useEffect(() => {
@@ -395,16 +443,17 @@ export default function TransferBookingPage() {
 
   /*
    * `undefined` on either an in-flight load OR a settled error that is NOT a
-   * transient coupon self-heal — the one card state `VehicleOptionCard`
-   * renders for both (see its own note). While a coupon is applied and THIS
-   * query is anything other than settled-successful, this falls back to
-   * `lastGoodQuotes` instead of `undefined` — see Critical 1.
+   * transient self-heal — the one card state `VehicleOptionCard` renders
+   * for both (see its own note). Whenever THIS query is anything other than
+   * settled-successful, this falls back to `lastGoodQuotes` instead of
+   * `undefined` — see Critical 1.
    *
    * **Keyed on "not successful", not "errored" (fix found during this
    * rebuild's own testing).** Measured directly, not assumed: re-keying a
-   * `trpc.useQueries` entry's query (changing `couponCode` here) can settle
-   * through a genuine `isPending: true` render for that entry — NOT an
-   * `isPlaceholderData` one — before it reaches `isError`, even though
+   * `trpc.useQueries` entry's query (changing `couponCode`, or — owner
+   * decision 2026-11-18 — changing `pax`) can settle through a genuine
+   * `isPending: true` render for that entry — NOT an `isPlaceholderData`
+   * one — before it reaches success or error, even though
    * `placeholderData: keepPreviousData` is set on every entry. Gating the
    * fallback on `result.isError` alone left that intermediate `isPending`
    * render with `selectedQuote: undefined` for one frame, unmounting
@@ -414,13 +463,17 @@ export default function TransferBookingPage() {
    * `!result.isSuccess` closes it regardless of which non-final state the
    * query is passing through.
    *
-   * **Still correctly scoped to "a coupon is applied".** A vehicle with no
-   * price row at all (genuinely unavailable, coupon or not) is unaffected:
-   * it has no entry in `lastGoodQuotes` to fall back to, coupon applied or
-   * not, so it still renders "not available" — see the "permanently
-   * unavailable vehicle" test. And with NO coupon applied, this still
-   * returns `undefined` exactly as before, so `VehicleOptionCard`'s own
-   * loading/unavailable states are unchanged for the common case.
+   * **No longer gated on "a coupon is applied" (owner decision 2026-11-18,
+   * widened from Critical 1's original scope).** A `pax` edit re-keys every
+   * offered vehicle's query exactly the same way a coupon edit does, and
+   * the selected vehicle's form must survive that transition too — see the
+   * `lastGoodQuotes` reset effect's own note on why `pax` is deliberately
+   * NOT one of the triggers that clears this map, which is what makes an
+   * unconditional fallback here safe rather than a route/product mix-up.
+   * A vehicle with no price row at all (genuinely unavailable) is
+   * unaffected either way: it has no entry in `lastGoodQuotes` to fall back
+   * to, so it still renders "not available" — see the "permanently
+   * unavailable vehicle" test.
    */
   function quoteFor(typeId: number): QuoteTransferResult | undefined {
     const index = vehicleOptions.findIndex((option) => option.vehicleTypeId === typeId);
@@ -428,10 +481,7 @@ export default function TransferBookingPage() {
     const result = quoteResults[index];
     if (!result) return undefined;
     if (result.isSuccess) return result.data;
-    if (couponCode) {
-      return lastGoodQuotes[typeId];
-    }
-    return undefined;
+    return lastGoodQuotes[typeId];
   }
 
   const selectedQuote = vehicleTypeId !== null ? quoteFor(vehicleTypeId) : undefined;
@@ -500,8 +550,8 @@ export default function TransferBookingPage() {
       date: String(data.get('date') ?? ''),
       pickupTime: String(data.get('pickupTime') ?? ''),
       dayUseEndTime: optionalField(data, 'dayUseEndTime'),
-      pax: Number(data.get('pax')),
-      luggageCount: Number(data.get('luggageCount')),
+      pax,
+      luggageCount,
       pickup: optionalField(data, 'pickup'),
       pickupMapUrl: optionalField(data, 'pickupMapUrl'),
       dropoffAddress: String(data.get('dropoffAddress') ?? ''),
@@ -584,6 +634,51 @@ export default function TransferBookingPage() {
 
           {vehiclePricingEnabled && (
             <>
+              {/*
+               * Passengers/Luggage — lifted here from `TransferGuestDetailsForm`
+               * (owner decision 2026-11-18, per-person pricing plan; see this
+               * file's header note). Rendered between the route picker and the
+               * vehicle-option cards, matching the plan's mockup: a per-person
+               * route's price, and each option's seat-fit check, both need a
+               * head count before a vehicle is even chosen.
+               */}
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="transfer-pax">Passengers</Label>
+                  <Input
+                    id="transfer-pax"
+                    type="number"
+                    min={1}
+                    max={30}
+                    required
+                    value={pax}
+                    onChange={(e) => setPax(Number(e.target.value))}
+                    aria-describedby={holdFieldErrors?.pax ? PAGE_PAX_ERROR_ID : undefined}
+                    aria-invalid={holdFieldErrors?.pax ? true : undefined}
+                    className="tap-target"
+                  />
+                  <FieldError id={PAGE_PAX_ERROR_ID} message={holdFieldErrors?.pax} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="transfer-luggage-count">Luggage (bags)</Label>
+                  <Input
+                    id="transfer-luggage-count"
+                    type="number"
+                    min={0}
+                    max={200}
+                    required
+                    value={luggageCount}
+                    onChange={(e) => setLuggageCount(Number(e.target.value))}
+                    aria-describedby={
+                      holdFieldErrors?.luggageCount ? PAGE_LUGGAGE_ERROR_ID : undefined
+                    }
+                    aria-invalid={holdFieldErrors?.luggageCount ? true : undefined}
+                    className="tap-target"
+                  />
+                  <FieldError id={PAGE_LUGGAGE_ERROR_ID} message={holdFieldErrors?.luggageCount} />
+                </div>
+              </div>
+
               <CouponField
                 value={couponInput}
                 onValueChange={(value) => {
@@ -610,17 +705,40 @@ export default function TransferBookingPage() {
                 <div className="grid gap-3 sm:grid-cols-2">
                   {vehicleOptions.map((option, index) => {
                     const result = quoteResults[index];
+                    const isLoadingOption = Boolean(result?.isPending || result?.isPlaceholderData);
+                    const quote = quoteFor(option.vehicleTypeId);
+                    /*
+                     * Owner decision 2026-11-18 (per-person pricing plan,
+                     * Decision 6): a vehicle the party doesn't fit stays
+                     * VISIBLE and disabled, with a reason — never silently
+                     * removed from the list. Seat cap is checked first, so a
+                     * party too big for this vehicle sees "Seats up to N"
+                     * rather than the generic "Not available for this
+                     * route" the undefined-quote branch would also produce
+                     * (the server itself refuses the same quote once pax
+                     * exceeds the cap, so both branches would otherwise
+                     * agree on "unavailable" — this just picks the more
+                     * useful of the two sentences).
+                     */
+                    const unavailableReason: string | null = isLoadingOption
+                      ? null
+                      : option.defaultSeats !== null && pax > option.defaultSeats
+                        ? `Seats up to ${option.defaultSeats}`
+                        : quote === undefined
+                          ? 'Not available for this route'
+                          : null;
                     return (
                       <VehicleOptionCard
                         key={option.vehicleTypeId}
                         vehicleTypeId={option.vehicleTypeId}
                         vehicleTypeName={option.vehicleTypeName}
                         vehicleTypeSlug={option.slug}
-                        quote={quoteFor(option.vehicleTypeId)}
-                        isLoading={Boolean(result?.isPending || result?.isPlaceholderData)}
+                        quote={quote}
+                        isLoading={isLoadingOption}
                         isSelected={vehicleTypeId === option.vehicleTypeId}
                         onSelect={() => setVehicleTypeId(option.vehicleTypeId)}
                         payMode={payMode}
+                        unavailableReason={unavailableReason}
                         error={holdFieldErrors?.vehicleTypeId}
                       />
                     );
@@ -632,6 +750,37 @@ export default function TransferBookingPage() {
 
           {vehicleTypeId !== null && productType !== null && selectedQuote && (
             <>
+              {/*
+               * Owner decision 2026-11-18 (per-person pricing plan). Every
+               * figure here is a server field, never a client multiplication
+               * — `unitPrice` is the catalog's own already-known per-person
+               * rate (a display of a known rate, not a computed total), and
+               * `paxCharged`/`subtotalCentavos` come straight off the quote.
+               * A `per_vehicle` route renders nothing extra here: its total/
+               * due-now figures already show unchanged on the selected
+               * `VehicleOptionCard` and the pay-mode radios below.
+               */}
+              {selectedQuote.pricingMode === 'per_person' &&
+                (() => {
+                  const selectedOption = vehicleOptions.find(
+                    (option) => option.vehicleTypeId === vehicleTypeId,
+                  );
+                  if (!selectedOption) return null;
+                  // `selectedOption` comes from `vehicleOptions`, which is
+                  // read off `displayRoutes` — this file's own `useMemo`
+                  // already swapped `dayUsePriceCentavos` into this same
+                  // `oneWayPriceCentavos` slot whenever `productType ===
+                  // 'transfer_day_use'`, so this is always the correct
+                  // per-head catalog rate for whichever product is active.
+                  const unitPriceCentavos = selectedOption.oneWayPriceCentavos;
+                  return (
+                    <p className="text-brand-blue-900 text-sm font-semibold">
+                      {formatPeso(unitPriceCentavos)} × {selectedQuote.paxCharged} pax ={' '}
+                      {formatPeso(selectedQuote.subtotalCentavos)}
+                    </p>
+                  );
+                })()}
+
               <TransferGuestDetailsForm
                 productType={productType}
                 payMode={payMode}

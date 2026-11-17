@@ -73,7 +73,9 @@ describe('PopularTransfers', () => {
     expect(within(first).getByText('Van')).toBeInTheDocument();
     expect(within(first).getByText('SUV')).toBeInTheDocument();
     expect(within(first).getByText(/₱2,500/)).toBeInTheDocument();
-    expect(within(first).getByText(/per van/i)).toBeInTheDocument();
+    // Owner decision 2026-11-18 (per-person pricing plan, Step 1): the
+    // vehicle's own casing is preserved — "per Van", never lowercased.
+    expect(within(first).getByText(/per Van/)).toBeInTheDocument();
 
     // Finding I1 (final review): the duration badge renders
     // `friendlyDuration()`'s own string ALONE — no literal "About " prefix
@@ -98,9 +100,10 @@ describe('PopularTransfers', () => {
     expect(within(second).getByText(/₱3,200/)).toBeInTheDocument();
     // Finding I2 (final review): card 2's cheapest offer falls back to SUV
     // (no van is offered on this route), so the price tail must say "per
-    // suv" — never the hardcoded "per van" the old code always rendered,
-    // which would have misrepresented this exact card.
-    expect(within(second).getByText(/per suv/i)).toBeInTheDocument();
+    // SUV" — never the hardcoded "per van" the old code always rendered
+    // (which would have misrepresented this exact card), and never
+    // lowercased to "per suv" either (owner decision 2026-11-18, Step 1).
+    expect(within(second).getByText(/per SUV/)).toBeInTheDocument();
     expect(within(second).queryByText(/per van/i)).not.toBeInTheDocument();
   });
 
@@ -160,6 +163,31 @@ describe('PopularTransfers', () => {
     // Moalboal's `toPlace.placeType` is 'destination' -> the MapPin icon.
     expect(second.querySelector('svg.lucide-map-pin')).not.toBeNull();
     expect(second.querySelector('img')).toBeNull();
+  });
+
+  /**
+   * Owner decision 2026-11-18 (per-person pricing plan, Step 1): the unit
+   * word comes from `cheapest.pricingMode`, never guessed from the vehicle
+   * name — a per-person route always reads "per person", regardless of
+   * which vehicle type happens to be cheapest.
+   */
+  it('reads "per person" for a per-person route\'s cheapest card, regardless of the vehicle name', async () => {
+    mockTrpc({
+      'transferRoutes.featured': [
+        {
+          ...TRANSFER_HOME_CARDS_FIXTURE[0]!,
+          cheapestOneWay: {
+            vehicleTypeName: 'Van',
+            priceCentavos: 80_000,
+            pricingMode: 'per_person',
+          },
+        },
+      ],
+    });
+    renderSection();
+
+    expect(await screen.findByText(/per person/i)).toBeInTheDocument();
+    expect(screen.queryByText(/per van/i)).not.toBeInTheDocument();
   });
 
   it('renders "Price unavailable" rather than ₱0 when a card has no sellable vehicle at all', async () => {

@@ -22,6 +22,14 @@ import { cn } from '@/lib/utils';
  * `<form>` (`TransferBookingPage.tsx`, Task T14), which reads every
  * uncontrolled field off `FormData` on submit.
  *
+ * **`pax`/`luggageCount` moved OUT of this component** (owner decision
+ * 2026-11-18, per-person pricing plan, Task 5/2E) — they are now
+ * page-level controlled state on `TransferBookingPage.tsx`, rendered
+ * between the route picker and the vehicle-option cards (a per-person
+ * route's price, and the seat-fit check, both need a head count before a
+ * vehicle is even chosen). This form no longer renders either field or
+ * reads either error.
+ *
  * **`dayUseEndTime` is hidden entirely on a one-way request, and
  * `flightNumber`/`airline` are hidden entirely on a day-use one** — not a
  * display nicety, `createHoldTransferInput`'s `superRefine` REFUSES each on
@@ -112,8 +120,6 @@ const LEAD_PHONE_ERROR_ID = 'transfer-phone-error';
 const DATE_ERROR_ID = 'transfer-date-error';
 const PICKUP_TIME_ERROR_ID = 'transfer-pickup-time-error';
 const DAY_USE_END_TIME_ERROR_ID = 'transfer-day-use-end-time-error';
-const PAX_ERROR_ID = 'transfer-pax-error';
-const LUGGAGE_ERROR_ID = 'transfer-luggage-count-error';
 const PICKUP_ERROR_ID = 'transfer-pickup-error';
 const PICKUP_MAP_ERROR_ID = 'transfer-pickup-map-error';
 const DROPOFF_ADDRESS_ERROR_ID = 'transfer-dropoff-address-error';
@@ -141,8 +147,6 @@ export default function TransferGuestDetailsForm({
   const dateError = fieldErrors?.date;
   const pickupTimeError = fieldErrors?.pickupTime;
   const dayUseEndTimeError = fieldErrors?.dayUseEndTime;
-  const paxError = fieldErrors?.pax;
-  const luggageCountError = fieldErrors?.luggageCount;
   const pickupError = fieldErrors?.pickup;
   const pickupMapError = fieldErrors?.pickupMapUrl;
   const dropoffAddressError = fieldErrors?.dropoffAddress;
@@ -205,39 +209,6 @@ export default function TransferGuestDetailsForm({
           <FieldError id={DAY_USE_END_TIME_ERROR_ID} message={dayUseEndTimeError} />
         </div>
       )}
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-1.5">
-          <Label htmlFor="transfer-pax">Passengers</Label>
-          <Input
-            id="transfer-pax"
-            name="pax"
-            type="number"
-            min={1}
-            max={30}
-            required
-            aria-describedby={paxError ? PAX_ERROR_ID : undefined}
-            aria-invalid={paxError ? true : undefined}
-            className="tap-target"
-          />
-          <FieldError id={PAX_ERROR_ID} message={paxError} />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="transfer-luggage-count">Bags</Label>
-          <Input
-            id="transfer-luggage-count"
-            name="luggageCount"
-            type="number"
-            min={0}
-            max={200}
-            required
-            aria-describedby={luggageCountError ? LUGGAGE_ERROR_ID : undefined}
-            aria-invalid={luggageCountError ? true : undefined}
-            className="tap-target"
-          />
-          <FieldError id={LUGGAGE_ERROR_ID} message={luggageCountError} />
-        </div>
-      </div>
 
       <div className="space-y-1.5">
         <Label htmlFor="transfer-pickup">Pickup location (optional)</Label>

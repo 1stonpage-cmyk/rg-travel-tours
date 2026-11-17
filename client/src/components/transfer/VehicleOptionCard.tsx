@@ -31,6 +31,18 @@ import { cn } from '@/lib/utils';
  * `Props.quote`'s own note) and this component does not need to tell them
  * apart — both render the same "not available for this route" state,
  * distinct from `isLoading`.
+ *
+ * **Seat-fit state (owner decision 2026-11-18, per-person pricing plan).**
+ * `TransferBookingPage.tsx` now also disables an option the typed `pax`
+ * doesn't fit, with a reason ("Seats up to 4") instead of "Not available for
+ * this route" — and it is the PARENT that decides the reason, never this
+ * component: `unavailableReason` arrives pre-resolved, exactly like `error`
+ * above, so nothing here ever compares `pax` against a seat count itself.
+ * `unavailableReason` is optional so every caller written before this
+ * decision (no seat-cap concept at all) keeps its original behaviour
+ * unchanged: omit it, and this card falls back to its original rule —
+ * unavailable exactly when `quote` is `undefined` and not loading, with the
+ * original "Not available for this route" text.
  */
 
 type Props = {
@@ -63,6 +75,15 @@ type Props = {
    * changes with pay mode.
    */
   payMode: PayMode;
+  /**
+   * The resolved reason this option cannot be selected right now (a seat
+   * cap the typed party exceeds, or no price for this route), or `null`
+   * when it is selectable — see this file's header note. Optional: when
+   * omitted, falls back to the original rule (`quote === undefined` and not
+   * loading) with the original "Not available for this route" text, so a
+   * caller with no seat-cap concept is unaffected.
+   */
+  unavailableReason?: string | null;
   /** Resolved message — see `TransferTypePicker`'s own note on this contract. */
   error?: string;
 };
@@ -76,9 +97,16 @@ export default function VehicleOptionCard({
   isSelected,
   onSelect,
   payMode,
+  unavailableReason,
   error,
 }: Props) {
-  const unavailable = !isLoading && quote === undefined;
+  const resolvedUnavailableReason =
+    unavailableReason !== undefined
+      ? unavailableReason
+      : quote === undefined
+        ? 'Not available for this route'
+        : null;
+  const unavailable = !isLoading && resolvedUnavailableReason !== null;
   const errorId = `transfer-vehicle-${vehicleTypeId}-error`;
   const detailsId = `transfer-vehicle-${vehicleTypeId}-details`;
   const image = vehicleImageFor(vehicleTypeSlug);
@@ -153,7 +181,7 @@ export default function VehicleOptionCard({
           </div>
         ) : unavailable ? (
           <p id={detailsId} className="text-muted-foreground text-sm">
-            Not available for this route
+            {resolvedUnavailableReason}
           </p>
         ) : (
           <div id={detailsId}>

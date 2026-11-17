@@ -31,6 +31,8 @@ const LONG_NAMES_ROUTE: TransferRoutePublicRow = {
   freeCancelHours: 24,
   inclusionsText: null,
   exclusionsText: null,
+  pricingMode: 'per_vehicle',
+  minPayingPax: 1,
   vehiclePrices: [],
 };
 

@@ -61,6 +61,8 @@ const MACTAN: TransferRoutePublicRow = {
   freeCancelHours: 24,
   inclusionsText: null,
   exclusionsText: null,
+  pricingMode: 'per_vehicle',
+  minPayingPax: 1,
   vehiclePrices: [
     {
       vehicleTypeId: 1,
@@ -68,6 +70,7 @@ const MACTAN: TransferRoutePublicRow = {
       slug: 'van',
       oneWayPriceCentavos: 150_000,
       dayUsePriceCentavos: 400_000,
+      defaultSeats: null,
     },
     {
       vehicleTypeId: 2,
@@ -75,6 +78,7 @@ const MACTAN: TransferRoutePublicRow = {
       slug: 'suv',
       oneWayPriceCentavos: 200_000,
       dayUsePriceCentavos: 500_000,
+      defaultSeats: null,
     },
   ],
 };

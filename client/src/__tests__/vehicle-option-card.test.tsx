@@ -22,6 +22,8 @@ const QUOTE: QuoteTransferResult = {
   amountDueNowCentavos: { full: 150_000, deposit: 45_000 },
   balanceCentavos: { full: 0, deposit: 105_000 },
   freeCancelHours: 24,
+  pricingMode: 'per_vehicle',
+  paxCharged: 1,
 };
 
 describe('VehicleOptionCard', () => {
@@ -107,6 +109,50 @@ describe('VehicleOptionCard', () => {
     expect(screen.getByText(/not available for this route/i)).toBeInTheDocument();
     expect(screen.queryByTestId('vehicle-option-2-skeleton')).not.toBeInTheDocument();
     expect(screen.getByRole('radio')).toBeDisabled();
+  });
+
+  /**
+   * Owner decision 2026-11-18 (per-person pricing plan) — the seat-fit
+   * state. The parent resolves the reason; this card just renders it
+   * verbatim and disables the radio, same as the old "not available" state
+   * but with the parent's own text instead of the hardcoded fallback.
+   */
+  it('renders the resolved unavailableReason text and disables the radio, even when a quote exists', () => {
+    render(
+      <VehicleOptionCard
+        vehicleTypeId={2}
+        vehicleTypeName="SUV"
+        quote={QUOTE}
+        isLoading={false}
+        isSelected={false}
+        onSelect={() => {}}
+        payMode="deposit"
+        unavailableReason="Seats up to 4"
+      />,
+    );
+    expect(screen.getByText('Seats up to 4')).toBeInTheDocument();
+    expect(screen.queryByText(/not available for this route/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('radio')).toBeDisabled();
+    // The total is NOT shown while disabled this way — same "one details
+    // slot" rule the loading/unavailable states already follow.
+    expect(screen.queryByText('₱1,500')).not.toBeInTheDocument();
+  });
+
+  it('stays selectable when unavailableReason is explicitly null, even though quote is passed', () => {
+    render(
+      <VehicleOptionCard
+        vehicleTypeId={1}
+        vehicleTypeName="Van"
+        quote={QUOTE}
+        isLoading={false}
+        isSelected={false}
+        onSelect={() => {}}
+        payMode="deposit"
+        unavailableReason={null}
+      />,
+    );
+    expect(screen.getByRole('radio')).not.toBeDisabled();
+    expect(screen.getByText('₱1,500')).toBeInTheDocument();
   });
 
   it('renders a resolved error message describing the radio', () => {

@@ -126,7 +126,10 @@ export default function PopularTransfers() {
                               </span>
                               <span className="text-muted-foreground">
                                 {' '}
-                                per {cheapest.vehicleTypeName.toLowerCase()}
+                                per{' '}
+                                {cheapest.pricingMode === 'per_person'
+                                  ? 'person'
+                                  : cheapest.vehicleTypeName}
                               </span>
                             </>
                           ) : (

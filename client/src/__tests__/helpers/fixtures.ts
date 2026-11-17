@@ -673,7 +673,7 @@ export const TRANSFER_HOME_CARDS_FIXTURE: TransferRouteHomeCard[] = [
       { name: 'Van', slug: 'van' },
       { name: 'SUV', slug: 'suv' },
     ],
-    cheapestOneWay: { vehicleTypeName: 'Van', priceCentavos: 250_000 },
+    cheapestOneWay: { vehicleTypeName: 'Van', priceCentavos: 250_000, pricingMode: 'per_vehicle' },
   },
   {
     id: 102,
@@ -684,6 +684,6 @@ export const TRANSFER_HOME_CARDS_FIXTURE: TransferRouteHomeCard[] = [
     shortDescription: null,
     imagePath: null,
     offeredVehicles: [{ name: 'SUV', slug: 'suv' }],
-    cheapestOneWay: { vehicleTypeName: 'SUV', priceCentavos: 320_000 },
+    cheapestOneWay: { vehicleTypeName: 'SUV', priceCentavos: 320_000, pricingMode: 'per_vehicle' },
   },
 ];

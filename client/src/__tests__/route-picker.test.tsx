@@ -24,6 +24,8 @@ const MACTAN: TransferRoutePublicRow = {
   freeCancelHours: 24,
   inclusionsText: null,
   exclusionsText: null,
+  pricingMode: 'per_vehicle',
+  minPayingPax: 1,
   vehiclePrices: [
     {
       vehicleTypeId: 1,
@@ -31,6 +33,7 @@ const MACTAN: TransferRoutePublicRow = {
       slug: 'van',
       oneWayPriceCentavos: 150_000,
       dayUsePriceCentavos: 400_000,
+      defaultSeats: null,
     },
     {
       vehicleTypeId: 2,
@@ -38,6 +41,7 @@ const MACTAN: TransferRoutePublicRow = {
       slug: 'suv',
       oneWayPriceCentavos: 200_000,
       dayUsePriceCentavos: 500_000,
+      defaultSeats: null,
     },
   ],
 };
@@ -52,6 +56,8 @@ const OSLOB: TransferRoutePublicRow = {
   freeCancelHours: 48,
   inclusionsText: null,
   exclusionsText: null,
+  pricingMode: 'per_vehicle',
+  minPayingPax: 1,
   vehiclePrices: [],
 };
 
@@ -66,6 +72,8 @@ const REVERSIBLE: TransferRoutePublicRow = {
   freeCancelHours: 24,
   inclusionsText: null,
   exclusionsText: null,
+  pricingMode: 'per_vehicle',
+  minPayingPax: 1,
   vehiclePrices: [
     {
       vehicleTypeId: 1,
@@ -73,6 +81,7 @@ const REVERSIBLE: TransferRoutePublicRow = {
       slug: 'van',
       oneWayPriceCentavos: 100_000,
       dayUsePriceCentavos: 300_000,
+      defaultSeats: null,
     },
   ],
 };

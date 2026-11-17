@@ -65,8 +65,11 @@ describe('TransferGuestDetailsForm', () => {
     show('transfer_one_way');
     expect(screen.getByLabelText(/pickup date/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/pickup time/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/^passengers$/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/^bags$/i)).toBeInTheDocument();
+    // `pax`/`luggageCount` moved to `TransferBookingPage.tsx` as page-level
+    // state (owner decision 2026-11-18, per-person pricing plan, Task
+    // 5/2E) — this component no longer renders either field.
+    expect(screen.queryByLabelText(/^passengers$/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^bags$/i)).not.toBeInTheDocument();
     expect(screen.getByLabelText(/drop-off address/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/full name/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/^email$/i)).toBeInTheDocument();

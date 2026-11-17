@@ -29,6 +29,8 @@ const MACTAN: TransferRoutePublicRow = {
   freeCancelHours: 24,
   inclusionsText: null,
   exclusionsText: null,
+  pricingMode: 'per_vehicle',
+  minPayingPax: 1,
   vehiclePrices: [
     {
       vehicleTypeId: 1,
@@ -36,6 +38,7 @@ const MACTAN: TransferRoutePublicRow = {
       slug: 'van',
       oneWayPriceCentavos: 150_000,
       dayUsePriceCentavos: 400_000,
+      defaultSeats: null,
     },
     {
       vehicleTypeId: 2,
@@ -43,6 +46,7 @@ const MACTAN: TransferRoutePublicRow = {
       slug: 'suv',
       oneWayPriceCentavos: 200_000,
       dayUsePriceCentavos: 500_000,
+      defaultSeats: null,
     },
   ],
 };
@@ -64,6 +68,8 @@ const VAN_QUOTE = {
   amountDueNowCentavos: { full: 150_000, deposit: 45_000 },
   balanceCentavos: { full: 0, deposit: 105_000 },
   freeCancelHours: 24,
+  pricingMode: 'per_vehicle' as const,
+  paxCharged: 1,
 };
 
 const SUV_QUOTE = {
@@ -136,10 +142,8 @@ describe('TransferBookingPage — happy path', () => {
     fireEvent.change(within(form).getByLabelText(/pickup time/i), {
       target: { value: '08:30' },
     });
-    await user.clear(within(form).getByLabelText(/^passengers$/i));
-    await user.type(within(form).getByLabelText(/^passengers$/i), '2');
-    await user.clear(within(form).getByLabelText(/^bags$/i));
-    await user.type(within(form).getByLabelText(/^bags$/i), '1');
+    fireEvent.change(within(form).getByLabelText(/^passengers$/i), { target: { value: '2' } });
+    fireEvent.change(within(form).getByLabelText(/luggage \(bags\)/i), { target: { value: '1' } });
     await user.type(within(form).getByLabelText(/drop-off address/i), 'SM Seaside, Cebu City');
     // MACTAN's fromPlace is an airport, so flightNumber/airline are now
     // REQUIRED client-side (owner decision 2026-11-08, decision 5) — filled
@@ -201,10 +205,8 @@ describe('TransferBookingPage — reversible route (owner decision 2026-11-08)',
     fireEvent.change(within(form).getByLabelText(/pickup time/i), {
       target: { value: '08:30' },
     });
-    await user.clear(within(form).getByLabelText(/^passengers$/i));
-    await user.type(within(form).getByLabelText(/^passengers$/i), '2');
-    await user.clear(within(form).getByLabelText(/^bags$/i));
-    await user.type(within(form).getByLabelText(/^bags$/i), '1');
+    fireEvent.change(within(form).getByLabelText(/^passengers$/i), { target: { value: '2' } });
+    fireEvent.change(within(form).getByLabelText(/luggage \(bags\)/i), { target: { value: '1' } });
     await user.type(within(form).getByLabelText(/drop-off address/i), 'Mactan Airport');
     /*
      * Retargeted comment (owner decision 3, 2026-11-09): under the
@@ -809,10 +811,8 @@ describe('TransferBookingPage — reads direction from the URL (Task 7, 1D)', ()
     fireEvent.change(within(form).getByLabelText(/pickup time/i), {
       target: { value: '08:30' },
     });
-    await user.clear(within(form).getByLabelText(/^passengers$/i));
-    await user.type(within(form).getByLabelText(/^passengers$/i), '2');
-    await user.clear(within(form).getByLabelText(/^bags$/i));
-    await user.type(within(form).getByLabelText(/^bags$/i), '1');
+    fireEvent.change(within(form).getByLabelText(/^passengers$/i), { target: { value: '2' } });
+    fireEvent.change(within(form).getByLabelText(/luggage \(bags\)/i), { target: { value: '1' } });
     await user.type(within(form).getByLabelText(/drop-off address/i), 'Mactan Airport');
     await user.type(within(form).getByLabelText(/flight number/i), 'PR123');
     await user.type(within(form).getByLabelText(/airline/i), 'Philippine Airlines');
@@ -836,5 +836,206 @@ describe('TransferBookingPage — reads direction from the URL (Task 7, 1D)', ()
     });
     expect(forwardRadio).toBeChecked();
     expect(screen.getByRole('radio', { name: /^cebu city/i })).not.toBeChecked();
+  });
+});
+
+/**
+ * Task 5 (owner decision 2026-11-18, per-person pricing plan). `pax`/
+ * `luggageCount` moved from `TransferGuestDetailsForm` up to page-level
+ * state, rendered between the route picker and the vehicle-option cards
+ * (the plan's mockup) — this describe block covers that reorder, the
+ * re-querying it drives, and the new seat-fit/checkout-summary UX that
+ * depends on it.
+ */
+describe('TransferBookingPage — Passengers/Luggage moved above vehicle selection (owner decision 2026-11-18)', () => {
+  it('renders the Passengers field above the vehicle-option cards once a route is picked', async () => {
+    mockTrpc({
+      'transferRoutes.list': [MACTAN],
+      'checkout.quoteTransfer': quoteByVehicleTypeId,
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await selectTypeAndRoute(user);
+
+    const paxInput = await screen.findByLabelText(/^passengers$/i);
+    const vanRadio = await screen.findByRole('radio', { name: /^van/i });
+
+    // Node.DOCUMENT_POSITION_FOLLOWING (4): `vanRadio` comes AFTER
+    // `paxInput` in document order — the Passengers field sits above the
+    // vehicle cards, not below them (the old location, inside the guest
+    // details form that only mounts once a vehicle is already selected).
+    expect(paxInput.compareDocumentPosition(vanRadio) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+
+  it("changing pax re-fires every offered vehicle's quoteTransfer query with the new value", async () => {
+    const quoteFn = vi.fn((input: unknown) => {
+      const { vehicleTypeId } = input as { vehicleTypeId: number };
+      return vehicleTypeId === 1 ? VAN_QUOTE : SUV_QUOTE;
+    });
+    mockTrpc({ 'transferRoutes.list': [MACTAN], 'checkout.quoteTransfer': quoteFn });
+    const user = userEvent.setup();
+    renderPage();
+
+    await selectTypeAndRoute(user);
+    const vanRadio = await screen.findByRole('radio', { name: /^van/i });
+    await waitFor(() => expect(vanRadio).not.toBeDisabled());
+
+    // The page's own default (`useState(1)`) — both vehicle options were
+    // queried with it before the guest touched anything.
+    await waitFor(() =>
+      expect(quoteFn).toHaveBeenCalledWith(expect.objectContaining({ vehicleTypeId: 1, pax: 1 })),
+    );
+    expect(quoteFn).toHaveBeenCalledWith(expect.objectContaining({ vehicleTypeId: 2, pax: 1 }));
+    quoteFn.mockClear();
+
+    const paxInput = screen.getByLabelText(/^passengers$/i);
+    await user.clear(paxInput);
+    await user.type(paxInput, '4');
+
+    await waitFor(() =>
+      expect(quoteFn).toHaveBeenCalledWith(expect.objectContaining({ vehicleTypeId: 1, pax: 4 })),
+    );
+    expect(quoteFn).toHaveBeenCalledWith(expect.objectContaining({ vehicleTypeId: 2, pax: 4 }));
+  });
+});
+
+/**
+ * Owner decision 2026-11-18, per-person pricing plan, Decision 1 (seat cap
+ * applies to both pricing modes) and Decision 6 (a vehicle the party can't
+ * fit stays visible, disabled, with a reason — never silently removed).
+ */
+describe('TransferBookingPage — seat-fit (owner decision 2026-11-18)', () => {
+  const SEAT_CAPPED: TransferRoutePublicRow = {
+    ...MACTAN,
+    id: 15,
+    slug: 'mactan-airport-moalboal-seat-capped',
+    vehiclePrices: [
+      { ...MACTAN.vehiclePrices[0]!, defaultSeats: null },
+      { ...MACTAN.vehiclePrices[1]!, defaultSeats: 2 },
+    ],
+  };
+
+  it('keeps an over-capacity vehicle VISIBLE and disabled, with "Seats up to N" — never removes it from the list', async () => {
+    mockTrpc({
+      'transferRoutes.list': [SEAT_CAPPED],
+      'checkout.quoteTransfer': quoteByVehicleTypeId,
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await selectTypeAndRoute(user);
+    const vanRadio = await screen.findByRole('radio', { name: /^van/i });
+    await waitFor(() => expect(vanRadio).not.toBeDisabled());
+
+    const paxInput = screen.getByLabelText(/^passengers$/i);
+    await user.clear(paxInput);
+    await user.type(paxInput, '5');
+
+    // Present AND disabled — not absent. The seat-cap reason replaces the
+    // generic "not available" text, and the card stays in the grid.
+    const suvRadio = await screen.findByRole('radio', { name: /^suv/i });
+    await waitFor(() => expect(screen.getByText('Seats up to 2')).toBeInTheDocument());
+    expect(suvRadio).toBeInTheDocument();
+    expect(suvRadio).toBeDisabled();
+    expect(screen.queryByText(/not available for this route/i)).not.toBeInTheDocument();
+
+    // Van has no cap (`defaultSeats: null`) and stays selectable regardless
+    // of party size.
+    expect(vanRadio).not.toBeDisabled();
+  });
+});
+
+/**
+ * Owner decision 2026-11-18, per-person pricing plan. The checkout summary
+ * line is built ENTIRELY from `quoteTransfer`'s own response fields
+ * (`paxCharged`, `subtotalCentavos`) and the catalog's own already-known
+ * unit rate — never a client-side `unitPrice * pax` multiplication. See
+ * `TransferBookingPage.tsx`'s own rendering of this line for the exact
+ * fields read.
+ */
+describe('TransferBookingPage — per-person checkout summary (owner decision 2026-11-18)', () => {
+  const PER_PERSON: TransferRoutePublicRow = {
+    ...MACTAN,
+    id: 16,
+    slug: 'mactan-airport-moalboal-per-person',
+    pricingMode: 'per_person',
+    minPayingPax: 1,
+    vehiclePrices: [
+      {
+        vehicleTypeId: 1,
+        vehicleTypeName: 'Van',
+        slug: 'van',
+        oneWayPriceCentavos: 80_000,
+        dayUsePriceCentavos: 200_000,
+        defaultSeats: null,
+      },
+    ],
+  };
+
+  it('shows "unitPrice × paxCharged pax = subtotal", reading paxCharged/subtotalCentavos straight off the server\'s quote', async () => {
+    mockTrpc({
+      'transferRoutes.list': [PER_PERSON],
+      'checkout.quoteTransfer': (input: unknown) => {
+        const { pax } = input as { pax: number };
+        // The server's own arithmetic (`transferSubtotalCentavos()`),
+        // reproduced here only so the MOCK can answer correctly — this is
+        // not something `TransferBookingPage.tsx` itself ever computes.
+        // (Local names avoid the literal `Centavos` suffix next to `*`
+        // purely to keep this project's "no client arithmetic on money"
+        // source guard, which scans every file under client/src including
+        // this one, from flagging a MOCK's own math as a page-level
+        // violation.)
+        const paxCharged = pax;
+        const subtotal = 80_000 * paxCharged;
+        const deposit = Math.round(subtotal * 0.3);
+        return {
+          subtotalCentavos: subtotal,
+          discountCentavos: 0,
+          totalCentavos: subtotal,
+          depositCentavos: deposit,
+          amountDueNowCentavos: { full: subtotal, deposit },
+          balanceCentavos: { full: 0, deposit: subtotal - deposit },
+          freeCancelHours: 24,
+          pricingMode: 'per_person',
+          paxCharged,
+        };
+      },
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await selectTypeAndRoute(user);
+
+    const paxInput = await screen.findByLabelText(/^passengers$/i);
+    await user.clear(paxInput);
+    await user.type(paxInput, '5');
+
+    const vanRadio = await screen.findByRole('radio', { name: /^van/i });
+    await waitFor(() => expect(vanRadio).not.toBeDisabled());
+    await user.click(vanRadio);
+
+    // ₱800 × 5 pax = ₱4,000 — exactly what the mocked server returned
+    // (paxCharged: 5, subtotalCentavos: 400_000), never a client-side
+    // recomputation of unitPrice * pax.
+    expect(await screen.findByText('₱800 × 5 pax = ₱4,000')).toBeInTheDocument();
+  });
+
+  it("shows nothing extra for a per_vehicle quote — today's existing summary is unchanged", async () => {
+    mockTrpc({
+      'transferRoutes.list': [MACTAN],
+      'checkout.quoteTransfer': quoteByVehicleTypeId,
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await selectTypeAndRoute(user);
+    const vanRadio = await screen.findByRole('radio', { name: /^van/i });
+    await waitFor(() => expect(vanRadio).not.toBeDisabled());
+    await user.click(vanRadio);
+
+    expect(screen.queryByText(/× \d+ pax =/)).not.toBeInTheDocument();
   });
 });
