@@ -50,7 +50,7 @@ export default function PopularTransfers() {
       <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
         <SectionHeading
           eyebrow="Popular transfers"
-          title="Private van transfers across Cebu"
+          title="Private transfers across Cebu"
           subtitle="Fixed price per vehicle, door to door. Book online in a minute."
         />
 

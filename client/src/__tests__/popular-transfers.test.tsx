@@ -53,7 +53,7 @@ describe('PopularTransfers', () => {
     // the heading itself only appears once real data has replaced the
     // (now-dead) loading skeleton — `findByRole` already awaits that.
     const heading = await screen.findByRole('heading', {
-      name: /private van transfers across cebu/i,
+      name: /private transfers across cebu/i,
     });
     const container = heading.closest('section') as HTMLElement;
     // Wait for real card content (the badge, present only once real data
@@ -150,7 +150,7 @@ describe('PopularTransfers', () => {
     renderSection();
 
     const heading = await screen.findByRole('heading', {
-      name: /private van transfers across cebu/i,
+      name: /private transfers across cebu/i,
     });
     const container = heading.closest('section') as HTMLElement;
     await within(container).findByText('Most booked');
