@@ -1,4 +1,4 @@
-import { packagesBySlugInput } from '@rg/shared';
+import { packagesBySlugInput, type PackagePricingMode } from '@rg/shared';
 import { TRPCError } from '@trpc/server';
 import { asc, eq } from 'drizzle-orm';
 import { readShowTours } from '../../content/settings';
@@ -16,6 +16,8 @@ export interface PackageListItem {
   oldPriceCentavos: number | null;
   /** Integer centavos. */
   newPriceCentavos: number;
+  /** How the price is labelled on the page — "per person" or "per group". Display only. */
+  pricingMode: PackagePricingMode;
   description: string | null;
   image: { path: string; alt: string } | null;
   highlights: unknown;
@@ -57,6 +59,7 @@ export const packagesRouter = router({
       days: row.days,
       oldPriceCentavos: row.oldPriceCentavos,
       newPriceCentavos: row.newPriceCentavos,
+      pricingMode: row.pricingMode,
       description: row.description,
       image: row.imagePath ? { path: row.imagePath, alt: row.imageAlt ?? '' } : null,
       highlights: row.highlights,
@@ -103,6 +106,7 @@ export const packagesRouter = router({
         days: row.days,
         oldPriceCentavos: row.oldPriceCentavos,
         newPriceCentavos: row.newPriceCentavos,
+        pricingMode: row.pricingMode,
         description: row.description,
         image: row.imagePath ? { path: row.imagePath, alt: row.imageAlt ?? '' } : null,
         highlights: row.highlights,

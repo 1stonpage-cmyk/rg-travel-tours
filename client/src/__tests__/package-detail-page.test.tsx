@@ -80,6 +80,32 @@ describe('PackageDetailPage — content', () => {
   });
 });
 
+/**
+ * Per-person-pricing plan, Task 4 (2D): `pricingMode` is a display label
+ * only — no pax, no arithmetic. `BASE_PACKAGE_FIXTURE.pricingMode` is
+ * `'per_group'` (fixtures.ts), so the first case here is the EXISTING
+ * behaviour and the second is the new branch this task adds.
+ */
+describe('PackageDetailPage — pricing mode label (per-person-pricing plan, Task 4)', () => {
+  it('says "per group" for a per_group package', async () => {
+    mockTrpc({ 'packages.bySlug': () => detail({ pricingMode: 'per_group' }) });
+    renderDetail();
+
+    await screen.findByRole('heading', { level: 1, name: PACKAGE_DETAIL_FIXTURE.title });
+    expect(screen.getByText('per group')).toBeInTheDocument();
+    expect(screen.queryByText('per person')).not.toBeInTheDocument();
+  });
+
+  it('says "per person" for a per_person package', async () => {
+    mockTrpc({ 'packages.bySlug': () => detail({ pricingMode: 'per_person' }) });
+    renderDetail();
+
+    await screen.findByRole('heading', { level: 1, name: PACKAGE_DETAIL_FIXTURE.title });
+    expect(screen.getByText('per person')).toBeInTheDocument();
+    expect(screen.queryByText('per group')).not.toBeInTheDocument();
+  });
+});
+
 describe('PackageDetailPage — inquiry form', () => {
   it('has no package <select> (the package is already fixed by the URL)', async () => {
     mockTrpc({ 'packages.bySlug': () => detail() });

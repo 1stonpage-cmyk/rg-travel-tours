@@ -119,6 +119,7 @@ function packageInput(overrides: Record<string, unknown> = {}) {
     days: 3,
     oldPriceCentavos: 1_250_000,
     newPriceCentavos: 980_000,
+    pricingMode: 'per_group',
     description: 'Three days across Camotes, with the van and the ferry included.',
     imagePath: '/placeholders/package-camotes.svg',
     imageAlt: 'A white sand beach on Camotes with a parked van behind it',
@@ -450,6 +451,39 @@ describeWithDb('admin.packages.create and .update', () => {
       } as never),
     ).rejects.toMatchObject({ code: 'NOT_FOUND', message: PACKAGE_NOT_FOUND_MESSAGE });
     expect(await auditRowsFor(PACKAGE_ENTITY, NOT_FOUND_SENTINEL_ID)).toEqual([]);
+  });
+});
+
+/*
+ * Per-person-pricing plan, Task 4 (2D): `pricingMode` is DISPLAY ONLY — "per
+ * person" vs "per group" — with no pax, no multiplication and no checkout
+ * behind it. These three tests are the whole of what this field needs
+ * proven: it round-trips through the admin screen, it reaches the two public
+ * reads the site pages use, and a value outside the enum is refused at the
+ * Zod boundary (BAD_REQUEST), never a 500.
+ */
+describeWithDb('admin.packages — pricingMode (per-person-pricing plan, Task 4)', () => {
+  it('round-trips a per_person package through admin.packages.list', async () => {
+    const { id } = await createPackage({ pricingMode: 'per_person' });
+
+    const mine = (await ownerApi().admin.packages.list()).find((row) => row.id === id);
+    expect(mine).toMatchObject({ pricingMode: 'per_person' });
+  });
+
+  it('exposes pricingMode on the PUBLIC packages.list and packages.bySlug', async () => {
+    const { input } = await createPackage({ pricingMode: 'per_group' });
+
+    const listed = (await publicApi().packages.list()).find((row) => row.slug === input.slug);
+    expect(listed).toMatchObject({ pricingMode: 'per_group' });
+
+    const bySlug = await publicApi().packages.bySlug({ slug: input.slug });
+    expect(bySlug).toMatchObject({ pricingMode: 'per_group' });
+  });
+
+  it('REFUSES a pricingMode outside the enum, at the Zod boundary (not a 500)', async () => {
+    await expect(
+      ownerApi().admin.packages.create(packageInput({ pricingMode: 'invalid' }) as never),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
 });
 

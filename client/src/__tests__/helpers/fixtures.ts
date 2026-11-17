@@ -491,6 +491,10 @@ export const PACKAGES_FIXTURE: PackageListItem[] = [
     days: 3,
     oldPriceCentavos: 1_250_000,
     newPriceCentavos: 980_000,
+    // The default every row carries until an admin switches it (owner
+    // decision 2026-11-18, per-person pricing plan) — matches the hardcoded
+    // "per group" copy these fixtures predate.
+    pricingMode: 'per_group',
     description:
       'City heritage, Oslob whale sharks and Kawasan canyoneering with hotel transfers included.',
     image: {
@@ -509,6 +513,7 @@ export const PACKAGES_FIXTURE: PackageListItem[] = [
     days: 5,
     oldPriceCentavos: 2_450_000,
     newPriceCentavos: 1_890_000,
+    pricingMode: 'per_group',
     description:
       'South Cebu plus a Bohol countryside crossing — Chocolate Hills, tarsiers and the Loboc River.',
     image: {
@@ -527,6 +532,7 @@ export const PACKAGES_FIXTURE: PackageListItem[] = [
     days: 4,
     oldPriceCentavos: 1_680_000,
     newPriceCentavos: 1_340_000,
+    pricingMode: 'per_group',
     description: 'Moalboal sardines, Badian canyoneering and Osmeña Peak sunrise at a slower pace.',
     image: {
       path: img('package-south-cebu'),

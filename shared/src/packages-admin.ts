@@ -62,6 +62,20 @@ const sortOrderSchema = z.number().int().min(0).max(9_999);
 /** A short list of bullet strings, as `packages.highlights` holds. */
 const highlightsSchema = z.array(z.string().trim().min(1).max(300)).max(50).nullable();
 
+/**
+ * `packages.pricing_mode` (owner decision 2026-11-18, per-person pricing
+ * plan). Display-only — there is no package checkout. Default `per_group`
+ * matches today's hardcoded public copy exactly; an admin may switch a
+ * package to `per_person` any time.
+ *
+ * Declared ahead of `packageFields` below, which references it: a `const`
+ * referenced before its own module-level initialization throws (TDZ), so
+ * this cannot sit after the schema that uses it the way it sits after every
+ * other export in this file.
+ */
+export const PACKAGE_PRICING_MODES = ['per_person', 'per_group'] as const;
+export type PackagePricingMode = (typeof PACKAGE_PRICING_MODES)[number];
+
 /** Every editable column on `packages`, minus the three named in this file's header. */
 const packageFields = {
   slug: z
@@ -83,6 +97,13 @@ const packageFields = {
   oldPriceCentavos: centavosSchema.nullable(),
   /** What a guest is actually quoted. The only required price. */
   newPriceCentavos: centavosSchema,
+  /**
+   * How the price is labelled on the public page — "per person" or "per
+   * group". Display only: there is no package checkout, so nothing here is
+   * multiplied by a pax count. REQUIRED, like every other field in this
+   * object, because `create`/`update` are a full replacement, never a patch.
+   */
+  pricingMode: z.enum(PACKAGE_PRICING_MODES),
   description: z.string().trim().max(20_000).nullable(),
   imagePath: z.string().trim().max(300).nullable(),
   imageAlt: z.string().trim().max(300).nullable(),
@@ -194,16 +215,9 @@ export interface PackageAdminRow {
   isActive: boolean;
   /** `COUNT(*)` of `inquiries` rows pointing at this package. */
   inquiryCount: number;
+  /** How the price is labelled on the public page. See `PACKAGE_PRICING_MODES`. */
+  pricingMode: PackagePricingMode;
 }
-
-/**
- * `packages.pricing_mode` (owner decision 2026-11-18, per-person pricing
- * plan). Display-only — there is no package checkout. Default `per_group`
- * matches today's hardcoded public copy exactly; an admin may switch a
- * package to `per_person` any time.
- */
-export const PACKAGE_PRICING_MODES = ['per_person', 'per_group'] as const;
-export type PackagePricingMode = (typeof PACKAGE_PRICING_MODES)[number];
 
 /* ----------------------------------------------------------------- Inquiries */
 

@@ -52,6 +52,7 @@ import {
   packageUpdateInput,
   type InquiryAdminRow,
   type PackageAdminRow,
+  type PackagePricingMode,
 } from '@rg/shared';
 import { asc, desc, eq, sql } from 'drizzle-orm';
 import { getDb } from '../../db/client';
@@ -100,6 +101,7 @@ function packageColumns(input: {
   days: number;
   oldPriceCentavos: number | null;
   newPriceCentavos: number;
+  pricingMode: PackagePricingMode;
   description: string | null;
   imagePath: string | null;
   imageAlt: string | null;
@@ -115,6 +117,7 @@ function packageColumns(input: {
     days: input.days,
     oldPriceCentavos: input.oldPriceCentavos,
     newPriceCentavos: input.newPriceCentavos,
+    pricingMode: input.pricingMode,
     description: input.description,
     imagePath: input.imagePath,
     imageAlt: input.imageAlt,
@@ -209,6 +212,7 @@ export const adminPackagesRouter = router({
         days: packages.days,
         oldPriceCentavos: packages.oldPriceCentavos,
         newPriceCentavos: packages.newPriceCentavos,
+        pricingMode: packages.pricingMode,
         description: packages.description,
         imagePath: packages.imagePath,
         imageAlt: packages.imageAlt,
@@ -233,6 +237,7 @@ export const adminPackagesRouter = router({
       days: row.days,
       oldPriceCentavos: row.oldPriceCentavos,
       newPriceCentavos: row.newPriceCentavos,
+      pricingMode: row.pricingMode,
       description: row.description,
       imagePath: row.imagePath,
       imageAlt: row.imageAlt,

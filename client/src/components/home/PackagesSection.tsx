@@ -251,7 +251,9 @@ export default function PackagesSection() {
                         <span className="text-brand-blue-900 text-2xl font-bold">
                           {formatPeso(pkg.newPriceCentavos)}
                         </span>
-                        <span className="text-muted-foreground text-xs">per group</span>
+                        <span className="text-muted-foreground text-xs">
+                          {pkg.pricingMode === 'per_person' ? 'per person' : 'per group'}
+                        </span>
                       </div>
 
                       <Button

@@ -96,6 +96,40 @@ describe('PackagesSection — live data', () => {
     ).toBeInTheDocument();
     expect(screen.queryByText(/mock failure/i)).not.toBeInTheDocument();
   });
+
+  /**
+   * Per-person-pricing plan, Task 4 (2D): `pricingMode` is a display label
+   * only. Every fixture package is `per_group` (the existing, unchanged
+   * behaviour); this adds one `per_person` package alongside them to prove
+   * the new branch renders too, per card, not just once for the page.
+   */
+  it('labels each card "per person" or "per group" per its own pricingMode', async () => {
+    const perPerson: PackageListItem = {
+      ...PACKAGES_FIXTURE[0]!,
+      id: 98,
+      slug: 'per-person-package',
+      title: 'Per Person Package',
+      pricingMode: 'per_person',
+    };
+    mockTrpc({ 'packages.list': [...PACKAGES_FIXTURE, perPerson] });
+    renderPackages();
+
+    const groupHeading = await screen.findByRole('heading', {
+      level: 3,
+      name: PACKAGES_FIXTURE[0]!.title,
+    });
+    expect(
+      within(groupHeading.closest('li') as HTMLElement).getByText('per group'),
+    ).toBeInTheDocument();
+
+    const personHeading = await screen.findByRole('heading', {
+      level: 3,
+      name: 'Per Person Package',
+    });
+    expect(
+      within(personHeading.closest('li') as HTMLElement).getByText('per person'),
+    ).toBeInTheDocument();
+  });
 });
 
 describe('ReviewsSection — live data', () => {

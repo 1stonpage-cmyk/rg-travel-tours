@@ -65,6 +65,7 @@ function pkg(overrides: Partial<PackageAdminRow> = {}): PackageAdminRow {
     days: 3,
     oldPriceCentavos: 1_250_000,
     newPriceCentavos: 980_000,
+    pricingMode: 'per_group',
     description: 'Three days around the city and the south.',
     imagePath: '/placeholders/package-cebu.svg',
     imageAlt: 'A van parked beside Magellan’s Cross',
@@ -297,6 +298,61 @@ describe('AdminPackagesPage — the package list', () => {
     // input rather than that the words appear somewhere on the page.
     expect(await screen.findByRole('alert')).toHaveTextContent(/has to be higher/i);
     expect(calls).toHaveLength(0);
+  });
+});
+
+/**
+ * Task 4 (2D), per-person-pricing plan: `pricingMode` is a DISPLAY label only
+ * — "per person" vs "per group" — with no pax or arithmetic behind it. The
+ * select defaults to "Per group" on a new package (matching the column's own
+ * DB default), preselects whatever an existing package already has when
+ * editing, and whichever option the admin picks is what gets posted.
+ */
+describe('AdminPackagesPage — pricing mode (per-person-pricing plan, Task 4)', () => {
+  it('defaults the Pricing select to "Per group" on a new package', async () => {
+    renderPage();
+    await screen.findByText('Cebu Highlights');
+
+    await user.click(screen.getByRole('button', { name: /add a package/i }));
+    expect(screen.getByRole('combobox', { name: /pricing/i })).toHaveTextContent('Per group');
+  });
+
+  it('preselects the stored pricing mode when editing an existing package', async () => {
+    const perPersonPackage = pkg({
+      id: 3,
+      slug: 'bohol-day-trip',
+      title: 'Bohol Day Trip',
+      pricingMode: 'per_person',
+    });
+    renderPage({ 'admin.packages.list': [ACTIVE, RETIRED, perPersonPackage] });
+    await screen.findByText('Bohol Day Trip');
+
+    await user.click(within(rowFor('Bohol Day Trip')).getByRole('button', { name: /^edit/i }));
+    expect(screen.getByRole('combobox', { name: /pricing/i })).toHaveTextContent('Per person');
+  });
+
+  it('posts the chosen pricing mode in the create payload', async () => {
+    const calls: unknown[] = [];
+    renderPage({
+      'admin.packages.create': (input: unknown) => {
+        calls.push(input);
+        return { id: 99 };
+      },
+    });
+    await screen.findByText('Cebu Highlights');
+
+    await user.click(screen.getByRole('button', { name: /add a package/i }));
+    await user.type(screen.getByLabelText(/^slug/i), 'malapascua-3d2n');
+    await user.type(screen.getByLabelText(/^title/i), 'Malapascua Thresher Sharks');
+    await user.type(screen.getByLabelText(/price now/i), '12500');
+
+    await user.click(screen.getByRole('combobox', { name: /pricing/i }));
+    await user.click(await screen.findByRole('option', { name: /^per person$/i }));
+
+    await user.click(screen.getByRole('button', { name: /^add package$/i }));
+
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]).toMatchObject({ pricingMode: 'per_person' });
   });
 });
 
