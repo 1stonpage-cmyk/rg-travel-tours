@@ -78,10 +78,15 @@ type Props = {
   /**
    * The resolved reason this option cannot be selected right now (a seat
    * cap the typed party exceeds, or no price for this route), or `null`
-   * when it is selectable — see this file's header note. Optional: when
-   * omitted, falls back to the original rule (`quote === undefined` and not
-   * loading) with the original "Not available for this route" text, so a
-   * caller with no seat-cap concept is unaffected.
+   * when the caller knows of nothing stopping it — see this file's header
+   * note. Optional: when omitted, the card falls back to the original rule
+   * (`quote === undefined` and not loading) with the original "Not available
+   * for this route" text, so a caller with no seat-cap concept is
+   * unaffected.
+   *
+   * **`null` is not a promise that `quote` exists** (bundled fix A, final
+   * whole-branch review): a missing quote still shows the unavailable state,
+   * with that same original text, whatever this prop says.
    */
   unavailableReason?: string | null;
   /** Resolved message — see `TransferTypePicker`'s own note on this contract. */
@@ -100,13 +105,20 @@ export default function VehicleOptionCard({
   unavailableReason,
   error,
 }: Props) {
-  const resolvedUnavailableReason =
-    unavailableReason !== undefined
-      ? unavailableReason
-      : quote === undefined
-        ? 'Not available for this route'
-        : null;
-  const unavailable = !isLoading && resolvedUnavailableReason !== null;
+  /*
+   * `quote === undefined` is its OWN sufficient reason to show the
+   * unavailable state (final whole-branch review, bundled fix A) — restored
+   * here after the seat-cap prop accidentally made the whole decision hang
+   * off `resolvedUnavailableReason` alone. A caller passing
+   * `unavailableReason: null` is saying "nothing I know of stops this
+   * option", which is not a promise that a quote exists; believing it over
+   * the missing quote is how the normal branch below reached
+   * `quote!.totalCentavos` on an `undefined`. No caller does that today, and
+   * nothing in the prop types stopped one from doing it tomorrow.
+   */
+  const reasonGiven = unavailableReason !== undefined && unavailableReason !== null;
+  const unavailable = !isLoading && (quote === undefined || reasonGiven);
+  const resolvedUnavailableReason = unavailableReason ?? 'Not available for this route';
   const errorId = `transfer-vehicle-${vehicleTypeId}-error`;
   const detailsId = `transfer-vehicle-${vehicleTypeId}-details`;
   const image = vehicleImageFor(vehicleTypeSlug);

@@ -11,13 +11,13 @@
  */
 import { render, screen, within, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { TransferRoutePublicRow } from '@rg/shared';
+import { seatCapMessage, type TransferRoutePublicRow } from '@rg/shared';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import TransferBookingPage from '@/pages/public/TransferBookingPage';
 import { TrpcProviders } from '@/lib/trpc';
 import { SETTINGS_FIXTURE } from './helpers/fixtures';
-import { mockTrpc, trpcError } from './helpers/mock-trpc';
+import { mockTrpc, trpcError, trpcValidationError } from './helpers/mock-trpc';
 
 const MACTAN: TransferRoutePublicRow = {
   id: 1,
@@ -1087,5 +1087,364 @@ describe('TransferBookingPage — per-person checkout summary (owner decision 20
     await user.click(vanRadio);
 
     expect(screen.queryByText(/× \d+ pax =/)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Final whole-branch review, Finding 2. Task 5 widened `quoteFor()`'s
+ * stale-quote fallback from "only while a coupon is applied" to "whenever
+ * this result is not yet successful", which fixed a real regression (a `pax`
+ * edit re-keys every vehicle's query and could unmount the guest-details
+ * form for one render) but also started covering a SETTLED error — a query
+ * that, with `retry: false`, will never resolve on its own. The card then
+ * went on offering the last good, now-wrong total as a selectable price,
+ * against this page's own documented invariant ("a placeholder (stale) quote
+ * must render as loading, never as a selectable but outdated price").
+ */
+describe('TransferBookingPage — a SETTLED quote refusal must not keep serving the last good price (final review, Finding 2)', () => {
+  /** One vehicle, and — on the client — no seat cap of its own. */
+  const ONE_UNCAPPED_VEHICLE: TransferRoutePublicRow = {
+    ...MACTAN,
+    id: 20,
+    slug: 'mactan-airport-moalboal-one-vehicle',
+    vehiclePrices: [{ ...MACTAN.vehiclePrices[0]!, defaultSeats: null }],
+  };
+
+  it('shows the vehicle as unavailable, with no lingering old total, once its query settles into an error', async () => {
+    mockTrpc({
+      'transferRoutes.list': [ONE_UNCAPPED_VEHICLE],
+      'checkout.quoteTransfer': (input: unknown) => {
+        const { pax } = input as { pax: number };
+        /*
+         * The SERVER's own seat cap while the client holds `defaultSeats:
+         * null` — a route list fetched before an admin lowered
+         * `vehicle_types.default_seats`. This is the shape in which the
+         * stale fallback is OBSERVABLE: when the client knows the cap too,
+         * its own "Seats up to N" branch renders first and masks the stale
+         * quote, so a card-level assertion would pass against the broken
+         * build. Here there is nothing to mask it.
+         */
+        if (pax > 4) throw trpcError(seatCapMessage(4), 'BAD_REQUEST');
+        return VAN_QUOTE;
+      },
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await selectTypeAndRoute(user);
+    const vanRadio = await screen.findByRole('radio', { name: /^van/i });
+    await waitFor(() => expect(vanRadio).not.toBeDisabled());
+    // Scoped to the card's own label — `RoutePicker`'s "from ₱1,500" line
+    // shows the same figure elsewhere on this screen.
+    const vanLabel = vanRadio.closest('label') as HTMLElement;
+    expect(within(vanLabel).getByText('₱1,500')).toBeInTheDocument();
+    await user.click(vanRadio);
+    expect(await screen.findByLabelText(/drop-off address/i)).toBeInTheDocument();
+
+    // Past the server's cap: this query errors now and on every retry.
+    fireEvent.change(screen.getByLabelText(/^passengers$/i), { target: { value: '6' } });
+
+    await waitFor(() =>
+      expect(within(vanLabel).getByText(/not available for this route/i)).toBeInTheDocument(),
+    );
+    expect(within(vanLabel).queryByText('₱1,500')).not.toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /^van/i })).toBeDisabled();
+  });
+
+  /**
+   * The other half of the same fix, and the reason the `enabled` gate added
+   * alongside it covers `pax`'s own Zod bounds as well as the seat cap:
+   * emptying the Passengers box to retype it makes `pax` 0, which the quote
+   * input refuses at the wire boundary. Narrowing `quoteFor()` to "stop
+   * falling back on a settled error" WITHOUT that gate would make this
+   * refusal unmount the guest-details form and wipe everything already
+   * typed — the exact regression Task 5's own disclosed deviation exists to
+   * prevent.
+   */
+  it('keeps the guest-details form and its typed values while the Passengers box is momentarily empty', async () => {
+    mockTrpc({
+      'transferRoutes.list': [MACTAN],
+      'checkout.quoteTransfer': (input: unknown) => {
+        const { pax, vehicleTypeId } = input as { pax: number; vehicleTypeId: number };
+        if (!Number.isInteger(pax) || pax < 1) {
+          throw trpcValidationError({
+            fieldErrors: { pax: ['Enter how many passengers are travelling.'] },
+          });
+        }
+        return vehicleTypeId === 1 ? VAN_QUOTE : SUV_QUOTE;
+      },
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await selectTypeAndRoute(user);
+    const vanRadio = await screen.findByRole('radio', { name: /^van/i });
+    await waitFor(() => expect(vanRadio).not.toBeDisabled());
+    await user.click(vanRadio);
+
+    const form = await screen.findByRole('form', { name: /transfer booking form/i });
+    await user.type(within(form).getByLabelText(/drop-off address/i), 'SM Seaside, Cebu City');
+
+    fireEvent.change(screen.getByLabelText(/^passengers$/i), { target: { value: '' } });
+
+    /*
+     * A WAIT, not a synchronous read: a refused pax-0 query would have to
+     * settle before the form could unmount, so reading the DOM immediately
+     * would pass against the broken build too. `waitFor` rejecting on
+     * timeout IS the assertion — the field never goes away.
+     */
+    await expect(
+      waitFor(
+        () => {
+          // A block body, not a concise one: `waitFor` RESOLVES with whatever
+          // its callback returns, and a returned chai assertion object breaks
+          // vitest's own failure formatter before it can report the failure.
+          expect(within(form).queryByLabelText(/drop-off address/i)).toBeNull();
+        },
+        { timeout: 400 },
+      ),
+    ).rejects.toThrow();
+    expect(within(form).getByLabelText(/drop-off address/i)).toHaveValue('SM Seaside, Cebu City');
+  });
+});
+
+/**
+ * Final whole-branch review, Finding 1. The coupon-recovery effect treats
+ * "every offered vehicle's quote is erroring at once" as the signature of a
+ * bad coupon — which it was, until this branch added two other ways every
+ * vehicle can refuse at the same moment for the same non-coupon reason: the
+ * universal seat cap (trivially "every vehicle" on a single-vehicle route)
+ * and a `pax` outside the quote input's own bounds. Neither is the guest's
+ * coupon's fault, and reverting the coupon for them silently deleted a code
+ * the guest had applied and attributed someone else's sentence to it.
+ */
+describe('TransferBookingPage — a seat-cap or bad-pax refusal is never blamed on the coupon (final review, Finding 1)', () => {
+  /** One vehicle, cap 2 — so "over the cap" IS "every vehicle erroring". */
+  const CAPPED_SINGLE: TransferRoutePublicRow = {
+    ...MACTAN,
+    id: 21,
+    slug: 'mactan-airport-moalboal-capped-single',
+    vehiclePrices: [{ ...MACTAN.vehiclePrices[1]!, defaultSeats: 2 }],
+  };
+
+  /** Van uncapped, SUV capped at 2 — a MIXED route, where the filter matters. */
+  const MIXED_CAPS: TransferRoutePublicRow = {
+    ...MACTAN,
+    id: 22,
+    slug: 'mactan-airport-moalboal-mixed-caps',
+    vehiclePrices: [
+      { ...MACTAN.vehiclePrices[0]!, defaultSeats: null },
+      { ...MACTAN.vehiclePrices[1]!, defaultSeats: 2 },
+    ],
+  };
+
+  async function applyCoupon(user: ReturnType<typeof userEvent.setup>, code: string) {
+    const form = await screen.findByRole('form', { name: /transfer booking form/i });
+    await user.type(within(form).getByLabelText(/coupon code/i), code);
+    await user.click(within(form).getByRole('button', { name: /^apply$/i }));
+  }
+
+  it('keeps a valid coupon applied when the only offered vehicle goes over its seat cap', async () => {
+    mockTrpc({
+      'transferRoutes.list': [CAPPED_SINGLE],
+      'checkout.quoteTransfer': (input: unknown) => {
+        const { pax, couponCode } = input as { pax: number; couponCode?: string };
+        if (pax > 2) throw trpcError(seatCapMessage(2), 'BAD_REQUEST');
+        return couponCode === 'SAVE10'
+          ? { ...SUV_QUOTE, totalCentavos: 180_000, discountCentavos: 20_000 }
+          : SUV_QUOTE;
+      },
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await selectTypeAndRoute(user);
+    const suvRadio = await screen.findByRole('radio', { name: /^suv/i });
+    await waitFor(() => expect(suvRadio).not.toBeDisabled());
+    await applyCoupon(user, 'SAVE10');
+    expect(await screen.findByText(/coupon "save10" applied/i)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/^passengers$/i), { target: { value: '5' } });
+    await waitFor(() => expect(screen.getByText('Seats up to 2')).toBeInTheDocument());
+
+    // Still the guest's coupon, and the SERVER's seat-cap sentence is not
+    // standing beside the coupon field pretending to be about it.
+    expect(screen.getByText(/coupon "save10" applied/i)).toBeInTheDocument();
+    expect(screen.queryByText(/please choose a smaller party/i)).not.toBeInTheDocument();
+  });
+
+  it('keeps a valid coupon applied while the Passengers box is empty (a pax-shape refusal, not a coupon one)', async () => {
+    mockTrpc({
+      'transferRoutes.list': [CAPPED_SINGLE],
+      'checkout.quoteTransfer': (input: unknown) => {
+        const { pax, couponCode } = input as { pax: number; couponCode?: string };
+        if (!Number.isInteger(pax) || pax < 1) {
+          throw trpcValidationError({
+            fieldErrors: { pax: ['Enter how many passengers are travelling.'] },
+          });
+        }
+        return couponCode === 'SAVE10'
+          ? { ...SUV_QUOTE, totalCentavos: 180_000, discountCentavos: 20_000 }
+          : SUV_QUOTE;
+      },
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await selectTypeAndRoute(user);
+    const suvRadio = await screen.findByRole('radio', { name: /^suv/i });
+    await waitFor(() => expect(suvRadio).not.toBeDisabled());
+    await applyCoupon(user, 'SAVE10');
+    expect(await screen.findByText(/coupon "save10" applied/i)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/^passengers$/i), { target: { value: '' } });
+
+    await expect(
+      waitFor(
+        () => {
+          // Block body — see the sibling note on why a returned assertion
+          // breaks the reporter rather than the test.
+          expect(screen.queryByText(/coupon "save10" applied/i)).toBeNull();
+        },
+        { timeout: 400 },
+      ),
+    ).rejects.toThrow();
+    // And the pax field's own sentence was never re-attributed to the coupon.
+    expect(screen.queryByText(/enter how many passengers are travelling/i)).not.toBeInTheDocument();
+  });
+
+  /**
+   * The mixed case — the one the per-option filter exists for, and the one
+   * that proves it is not merely redundant with skipping doomed queries. Van
+   * refuses for the COUPON; SUV is separately over its own seat cap, so its
+   * query never runs. "Every vehicle's result is erroring" is false here, yet
+   * every vehicle that could have answered the coupon question refused — so
+   * the coupon's own sentence must still reach the guest.
+   */
+  it("surfaces a bad coupon's real refusal even while another vehicle is separately over its seat cap", async () => {
+    mockTrpc({
+      'transferRoutes.list': [MIXED_CAPS],
+      'checkout.quoteTransfer': (input: unknown) => {
+        const { vehicleTypeId, couponCode, pax } = input as {
+          vehicleTypeId: number;
+          couponCode?: string;
+          pax: number;
+        };
+        if (vehicleTypeId === 2 && pax > 2) throw trpcError(seatCapMessage(2), 'BAD_REQUEST');
+        if (couponCode === 'BADCODE') throw trpcError('This coupon has expired.', 'BAD_REQUEST');
+        return vehicleTypeId === 1 ? VAN_QUOTE : SUV_QUOTE;
+      },
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await selectTypeAndRoute(user);
+    const vanRadio = await screen.findByRole('radio', { name: /^van/i });
+    await waitFor(() => expect(vanRadio).not.toBeDisabled());
+
+    // SUV out of range first, then a bad code — so the two refusals overlap.
+    fireEvent.change(screen.getByLabelText(/^passengers$/i), { target: { value: '5' } });
+    await waitFor(() => expect(screen.getByText('Seats up to 2')).toBeInTheDocument());
+    await applyCoupon(user, 'BADCODE');
+
+    expect(await screen.findByText(/this coupon has expired/i)).toBeInTheDocument();
+    // Van recovered to its coupon-free price, rather than being left
+    // "unavailable" because of someone else's cap.
+    const vanLabel = screen.getByRole('radio', { name: /^van/i }).closest('label') as HTMLElement;
+    await waitFor(() => expect(within(vanLabel).getByText('₱1,500')).toBeInTheDocument());
+  });
+});
+
+/**
+ * Final whole-branch review, Finding 5. A route's `minPayingPax` above 1 is
+ * already honoured by the server (the summary line shows its `paxCharged`,
+ * e.g. "₱800 × 2 pax = ₱1,600" for a party of one), but nothing told the
+ * guest WHY the count in the total differs from the one they typed.
+ */
+describe('TransferBookingPage — minimum paying passengers (final review, Finding 5)', () => {
+  const MIN_TWO: TransferRoutePublicRow = {
+    ...MACTAN,
+    id: 23,
+    slug: 'mactan-airport-moalboal-min-two',
+    pricingMode: 'per_person',
+    minPayingPax: 2,
+    vehiclePrices: [
+      {
+        vehicleTypeId: 1,
+        vehicleTypeName: 'Van',
+        slug: 'van',
+        oneWayPriceCentavos: 80_000,
+        dayUsePriceCentavos: 200_000,
+        defaultSeats: null,
+      },
+    ],
+  };
+
+  /** The server's own `transferSubtotalCentavos()` floor, for the mock only. */
+  function perPersonQuote(input: unknown) {
+    const { pax } = input as { pax: number };
+    const charged = Math.max(pax, 2);
+    const subtotal = 80_000 * charged;
+    const deposit = Math.round(subtotal * 0.3);
+    return {
+      subtotalCentavos: subtotal,
+      discountCentavos: 0,
+      totalCentavos: subtotal,
+      depositCentavos: deposit,
+      amountDueNowCentavos: { full: subtotal, deposit },
+      balanceCentavos: { full: 0, deposit: subtotal - deposit },
+      freeCancelHours: 24,
+      pricingMode: 'per_person' as const,
+      paxCharged: charged,
+    };
+  }
+
+  it('explains the minimum while the typed party is below it', async () => {
+    mockTrpc({
+      'transferRoutes.list': [MIN_TWO],
+      'checkout.quoteTransfer': perPersonQuote,
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await selectTypeAndRoute(user);
+
+    // The page's own default is 1 passenger, below this route's minimum.
+    const note = await screen.findByText(/minimum of 2 paying passengers/i);
+    expect(note).toBeInTheDocument();
+    // Wired to the field it is about, not floating loose on the page.
+    const paxInput = screen.getByLabelText(/^passengers$/i);
+    expect(paxInput.getAttribute('aria-describedby')?.split(' ')).toContain(note.id);
+  });
+
+  it('drops the note once the typed party reaches the minimum', async () => {
+    mockTrpc({
+      'transferRoutes.list': [MIN_TWO],
+      'checkout.quoteTransfer': perPersonQuote,
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await selectTypeAndRoute(user);
+    expect(await screen.findByText(/minimum of 2 paying passengers/i)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/^passengers$/i), { target: { value: '2' } });
+
+    await waitFor(() =>
+      expect(screen.queryByText(/minimum of 2 paying passengers/i)).not.toBeInTheDocument(),
+    );
+  });
+
+  it("says nothing on a route with today's default minimum of 1", async () => {
+    mockTrpc({
+      'transferRoutes.list': [MACTAN],
+      'checkout.quoteTransfer': quoteByVehicleTypeId,
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await selectTypeAndRoute(user);
+    await screen.findByLabelText(/^passengers$/i);
+    expect(screen.queryByText(/paying passengers/i)).not.toBeInTheDocument();
   });
 });

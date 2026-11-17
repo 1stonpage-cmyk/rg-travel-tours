@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   formatPeso,
+  quoteTransferInput,
   TRANSFER_PRODUCT_TYPES,
   type PayMode,
   type QuoteTransferResult,
@@ -98,12 +99,24 @@ import { trpc } from '@/lib/trpc';
  * at once — distinct from a route/vehicle-shape refusal (no price row for
  * one vehicle type), which can only ever hit ONE query. `allQuotesErroring`
  * below is exactly that discriminator: only when `couponCode` is set AND
- * every offered vehicle's query is erroring simultaneously does the effect
- * treat the failure as the coupon's, surface the server's own sentence
- * beside `CouponField`, and revert to a coupon-free quote.
+ * every offered vehicle that COULD have answered is erroring simultaneously
+ * does the effect treat the failure as the coupon's, surface the server's
+ * own sentence beside `CouponField`, and revert to a coupon-free quote.
+ *
+ * **"Could have answered" is load-bearing, and is the correction the final
+ * whole-branch review made (Finding 1).** This branch introduced two
+ * refusals that also hit every vehicle at once and are not the coupon's
+ * fault — the universal seat cap (`pax` over a vehicle type's
+ * `defaultSeats`, which on a single-vehicle route is trivially "every
+ * vehicle") and a `pax` outside the quote input's own bounds (clearing the
+ * Passengers box makes it `0`). Taking the vote over ALL the results let
+ * either of those delete a coupon the guest had applied and pin someone
+ * else's sentence on it. `couponCandidateResults` below therefore excludes
+ * the vehicles whose refusal the browser can already explain for itself.
  *
  * **A placeholder (stale) quote must render as loading, never as a
- * selectable but outdated price** (carried over, Critical 2).
+ * selectable but outdated price** (carried over, Critical 2; narrowed back
+ * to that exact claim by the final review's Finding 2 — see `quoteFor`).
  * `keepPreviousData` is scoped to the WHOLE query key, which includes
  * `productType` — so switching one-way → day-use without this would keep
  * showing a card's one-way total, still clickable, until the day-use quote
@@ -224,6 +237,8 @@ function prefersReducedMotion(): boolean {
 /** Ids for the page-level Passengers/Luggage fields' error messages — see this file's header note. */
 const PAGE_PAX_ERROR_ID = 'transfer-page-pax-error';
 const PAGE_LUGGAGE_ERROR_ID = 'transfer-page-luggage-count-error';
+/** The minimum-paying-passengers note's own id — see `minPayingPaxNote` below. */
+const PAGE_MIN_PAX_NOTE_ID = 'transfer-page-min-paying-pax';
 
 /**
  * Owner decision 2026-11-18 (per-person pricing plan, Decision 6), shared by
@@ -233,6 +248,22 @@ const PAGE_LUGGAGE_ERROR_ID = 'transfer-page-luggage-count-error';
  */
 function isOverSeatCap(defaultSeats: number | null, currentPax: number): boolean {
   return defaultSeats !== null && currentPax > defaultSeats;
+}
+
+/**
+ * Is this head count one `checkout.quoteTransfer` will even accept?
+ *
+ * Asked of the REAL input schema's own `pax` field rather than against two
+ * numbers copied over here (final whole-branch review, Finding 1) — a
+ * duplicated `1`/`30` pair would answer this question differently from the
+ * server the day either bound moves. The one caller that matters is the
+ * coupon-recovery discriminator below: a `pax` the wire refuses is a refusal
+ * about the Passengers box, never about the code the guest typed. It is
+ * reachable from the box itself — `Number('')` is `0`, so clearing it to
+ * retype a number passes through an out-of-bounds value every time.
+ */
+function isQuotablePax(currentPax: number): boolean {
+  return quoteTransferInput.shape.pax.safeParse(currentPax).success;
 }
 
 export default function TransferBookingPage() {
@@ -338,6 +369,32 @@ export default function TransferBookingPage() {
    * ferry details are never required (owner spec, 1E): always optional,
    * shown only when the pickup is a pier.
    */
+  /**
+   * Why the pax count in the total can exceed the one the guest typed
+   * (final whole-branch review, Finding 5).
+   *
+   * The server already charges `max(pax, minPayingPax)` on a per-person
+   * route and the summary line already shows that figure — "₱800 × 2 pax =
+   * ₱1,600" for a party of one — but nothing said WHY. This is copy only:
+   * the number comes from the route, nothing is computed here, and the note
+   * disappears the moment the typed party reaches the minimum.
+   *
+   * Gated on `per_person` as well as on the number, deliberately. A
+   * `per_vehicle` route can still carry a `min_paying_pax` above 1 — the
+   * column is independent, and `mergeTransferRoutePatch()` keeps the stored
+   * value when an admin switches a route back to per-vehicle without
+   * mentioning it — and on such a route the sentence would be actively
+   * false, because a flat rate charges for no particular number of heads.
+   */
+  const minPayingPaxNote =
+    selectedRoute !== null &&
+    selectedRoute.pricingMode === 'per_person' &&
+    selectedRoute.minPayingPax > 1 &&
+    pax < selectedRoute.minPayingPax
+      ? `This route has a minimum of ${selectedRoute.minPayingPax} paying passengers, ` +
+        `so the total charges for ${selectedRoute.minPayingPax}.`
+      : null;
+
   const ferryDetailsVisible =
     selectedRoute !== null &&
     (direction === 'forward'
@@ -347,12 +404,31 @@ export default function TransferBookingPage() {
   const vehicleOptions = selectedRoute?.vehiclePrices ?? [];
   const vehiclePricingEnabled = productType !== null && routeId !== null;
 
+  /**
+   * Whether the typed head count is one the quote procedure can answer at
+   * all — see `isQuotablePax`. Read by the `enabled` gate below and by the
+   * coupon discriminator further down, so the two cannot disagree.
+   */
+  const paxQuotable = isQuotablePax(pax);
+
   /*
    * One `quoteTransfer` per OFFERED vehicle type on the selected route —
    * see this file's header note on why `useQueries` replaces the old fixed
    * `vanQuote`/`suvQuote` pair. Results come back in the SAME order as
    * `vehicleOptions`, so `quoteResults[i]` always answers for
    * `vehicleOptions[i]`.
+   *
+   * **A query the client already knows the server will refuse is never
+   * sent** (final whole-branch review, bundled fix B): a vehicle the typed
+   * party cannot fit (`defaultSeats` says so, the same number the server
+   * caps on) and a `pax` outside the input's own bounds both refuse on every
+   * keystroke and every retry, for reasons the browser can see without
+   * asking. Not sending them costs the guest nothing — the seat-capped card
+   * renders its own "Seats up to N" reason without a quote, and an
+   * unquotable `pax` is a half-typed number — and it keeps a doomed,
+   * permanently-`isError` result from standing in for a real answer in the
+   * two places that read these results collectively (the coupon
+   * discriminator and `quoteFor`'s fallback).
    */
   const quoteResults = trpc.useQueries((t) =>
     vehicleOptions.map((option) =>
@@ -364,7 +440,11 @@ export default function TransferBookingPage() {
           couponCode,
           pax,
         },
-        { enabled: vehiclePricingEnabled, retry: false, placeholderData: keepPreviousData },
+        {
+          enabled: vehiclePricingEnabled && paxQuotable && !isOverSeatCap(option.defaultSeats, pax),
+          retry: false,
+          placeholderData: keepPreviousData,
+        },
       ),
     ),
   );
@@ -402,10 +482,12 @@ export default function TransferBookingPage() {
      * a coupon change) and `<TransferGuestDetailsForm>` unmounting and
      * wiping every field the guest already typed — reproduced directly by
      * writing this task's own re-query test. Leaving `pax` out keeps this
-     * map's entries alive across a pax edit so `quoteFor`'s (now
-     * unconditional, see its own note) fallback can serve the last good
-     * quote for exactly as long as the new pax's quote takes to resolve —
-     * self-healing the instant it does, via the merge effect below.
+     * map's entries alive across a pax edit so `quoteFor`'s fallback (no
+     * longer gated on a coupon, but no longer covering a SETTLED error
+     * either — see its own note, final review Finding 2) can serve the last
+     * good quote for exactly as long as the new pax's quote takes to
+     * resolve — self-healing the instant it does, via the merge effect
+     * below.
      */
   }, [routeId, productType]);
 
@@ -429,30 +511,59 @@ export default function TransferBookingPage() {
     });
   }, [vehicleOptions, quoteResults]);
 
-  /** Every offered vehicle's query is erroring at once — the coupon signature, not a per-vehicle shape refusal. */
+  /**
+   * The queries whose refusal could actually BE the coupon's (final
+   * whole-branch review, Finding 1).
+   *
+   * "Every offered vehicle is erroring at once" was a sound coupon
+   * signature while a bad coupon was the ONLY thing that could refuse every
+   * vehicle simultaneously. This branch added two more, neither of them the
+   * coupon's fault: the universal seat cap — trivially "every vehicle" on a
+   * single-vehicle route — and a `pax` the quote input itself refuses. So
+   * the vehicles whose refusal the browser can already explain are excluded
+   * from the vote, instead of the vote being taken over all of them:
+   *
+   *  - an out-of-bounds `pax` disqualifies EVERY vehicle at once (nothing
+   *    can answer the coupon question while the head count is unusable), and
+   *  - a seat-capped vehicle disqualifies only itself, so a route with one
+   *    fitting vehicle and one over-capacity one still reports a genuinely
+   *    bad coupon rather than going quiet.
+   *
+   * These are the same questions the `enabled` gate above asks, deliberately
+   * re-asked here rather than inferred from the results: a disqualified
+   * query is idle, and "idle" must not read as "it answered".
+   */
+  const couponCandidateResults = paxQuotable
+    ? quoteResults.filter((_result, index) => {
+        const option = vehicleOptions[index];
+        return option !== undefined && !isOverSeatCap(option.defaultSeats, pax);
+      })
+    : [];
+
+  /** Every vehicle that COULD have answered is erroring at once — the coupon signature. */
   const allQuotesErroring =
-    quoteResults.length > 0 && quoteResults.every((result) => result.isError);
+    couponCandidateResults.length > 0 && couponCandidateResults.every((result) => result.isError);
 
   /*
    * Critical 1 fix, generalized — see this file's header note. Fires only
-   * when a coupon is applied AND every offered vehicle's query is erroring
-   * at the SAME time, which is what a bad/expired coupon looks like (it
-   * fails validation identically for every vehicle type) and a
+   * when a coupon is applied AND every offered vehicle that could answer is
+   * erroring at the SAME time, which is what a bad/expired coupon looks
+   * like (it fails validation identically for every vehicle type) and a
    * route/vehicle-shape refusal (no price row for one vehicle) never does.
-   * The first query's error is read as the representative message — a
+   * The first candidate's error is read as the representative message — a
    * coupon refusal is deterministic across every vehicle, so they never
    * actually disagree.
    */
   useEffect(() => {
     if (couponCode && allQuotesErroring) {
-      const representative = quoteResults[0];
+      const representative = couponCandidateResults[0];
       setCouponError(
         firstValidationMessage(representative?.error) ??
           describeCheckoutError(representative?.error),
       );
       setCouponCode(undefined);
     }
-  }, [couponCode, allQuotesErroring, quoteResults]);
+  }, [couponCode, allQuotesErroring, couponCandidateResults]);
 
   /*
    * `undefined` on either an in-flight load OR a settled error that is NOT a
@@ -476,17 +587,29 @@ export default function TransferBookingPage() {
    * `!result.isSuccess` closes it regardless of which non-final state the
    * query is passing through.
    *
-   * **No longer gated on "a coupon is applied" (owner decision 2026-11-18,
-   * widened from Critical 1's original scope).** A `pax` edit re-keys every
-   * offered vehicle's query exactly the same way a coupon edit does, and
-   * the selected vehicle's form must survive that transition too — see the
-   * `lastGoodQuotes` reset effect's own note on why `pax` is deliberately
-   * NOT one of the triggers that clears this map, which is what makes an
-   * unconditional fallback here safe rather than a route/product mix-up.
-   * A vehicle with no price row at all (genuinely unavailable) is
+   * **Not gated on "a coupon is applied" for the IN-FLIGHT case (owner
+   * decision 2026-11-18, widened from Critical 1's original scope).** A
+   * `pax` edit re-keys every offered vehicle's query exactly the same way a
+   * coupon edit does, and the selected vehicle's form must survive that
+   * transition too — see the `lastGoodQuotes` reset effect's own note on why
+   * `pax` is deliberately NOT one of the triggers that clears this map,
+   * which is what makes a fallback here safe rather than a route/product
+   * mix-up. A vehicle with no price row at all (genuinely unavailable) is
    * unaffected either way: it has no entry in `lastGoodQuotes` to fall back
    * to, so it still renders "not available" — see the "permanently
    * unavailable vehicle" test.
+   *
+   * **But a SETTLED error ends the fallback (final whole-branch review,
+   * Finding 2).** The widening above covered one state too many. `retry:
+   * false` means an `isError` result will not resolve on its own: nothing is
+   * in flight, there is no newer answer coming, and serving the last good
+   * quote there publishes a stale price as a current, selectable one —
+   * exactly what this file's header forbids. So the fallback now covers
+   * only "not settled yet" (pending or placeholder), plus the one settled
+   * case that genuinely self-heals: a coupon refusal, which the effect above
+   * answers by dropping `couponCode`, re-keying every query within a render
+   * or two. Once no coupon is applied, a settled error means unavailable,
+   * full stop.
    */
   function quoteFor(typeId: number): QuoteTransferResult | undefined {
     const index = vehicleOptions.findIndex((option) => option.vehicleTypeId === typeId);
@@ -494,6 +617,7 @@ export default function TransferBookingPage() {
     const result = quoteResults[index];
     if (!result) return undefined;
     if (result.isSuccess) return result.data;
+    if (result.isError && !couponCode) return undefined;
     return lastGoodQuotes[typeId];
   }
 
@@ -714,11 +838,29 @@ export default function TransferBookingPage() {
                     required
                     value={pax}
                     onChange={(e) => setPax(Number(e.target.value))}
-                    aria-describedby={holdFieldErrors?.pax ? PAGE_PAX_ERROR_ID : undefined}
+                    aria-describedby={
+                      [
+                        holdFieldErrors?.pax ? PAGE_PAX_ERROR_ID : null,
+                        minPayingPaxNote ? PAGE_MIN_PAX_NOTE_ID : null,
+                      ]
+                        .filter(Boolean)
+                        .join(' ') || undefined
+                    }
                     aria-invalid={holdFieldErrors?.pax ? true : undefined}
                     className="tap-target"
                   />
                   <FieldError id={PAGE_PAX_ERROR_ID} message={holdFieldErrors?.pax} />
+                  {/*
+                   * Finding 5 — the same `text-muted-foreground text-xs`
+                   * hint shape `TransferGuestDetailsForm` already uses for
+                   * its "this trip touches the airport" line, not a new
+                   * visual pattern.
+                   */}
+                  {minPayingPaxNote && (
+                    <p id={PAGE_MIN_PAX_NOTE_ID} className="text-muted-foreground text-xs">
+                      {minPayingPaxNote}
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="transfer-luggage-count">Luggage (bags)</Label>
@@ -766,25 +908,31 @@ export default function TransferBookingPage() {
                 <div className="grid gap-3 sm:grid-cols-2">
                   {vehicleOptions.map((option, index) => {
                     const result = quoteResults[index];
-                    const isLoadingOption = Boolean(result?.isPending || result?.isPlaceholderData);
-                    const quote = quoteFor(option.vehicleTypeId);
                     /*
                      * Owner decision 2026-11-18 (per-person pricing plan,
                      * Decision 6): a vehicle the party doesn't fit stays
                      * VISIBLE and disabled, with a reason — never silently
-                     * removed from the list. Seat cap is checked first, so a
-                     * party too big for this vehicle sees "Seats up to N"
-                     * rather than the generic "Not available for this
-                     * route" the undefined-quote branch would also produce
-                     * (the server itself refuses the same quote once pax
-                     * exceeds the cap, so both branches would otherwise
-                     * agree on "unavailable" — this just picks the more
-                     * useful of the two sentences).
+                     * removed from the list. Seat cap is checked BEFORE the
+                     * loading state, not after (final whole-branch review,
+                     * bundled fix B): this option's query is not sent at all
+                     * while the party is over its cap, which leaves the
+                     * result sitting on `keepPreviousData`'s placeholder —
+                     * i.e. reading as "loading" forever — so a capped card
+                     * would show an endless skeleton instead of the reason
+                     * the guest needs. Checking the cap first also picks the
+                     * more useful of two true sentences: the server refuses
+                     * the same quote once pax exceeds the cap, so the
+                     * undefined-quote branch would otherwise say the vaguer
+                     * "Not available for this route".
                      */
-                    const unavailableReason: string | null = isLoadingOption
-                      ? null
-                      : isOverSeatCap(option.defaultSeats, pax)
-                        ? `Seats up to ${option.defaultSeats}`
+                    const seatCapped = isOverSeatCap(option.defaultSeats, pax);
+                    const isLoadingOption =
+                      !seatCapped && Boolean(result?.isPending || result?.isPlaceholderData);
+                    const quote = quoteFor(option.vehicleTypeId);
+                    const unavailableReason: string | null = seatCapped
+                      ? `Seats up to ${option.defaultSeats}`
+                      : isLoadingOption
+                        ? null
                         : quote === undefined
                           ? 'Not available for this route'
                           : null;

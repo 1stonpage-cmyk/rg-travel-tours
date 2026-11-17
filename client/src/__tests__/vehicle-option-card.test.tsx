@@ -155,6 +155,33 @@ describe('VehicleOptionCard', () => {
     expect(screen.getByText('₱1,500')).toBeInTheDocument();
   });
 
+  /**
+   * Final whole-branch review, bundled fix A. `unavailableReason={null}` is
+   * the caller saying "nothing I know of stops this option", which is NOT
+   * the same claim as "there is a quote to render" — and this component used
+   * to treat it as both, reaching for `quote!.totalCentavos` on a
+   * `quote === undefined` it had been told to ignore. No caller passes that
+   * pair today; nothing in the prop types forbade it either. The rule is
+   * back to what it was before the seat-cap prop existed: no quote and not
+   * loading always means the unavailable state, full stop.
+   */
+  it('shows the unavailable state, not a crash, when unavailableReason is null AND there is no quote', () => {
+    render(
+      <VehicleOptionCard
+        vehicleTypeId={3}
+        vehicleTypeName="Coaster"
+        quote={undefined}
+        isLoading={false}
+        isSelected={false}
+        onSelect={() => {}}
+        payMode="deposit"
+        unavailableReason={null}
+      />,
+    );
+    expect(screen.getByRole('radio')).toBeDisabled();
+    expect(screen.getByText(/not available for this route/i)).toBeInTheDocument();
+  });
+
   it('renders a resolved error message describing the radio', () => {
     render(
       <VehicleOptionCard
