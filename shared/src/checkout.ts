@@ -89,8 +89,7 @@ export const guestPhoneSchema = z
     z
       .string()
       .refine(
-        (value) =>
-          /^(09\d{9}|\+639\d{9})$/.test(value) || INTERNATIONAL_PHONE_PATTERN.test(value),
+        (value) => /^(09\d{9}|\+639\d{9})$/.test(value) || INTERNATIONAL_PHONE_PATTERN.test(value),
         'Enter a valid mobile number, like 0917 123 4567 or +1 555 123 4567.',
       ),
   )
