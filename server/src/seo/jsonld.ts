@@ -298,7 +298,19 @@ export interface TransferServiceInput {
   siteUrl: string;
   /** `"Cebu, Philippines"` — matches `travelAgencyNode`'s own literal. */
   areaServed: string;
-  /** One Offer per OFFERED vehicle type, already filtered to priced+sellable. */
+  /**
+   * Today's one caller (`resolveTransferRoute`) passes at most one entry: a
+   * single stable "from" offer built from `TransferRouteSeoRow.cheapestOneWayCentavos`
+   * — the lowest CATALOGUED price across every priced vehicle type on the
+   * route, deliberately NOT filtered by live fleet sellability (see that
+   * field's own doc comment in `seo/resolvers.ts` for why: a van going
+   * `on_trip`/`for_repair` must never flip this page's indexed price on and
+   * off between crawls). Empty when the route has no price row at all. The
+   * shape stays a generic array rather than a single optional field so a
+   * later caller MAY publish one Offer per vehicle type — but any such
+   * caller must keep the same stability rule, never re-introduce
+   * `sellableVehiclesByType()` here.
+   */
   offers: { name: string; priceCentavos: number }[];
 }
 
