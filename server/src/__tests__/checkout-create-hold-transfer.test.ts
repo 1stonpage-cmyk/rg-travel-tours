@@ -667,7 +667,7 @@ describeWithDb('checkout.createHoldTransfer', () => {
     );
 
     expect(messagesAt(error, 'lead.phone')).toEqual([
-      'Enter a valid PH mobile number, like 0917 123 4567',
+      'Enter a valid mobile number, like 0917 123 4567 or +1 555 123 4567.',
     ]);
     expect(messagesAt(error, 'lead.name')).toEqual([]);
     expect(messagesAt(error, 'lead.email')).toEqual([]);
