@@ -48,7 +48,7 @@
  */
 import { initTRPC, TRPCError } from '@trpc/server';
 import type { Context } from './context';
-import type { ZodError } from 'zod';
+import { ZodError } from 'zod';
 import { PASSWORD_CHANGE_REQUIRED, type AdminRole, flattenZodError } from '@rg/shared';
 import { requireCustomer } from './middleware/require-customer';
 import { requireDriver } from './middleware/require-driver';
