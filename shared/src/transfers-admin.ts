@@ -39,7 +39,7 @@
  * service.
  */
 import { z } from 'zod';
-import { civilDateSchema, guestPhoneSchema, phPhoneSchema } from './checkout';
+import { civilDateSchema, guestPhoneSchema } from './checkout';
 import { TRANSFER_PLACE_TYPES, TRANSFER_PRICING_MODES, TRANSFER_PRODUCT_TYPES } from './transfers';
 import type { TransferPlaceType, TransferPricingMode } from './transfers';
 import { MAX_CENTAVOS } from './tours-admin';
