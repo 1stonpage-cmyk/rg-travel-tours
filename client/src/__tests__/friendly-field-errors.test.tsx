@@ -258,7 +258,9 @@ describe('Checkout — createHold validation errors', () => {
       expect(within(form).getByText(FORM_MESSAGE)).toBeInTheDocument();
     });
     // Nothing claimed it belonged to a field.
-    expect(within(form).getByLabelText(/whatsapp.*mobile number/i)).not.toHaveAttribute('aria-invalid');
+    expect(within(form).getByLabelText(/whatsapp.*mobile number/i)).not.toHaveAttribute(
+      'aria-invalid',
+    );
     expectNoRawJson(form);
   });
 

@@ -1,5 +1,10 @@
 import { useState } from 'react';
-import { GUEST_PHONE_PLACEHOLDER, formatPeso, isLikelyInternationalPhone, type PayMode } from '@rg/shared';
+import {
+  GUEST_PHONE_PLACEHOLDER,
+  formatPeso,
+  isLikelyInternationalPhone,
+  type PayMode,
+} from '@rg/shared';
 import FieldError from '@/components/common/FieldError';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -128,7 +133,10 @@ export default function GuestDetails({
             value={phoneValue}
             onChange={(e) => setPhoneValue(e.target.value)}
             aria-describedby={
-              [leadPhoneError ? LEAD_PHONE_ERROR_ID : null, showIntlNote ? LEAD_PHONE_NOTE_ID : null]
+              [
+                leadPhoneError ? LEAD_PHONE_ERROR_ID : null,
+                showIntlNote ? LEAD_PHONE_NOTE_ID : null,
+              ]
                 .filter(Boolean)
                 .join(' ') || undefined
             }

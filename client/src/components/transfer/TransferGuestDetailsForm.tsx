@@ -1,5 +1,11 @@
 import { useState } from 'react';
-import { GUEST_PHONE_PLACEHOLDER, formatPeso, isLikelyInternationalPhone, type PayMode, type TransferProductType } from '@rg/shared';
+import {
+  GUEST_PHONE_PLACEHOLDER,
+  formatPeso,
+  isLikelyInternationalPhone,
+  type PayMode,
+  type TransferProductType,
+} from '@rg/shared';
 import ConsentCheckbox from '@/components/checkout/ConsentCheckbox';
 import FieldError from '@/components/common/FieldError';
 import { Input } from '@/components/ui/input';
@@ -415,7 +421,10 @@ export default function TransferGuestDetailsForm({
             value={phoneValue}
             onChange={(e) => setPhoneValue(e.target.value)}
             aria-describedby={
-              [leadPhoneError ? LEAD_PHONE_ERROR_ID : null, showIntlNote ? LEAD_PHONE_NOTE_ID : null]
+              [
+                leadPhoneError ? LEAD_PHONE_ERROR_ID : null,
+                showIntlNote ? LEAD_PHONE_NOTE_ID : null,
+              ]
                 .filter(Boolean)
                 .join(' ') || undefined
             }
