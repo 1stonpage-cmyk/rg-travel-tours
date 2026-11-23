@@ -88,6 +88,53 @@ describeWithDb('page resolution', () => {
     expect((await resolvePage('/')).ogImage).toBe('http://localhost:5180/hero/hero-cebu-1920.jpg');
   });
 
+  /**
+   * Task: SEO fixes, 2026-11-24. `/transfer` is the MAIN booking page for a
+   * transfers-only launch (`settings.show_tours = false`), but used to be
+   * permanently `noindex` via `appSurfaceMeta` — see the removed QA-1/
+   * BUG-116 entries this task deletes from `NOINDEX_PATH_PREFIXES` and
+   * `APP_SURFACE_COPY`. It now gets a real resolver like any other
+   * indexable route.
+   *
+   * `content_unverified` has to be false for the `robots` assertion, same
+   * reasoning as the `/photo-credits` and `/tours/:slug` tests above: the
+   * seeded default is true, and the site-wide gate in `resolvePage` forces
+   * every route to `noindex,nofollow` regardless of what its own resolver
+   * asked for.
+   */
+  it('/transfer resolves to a real, indexable page', async () => {
+    await getDb()
+      .update(settings)
+      .set({ value: false })
+      .where(eq(settings.key, 'content_unverified'));
+    resetContentUnverifiedCache();
+    try {
+      const meta = await resolvePage('/transfer');
+      expect(meta.status).toBe(200);
+      expect(meta.robots).toBe('index,follow');
+      expect(meta.title.length).toBeLessThanOrEqual(60);
+      expect(meta.description.length).toBeGreaterThanOrEqual(140);
+      expect(meta.description.length).toBeLessThanOrEqual(160);
+      expect(meta.canonical).toBe(absoluteUrl('/transfer'));
+      expect(
+        meta.jsonLd.some((n) => (n as Record<string, unknown>)['@type'] === 'TravelAgency'),
+      ).toBe(true);
+    } finally {
+      await getDb()
+        .update(settings)
+        .set({ value: true })
+        .where(eq(settings.key, 'content_unverified'));
+      resetContentUnverifiedCache();
+    }
+  });
+
+  it('/transfer with a query string canonicals to the bare path', async () => {
+    // resolvePage is already called with req.path / url.pathname, which
+    // strips the query before this function ever sees it — assert directly.
+    const meta = await resolvePage('/transfer');
+    expect(meta.canonical).not.toContain('?');
+  });
+
   it('gives /tours its own title and the site description', async () => {
     const meta = await resolvePage('/tours');
     expect(meta.status).toBe(200);
@@ -341,9 +388,6 @@ describe('app surfaces (pure)', () => {
     ['/checkout/oslob-whale-shark-tumalog-falls', 'Checkout'],
     ['/booking', 'Booking status'],
     ['/booking/RG-7KQ4M9', 'Booking status'],
-    // QA-1 (BUG-116 pattern): /transfer is a real public SPA route (T14)
-    // that had no entry here either, so it 404'd the same way.
-    ['/transfer', 'Book a transfer'],
   ] as const;
 
   it.each(cases)('%s is 200, noindex and titled as its own place', (path, titleStart) => {
@@ -367,7 +411,10 @@ describe('app surfaces (pure)', () => {
   });
 
   it('is null for anything that is not an app surface, so the route table runs unchanged', () => {
-    for (const path of ['/', '/tours', '/tours/some-slug', '/privacy', '/nope']) {
+    // SEO fixes, 2026-11-24: /transfer left NOINDEX_PATH_PREFIXES — it is
+    // the main booking page, not an app surface — so it belongs in this
+    // list now, not in `cases` above.
+    for (const path of ['/', '/tours', '/tours/some-slug', '/privacy', '/nope', '/transfer']) {
       expect(appSurfaceMeta(path), path).toBeNull();
     }
   });

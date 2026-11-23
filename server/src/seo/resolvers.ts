@@ -444,16 +444,6 @@ const APP_SURFACE_COPY: Record<
     title: `${APP_SURFACE_TITLES['/booking']} | ${BRAND}`,
     description: `Track your ${BRAND} booking.`,
   },
-  /*
-   * QA-1 (same BUG-116 pattern): `/transfer` (Task T14) is a real public SPA
-   * route — a guest's own flow, no auth, no database-backed content — that
-   * was never added here either, so it 404'd the same way `/checkout` and
-   * `/booking` did.
-   */
-  '/transfer': {
-    title: `${APP_SURFACE_TITLES['/transfer']} | ${BRAND}`,
-    description: `Book a private van or SUV transfer with ${BRAND}.`,
-  },
 };
 
 /**
@@ -534,6 +524,34 @@ const resolveHome: Resolver = async () => {
     // The ONLY route that renders HeroSection, and so the only one that may
     // ask the browser to fetch the hero photo early.
     preload: HERO_PRELOAD,
+    status: 200,
+    robots: 'index,follow',
+  };
+};
+
+/**
+ * `/transfer` (task: SEO fixes, 2026-11-24). Used to be an `appSurfaceMeta`
+ * entry — permanently `noindex` — even though it is the MAIN booking page
+ * for a transfers-only launch (`settings.show_tours = false`). A real
+ * resolver with a title/description/JSON-LD and `index,follow` (still
+ * subject to the site-wide `content_unverified` gate `resolvePage` applies
+ * at the end, exactly like every other indexable route).
+ */
+const resolveTransfer: Resolver = async () => {
+  const { siteSeo, hero } = await readSiteBlocks();
+  const ogImage = firstImageUrl(siteSeo.ogImage, hero.imagePath);
+  const { agency } = await buildSiteGraph(siteSeo.description, ogImage);
+
+  return {
+    title: `${STATIC_PUBLIC_TITLES['/transfer']} | ${BRAND}`,
+    description:
+      'Private airport, pier and island transfers across Cebu with TravelSugbo. ' +
+      'Fixed prices, licensed drivers, pay online or by GCash. Book your pickup in minutes.',
+    canonical: absoluteUrl('/transfer'),
+    ogImage,
+    ogType: 'website',
+    jsonLd: [agency],
+    preload: null,
     status: 200,
     robots: 'index,follow',
   };
@@ -774,6 +792,7 @@ export interface RouteEntry {
  */
 export const ROUTES: RouteEntry[] = [
   { pattern: '/', resolve: resolveHome },
+  { pattern: '/transfer', resolve: resolveTransfer },
   { pattern: '/tours', resolve: resolveToursIndex },
   { pattern: '/tours/:slug', resolve: resolveTour },
   { pattern: '/packages/:slug', resolve: resolvePackage },

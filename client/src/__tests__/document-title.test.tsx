@@ -70,6 +70,7 @@ function renderPublicAt(path: string) {
             <Route index element={<p>home body</p>} />
             <Route path="terms" element={<p>terms body</p>} />
             <Route path="tours/:slug" element={<p>tour body</p>} />
+            <Route path="transfer" element={<p>transfer body</p>} />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -109,6 +110,19 @@ describe('document.title', () => {
     renderPublicAt('/terms');
     expect(document.title).toBe(`${STATIC_PUBLIC_TITLES['/terms']} | ${SITE.name}`);
     expect(document.title).toBe('Terms of Service | TravelSugbo');
+  });
+
+  /**
+   * Task: SEO fixes, 2026-11-24. `/transfer`'s title used to live in
+   * `APP_SURFACE_TITLES`, which nothing client-side ever read — `PublicLayout`
+   * only consults `STATIC_PUBLIC_TITLES` — so a client-side navigation to
+   * `/transfer` never re-asserted a title at all. Moving the entry to
+   * `STATIC_PUBLIC_TITLES` (the map this component actually reads) fixes
+   * that for free.
+   */
+  it('names /transfer from STATIC_PUBLIC_TITLES, now that PublicLayout actually reads it', () => {
+    renderPublicAt('/transfer');
+    expect(document.title).toBe(`${STATIC_PUBLIC_TITLES['/transfer']} | ${SITE.name}`);
   });
 
   it('PublicLayout claims no title on a route whose page owns it: home', () => {

@@ -151,6 +151,19 @@ describe('robotsTagValue', () => {
     expect(isPrivatePath('/portal-tour')).toBe(false);
     expect(isPrivatePath('/tours')).toBe(false);
   });
+
+  /**
+   * Task: SEO fixes, 2026-11-24. `/transfer` left `NOINDEX_PATH_PREFIXES` —
+   * it is the main booking page for a transfers-only launch, not an app
+   * surface — so it must no longer be a private path.
+   */
+  it('/transfer is no longer a private path', () => {
+    expect(isPrivatePath('/transfer')).toBe(false);
+  });
+
+  it('/transfers/:slug is never caught by the /transfer-less prefix list', () => {
+    expect(isPrivatePath('/transfers/cebu-airport-to-moalboal')).toBe(false);
+  });
 });
 
 describe('XML helpers', () => {
@@ -178,10 +191,11 @@ describeWithDb('buildSitemap', () => {
     resetContentUnverifiedCache();
   });
 
-  it('lists home, /tours, the four legal pages and every active tour and package', async () => {
+  it('lists home, /transfer, /tours, the four legal pages and every active tour and package', async () => {
     const xml = await buildSitemap();
 
     expect(xml).toContain(`<loc>${absoluteUrl('/')}</loc>`);
+    expect(xml).toContain(`<loc>${absoluteUrl('/transfer')}</loc>`);
     expect(xml).toContain(`<loc>${absoluteUrl('/tours')}</loc>`);
     expect(xml).toContain(`<loc>${absoluteUrl('/privacy')}</loc>`);
     expect(xml).toContain(`<loc>${absoluteUrl('/terms')}</loc>`);
@@ -192,12 +206,23 @@ describeWithDb('buildSitemap', () => {
 
     // Both detail-page halves (Week 7 plan, Tasks 2 and 3): every active
     // tour's AND package's detail URL is now in the sitemap, not just the
-    // six static routes above.
+    // seven static routes above.
     const detail = await detailUrls();
     expect(detail.length).toBeGreaterThan(0);
     for (const entry of detail) expect(xml).toContain(`<loc>${entry.loc}</loc>`);
 
-    expect(xml.match(/<loc>/g)).toHaveLength(6 + detail.length);
+    expect(xml.match(/<loc>/g)).toHaveLength(7 + detail.length);
+  });
+
+  /**
+   * Task: SEO fixes, 2026-11-24. `/transfer` is the main booking page for a
+   * transfers-only launch, listed unconditionally (not gated on
+   * `show_tours`, unlike `/tours`) — and only because `resolveTransfer`
+   * itself answers `index,follow` (this file's own first rule).
+   */
+  it('lists /transfer, and only while its own resolver says index,follow', async () => {
+    const urls = (await collectSitemapUrls()).map((u) => u.loc);
+    expect(urls).toContain(absoluteUrl('/transfer'));
   });
 
   it('lists both tour and package detail URLs now (2D / D5 resolved)', async () => {
@@ -275,8 +300,11 @@ describeWithDb('buildSitemap', () => {
       expect(locs).not.toContain(absoluteUrl('/tours'));
       expect(locs.filter((loc) => loc.includes('/tours/'))).toEqual([]);
 
-      // Everything else stays: home and the four legal pages.
+      // Everything else stays: home, /transfer (unconditional — it is the
+      // transfers-launch product itself, not gated by this flag) and the
+      // four legal pages.
       expect(locs).toContain(absoluteUrl('/'));
+      expect(locs).toContain(absoluteUrl('/transfer'));
       for (const path of ['/privacy', '/terms', '/refund-policy', '/cookies']) {
         expect(locs, path).toContain(absoluteUrl(path));
       }
@@ -326,15 +354,15 @@ describeWithDb('buildSitemap', () => {
 
     // Every lastmod the document carries is in the W3C form, not just that
     // one. Every active tour and package has a NOT NULL updated_at too
-    // (schema.ts). Only home and /tours carry a lastmod among the six static
-    // routes now — the four legal pages are static content with no
-    // `updated_at` to read, so their `<lastmod>` is omitted rather than
+    // (schema.ts). Only home, /transfer and /tours carry a lastmod among the
+    // seven static routes now — the four legal pages are static content with
+    // no `updated_at` to read, so their `<lastmod>` is omitted rather than
     // invented (seo/sitemap.ts's own "read, never invented" rule).
     const detailCount = (await detailUrls()).length;
     const lastmods = [...(await buildSitemap()).matchAll(/<lastmod>([^<]+)<\/lastmod>/g)].map(
       (match) => match[1],
     );
-    expect(lastmods).toHaveLength(2 + detailCount);
+    expect(lastmods).toHaveLength(3 + detailCount);
     for (const value of lastmods) {
       expect(value).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+00:00$/);
     }
@@ -353,7 +381,7 @@ describeWithDb('buildSitemap', () => {
   it('is well-formed XML with a urlset namespace', async () => {
     const xml = await buildSitemap();
     const detailCount = (await detailUrls()).length;
-    const urlCount = 6 + detailCount;
+    const urlCount = 7 + detailCount;
 
     expect(xml.startsWith('<?xml version="1.0" encoding="UTF-8"?>\n')).toBe(true);
     expect(xml).toContain('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">');

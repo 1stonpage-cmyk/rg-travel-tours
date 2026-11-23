@@ -168,6 +168,12 @@ function buildPackageDetailUrls(rows: SitemapRows): SitemapEntry[] {
  * own rule is "read, never invented" — so `lastmod` is omitted for all four (`null`; the renderer
  * below drops the `<lastmod>` tag entirely rather than emit a guessed date).
  *
+ * `/transfer` (SEO fixes task, 2026-11-24) is listed UNCONDITIONALLY,
+ * unlike `/tours` — it is the transfers-launch product itself, so there is
+ * no flag that ever takes it off sale, and `resolveTransfer` always answers
+ * `index,follow`. Its `lastmod` reuses `settingsNewest`, the same figure
+ * home uses, since nothing `settings`-shaped is specific to this one page.
+ *
  * `show_tours` being off (transfers-launch plan, Task T15; extended to
  * packages by owner decision 2026-11-10, Decision 2) drops BOTH tour
  * halves — `/tours` and every `/tours/:slug` — AND every package detail
@@ -181,7 +187,13 @@ export async function collectSitemapUrls(): Promise<SitemapEntry[]> {
   const [rows, showTours] = await Promise.all([loadSitemapRows(), readShowTours()]);
   const settingsNewest = newest(rows.settingRows.map((row) => row.updatedAt));
 
-  const urls: SitemapEntry[] = [{ loc: absoluteUrl('/'), lastmod: settingsNewest }];
+  const urls: SitemapEntry[] = [
+    { loc: absoluteUrl('/'), lastmod: settingsNewest },
+    // `/transfer` (SEO fixes task, 2026-11-24) — unconditional, unlike
+    // `/tours` below: it is the transfers-launch product itself, not gated
+    // by `show_tours`, and `resolveTransfer` always answers `index,follow`.
+    { loc: absoluteUrl('/transfer'), lastmod: settingsNewest },
+  ];
 
   if (showTours) {
     urls.push({

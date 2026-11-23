@@ -42,8 +42,12 @@ import type { SiteEnv } from '../env';
  * surfaces this comment used to say would land here: a thin-content,
  * personal-data noindex for the same reasons as the other three, even
  * though — unlike them — both are genuinely public, unauthenticated pages.
- * `/transfer` (QA-1, same BUG-116 pattern) joined them for the identical
- * reason: a real public SPA route with no database-backed content.
+ *
+ * `/transfer` lived here too (QA-1, same BUG-116 pattern) until the SEO
+ * fixes task (2026-11-24) removed it: it is the MAIN booking page for a
+ * transfers-only launch, not a thin-content app surface, and now gets its
+ * own real resolver (`resolveTransfer`, `seo/resolvers.ts`) with
+ * `index,follow`.
  */
 export const NOINDEX_PATH_PREFIXES = [
   '/admin',
@@ -51,7 +55,6 @@ export const NOINDEX_PATH_PREFIXES = [
   '/portal',
   '/checkout',
   '/booking',
-  '/transfer',
 ] as const;
 
 /**

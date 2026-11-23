@@ -61,15 +61,9 @@ export const APP_SURFACE_TITLES = {
    * (`/checkout` holds a lead guest's name, email and phone; `/booking`
    * looks a stay up by reference). "My booking" is already `/portal`'s
    * title, hence "Booking status" rather than a second "My booking".
-   *
-   * QA-1 (same BUG-116 pattern): `/transfer` (Task T14, transfers-launch
-   * plan) is the identical shape — a real, public, unauthenticated SPA route
-   * with no database-backed content — and was missed when it was added, so
-   * it 404'd the same way. Same fix, same reasoning.
    */
   '/checkout': 'Checkout',
   '/booking': 'Booking status',
-  '/transfer': 'Book a transfer',
 } as const;
 
 /**
@@ -81,6 +75,15 @@ export const APP_SURFACE_TITLES = {
  */
 export const STATIC_PUBLIC_TITLES = {
   '/tours': 'Cebu Day Tours',
+  /*
+   * SEO fixes task (2026-11-24). `/transfer` used to live in
+   * `APP_SURFACE_TITLES` above (QA-1/BUG-116), which nothing client-side
+   * ever read — `PublicLayout`'s `publicTitle()` only consults this map —
+   * so a client-side navigation to `/transfer` never re-asserted a title at
+   * all. It belongs here: a real public booking page with a fixed
+   * navigational name, exactly like `/tours`.
+   */
+  '/transfer': 'Book a Private Transfer in Cebu',
   '/privacy': 'Privacy Notice',
   '/terms': 'Terms of Service',
   '/refund-policy': 'Cancellation & Refund Policy',
