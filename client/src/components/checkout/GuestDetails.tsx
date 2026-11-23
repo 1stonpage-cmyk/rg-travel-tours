@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { AlertTriangle } from 'lucide-react';
 import {
   GUEST_PHONE_PLACEHOLDER,
   formatPeso,
@@ -10,6 +11,29 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { getFieldErrors, getNestedFieldError } from '@/lib/field-errors';
 import { cn } from '@/lib/utils';
+
+/**
+ * The amber "something's wrong here" chrome a Task 6 pre-submit (or server)
+ * refusal puts on an invalid field — an amber border plus a small warning
+ * glyph inside the input's own wrapper, never red (CLAUDE.md). This is
+ * ATTENTION chrome, distinct from the MESSAGE beneath the field, which stays
+ * `text-brand-error`/`FieldError`'s own dark blue-grey — see
+ * `ErrorSummary.tsx`'s header note on why amber-for-attention and
+ * blue-grey-for-the-sentence are two different jobs, not a contradiction.
+ */
+function invalidInputClassName(hasError: boolean): string {
+  return cn('tap-target', hasError && 'border-brand-warning pr-9');
+}
+
+function WarningIcon({ show }: { show: boolean }) {
+  if (!show) return null;
+  return (
+    <AlertTriangle
+      aria-hidden="true"
+      className="text-brand-warning pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2"
+    />
+  );
+}
 
 type Props = {
   payMode: PayMode;
@@ -94,55 +118,64 @@ export default function GuestDetails({
     <div className="space-y-5">
       <div className="space-y-1.5">
         <Label htmlFor="checkout-name">Full name</Label>
-        <Input
-          id="checkout-name"
-          name="name"
-          required
-          autoComplete="name"
-          aria-describedby={leadNameError ? LEAD_NAME_ERROR_ID : undefined}
-          aria-invalid={leadNameError ? true : undefined}
-          className="tap-target"
-        />
+        <div className="relative">
+          <Input
+            id="checkout-name"
+            name="name"
+            required
+            autoComplete="name"
+            aria-describedby={leadNameError ? LEAD_NAME_ERROR_ID : undefined}
+            aria-invalid={leadNameError ? true : undefined}
+            className={invalidInputClassName(Boolean(leadNameError))}
+          />
+          <WarningIcon show={Boolean(leadNameError)} />
+        </div>
         <FieldError id={LEAD_NAME_ERROR_ID} message={leadNameError ?? undefined} />
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-1.5">
           <Label htmlFor="checkout-email">Email</Label>
-          <Input
-            id="checkout-email"
-            name="email"
-            type="email"
-            required
-            autoComplete="email"
-            aria-describedby={leadEmailError ? LEAD_EMAIL_ERROR_ID : undefined}
-            aria-invalid={leadEmailError ? true : undefined}
-            className="tap-target"
-          />
+          <div className="relative">
+            <Input
+              id="checkout-email"
+              name="email"
+              type="email"
+              required
+              autoComplete="email"
+              aria-describedby={leadEmailError ? LEAD_EMAIL_ERROR_ID : undefined}
+              aria-invalid={leadEmailError ? true : undefined}
+              className={invalidInputClassName(Boolean(leadEmailError))}
+            />
+            <WarningIcon show={Boolean(leadEmailError)} />
+          </div>
           <FieldError id={LEAD_EMAIL_ERROR_ID} message={leadEmailError ?? undefined} />
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="checkout-phone">WhatsApp / mobile number</Label>
-          <Input
-            id="checkout-phone"
-            name="phone"
-            type="tel"
-            required
-            autoComplete="tel"
-            placeholder={GUEST_PHONE_PLACEHOLDER}
-            value={phoneValue}
-            onChange={(e) => setPhoneValue(e.target.value)}
-            aria-describedby={
-              [
-                leadPhoneError ? LEAD_PHONE_ERROR_ID : null,
-                showIntlNote ? LEAD_PHONE_NOTE_ID : null,
-              ]
-                .filter(Boolean)
-                .join(' ') || undefined
-            }
-            aria-invalid={leadPhoneError ? true : undefined}
-            className="tap-target"
-          />
+          <div className="relative">
+            <Input
+              id="checkout-phone"
+              name="phone"
+              type="tel"
+              required
+              autoComplete="tel"
+              placeholder={GUEST_PHONE_PLACEHOLDER}
+              value={phoneValue}
+              onChange={(e) => setPhoneValue(e.target.value)}
+              aria-describedby={
+                [
+                  leadPhoneError ? LEAD_PHONE_ERROR_ID : null,
+                  showIntlNote ? LEAD_PHONE_NOTE_ID : null,
+                ]
+                  .filter(Boolean)
+                  .join(' ') || undefined
+              }
+              aria-invalid={leadPhoneError ? true : undefined}
+              className={invalidInputClassName(Boolean(leadPhoneError))}
+            />
+            <WarningIcon show={Boolean(leadPhoneError)} />
+          </div>
           <FieldError id={LEAD_PHONE_ERROR_ID} message={leadPhoneError ?? undefined} />
           {showIntlNote && (
             <p id={LEAD_PHONE_NOTE_ID} className="text-muted-foreground text-xs">
@@ -154,40 +187,57 @@ export default function GuestDetails({
 
       <div className="space-y-1.5">
         <Label htmlFor="checkout-pickup">Pickup location (optional)</Label>
-        <Input
-          id="checkout-pickup"
-          name="pickup"
-          aria-describedby={pickupError ? PICKUP_ERROR_ID : undefined}
-          aria-invalid={pickupError ? true : undefined}
-          className="tap-target"
-        />
+        <div className="relative">
+          <Input
+            id="checkout-pickup"
+            name="pickup"
+            aria-describedby={pickupError ? PICKUP_ERROR_ID : undefined}
+            aria-invalid={pickupError ? true : undefined}
+            className={invalidInputClassName(Boolean(pickupError))}
+          />
+          <WarningIcon show={Boolean(pickupError)} />
+        </div>
         <FieldError id={PICKUP_ERROR_ID} message={pickupError} />
       </div>
 
       <div className="space-y-1.5">
         <Label htmlFor="checkout-pickup-map">Google Maps pin (optional)</Label>
-        <Input
-          id="checkout-pickup-map"
-          name="pickupMapUrl"
-          type="url"
-          placeholder="https://maps.google.com/..."
-          aria-describedby={pickupMapError ? PICKUP_MAP_ERROR_ID : undefined}
-          aria-invalid={pickupMapError ? true : undefined}
-          className="tap-target"
-        />
+        <div className="relative">
+          <Input
+            id="checkout-pickup-map"
+            name="pickupMapUrl"
+            type="url"
+            placeholder="https://maps.google.com/..."
+            aria-describedby={pickupMapError ? PICKUP_MAP_ERROR_ID : undefined}
+            aria-invalid={pickupMapError ? true : undefined}
+            className={invalidInputClassName(Boolean(pickupMapError))}
+          />
+          <WarningIcon show={Boolean(pickupMapError)} />
+        </div>
         <FieldError id={PICKUP_MAP_ERROR_ID} message={pickupMapError} />
       </div>
 
       <div className="space-y-1.5">
         <Label htmlFor="checkout-requests">Special requests (optional)</Label>
-        <textarea
-          id="checkout-requests"
-          name="requests"
-          rows={3}
-          aria-describedby={requestsError ? REQUESTS_ERROR_ID : undefined}
-          aria-invalid={requestsError ? true : undefined}
-          className="border-input bg-background focus-visible:ring-ring w-full rounded-md border px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 md:text-sm"
-        />
+        <div className="relative">
+          <textarea
+            id="checkout-requests"
+            name="requests"
+            rows={3}
+            aria-describedby={requestsError ? REQUESTS_ERROR_ID : undefined}
+            aria-invalid={requestsError ? true : undefined}
+            className={cn(
+              'border-input bg-background focus-visible:ring-ring w-full rounded-md border px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 md:text-sm',
+              requestsError && 'border-brand-warning pr-9',
+            )}
+          />
+          {requestsError && (
+            <AlertTriangle
+              aria-hidden="true"
+              className="text-brand-warning pointer-events-none absolute right-3 top-3 size-4"
+            />
+          )}
+        </div>
         <FieldError id={REQUESTS_ERROR_ID} message={requestsError} />
       </div>
 

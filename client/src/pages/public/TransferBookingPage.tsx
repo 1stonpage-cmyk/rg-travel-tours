@@ -1,7 +1,9 @@
 import { keepPreviousData } from '@tanstack/react-query';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { AlertTriangle } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import {
+  createHoldTransferInput,
   formatPeso,
   quoteTransferInput,
   TRANSFER_PRODUCT_TYPES,
@@ -14,9 +16,13 @@ import {
 import CouponField from '@/components/checkout/CouponField';
 import PaymentOptions from '@/components/checkout/PaymentOptions';
 import HoldCountdown from '@/components/checkout/HoldCountdown';
+import ErrorSummary, { type ErrorSummaryItem } from '@/components/common/ErrorSummary';
 import FieldError from '@/components/common/FieldError';
 import TurnstileWidget from '@/components/common/TurnstileWidget';
-import RoutePicker, { type TransferRouteSelection } from '@/components/transfer/RoutePicker';
+import RoutePicker, {
+  ROUTE_PICKER_ID,
+  type TransferRouteSelection,
+} from '@/components/transfer/RoutePicker';
 import TransferGuestDetailsForm, {
   type FlightDetailsRequirement,
 } from '@/components/transfer/TransferGuestDetailsForm';
@@ -28,12 +34,16 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
+  clientSideErrors,
   firstValidationMessage,
   getFieldErrors,
   getFormErrors,
+  getNestedFieldError,
   hasAnyNestedFieldError,
 } from '@/lib/field-errors';
 import { describeCheckoutError } from '@/lib/mutation-errors';
+import { scrollToAndFocus } from '@/lib/scroll-to-field';
+import { cn } from '@/lib/utils';
 import { trpc } from '@/lib/trpc';
 
 /**
@@ -223,6 +233,101 @@ const PLACED_HOLD_FIELDS: ReadonlySet<string> = new Set([
 /** See `CheckoutPage.tsx`'s own `LEAD_LEAF_PATHS` note (final-review finding 1). */
 const LEAD_LEAF_PATHS = ['lead.name', 'lead.email', 'lead.phone'] as const;
 
+/** The vehicle-option grid's own id, so Task 6's scroll+focus has a target for `vehicleTypeId` (no literal `<input>` to focus — a grid of cards). */
+const VEHICLE_GRID_ID = 'transfer-vehicle-grid';
+
+/**
+ * Task 6 — client-side pre-submit validation against `createHoldTransferInput`,
+ * the transfer counterpart of `CheckoutPage.tsx`'s own `FIELD_LABELS`/
+ * `FIELD_ORDER`/`FIELD_IDS`/`buildErrorSummaryItems`. See that file's header
+ * note on why `payMode`/`consent` (and here, `productType`/`routeId`/
+ * `vehicleTypeId`, each guarded by `handleSubmit`'s own early return) are
+ * kept out of `FIELD_ORDER` even though a label exists for them — they
+ * cannot actually carry a client-side message by the time a payload is
+ * built, so there is nothing for the summary to show.
+ */
+const FIELD_LABELS: Record<string, string> = {
+  productType: 'Transfer type',
+  routeId: 'Route',
+  pax: 'Passengers',
+  luggageCount: 'Luggage',
+  date: 'Pickup date',
+  pickupTime: 'Pickup time',
+  dayUseEndTime: 'Vehicle needed until',
+  pickup: 'Pickup location',
+  pickupMapUrl: 'Pickup Google Maps pin',
+  dropoffAddress: 'Drop-off address',
+  dropoffMapUrl: 'Drop-off Google Maps pin',
+  flightNumber: 'Flight number',
+  airline: 'Airline',
+  ferryVesselName: 'Ferry / vessel name',
+  ferryArrivalTime: 'Ferry arrival time',
+  requests: 'Special requests',
+  couponCode: 'Coupon code',
+  'lead.name': 'Full name',
+  'lead.email': 'Email',
+  'lead.phone': 'WhatsApp / mobile number',
+  vehicleTypeId: 'Vehicle',
+};
+/** Field order on screen, top to bottom — the summary and the scroll target both follow it. */
+const FIELD_ORDER = [
+  'productType',
+  'routeId',
+  'pax',
+  'luggageCount',
+  'date',
+  'pickupTime',
+  'dayUseEndTime',
+  'pickup',
+  'pickupMapUrl',
+  'dropoffAddress',
+  'dropoffMapUrl',
+  'flightNumber',
+  'airline',
+  'ferryVesselName',
+  'ferryArrivalTime',
+  'requests',
+  'lead.name',
+  'lead.email',
+  'lead.phone',
+  'vehicleTypeId',
+];
+/** Maps a dot-path to the invalid control's (or picker's) own id, for scroll+focus. */
+const FIELD_IDS: Record<string, string> = {
+  productType: TRANSFER_TYPE_PICKER_ID,
+  routeId: ROUTE_PICKER_ID,
+  pax: 'transfer-pax',
+  luggageCount: 'transfer-luggage-count',
+  date: 'transfer-date',
+  pickupTime: 'transfer-pickup-time',
+  dayUseEndTime: 'transfer-day-use-end-time',
+  pickup: 'transfer-pickup',
+  pickupMapUrl: 'transfer-pickup-map',
+  dropoffAddress: 'transfer-dropoff-address',
+  dropoffMapUrl: 'transfer-dropoff-map',
+  flightNumber: 'transfer-flight-number',
+  airline: 'transfer-airline',
+  ferryVesselName: 'transfer-ferry-vessel-name',
+  ferryArrivalTime: 'transfer-ferry-arrival-time',
+  requests: 'transfer-requests',
+  'lead.name': 'transfer-name',
+  'lead.email': 'transfer-email',
+  'lead.phone': 'transfer-phone',
+  vehicleTypeId: VEHICLE_GRID_ID,
+};
+
+function buildErrorSummaryItems(error: unknown): ErrorSummaryItem[] {
+  const items: ErrorSummaryItem[] = [];
+  for (const path of FIELD_ORDER) {
+    const message = path.includes('.')
+      ? getNestedFieldError(error, path)
+      : (getFieldErrors(error)?.[path] ?? null);
+    const id = FIELD_IDS[path];
+    if (message && id) items.push({ id, label: FIELD_LABELS[path] ?? path, message });
+  }
+  return items;
+}
+
 /**
  * Task 1F (DEMO POLISH). Mirrors `components/home/CatalogPreview.tsx`'s
  * identical guard: jsdom (this project's test environment) implements no
@@ -291,6 +396,8 @@ export default function TransferBookingPage() {
   const [couponInput, setCouponInput] = useState('');
   const [couponError, setCouponError] = useState<string | null>(null);
   const [consentError, setConsentError] = useState<string | null>(null);
+  /** Task 6 — see `CheckoutPage.tsx`'s identical `preSubmitError` note. */
+  const [preSubmitError, setPreSubmitError] = useState<unknown>(null);
   const [turnstileToken, setTurnstileToken] = useState<string | undefined>(undefined);
   // A Turnstile token is single-use — bump this to remount the widget (and
   // get a fresh one) after any failed attempt, not only a Turnstile refusal.
@@ -691,24 +798,31 @@ export default function TransferBookingPage() {
     },
   });
 
-  const holdFieldErrors = createHoldTransfer.isError
-    ? getFieldErrors(createHoldTransfer.error)
-    : null;
-  const holdFormErrors = createHoldTransfer.isError ? getFormErrors(createHoldTransfer.error) : [];
+  /*
+   * Task 6 — see `CheckoutPage.tsx`'s identical block for the full note on
+   * `activeError`: a pre-submit client-side refusal (`preSubmitError`) takes
+   * priority over the mutation's own, and every read below degrades to
+   * exactly what it was before this task once both are `null`.
+   */
+  const activeError =
+    preSubmitError ?? (createHoldTransfer.isError ? createHoldTransfer.error : null);
+  const holdFieldErrors = getFieldErrors(activeError);
+  const holdFormErrors = getFormErrors(activeError);
   const leadGroupUnresolved =
     (holdFieldErrors?.lead ?? undefined) !== undefined &&
-    !hasAnyNestedFieldError(createHoldTransfer.error, LEAD_LEAF_PATHS);
+    !hasAnyNestedFieldError(activeError, LEAD_LEAF_PATHS);
   const unplacedFieldMessages = Object.entries(holdFieldErrors ?? {})
     .filter(
       ([field]) => !PLACED_HOLD_FIELDS.has(field) || (field === 'lead' && leadGroupUnresolved),
     )
     .map(([, message]) => message);
   const isValidationRefusal = holdFieldErrors !== null || holdFormErrors.length > 0;
-  const holdBannerMessages = !createHoldTransfer.isError
-    ? []
-    : isValidationRefusal
-      ? [...holdFormErrors, ...unplacedFieldMessages]
-      : [describeCheckoutError(createHoldTransfer.error)];
+  const holdBannerMessages =
+    activeError === null
+      ? []
+      : isValidationRefusal
+        ? [...holdFormErrors, ...unplacedFieldMessages]
+        : [describeCheckoutError(activeError)];
 
   function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -719,6 +833,7 @@ export default function TransferBookingPage() {
 
     if (data.get('consent') !== 'on') {
       createHoldTransfer.reset();
+      setPreSubmitError(null);
       setConsentError(
         'Please agree to the data privacy consent above before we can hold your spot (RA 10173).',
       );
@@ -726,7 +841,7 @@ export default function TransferBookingPage() {
     }
     setConsentError(null);
 
-    createHoldTransfer.mutate({
+    const payload = {
       productType,
       routeId,
       vehicleTypeId,
@@ -756,7 +871,23 @@ export default function TransferBookingPage() {
       },
       consent: true,
       turnstileToken,
-    });
+    };
+
+    /*
+     * Task 6 — see `CheckoutPage.tsx`'s identical block for the full note.
+     * Same payload, same schema the server enforces, before the mutation
+     * ever fires.
+     */
+    const validationError = clientSideErrors(createHoldTransferInput, payload);
+    if (validationError) {
+      createHoldTransfer.reset();
+      setPreSubmitError(validationError);
+      const firstItem = buildErrorSummaryItems(validationError)[0];
+      if (firstItem) scrollToAndFocus(firstItem.id);
+      return;
+    }
+    setPreSubmitError(null);
+    createHoldTransfer.mutate(payload);
   }
 
   const routeSelection: TransferRouteSelection | null =
@@ -830,25 +961,36 @@ export default function TransferBookingPage() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label htmlFor="transfer-pax">Passengers</Label>
-                  <Input
-                    id="transfer-pax"
-                    type="number"
-                    min={1}
-                    max={30}
-                    required
-                    value={pax}
-                    onChange={(e) => setPax(Number(e.target.value))}
-                    aria-describedby={
-                      [
-                        holdFieldErrors?.pax ? PAGE_PAX_ERROR_ID : null,
-                        minPayingPaxNote ? PAGE_MIN_PAX_NOTE_ID : null,
-                      ]
-                        .filter(Boolean)
-                        .join(' ') || undefined
-                    }
-                    aria-invalid={holdFieldErrors?.pax ? true : undefined}
-                    className="tap-target"
-                  />
+                  <div className="relative">
+                    <Input
+                      id="transfer-pax"
+                      type="number"
+                      min={1}
+                      max={30}
+                      required
+                      value={pax}
+                      onChange={(e) => setPax(Number(e.target.value))}
+                      aria-describedby={
+                        [
+                          holdFieldErrors?.pax ? PAGE_PAX_ERROR_ID : null,
+                          minPayingPaxNote ? PAGE_MIN_PAX_NOTE_ID : null,
+                        ]
+                          .filter(Boolean)
+                          .join(' ') || undefined
+                      }
+                      aria-invalid={holdFieldErrors?.pax ? true : undefined}
+                      className={cn(
+                        'tap-target',
+                        holdFieldErrors?.pax && 'border-brand-warning pr-9',
+                      )}
+                    />
+                    {holdFieldErrors?.pax && (
+                      <AlertTriangle
+                        aria-hidden="true"
+                        className="text-brand-warning pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2"
+                      />
+                    )}
+                  </div>
                   <FieldError id={PAGE_PAX_ERROR_ID} message={holdFieldErrors?.pax} />
                   {/*
                    * Finding 5 — the same `text-muted-foreground text-xs`
@@ -864,20 +1006,31 @@ export default function TransferBookingPage() {
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="transfer-luggage-count">Luggage (bags)</Label>
-                  <Input
-                    id="transfer-luggage-count"
-                    type="number"
-                    min={0}
-                    max={200}
-                    required
-                    value={luggageCount}
-                    onChange={(e) => setLuggageCount(Number(e.target.value))}
-                    aria-describedby={
-                      holdFieldErrors?.luggageCount ? PAGE_LUGGAGE_ERROR_ID : undefined
-                    }
-                    aria-invalid={holdFieldErrors?.luggageCount ? true : undefined}
-                    className="tap-target"
-                  />
+                  <div className="relative">
+                    <Input
+                      id="transfer-luggage-count"
+                      type="number"
+                      min={0}
+                      max={200}
+                      required
+                      value={luggageCount}
+                      onChange={(e) => setLuggageCount(Number(e.target.value))}
+                      aria-describedby={
+                        holdFieldErrors?.luggageCount ? PAGE_LUGGAGE_ERROR_ID : undefined
+                      }
+                      aria-invalid={holdFieldErrors?.luggageCount ? true : undefined}
+                      className={cn(
+                        'tap-target',
+                        holdFieldErrors?.luggageCount && 'border-brand-warning pr-9',
+                      )}
+                    />
+                    {holdFieldErrors?.luggageCount && (
+                      <AlertTriangle
+                        aria-hidden="true"
+                        className="text-brand-warning pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2"
+                      />
+                    )}
+                  </div>
                   <FieldError id={PAGE_LUGGAGE_ERROR_ID} message={holdFieldErrors?.luggageCount} />
                 </div>
               </div>
@@ -905,7 +1058,7 @@ export default function TransferBookingPage() {
                   contact us directly.
                 </p>
               ) : (
-                <div className="grid gap-3 sm:grid-cols-2">
+                <div id={VEHICLE_GRID_ID} className="grid gap-3 sm:grid-cols-2">
                   {vehicleOptions.map((option, index) => {
                     const result = quoteResults[index];
                     /*
@@ -996,7 +1149,7 @@ export default function TransferBookingPage() {
                   amountDueNowCentavos={selectedQuote.amountDueNowCentavos}
                   flightDetailsRequirement={flightDetailsRequirement}
                   ferryDetailsVisible={ferryDetailsVisible}
-                  error={createHoldTransfer.isError ? createHoldTransfer.error : null}
+                  error={activeError}
                 />
 
                 {consentError && (
@@ -1022,6 +1175,8 @@ export default function TransferBookingPage() {
                   onVerify={setTurnstileToken}
                   onError={() => setTurnstileToken(undefined)}
                 />
+
+                <ErrorSummary items={buildErrorSummaryItems(activeError)} />
 
                 <Button
                   type="submit"

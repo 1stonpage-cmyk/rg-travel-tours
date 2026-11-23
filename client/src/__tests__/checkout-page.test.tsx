@@ -16,7 +16,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import CheckoutPage from '@/pages/public/CheckoutPage';
 import { RATE_LIMIT_MESSAGE } from '@/lib/mutation-errors';
 import { TrpcProviders } from '@/lib/trpc';
@@ -100,6 +100,76 @@ describe('CheckoutPage — consent gate', () => {
     const alert = await within(form).findByRole('alert');
     expect(alert.textContent).toMatch(/agree|consent/i);
     expect(called).toBe(false);
+  });
+});
+
+/**
+ * Task 6 — "clicking Book now does nothing visible", closed. A submit whose
+ * payload fails the SAME schema the server enforces (`createHoldInput`)
+ * never reaches `createHold.mutate()` at all: it shows an `<ErrorSummary>`
+ * and scrolls/focuses the first invalid field instead.
+ */
+describe('CheckoutPage — client-side pre-submit validation (Task 6)', () => {
+  beforeEach(() => {
+    // jsdom implements no `Element.prototype.scrollIntoView` — see
+    // `scroll-to-field.test.ts` and `transfer-booking-page.test.tsx`'s
+    // identical stub.
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  it('shows an error summary and focuses the first invalid field instead of calling the server', async () => {
+    mockTrpc({ 'checkout.quote': QUOTE_FIXTURE });
+    let createHoldCalls = 0;
+    mockTrpc({
+      'checkout.createHold': () => {
+        createHoldCalls += 1;
+        return HOLD_RESULT;
+      },
+    });
+    const user = userEvent.setup();
+    renderCheckout();
+
+    const form = await screen.findByRole('form', { name: /checkout/i });
+    await user.type(within(form).getByLabelText(/full name/i), 'Juan Dela Cruz');
+    await user.type(within(form).getByLabelText(/^email$/i), 'juan@example.com');
+    // Non-blank but not a real mobile number — the native `required`
+    // attribute would otherwise block the submit event before React ever
+    // sees it, which would prove nothing about THIS validation.
+    await user.type(within(form).getByLabelText(/whatsapp.*mobile number/i), '123');
+    await user.click(within(form).getByLabelText(/i agree/i));
+    await user.click(within(form).getByRole('button', { name: /book now/i }));
+
+    // Query by the summary's own sentence, not by role="alert" alone —
+    // `FieldError` ALSO renders role="alert" per field, so an unqualified
+    // `getByRole('alert')` would be ambiguous.
+    expect(screen.getByText(/check \d+ field/i)).toBeInTheDocument();
+    const phoneInput = within(form).getByLabelText(/whatsapp.*mobile number/i);
+    expect(document.activeElement).toBe(phoneInput);
+    // The amber attention chrome (brief 2B) rides on the same invalid field.
+    expect(phoneInput.className).toMatch(/border-brand-warning/);
+    expect(createHoldCalls).toBe(0);
+  });
+
+  it('does not block a fully valid submission', async () => {
+    mockTrpc({ 'checkout.quote': QUOTE_FIXTURE });
+    let createHoldCalls = 0;
+    mockTrpc({
+      'checkout.createHold': () => {
+        createHoldCalls += 1;
+        return HOLD_RESULT;
+      },
+    });
+    const user = userEvent.setup();
+    renderCheckout();
+
+    const form = await screen.findByRole('form', { name: /checkout/i });
+    await fillGuestDetails(user, form);
+    await user.click(within(form).getByLabelText(/i agree/i));
+    await user.click(within(form).getByRole('button', { name: /book now/i }));
+
+    expect(await screen.findByText(new RegExp(HOLD_RESULT.ref))).toBeInTheDocument();
+    expect(createHoldCalls).toBe(1);
+    expect(screen.queryByText(/check \d+ field/i)).not.toBeInTheDocument();
   });
 });
 

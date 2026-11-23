@@ -151,7 +151,17 @@ describe('Checkout — createHold validation errors', () => {
     const form = await screen.findByRole('form', { name: /checkout/i });
     await user.type(within(form).getByLabelText(/full name/i), 'Juan Dela Cruz');
     await user.type(within(form).getByLabelText(/^email$/i), 'juan@example.com');
-    await user.type(within(form).getByLabelText(/whatsapp.*mobile number/i), '12345');
+    /*
+     * Task 6 note: a VALID PH mobile number, deliberately, not the
+     * '12345' this test used before Task 6 existed. This test is about
+     * where the SERVER's mocked refusal lands, so the typed value must
+     * pass the client's own pre-submit `clientSideErrors` check (added by
+     * Task 6) or the mock below is never even asked — '12345' now fails
+     * client-side first, with the CLIENT's own (different) phone message,
+     * which is a real behaviour change this test must follow rather than
+     * fight.
+     */
+    await user.type(within(form).getByLabelText(/whatsapp.*mobile number/i), '0917 123 4567');
     await user.click(within(form).getByLabelText(/i agree/i));
     await user.click(within(form).getByRole('button', { name: /book now/i }));
 

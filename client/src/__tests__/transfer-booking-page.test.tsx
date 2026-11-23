@@ -174,6 +174,72 @@ describe('TransferBookingPage — happy path', () => {
   });
 });
 
+/**
+ * Task 6 — "clicking Book now does nothing visible", closed. A submit whose
+ * payload fails the SAME schema the server enforces
+ * (`createHoldTransferInput`) never reaches `createHoldTransfer.mutate()` at
+ * all: it shows an `<ErrorSummary>` and scrolls/focuses the first invalid
+ * field instead.
+ */
+describe('TransferBookingPage — client-side pre-submit validation (Task 6)', () => {
+  beforeEach(() => {
+    // jsdom implements no `Element.prototype.scrollIntoView` — see this
+    // file's existing "route picked before type" describe block.
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  it('shows an error summary and focuses the first invalid field instead of calling the server', async () => {
+    let createHoldTransferCalls = 0;
+    mockTrpc({
+      'transferRoutes.list': [MACTAN],
+      'checkout.quoteTransfer': quoteByVehicleTypeId,
+      'checkout.createHoldTransfer': () => {
+        createHoldTransferCalls += 1;
+        return HOLD_RESULT;
+      },
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await selectTypeAndRoute(user);
+    const vanRadio = await screen.findByRole('radio', { name: /^van/i });
+    await waitFor(() => expect(vanRadio).not.toBeDisabled());
+    await user.click(vanRadio);
+
+    const form = await screen.findByRole('form', { name: /transfer booking form/i });
+    fireEvent.change(within(form).getByLabelText(/pickup date/i), {
+      target: { value: '2026-12-15' },
+    });
+    fireEvent.change(within(form).getByLabelText(/pickup time/i), {
+      target: { value: '08:30' },
+    });
+    fireEvent.change(within(form).getByLabelText(/^passengers$/i), { target: { value: '2' } });
+    fireEvent.change(within(form).getByLabelText(/luggage \(bags\)/i), { target: { value: '1' } });
+    await user.type(within(form).getByLabelText(/drop-off address/i), 'SM Seaside, Cebu City');
+    // MACTAN's fromPlace is an airport, so these are required (same as the
+    // happy-path test above) — filled in so they are not the invalid field.
+    await user.type(within(form).getByLabelText(/^flight number$/i), 'PR123');
+    await user.type(within(form).getByLabelText(/^airline$/i), 'Philippine Airlines');
+    await user.type(within(form).getByLabelText(/full name/i), 'Juan Dela Cruz');
+    await user.type(within(form).getByLabelText(/^email$/i), 'juan@example.com');
+    // Non-blank but not a real mobile number — the native `required`
+    // attribute would otherwise block the submit event before React ever
+    // sees it, which would prove nothing about THIS validation.
+    await user.type(within(form).getByLabelText(/whatsapp.*mobile number/i), '123');
+    await user.click(within(form).getByLabelText(/i agree/i));
+
+    await user.click(within(form).getByRole('button', { name: /book now/i }));
+
+    // Query by the summary's own sentence, not by role="alert" alone —
+    // `FieldError` ALSO renders role="alert" per field.
+    expect(screen.getByText(/check \d+ field/i)).toBeInTheDocument();
+    const phoneInput = within(form).getByLabelText(/whatsapp.*mobile number/i);
+    expect(document.activeElement).toBe(phoneInput);
+    expect(phoneInput.className).toMatch(/border-brand-warning/);
+    expect(createHoldTransferCalls).toBe(0);
+  });
+});
+
 describe('TransferBookingPage — reversible route (owner decision 2026-11-08)', () => {
   it('sends direction: "reverse" and the SAME routeId when the guest picks the reverse leg', async () => {
     let capturedHoldInput: Record<string, unknown> | undefined;

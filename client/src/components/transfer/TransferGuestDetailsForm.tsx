@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { AlertTriangle } from 'lucide-react';
 import {
   GUEST_PHONE_PLACEHOLDER,
   formatPeso,
@@ -12,6 +13,21 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { getFieldErrors, getNestedFieldError } from '@/lib/field-errors';
 import { cn } from '@/lib/utils';
+
+/** See `GuestDetails.tsx`'s identical pair — same amber-attention/blue-grey-message split. */
+function invalidInputClassName(hasError: boolean): string {
+  return cn('tap-target', hasError && 'border-brand-warning pr-9');
+}
+
+function WarningIcon({ show }: { show: boolean }) {
+  if (!show) return null;
+  return (
+    <AlertTriangle
+      aria-hidden="true"
+      className="text-brand-warning pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2"
+    />
+  );
+}
 
 /**
  * Task T13 — every field `createHoldTransferInput` (`@rg/shared`,
@@ -178,28 +194,34 @@ export default function TransferGuestDetailsForm({
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-1.5">
           <Label htmlFor="transfer-date">Pickup date</Label>
-          <Input
-            id="transfer-date"
-            name="date"
-            type="date"
-            required
-            aria-describedby={dateError ? DATE_ERROR_ID : undefined}
-            aria-invalid={dateError ? true : undefined}
-            className="tap-target"
-          />
+          <div className="relative">
+            <Input
+              id="transfer-date"
+              name="date"
+              type="date"
+              required
+              aria-describedby={dateError ? DATE_ERROR_ID : undefined}
+              aria-invalid={dateError ? true : undefined}
+              className={invalidInputClassName(Boolean(dateError))}
+            />
+            <WarningIcon show={Boolean(dateError)} />
+          </div>
           <FieldError id={DATE_ERROR_ID} message={dateError} />
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="transfer-pickup-time">Pickup time</Label>
-          <Input
-            id="transfer-pickup-time"
-            name="pickupTime"
-            type="time"
-            required
-            aria-describedby={pickupTimeError ? PICKUP_TIME_ERROR_ID : undefined}
-            aria-invalid={pickupTimeError ? true : undefined}
-            className="tap-target"
-          />
+          <div className="relative">
+            <Input
+              id="transfer-pickup-time"
+              name="pickupTime"
+              type="time"
+              required
+              aria-describedby={pickupTimeError ? PICKUP_TIME_ERROR_ID : undefined}
+              aria-invalid={pickupTimeError ? true : undefined}
+              className={invalidInputClassName(Boolean(pickupTimeError))}
+            />
+            <WarningIcon show={Boolean(pickupTimeError)} />
+          </div>
           <FieldError id={PICKUP_TIME_ERROR_ID} message={pickupTimeError} />
         </div>
       </div>
@@ -208,73 +230,88 @@ export default function TransferGuestDetailsForm({
       {isDayUse && (
         <div className="space-y-1.5">
           <Label htmlFor="transfer-day-use-end-time">Vehicle needed until</Label>
-          <Input
-            id="transfer-day-use-end-time"
-            name="dayUseEndTime"
-            type="time"
-            required
-            aria-describedby={dayUseEndTimeError ? DAY_USE_END_TIME_ERROR_ID : undefined}
-            aria-invalid={dayUseEndTimeError ? true : undefined}
-            className="tap-target"
-          />
+          <div className="relative">
+            <Input
+              id="transfer-day-use-end-time"
+              name="dayUseEndTime"
+              type="time"
+              required
+              aria-describedby={dayUseEndTimeError ? DAY_USE_END_TIME_ERROR_ID : undefined}
+              aria-invalid={dayUseEndTimeError ? true : undefined}
+              className={invalidInputClassName(Boolean(dayUseEndTimeError))}
+            />
+            <WarningIcon show={Boolean(dayUseEndTimeError)} />
+          </div>
           <FieldError id={DAY_USE_END_TIME_ERROR_ID} message={dayUseEndTimeError} />
         </div>
       )}
 
       <div className="space-y-1.5">
         <Label htmlFor="transfer-pickup">Pickup location (optional)</Label>
-        <Input
-          id="transfer-pickup"
-          name="pickup"
-          maxLength={400}
-          aria-describedby={pickupError ? PICKUP_ERROR_ID : undefined}
-          aria-invalid={pickupError ? true : undefined}
-          className="tap-target"
-        />
+        <div className="relative">
+          <Input
+            id="transfer-pickup"
+            name="pickup"
+            maxLength={400}
+            aria-describedby={pickupError ? PICKUP_ERROR_ID : undefined}
+            aria-invalid={pickupError ? true : undefined}
+            className={invalidInputClassName(Boolean(pickupError))}
+          />
+          <WarningIcon show={Boolean(pickupError)} />
+        </div>
         <FieldError id={PICKUP_ERROR_ID} message={pickupError} />
       </div>
 
       <div className="space-y-1.5">
         <Label htmlFor="transfer-pickup-map">Pickup Google Maps pin (optional)</Label>
-        <Input
-          id="transfer-pickup-map"
-          name="pickupMapUrl"
-          type="url"
-          maxLength={500}
-          placeholder="https://maps.google.com/..."
-          aria-describedby={pickupMapError ? PICKUP_MAP_ERROR_ID : undefined}
-          aria-invalid={pickupMapError ? true : undefined}
-          className="tap-target"
-        />
+        <div className="relative">
+          <Input
+            id="transfer-pickup-map"
+            name="pickupMapUrl"
+            type="url"
+            maxLength={500}
+            placeholder="https://maps.google.com/..."
+            aria-describedby={pickupMapError ? PICKUP_MAP_ERROR_ID : undefined}
+            aria-invalid={pickupMapError ? true : undefined}
+            className={invalidInputClassName(Boolean(pickupMapError))}
+          />
+          <WarningIcon show={Boolean(pickupMapError)} />
+        </div>
         <FieldError id={PICKUP_MAP_ERROR_ID} message={pickupMapError} />
       </div>
 
       <div className="space-y-1.5">
         <Label htmlFor="transfer-dropoff-address">Drop-off address</Label>
-        <Input
-          id="transfer-dropoff-address"
-          name="dropoffAddress"
-          required
-          maxLength={400}
-          aria-describedby={dropoffAddressError ? DROPOFF_ADDRESS_ERROR_ID : undefined}
-          aria-invalid={dropoffAddressError ? true : undefined}
-          className="tap-target"
-        />
+        <div className="relative">
+          <Input
+            id="transfer-dropoff-address"
+            name="dropoffAddress"
+            required
+            maxLength={400}
+            aria-describedby={dropoffAddressError ? DROPOFF_ADDRESS_ERROR_ID : undefined}
+            aria-invalid={dropoffAddressError ? true : undefined}
+            className={invalidInputClassName(Boolean(dropoffAddressError))}
+          />
+          <WarningIcon show={Boolean(dropoffAddressError)} />
+        </div>
         <FieldError id={DROPOFF_ADDRESS_ERROR_ID} message={dropoffAddressError} />
       </div>
 
       <div className="space-y-1.5">
         <Label htmlFor="transfer-dropoff-map">Drop-off Google Maps pin (optional)</Label>
-        <Input
-          id="transfer-dropoff-map"
-          name="dropoffMapUrl"
-          type="url"
-          maxLength={500}
-          placeholder="https://maps.google.com/..."
-          aria-describedby={dropoffMapError ? DROPOFF_MAP_ERROR_ID : undefined}
-          aria-invalid={dropoffMapError ? true : undefined}
-          className="tap-target"
-        />
+        <div className="relative">
+          <Input
+            id="transfer-dropoff-map"
+            name="dropoffMapUrl"
+            type="url"
+            maxLength={500}
+            placeholder="https://maps.google.com/..."
+            aria-describedby={dropoffMapError ? DROPOFF_MAP_ERROR_ID : undefined}
+            aria-invalid={dropoffMapError ? true : undefined}
+            className={invalidInputClassName(Boolean(dropoffMapError))}
+          />
+          <WarningIcon show={Boolean(dropoffMapError)} />
+        </div>
         <FieldError id={DROPOFF_MAP_ERROR_ID} message={dropoffMapError} />
       </div>
 
@@ -296,30 +333,36 @@ export default function TransferGuestDetailsForm({
               <Label htmlFor="transfer-flight-number">
                 Flight number{flightDetailsRequirement === 'optional' && ' (optional)'}
               </Label>
-              <Input
-                id="transfer-flight-number"
-                name="flightNumber"
-                maxLength={20}
-                required={flightDetailsRequirement === 'required'}
-                aria-describedby={flightNumberError ? FLIGHT_NUMBER_ERROR_ID : undefined}
-                aria-invalid={flightNumberError ? true : undefined}
-                className="tap-target"
-              />
+              <div className="relative">
+                <Input
+                  id="transfer-flight-number"
+                  name="flightNumber"
+                  maxLength={20}
+                  required={flightDetailsRequirement === 'required'}
+                  aria-describedby={flightNumberError ? FLIGHT_NUMBER_ERROR_ID : undefined}
+                  aria-invalid={flightNumberError ? true : undefined}
+                  className={invalidInputClassName(Boolean(flightNumberError))}
+                />
+                <WarningIcon show={Boolean(flightNumberError)} />
+              </div>
               <FieldError id={FLIGHT_NUMBER_ERROR_ID} message={flightNumberError} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="transfer-airline">
                 Airline{flightDetailsRequirement === 'optional' && ' (optional)'}
               </Label>
-              <Input
-                id="transfer-airline"
-                name="airline"
-                maxLength={80}
-                required={flightDetailsRequirement === 'required'}
-                aria-describedby={airlineError ? AIRLINE_ERROR_ID : undefined}
-                aria-invalid={airlineError ? true : undefined}
-                className="tap-target"
-              />
+              <div className="relative">
+                <Input
+                  id="transfer-airline"
+                  name="airline"
+                  maxLength={80}
+                  required={flightDetailsRequirement === 'required'}
+                  aria-describedby={airlineError ? AIRLINE_ERROR_ID : undefined}
+                  aria-invalid={airlineError ? true : undefined}
+                  className={invalidInputClassName(Boolean(airlineError))}
+                />
+                <WarningIcon show={Boolean(airlineError)} />
+              </div>
               <FieldError id={AIRLINE_ERROR_ID} message={airlineError} />
             </div>
           </div>
@@ -339,26 +382,32 @@ export default function TransferGuestDetailsForm({
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="transfer-ferry-vessel-name">Ferry / vessel name (optional)</Label>
-              <Input
-                id="transfer-ferry-vessel-name"
-                name="ferryVesselName"
-                maxLength={120}
-                aria-describedby={ferryVesselNameError ? FERRY_VESSEL_NAME_ERROR_ID : undefined}
-                aria-invalid={ferryVesselNameError ? true : undefined}
-                className="tap-target"
-              />
+              <div className="relative">
+                <Input
+                  id="transfer-ferry-vessel-name"
+                  name="ferryVesselName"
+                  maxLength={120}
+                  aria-describedby={ferryVesselNameError ? FERRY_VESSEL_NAME_ERROR_ID : undefined}
+                  aria-invalid={ferryVesselNameError ? true : undefined}
+                  className={invalidInputClassName(Boolean(ferryVesselNameError))}
+                />
+                <WarningIcon show={Boolean(ferryVesselNameError)} />
+              </div>
               <FieldError id={FERRY_VESSEL_NAME_ERROR_ID} message={ferryVesselNameError} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="transfer-ferry-arrival-time">Ferry arrival time (optional)</Label>
-              <Input
-                id="transfer-ferry-arrival-time"
-                name="ferryArrivalTime"
-                type="time"
-                aria-describedby={ferryArrivalTimeError ? FERRY_ARRIVAL_TIME_ERROR_ID : undefined}
-                aria-invalid={ferryArrivalTimeError ? true : undefined}
-                className="tap-target"
-              />
+              <div className="relative">
+                <Input
+                  id="transfer-ferry-arrival-time"
+                  name="ferryArrivalTime"
+                  type="time"
+                  aria-describedby={ferryArrivalTimeError ? FERRY_ARRIVAL_TIME_ERROR_ID : undefined}
+                  aria-invalid={ferryArrivalTimeError ? true : undefined}
+                  className={invalidInputClassName(Boolean(ferryArrivalTimeError))}
+                />
+                <WarningIcon show={Boolean(ferryArrivalTimeError)} />
+              </div>
               <FieldError id={FERRY_ARRIVAL_TIME_ERROR_ID} message={ferryArrivalTimeError} />
             </div>
           </div>
@@ -367,70 +416,90 @@ export default function TransferGuestDetailsForm({
 
       <div className="space-y-1.5">
         <Label htmlFor="transfer-requests">Special requests (optional)</Label>
-        <textarea
-          id="transfer-requests"
-          name="requests"
-          rows={3}
-          maxLength={2000}
-          aria-describedby={requestsError ? REQUESTS_ERROR_ID : undefined}
-          aria-invalid={requestsError ? true : undefined}
-          className="border-input bg-background focus-visible:ring-ring w-full rounded-md border px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 md:text-sm"
-        />
+        <div className="relative">
+          <textarea
+            id="transfer-requests"
+            name="requests"
+            rows={3}
+            maxLength={2000}
+            aria-describedby={requestsError ? REQUESTS_ERROR_ID : undefined}
+            aria-invalid={requestsError ? true : undefined}
+            className={cn(
+              'border-input bg-background focus-visible:ring-ring w-full rounded-md border px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 md:text-sm',
+              requestsError && 'border-brand-warning pr-9',
+            )}
+          />
+          {requestsError && (
+            <AlertTriangle
+              aria-hidden="true"
+              className="text-brand-warning pointer-events-none absolute right-3 top-3 size-4"
+            />
+          )}
+        </div>
         <FieldError id={REQUESTS_ERROR_ID} message={requestsError} />
       </div>
 
       <div className="space-y-1.5">
         <Label htmlFor="transfer-name">Full name</Label>
-        <Input
-          id="transfer-name"
-          name="name"
-          required
-          maxLength={160}
-          autoComplete="name"
-          aria-describedby={leadNameError ? LEAD_NAME_ERROR_ID : undefined}
-          aria-invalid={leadNameError ? true : undefined}
-          className="tap-target"
-        />
+        <div className="relative">
+          <Input
+            id="transfer-name"
+            name="name"
+            required
+            maxLength={160}
+            autoComplete="name"
+            aria-describedby={leadNameError ? LEAD_NAME_ERROR_ID : undefined}
+            aria-invalid={leadNameError ? true : undefined}
+            className={invalidInputClassName(Boolean(leadNameError))}
+          />
+          <WarningIcon show={Boolean(leadNameError)} />
+        </div>
         <FieldError id={LEAD_NAME_ERROR_ID} message={leadNameError ?? undefined} />
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-1.5">
           <Label htmlFor="transfer-email">Email</Label>
-          <Input
-            id="transfer-email"
-            name="email"
-            type="email"
-            required
-            autoComplete="email"
-            aria-describedby={leadEmailError ? LEAD_EMAIL_ERROR_ID : undefined}
-            aria-invalid={leadEmailError ? true : undefined}
-            className="tap-target"
-          />
+          <div className="relative">
+            <Input
+              id="transfer-email"
+              name="email"
+              type="email"
+              required
+              autoComplete="email"
+              aria-describedby={leadEmailError ? LEAD_EMAIL_ERROR_ID : undefined}
+              aria-invalid={leadEmailError ? true : undefined}
+              className={invalidInputClassName(Boolean(leadEmailError))}
+            />
+            <WarningIcon show={Boolean(leadEmailError)} />
+          </div>
           <FieldError id={LEAD_EMAIL_ERROR_ID} message={leadEmailError ?? undefined} />
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="transfer-phone">WhatsApp / mobile number</Label>
-          <Input
-            id="transfer-phone"
-            name="phone"
-            type="tel"
-            required
-            autoComplete="tel"
-            placeholder={GUEST_PHONE_PLACEHOLDER}
-            value={phoneValue}
-            onChange={(e) => setPhoneValue(e.target.value)}
-            aria-describedby={
-              [
-                leadPhoneError ? LEAD_PHONE_ERROR_ID : null,
-                showIntlNote ? LEAD_PHONE_NOTE_ID : null,
-              ]
-                .filter(Boolean)
-                .join(' ') || undefined
-            }
-            aria-invalid={leadPhoneError ? true : undefined}
-            className="tap-target"
-          />
+          <div className="relative">
+            <Input
+              id="transfer-phone"
+              name="phone"
+              type="tel"
+              required
+              autoComplete="tel"
+              placeholder={GUEST_PHONE_PLACEHOLDER}
+              value={phoneValue}
+              onChange={(e) => setPhoneValue(e.target.value)}
+              aria-describedby={
+                [
+                  leadPhoneError ? LEAD_PHONE_ERROR_ID : null,
+                  showIntlNote ? LEAD_PHONE_NOTE_ID : null,
+                ]
+                  .filter(Boolean)
+                  .join(' ') || undefined
+              }
+              aria-invalid={leadPhoneError ? true : undefined}
+              className={invalidInputClassName(Boolean(leadPhoneError))}
+            />
+            <WarningIcon show={Boolean(leadPhoneError)} />
+          </div>
           <FieldError id={LEAD_PHONE_ERROR_ID} message={leadPhoneError ?? undefined} />
           {showIntlNote && (
             <p id={LEAD_PHONE_NOTE_ID} className="text-muted-foreground text-xs">

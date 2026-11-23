@@ -53,6 +53,9 @@ type Props = {
 
 const ERROR_ID = 'transfer-route-error';
 
+/** The fieldset's own id, so Task 6's scroll+focus can target this picker (no literal `<input>` to focus). */
+export const ROUTE_PICKER_ID = 'transfer-route-picker';
+
 /** Never present in a route id, so a composite radio `value` cannot collide. */
 const RADIO_VALUE_SEPARATOR = ':';
 
@@ -138,7 +141,11 @@ export default function RoutePicker({ routes, value, onChange, isLoading, error 
   }
 
   return (
-    <fieldset className="space-y-2" aria-describedby={error ? ERROR_ID : undefined}>
+    <fieldset
+      id={ROUTE_PICKER_ID}
+      className="space-y-2"
+      aria-describedby={error ? ERROR_ID : undefined}
+    >
       <legend className="text-sm font-medium">Choose a route</legend>
       <div className="grid gap-3">
         {routes.flatMap((route) => {

@@ -1,10 +1,11 @@
 import { keepPreviousData } from '@tanstack/react-query';
-import { DATE_BLOCKED, DATE_NOT_BOOKABLE, type PayMode } from '@rg/shared';
+import { createHoldInput, DATE_BLOCKED, DATE_NOT_BOOKABLE, type PayMode } from '@rg/shared';
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import QueryBoundary from '@/components/common/QueryBoundary';
 import { Skeleton } from '@/components/common/Skeleton';
 import CouponField from '@/components/checkout/CouponField';
+import ErrorSummary, { type ErrorSummaryItem } from '@/components/common/ErrorSummary';
 import GuestDetails from '@/components/checkout/GuestDetails';
 import HoldCountdown from '@/components/checkout/HoldCountdown';
 import ConsentCheckbox from '@/components/checkout/ConsentCheckbox';
@@ -13,12 +14,15 @@ import QuoteSummary from '@/components/checkout/QuoteSummary';
 import TurnstileWidget from '@/components/common/TurnstileWidget';
 import { Button } from '@/components/ui/button';
 import {
+  clientSideErrors,
   firstValidationMessage,
   getFieldErrors,
   getFormErrors,
+  getNestedFieldError,
   hasAnyNestedFieldError,
 } from '@/lib/field-errors';
 import { describeCheckoutError } from '@/lib/mutation-errors';
+import { scrollToAndFocus } from '@/lib/scroll-to-field';
 import { trpc } from '@/lib/trpc';
 
 /**
@@ -166,6 +170,56 @@ const PLACED_HOLD_FIELDS: ReadonlySet<string> = new Set([
   'couponCode',
 ]);
 
+/**
+ * Task 6 — client-side pre-submit validation (`clientSideErrors`) against
+ * this SAME `createHoldInput` schema, BEFORE `createHold.mutate()` is ever
+ * called. "Clicking Book now does nothing visible" is the audit finding this
+ * closes: an invalid submission now shows an `<ErrorSummary>` and scrolls/
+ * focuses the first bad field instead of a silent no-op or a later
+ * server-round-trip surprise.
+ *
+ * Only fields that genuinely have a box on screen AND can genuinely fail
+ * client-side appear in `FIELD_ORDER`/`FIELD_IDS` — `payMode` is always one
+ * of `PAY_MODES` (controlled radio state) and `consent` is always `true` by
+ * the time a payload is built (the pre-existing consent gate above returns
+ * early otherwise), so neither can ever actually produce a message here;
+ * they are kept out of `FIELD_ORDER` for the same reason the brief's own
+ * list omits them, and `buildErrorSummaryItems` already drops anything with
+ * no id-having match.
+ */
+const FIELD_LABELS: Record<string, string> = {
+  pickup: 'Pickup location',
+  pickupMapUrl: 'Google Maps pin',
+  requests: 'Special requests',
+  couponCode: 'Coupon code',
+  'lead.name': 'Full name',
+  'lead.email': 'Email',
+  'lead.phone': 'WhatsApp / mobile number',
+};
+/** Field order on screen, top to bottom — the summary and the scroll target both follow it. */
+const FIELD_ORDER = ['lead.name', 'lead.email', 'lead.phone', 'pickup', 'pickupMapUrl', 'requests'];
+/** Maps a dot-path to the invalid control's own id, for scroll+focus. */
+const FIELD_IDS: Record<string, string> = {
+  'lead.name': 'checkout-name',
+  'lead.email': 'checkout-email',
+  'lead.phone': 'checkout-phone',
+  pickup: 'checkout-pickup',
+  pickupMapUrl: 'checkout-pickup-map',
+  requests: 'checkout-requests',
+};
+
+function buildErrorSummaryItems(error: unknown): ErrorSummaryItem[] {
+  const items: ErrorSummaryItem[] = [];
+  for (const path of FIELD_ORDER) {
+    const message = path.includes('.')
+      ? getNestedFieldError(error, path)
+      : (getFieldErrors(error)?.[path] ?? null);
+    const id = FIELD_IDS[path];
+    if (message && id) items.push({ id, label: FIELD_LABELS[path] ?? path, message });
+  }
+  return items;
+}
+
 function CheckoutSkeleton() {
   return (
     <div
@@ -197,6 +251,17 @@ export default function CheckoutPage() {
   const [couponError, setCouponError] = useState<string | null>(null);
   const [payMode, setPayMode] = useState<PayMode>('deposit');
   const [consentError, setConsentError] = useState<string | null>(null);
+  /**
+   * Task 6. A pre-submit refusal found by validating the SAME payload
+   * `createHold.mutate()` would otherwise receive, against the SAME schema
+   * the server enforces (`createHoldInput`) — never a second, drifting
+   * notion of "valid". Takes priority over `createHold.error` in
+   * `activeError` below; cleared the instant a submit's payload validates,
+   * which is also the instant a real server attempt begins, so a later
+   * render never shows a stale client-side refusal next to a fresh server
+   * one.
+   */
+  const [preSubmitError, setPreSubmitError] = useState<unknown>(null);
   const [turnstileToken, setTurnstileToken] = useState<string | undefined>(undefined);
   // A Turnstile token is single-use — bump this to remount the widget (and
   // get a fresh one) after any failed attempt, not only a Turnstile refusal.
@@ -274,6 +339,7 @@ export default function CheckoutPage() {
 
     if (data.get('consent') !== 'on') {
       createHold.reset();
+      setPreSubmitError(null);
       setConsentError(
         'Please agree to the data privacy consent above before we can hold your spot (RA 10173).',
       );
@@ -285,7 +351,7 @@ export default function CheckoutPage() {
     const pickupMapUrl = String(data.get('pickupMapUrl') ?? '').trim();
     const requests = String(data.get('requests') ?? '').trim();
 
-    createHold.mutate({
+    const payload = {
       tourSlug,
       date,
       pax,
@@ -307,12 +373,39 @@ export default function CheckoutPage() {
       requests: requests === '' ? undefined : requests,
       consent: true,
       turnstileToken,
-    });
+    };
+
+    /*
+     * Task 6. The same payload, validated against the same schema the
+     * server will run, BEFORE the mutation ever fires — "clicking Book now
+     * does nothing visible" closed. A refusal here never reaches the
+     * network: the mutation is reset (so a stale server error cannot linger
+     * behind a fresh client one), the error summary gets something to show,
+     * and the first invalid field is scrolled to and focused.
+     */
+    const validationError = clientSideErrors(createHoldInput, payload);
+    if (validationError) {
+      createHold.reset();
+      setPreSubmitError(validationError);
+      const firstItem = buildErrorSummaryItems(validationError)[0];
+      if (firstItem) scrollToAndFocus(firstItem.id);
+      return;
+    }
+    setPreSubmitError(null);
+    createHold.mutate(payload);
   }
 
   /*
    * `createHold`'s refusal, split into the two kinds a guest can act on
-   * differently (task A4).
+   * differently (task A4) — now read off `activeError` (task 6) rather than
+   * `createHold.error` directly, so a pre-submit client-side refusal and a
+   * server one render through exactly the same split.
+   *
+   * `activeError` prefers a PRE-SUBMIT client-side refusal (`preSubmitError`,
+   * task 6) over the mutation's own, and is `null` whenever neither is
+   * present — at which point every read below degrades to exactly what it
+   * was before this task, since `getFieldErrors`/`getFormErrors` already
+   * answer `null`/`[]` for a `null` input.
    *
    * `holdFieldErrors` is non-null only for an INPUT VALIDATION failure, and
    * its messages go to the inputs below. Everything else — a capacity
@@ -325,8 +418,9 @@ export default function CheckoutPage() {
    * render (see `PLACED_HOLD_FIELDS`), or — when this was not a validation
    * failure at all — the single existing generic/specific sentence.
    */
-  const holdFieldErrors = createHold.isError ? getFieldErrors(createHold.error) : null;
-  const holdFormErrors = createHold.isError ? getFormErrors(createHold.error) : [];
+  const activeError = preSubmitError ?? (createHold.isError ? createHold.error : null);
+  const holdFieldErrors = getFieldErrors(activeError);
+  const holdFormErrors = getFormErrors(activeError);
   /*
    * Final-review finding 1: `lead` is normally excluded from the banner
    * because `GuestDetails.tsx` is assumed to always render its own message
@@ -337,18 +431,19 @@ export default function CheckoutPage() {
    */
   const leadGroupUnresolved =
     (holdFieldErrors?.lead ?? undefined) !== undefined &&
-    !hasAnyNestedFieldError(createHold.error, LEAD_LEAF_PATHS);
+    !hasAnyNestedFieldError(activeError, LEAD_LEAF_PATHS);
   const unplacedFieldMessages = Object.entries(holdFieldErrors ?? {})
     .filter(
       ([field]) => !PLACED_HOLD_FIELDS.has(field) || (field === 'lead' && leadGroupUnresolved),
     )
     .map(([, message]) => message);
   const isValidationRefusal = holdFieldErrors !== null || holdFormErrors.length > 0;
-  const holdBannerMessages = !createHold.isError
-    ? []
-    : isValidationRefusal
-      ? [...holdFormErrors, ...unplacedFieldMessages]
-      : [describeCheckoutError(createHold.error)];
+  const holdBannerMessages =
+    activeError === null
+      ? []
+      : isValidationRefusal
+        ? [...holdFormErrors, ...unplacedFieldMessages]
+        : [describeCheckoutError(activeError)];
 
   if (!hasSelection) {
     return (
@@ -465,7 +560,7 @@ export default function CheckoutPage() {
                     payMode={payMode}
                     onPayModeChange={setPayMode}
                     amountDueNowCentavos={quote.amountDueNowCentavos}
-                    error={createHold.isError ? createHold.error : null}
+                    error={activeError}
                   />
 
                   {/*
@@ -496,6 +591,8 @@ export default function CheckoutPage() {
                     onVerify={setTurnstileToken}
                     onError={() => setTurnstileToken(undefined)}
                   />
+
+                  <ErrorSummary items={buildErrorSummaryItems(activeError)} />
 
                   <Button
                     type="submit"
