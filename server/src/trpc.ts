@@ -48,8 +48,8 @@
  */
 import { initTRPC, TRPCError } from '@trpc/server';
 import type { Context } from './context';
-import { ZodError, z } from 'zod';
-import { PASSWORD_CHANGE_REQUIRED, type AdminRole } from '@rg/shared';
+import type { ZodError } from 'zod';
+import { PASSWORD_CHANGE_REQUIRED, type AdminRole, flattenZodError } from '@rg/shared';
 import { requireCustomer } from './middleware/require-customer';
 import { requireDriver } from './middleware/require-driver';
 import {
@@ -192,29 +192,22 @@ const t = initTRPC
  * a path two or more segments deep get an entry here; a top-level issue
  * (`path.length <= 1`) is already fully described by `fieldErrors` and would
  * just be a duplicate under its own name.
+ *
+ * `flattenZodError` (extracted to `@rg/shared`) handles the pure logic;
+ * this function re-applies `scrubPaths` to every message string as a
+ * server-only step — the client's own pre-submit validation never contains
+ * a filesystem path.
  */
-function flatten(error: ZodError): {
-  formErrors: string[];
-  fieldErrors: Record<string, string[]>;
-  nestedFieldErrors: Record<string, string[]>;
-} {
-  const flat = z.flattenError(error);
-
-  const nestedFieldErrors: Record<string, string[]> = {};
-  for (const issue of error.issues) {
-    if (issue.path.length < 2) continue;
-    const key = issue.path.join('.');
-    (nestedFieldErrors[key] ??= []).push(scrubPaths(issue.message));
-  }
-
+function flatten(error: ZodError) {
+  const flat = flattenZodError(error);
   return {
     formErrors: flat.formErrors.map(scrubPaths),
     fieldErrors: Object.fromEntries(
-      Object.entries(flat.fieldErrors as Record<string, string[] | undefined>).map(
-        ([field, messages]) => [field, (messages ?? []).map(scrubPaths)],
-      ),
+      Object.entries(flat.fieldErrors).map(([k, v]) => [k, v.map(scrubPaths)]),
     ),
-    nestedFieldErrors,
+    nestedFieldErrors: Object.fromEntries(
+      Object.entries(flat.nestedFieldErrors).map(([k, v]) => [k, v.map(scrubPaths)]),
+    ),
   };
 }
 

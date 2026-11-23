@@ -20,4 +20,5 @@ export * from './tours-admin';
 export * from './transfers';
 export * from './transfers-admin';
 export * from './transfers-checkout';
+export * from './zod-errors';
 export * from './schemas/public';
