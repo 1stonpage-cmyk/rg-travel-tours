@@ -73,7 +73,7 @@ describe('TransferGuestDetailsForm', () => {
     expect(screen.getByLabelText(/drop-off address/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/full name/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/^email$/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/mobile number/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/whatsapp.*mobile number/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/i agree/i)).toBeInTheDocument();
   });
 
@@ -123,7 +123,7 @@ describe('TransferGuestDetailsForm', () => {
         nestedFieldErrors: { 'lead.phone': [PHONE_MESSAGE] },
       }),
     );
-    const phone = screen.getByLabelText(/mobile number/i);
+    const phone = screen.getByLabelText(/whatsapp.*mobile number/i);
     expect(phone).toHaveAttribute('aria-invalid', 'true');
     expect(screen.getByText(PHONE_MESSAGE)).toBeInTheDocument();
     expect(screen.getByLabelText(/full name/i)).not.toHaveAttribute('aria-invalid');

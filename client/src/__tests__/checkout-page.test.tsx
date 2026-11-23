@@ -61,7 +61,7 @@ function renderCheckout(entry = '/checkout/oslob-tour?date=2026-11-20&pax=3') {
 async function fillGuestDetails(user: ReturnType<typeof userEvent.setup>, form: HTMLElement) {
   await user.type(within(form).getByLabelText(/full name/i), 'Juan Dela Cruz');
   await user.type(within(form).getByLabelText(/^email$/i), 'juan@example.com');
-  await user.type(within(form).getByLabelText(/mobile number/i), '0917 123 4567');
+  await user.type(within(form).getByLabelText(/whatsapp.*mobile number/i), '0917 123 4567');
 }
 
 describe('CheckoutPage — renders the server quote verbatim', () => {

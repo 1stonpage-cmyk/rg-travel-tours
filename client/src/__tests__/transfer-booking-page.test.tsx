@@ -152,7 +152,7 @@ describe('TransferBookingPage — happy path', () => {
     await user.type(within(form).getByLabelText(/^airline$/i), 'Philippine Airlines');
     await user.type(within(form).getByLabelText(/full name/i), 'Juan Dela Cruz');
     await user.type(within(form).getByLabelText(/^email$/i), 'juan@example.com');
-    await user.type(within(form).getByLabelText(/mobile number/i), '0917 123 4567');
+    await user.type(within(form).getByLabelText(/whatsapp.*mobile number/i), '0917 123 4567');
     await user.click(within(form).getByLabelText(/i agree/i));
 
     await user.click(within(form).getByRole('button', { name: /book now/i }));
@@ -223,7 +223,7 @@ describe('TransferBookingPage — reversible route (owner decision 2026-11-08)',
     await user.type(within(form).getByLabelText(/airline/i), 'Philippine Airlines');
     await user.type(within(form).getByLabelText(/full name/i), 'Juan Dela Cruz');
     await user.type(within(form).getByLabelText(/^email$/i), 'juan@example.com');
-    await user.type(within(form).getByLabelText(/mobile number/i), '0917 123 4567');
+    await user.type(within(form).getByLabelText(/whatsapp.*mobile number/i), '0917 123 4567');
     await user.click(within(form).getByLabelText(/i agree/i));
 
     await user.click(within(form).getByRole('button', { name: /book now/i }));
@@ -551,7 +551,7 @@ describe('TransferBookingPage — bad coupon recovery (review fix, Critical 1)',
     const form = await screen.findByRole('form', { name: /transfer booking form/i });
     await user.type(within(form).getByLabelText(/full name/i), 'Juan Dela Cruz');
     await user.type(within(form).getByLabelText(/^email$/i), 'juan@example.com');
-    await user.type(within(form).getByLabelText(/mobile number/i), '0917 123 4567');
+    await user.type(within(form).getByLabelText(/whatsapp.*mobile number/i), '0917 123 4567');
     await user.type(within(form).getByLabelText(/drop-off address/i), 'SM Seaside, Cebu City');
 
     await user.type(within(form).getByLabelText(/coupon code/i), 'BADCODE');
@@ -574,7 +574,7 @@ describe('TransferBookingPage — bad coupon recovery (review fix, Critical 1)',
     // never unmounted while the coupon's dual refusal was in flight.
     expect(within(form).getByLabelText(/full name/i)).toHaveValue('Juan Dela Cruz');
     expect(within(form).getByLabelText(/^email$/i)).toHaveValue('juan@example.com');
-    expect(within(form).getByLabelText(/mobile number/i)).toHaveValue('0917 123 4567');
+    expect(within(form).getByLabelText(/whatsapp.*mobile number/i)).toHaveValue('0917 123 4567');
     expect(within(form).getByLabelText(/drop-off address/i)).toHaveValue('SM Seaside, Cebu City');
   });
 });
@@ -818,7 +818,7 @@ describe('TransferBookingPage — reads direction from the URL (Task 7, 1D)', ()
     await user.type(within(form).getByLabelText(/airline/i), 'Philippine Airlines');
     await user.type(within(form).getByLabelText(/full name/i), 'Juan Dela Cruz');
     await user.type(within(form).getByLabelText(/^email$/i), 'juan@example.com');
-    await user.type(within(form).getByLabelText(/mobile number/i), '0917 123 4567');
+    await user.type(within(form).getByLabelText(/whatsapp.*mobile number/i), '0917 123 4567');
     await user.click(within(form).getByLabelText(/i agree/i));
     await user.click(within(form).getByRole('button', { name: /book now/i }));
 

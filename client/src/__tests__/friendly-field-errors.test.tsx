@@ -151,7 +151,7 @@ describe('Checkout — createHold validation errors', () => {
     const form = await screen.findByRole('form', { name: /checkout/i });
     await user.type(within(form).getByLabelText(/full name/i), 'Juan Dela Cruz');
     await user.type(within(form).getByLabelText(/^email$/i), 'juan@example.com');
-    await user.type(within(form).getByLabelText(/mobile number/i), '12345');
+    await user.type(within(form).getByLabelText(/whatsapp.*mobile number/i), '12345');
     await user.click(within(form).getByLabelText(/i agree/i));
     await user.click(within(form).getByRole('button', { name: /book now/i }));
 
@@ -160,7 +160,7 @@ describe('Checkout — createHold validation errors', () => {
     });
 
     // Beside the right field: the mobile input points at the message.
-    const phone = within(form).getByLabelText(/mobile number/i);
+    const phone = within(form).getByLabelText(/whatsapp.*mobile number/i);
     expect(describedMessage(phone)).toContain(PHONE_MESSAGE);
     expect(phone).toHaveAttribute('aria-invalid', 'true');
 
@@ -218,7 +218,7 @@ describe('Checkout — createHold validation errors', () => {
     const form = await screen.findByRole('form', { name: /checkout/i });
     await user.type(within(form).getByLabelText(/full name/i), 'Juan Dela Cruz');
     await user.type(within(form).getByLabelText(/^email$/i), 'juan@example.com');
-    await user.type(within(form).getByLabelText(/mobile number/i), '0917 123 4567');
+    await user.type(within(form).getByLabelText(/whatsapp.*mobile number/i), '0917 123 4567');
     await user.click(within(form).getByLabelText(/i agree/i));
     await user.click(within(form).getByRole('button', { name: /book now/i }));
 
@@ -250,7 +250,7 @@ describe('Checkout — createHold validation errors', () => {
     const form = await screen.findByRole('form', { name: /checkout/i });
     await user.type(within(form).getByLabelText(/full name/i), 'Juan Dela Cruz');
     await user.type(within(form).getByLabelText(/^email$/i), 'juan@example.com');
-    await user.type(within(form).getByLabelText(/mobile number/i), '0917 123 4567');
+    await user.type(within(form).getByLabelText(/whatsapp.*mobile number/i), '0917 123 4567');
     await user.click(within(form).getByLabelText(/i agree/i));
     await user.click(within(form).getByRole('button', { name: /book now/i }));
 
@@ -258,7 +258,7 @@ describe('Checkout — createHold validation errors', () => {
       expect(within(form).getByText(FORM_MESSAGE)).toBeInTheDocument();
     });
     // Nothing claimed it belonged to a field.
-    expect(within(form).getByLabelText(/mobile number/i)).not.toHaveAttribute('aria-invalid');
+    expect(within(form).getByLabelText(/whatsapp.*mobile number/i)).not.toHaveAttribute('aria-invalid');
     expectNoRawJson(form);
   });
 
@@ -283,7 +283,7 @@ describe('Checkout — createHold validation errors', () => {
     const form = await screen.findByRole('form', { name: /checkout/i });
     await user.type(within(form).getByLabelText(/full name/i), 'Juan Dela Cruz');
     await user.type(within(form).getByLabelText(/^email$/i), 'juan@example.com');
-    await user.type(within(form).getByLabelText(/mobile number/i), '0917 123 4567');
+    await user.type(within(form).getByLabelText(/whatsapp.*mobile number/i), '0917 123 4567');
     await user.click(within(form).getByLabelText(/i agree/i));
     await user.click(within(form).getByRole('button', { name: /book now/i }));
 

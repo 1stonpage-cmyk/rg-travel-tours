@@ -1,4 +1,5 @@
-import { formatPeso, type PayMode, type TransferProductType } from '@rg/shared';
+import { useState } from 'react';
+import { GUEST_PHONE_PLACEHOLDER, formatPeso, isLikelyInternationalPhone, type PayMode, type TransferProductType } from '@rg/shared';
 import ConsentCheckbox from '@/components/checkout/ConsentCheckbox';
 import FieldError from '@/components/common/FieldError';
 import { Input } from '@/components/ui/input';
@@ -117,6 +118,7 @@ const PAY_MODE_LABELS: Record<PayMode, string> = {
 const LEAD_NAME_ERROR_ID = 'transfer-name-error';
 const LEAD_EMAIL_ERROR_ID = 'transfer-email-error';
 const LEAD_PHONE_ERROR_ID = 'transfer-phone-error';
+const LEAD_PHONE_NOTE_ID = 'transfer-phone-intl-note';
 const DATE_ERROR_ID = 'transfer-date-error';
 const PICKUP_TIME_ERROR_ID = 'transfer-pickup-time-error';
 const DAY_USE_END_TIME_ERROR_ID = 'transfer-day-use-end-time-error';
@@ -140,6 +142,9 @@ export default function TransferGuestDetailsForm({
   ferryDetailsVisible,
   error,
 }: Props) {
+  const [phoneValue, setPhoneValue] = useState('');
+  const showIntlNote = isLikelyInternationalPhone(phoneValue);
+
   const leadNameError = getNestedFieldError(error, 'lead.name');
   const leadEmailError = getNestedFieldError(error, 'lead.email');
   const leadPhoneError = getNestedFieldError(error, 'lead.phone');
@@ -399,19 +404,30 @@ export default function TransferGuestDetailsForm({
           <FieldError id={LEAD_EMAIL_ERROR_ID} message={leadEmailError ?? undefined} />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="transfer-phone">Mobile number</Label>
+          <Label htmlFor="transfer-phone">WhatsApp / mobile number</Label>
           <Input
             id="transfer-phone"
             name="phone"
             type="tel"
             required
             autoComplete="tel"
-            placeholder="09XX XXX XXXX"
-            aria-describedby={leadPhoneError ? LEAD_PHONE_ERROR_ID : undefined}
+            placeholder={GUEST_PHONE_PLACEHOLDER}
+            value={phoneValue}
+            onChange={(e) => setPhoneValue(e.target.value)}
+            aria-describedby={
+              [leadPhoneError ? LEAD_PHONE_ERROR_ID : null, showIntlNote ? LEAD_PHONE_NOTE_ID : null]
+                .filter(Boolean)
+                .join(' ') || undefined
+            }
             aria-invalid={leadPhoneError ? true : undefined}
             className="tap-target"
           />
           <FieldError id={LEAD_PHONE_ERROR_ID} message={leadPhoneError ?? undefined} />
+          {showIntlNote && (
+            <p id={LEAD_PHONE_NOTE_ID} className="text-muted-foreground text-xs">
+              Please have WhatsApp or Viber installed before your trip day so we can reach you.
+            </p>
+          )}
         </div>
       </div>
 
