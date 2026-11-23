@@ -333,3 +333,40 @@ export function seatCapMessage(seats: number): string {
     'Please choose a smaller party or a larger vehicle.'
   );
 }
+
+/**
+ * A human duration from minutes — used by the route landing pages' meta
+ * description (SEO fixes, 2026-11-24, Task 8) rather than inventing a second
+ * formatter server-side.
+ */
+export function formatDurationMinutes(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h === 0) return `${m} min`;
+  if (m === 0) return `${h} hr`;
+  return `${h} hr ${m} min`;
+}
+
+/**
+ * Pattern matches GREEDILY on the first group, so a slug with more than one
+ * "-to-" occurrence splits at the LAST one (`a-to-b-to-c` -> group1=`a-to-b`,
+ * group2=`c`) — an accepted, documented edge case; every seeded slug has
+ * exactly one occurrence.
+ */
+const FROM_TO_SLUG_PATTERN = /^(.+)-to-(.+)$/;
+
+/**
+ * Derives the OTHER direction's own public URL slug from a route's stored
+ * (forward) `transfer_routes.slug` — no second column, no migration (owner
+ * decision 2026-11-24, superseding this plan's original "one URL per route"
+ * design). Every seeded slug already reads `{from}-to-{to}`, so swapping the
+ * two halves produces the exact human-readable reverse URL the owner asked
+ * for. A slug that does not contain the literal `-to-` segment (an admin
+ * free-typed something else) falls back to a `-return` suffix instead of
+ * guessing — still a real, distinct, valid URL, just a less descriptive one.
+ */
+export function reverseTransferRouteSlug(slug: string): string {
+  const match = slug.match(FROM_TO_SLUG_PATTERN);
+  if (!match) return `${slug}-return`;
+  return `${match[2]}-to-${match[1]}`;
+}

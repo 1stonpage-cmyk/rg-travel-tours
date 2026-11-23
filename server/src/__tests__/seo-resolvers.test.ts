@@ -1,9 +1,18 @@
-import { HERO_IMAGE_PRELOAD } from '@rg/shared';
+import { HERO_IMAGE_PRELOAD, reverseTransferRouteSlug } from '@rg/shared';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetContentUnverifiedCache } from '../content/settings';
 import { getDb, getPool } from '../db/client';
-import { destinations, settings, tourPriceTiers, tours } from '../db/schema';
+import {
+  destinations,
+  settings,
+  tourPriceTiers,
+  tours,
+  transferPlaces,
+  transferRoutes,
+  transferRouteVehiclePrices,
+  vehicleTypes,
+} from '../db/schema';
 import { NOINDEX_PATH_PREFIXES } from '../middleware/robots-header';
 import {
   absoluteUrl,
@@ -133,6 +142,12 @@ describeWithDb('page resolution', () => {
     // strips the query before this function ever sees it — assert directly.
     const meta = await resolvePage('/transfer');
     expect(meta.canonical).not.toContain('?');
+  });
+
+  it('an inactive or unknown transfer route slug 404s and noindexes', async () => {
+    const meta = await resolvePage('/transfers/does-not-exist');
+    expect(meta.status).toBe(404);
+    expect(meta.robots).toBe('noindex,nofollow');
   });
 
   it('gives /tours its own title and the site description', async () => {
@@ -663,5 +678,150 @@ describeWithDb('page resolution — fallback fixtures', () => {
       .set({ isActive: false })
       .where(eq(destinations.id, DESTINATION_ID));
     expect((await resolvePage(`/tours/${SLUG}`)).status).toBe(404);
+  });
+});
+
+/**
+ * Task 8 (SEO fixes, 2026-11-24): `/transfers/:slug`, direction-aware.
+ *
+ * `rg_travel_test` is deliberately kept at zero `transfer_places`/
+ * `transfer_routes` rows (same discipline as the fleet — this project's seed
+ * gates both to the APP database only; see `db/seed.ts`'s own comments and
+ * `seed-demo-transfer-bookings.test.ts`'s header). So this is a dedicated
+ * fixture, not the real `SEED_TRANSFER_ROUTES` catalog — ids far outside the
+ * seeded range, mirroring "page resolution — fallback fixtures" above.
+ */
+describeWithDb('page resolution — transfer routes (Task 8)', () => {
+  const FROM_PLACE_ID = 900_401;
+  const TO_PLACE_ID = 900_402;
+  const ROUTE_ID = 900_403;
+  const SLUG = 'fixture-seo-origin-to-fixture-seo-destination';
+  const REVERSE_SLUG = reverseTransferRouteSlug(SLUG);
+
+  beforeAll(async () => {
+    const db = getDb();
+    // The real 'van' vehicle_types id — backfilled into every database
+    // (including rg_travel_test) by migration 0023, never a literal id.
+    const [vanType] = await db
+      .select({ id: vehicleTypes.id })
+      .from(vehicleTypes)
+      .where(eq(vehicleTypes.slug, 'van'));
+    if (!vanType) throw new Error('No vehicle_types row for slug "van" — expected from seedBase.');
+
+    await db.insert(transferPlaces).values([
+      { id: FROM_PLACE_ID, name: 'Fixture SEO Origin', nameKey: 'fixture seo origin' },
+      { id: TO_PLACE_ID, name: 'Fixture SEO Destination', nameKey: 'fixture seo destination' },
+    ]);
+    await db.insert(transferRoutes).values({
+      id: ROUTE_ID,
+      fromPlaceId: FROM_PLACE_ID,
+      toPlaceId: TO_PLACE_ID,
+      slug: SLUG,
+      reverseEnabled: true,
+      estimatedDurationMinutes: 150,
+      freeCancelHours: 24,
+    });
+    await db.insert(transferRouteVehiclePrices).values({
+      routeId: ROUTE_ID,
+      vehicleTypeId: vanType.id,
+      oneWayPriceCentavos: 250_000,
+      dayUsePriceCentavos: 400_000,
+    });
+  });
+
+  afterAll(async () => {
+    const db = getDb();
+    await db
+      .delete(transferRouteVehiclePrices)
+      .where(eq(transferRouteVehiclePrices.routeId, ROUTE_ID));
+    await db.delete(transferRoutes).where(eq(transferRoutes.id, ROUTE_ID));
+    await db.delete(transferPlaces).where(eq(transferPlaces.id, FROM_PLACE_ID));
+    await db.delete(transferPlaces).where(eq(transferPlaces.id, TO_PLACE_ID));
+  });
+
+  beforeEach(async () => {
+    await getDb()
+      .update(transferRoutes)
+      .set({ reverseEnabled: true })
+      .where(eq(transferRoutes.id, ROUTE_ID));
+  });
+
+  /** `content_unverified` has to be false for `robots`, same reasoning as every other indexable-route test in this file. */
+  async function withVerifiedContent<T>(fn: () => Promise<T>): Promise<T> {
+    await getDb()
+      .update(settings)
+      .set({ value: false })
+      .where(eq(settings.key, 'content_unverified'));
+    resetContentUnverifiedCache();
+    try {
+      return await fn();
+    } finally {
+      await getDb()
+        .update(settings)
+        .set({ value: true })
+        .where(eq(settings.key, 'content_unverified'));
+      resetContentUnverifiedCache();
+    }
+  }
+
+  it('resolves a transfer route forward slug to a real, indexable page', async () => {
+    await withVerifiedContent(async () => {
+      const meta = await resolvePage(`/transfers/${SLUG}`);
+      expect(meta.status).toBe(200);
+      expect(meta.robots).toBe('index,follow');
+      expect(meta.title.length).toBeLessThanOrEqual(60);
+      expect(meta.description.length).toBeGreaterThanOrEqual(140);
+      expect(meta.description.length).toBeLessThanOrEqual(160);
+      expect(meta.canonical).toBe(absoluteUrl(`/transfers/${SLUG}`));
+      expect(meta.jsonLd.some((n) => (n as Record<string, unknown>)['@type'] === 'Service')).toBe(
+        true,
+      );
+      expect(
+        meta.jsonLd.some((n) => (n as Record<string, unknown>)['@type'] === 'BreadcrumbList'),
+      ).toBe(true);
+      expect(
+        meta.jsonLd.some((n) => (n as Record<string, unknown>)['@type'] === 'TravelAgency'),
+      ).toBe(true);
+    });
+  });
+
+  it('resolves the DERIVED reverse slug to the opposite direction, with its own canonical and title', async () => {
+    await withVerifiedContent(async () => {
+      const forward = await resolvePage(`/transfers/${SLUG}`);
+      const reverse = await resolvePage(`/transfers/${REVERSE_SLUG}`);
+      expect(reverse.status).toBe(200);
+      expect(reverse.robots).toBe('index,follow');
+      expect(reverse.canonical).toBe(absoluteUrl(`/transfers/${REVERSE_SLUG}`));
+      expect(reverse.title).not.toBe(forward.title);
+    });
+  });
+
+  /** Proves `resolveTransferRoute`'s 404 inherits `loadTransferRouteSeo`'s own `reverseEnabled` gate end to end. */
+  it("a reverse-disabled route's reverse slug 404s even though the forward slug is live", async () => {
+    await getDb()
+      .update(transferRoutes)
+      .set({ reverseEnabled: false })
+      .where(eq(transferRoutes.id, ROUTE_ID));
+
+    const forward = await resolvePage(`/transfers/${SLUG}`);
+    expect(forward.status).toBe(200);
+    const reverse = await resolvePage(`/transfers/${REVERSE_SLUG}`);
+    expect(reverse.status).toBe(404);
+    expect(reverse.robots).toBe('noindex,nofollow');
+  });
+
+  it('404s an inactive route', async () => {
+    await getDb()
+      .update(transferRoutes)
+      .set({ isActive: false })
+      .where(eq(transferRoutes.id, ROUTE_ID));
+    try {
+      expect((await resolvePage(`/transfers/${SLUG}`)).status).toBe(404);
+    } finally {
+      await getDb()
+        .update(transferRoutes)
+        .set({ isActive: true })
+        .where(eq(transferRoutes.id, ROUTE_ID));
+    }
   });
 });

@@ -31,11 +31,16 @@
 import { and, asc, eq } from 'drizzle-orm';
 import type { RequestHandler } from 'express';
 import { readContentUnverified, readShowTours } from '../content/settings';
+import { reverseTransferRouteSlug } from '@rg/shared';
 import { getDb } from '../db/client';
 import { destinations, packages, settings, tours } from '../db/schema';
 import type { SiteEnv } from '../env';
 import { NOINDEX_PATH_PREFIXES } from '../middleware/robots-header';
-import { absoluteUrl } from './resolvers';
+import {
+  absoluteUrl,
+  loadActiveTransferRouteRows,
+  type ActiveTransferRouteBaseRow,
+} from './resolvers';
 
 /** One `<url>` element: where it is, and when its content last changed. */
 export interface SitemapEntry {
@@ -154,6 +159,30 @@ function buildPackageDetailUrls(rows: SitemapRows): SitemapEntry[] {
 }
 
 /**
+ * `/transfers/:slug`, BOTH directions (Task 8, SEO fixes, 2026-11-24) — the
+ * forward URL for every active, both-places-active route, and additionally
+ * the reverse URL for every `reverseEnabled` one. Reuses
+ * `loadActiveTransferRouteRows()` from `seo/resolvers.ts` rather than
+ * re-querying, so this file and `loadTransferRouteSeo` can never drift on
+ * which routes qualify — this file's own first rule ("a sitemap must never
+ * list a URL whose own resolver says noindex") applied to the route catalog
+ * itself.
+ */
+function buildTransferRouteDetailUrls(rows: ActiveTransferRouteBaseRow[]): SitemapEntry[] {
+  const urls: SitemapEntry[] = [];
+  for (const row of rows) {
+    urls.push({ loc: absoluteUrl(`/transfers/${row.slug}`), lastmod: row.updatedAt });
+    if (row.reverseEnabled) {
+      urls.push({
+        loc: absoluteUrl(`/transfers/${reverseTransferRouteSlug(row.slug)}`),
+        lastmod: row.updatedAt,
+      });
+    }
+  }
+  return urls;
+}
+
+/**
  * Every indexable URL on the site, in crawl-priority order (home first).
  *
  * The four static routes are exactly the `index,follow` entries of
@@ -184,7 +213,11 @@ function buildPackageDetailUrls(rows: SitemapRows): SitemapEntry[] {
  * two independent flags rather than one.
  */
 export async function collectSitemapUrls(): Promise<SitemapEntry[]> {
-  const [rows, showTours] = await Promise.all([loadSitemapRows(), readShowTours()]);
+  const [rows, showTours, transferRouteRows] = await Promise.all([
+    loadSitemapRows(),
+    readShowTours(),
+    loadActiveTransferRouteRows(),
+  ]);
   const settingsNewest = newest(rows.settingRows.map((row) => row.updatedAt));
 
   const urls: SitemapEntry[] = [
@@ -227,6 +260,11 @@ export async function collectSitemapUrls(): Promise<SitemapEntry[]> {
   if (showTours) {
     urls.push(...buildPackageDetailUrls(rows));
   }
+
+  // `/transfers/:slug`, both directions (Task 8, SEO fixes, 2026-11-24) —
+  // UNCONDITIONAL, not gated on `showTours`: transfers are the launch
+  // product, and `show_tours` only ever gated the TOUR catalog.
+  urls.push(...buildTransferRouteDetailUrls(transferRouteRows));
 
   return urls;
 }

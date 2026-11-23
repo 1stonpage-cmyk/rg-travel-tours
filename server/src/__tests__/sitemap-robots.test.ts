@@ -15,13 +15,14 @@
  * read a stale `true` would pass forever. `resetTestDb()` in `afterAll` puts
  * the seeded baseline back for the files that run after this one.
  */
+import { reverseTransferRouteSlug } from '@rg/shared';
 import { eq } from 'drizzle-orm';
 import express from 'express';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import request from 'supertest';
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../app';
 import {
   CONTENT_UNVERIFIED_TTL_MS,
@@ -29,7 +30,7 @@ import {
   resetContentUnverifiedCache,
 } from '../content/settings';
 import { getDb } from '../db/client';
-import { packages, settings, tours } from '../db/schema';
+import { packages, settings, tours, transferPlaces, transferRoutes } from '../db/schema';
 import { isPrivatePath, robotsHeader, robotsTagValue } from '../middleware/robots-header';
 import { absoluteUrl, resolvePage } from '../seo/resolvers';
 import {
@@ -211,6 +212,14 @@ describeWithDb('buildSitemap', () => {
     expect(detail.length).toBeGreaterThan(0);
     for (const entry of detail) expect(xml).toContain(`<loc>${entry.loc}</loc>`);
 
+    // Task 8 (SEO fixes, 2026-11-24): `/transfers/:slug` (both directions)
+    // joins the detail URLs too, but `rg_travel_test` is deliberately kept
+    // at zero `transfer_routes` rows (same discipline as the fleet —
+    // `capacity.test.ts` counts the whole fleet, and this project's seed
+    // gates transfer places/routes to the APP database only, same as
+    // vans/drivers). So this count stays `7 + detail.length` here; the
+    // transfer-route sitemap behaviour has its own dedicated, fixture-based
+    // block below, which does not share this block's `resetTestDb()` calls.
     expect(xml.match(/<loc>/g)).toHaveLength(7 + detail.length);
   });
 
@@ -423,6 +432,94 @@ describeWithDb('buildSitemap', () => {
 
     expect(tourLocs).toEqual([...tourLocs].sort());
     expect(tourLocs.length).toBeGreaterThan(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Transfer route detail URLs, both directions (Task 8, SEO fixes, 2026-11-24)
+//
+// `rg_travel_test` is deliberately kept at zero `transfer_places`/
+// `transfer_routes` rows (same discipline as the fleet: the project's seed
+// gates them to the APP database only — see `db/seed.ts`'s own comments and
+// `seed-demo-transfer-bookings.test.ts`'s header for why). So this block
+// builds its OWN fixture route(s) rather than assuming `SEED_TRANSFER_ROUTES`
+// exist here, and runs in its OWN `describeWithDb` block — never inside
+// `buildSitemap`'s above, whose own tests call `resetTestDb()` mid-block and
+// would wipe a fixture inserted in a shared `beforeAll`.
+// ---------------------------------------------------------------------------
+
+describeWithDb('transfer route sitemap URLs (Task 8)', () => {
+  const unique = () => `${Math.floor(Math.random() * 1e9)}_${Date.now()}`;
+  const created = { placeIds: [] as number[], routeIds: [] as number[] };
+
+  async function makePlace(name: string): Promise<number> {
+    const [row] = await getDb()
+      .insert(transferPlaces)
+      .values({ name, nameKey: name.trim().toLowerCase() });
+    created.placeIds.push(row.insertId);
+    return row.insertId;
+  }
+
+  async function makeRoute(opts: { reverseEnabled: boolean }): Promise<string> {
+    const slug = `sitemap-fixture-${unique()}`;
+    const fromPlaceId = await makePlace(`Sitemap Fixture Origin ${unique()}`);
+    const toPlaceId = await makePlace(`Sitemap Fixture Destination ${unique()}`);
+    const [row] = await getDb().insert(transferRoutes).values({
+      fromPlaceId,
+      toPlaceId,
+      slug,
+      reverseEnabled: opts.reverseEnabled,
+      estimatedDurationMinutes: 90,
+      freeCancelHours: 24,
+    });
+    created.routeIds.push(row.insertId);
+    return slug;
+  }
+
+  afterEach(async () => {
+    const db = getDb();
+    for (const id of created.routeIds.splice(0)) {
+      await db.delete(transferRoutes).where(eq(transferRoutes.id, id));
+    }
+    for (const id of created.placeIds.splice(0)) {
+      await db.delete(transferPlaces).where(eq(transferPlaces.id, id));
+    }
+  });
+
+  it('lists both the forward and the derived reverse URL for a reverseEnabled route', async () => {
+    const slug = await makeRoute({ reverseEnabled: true });
+    const urls = (await collectSitemapUrls()).map((u) => u.loc);
+    expect(urls).toContain(absoluteUrl(`/transfers/${slug}`));
+    expect(urls).toContain(absoluteUrl(`/transfers/${reverseTransferRouteSlug(slug)}`));
+  });
+
+  it('omits the reverse URL for a route with reverseEnabled=false, and keeps its forward URL', async () => {
+    const slug = await makeRoute({ reverseEnabled: false });
+    const urls = (await collectSitemapUrls()).map((u) => u.loc);
+    expect(urls).toContain(absoluteUrl(`/transfers/${slug}`));
+    expect(urls).not.toContain(absoluteUrl(`/transfers/${reverseTransferRouteSlug(slug)}`));
+  });
+
+  /**
+   * Step 8 of the brief: re-proves this file's own "no URL whose own
+   * resolver says noindex" guard with a transfer route URL actually present
+   * — the `buildSitemap` block's own version of this test runs with ZERO
+   * transfer routes in this database, so it covers transfers vacuously.
+   */
+  it('a listed transfer route URL, both directions, resolves index,follow — never vacuously', async () => {
+    await makeRoute({ reverseEnabled: true });
+    await setContentUnverified(false);
+    try {
+      const urls = (await collectSitemapUrls()).map((u) => u.loc);
+      const transferUrls = urls.filter((loc) => loc.includes('/transfers/'));
+      expect(transferUrls.length).toBeGreaterThanOrEqual(2); // premise: forward + reverse are really here
+      for (const loc of transferUrls) {
+        const meta = await resolvePage(new URL(loc).pathname);
+        expect(meta.robots, loc).toBe('index,follow');
+      }
+    } finally {
+      await setContentUnverified(true);
+    }
   });
 });
 

@@ -18,11 +18,17 @@
  */
 import {
   APP_SURFACE_TITLES,
+  formatDurationMinutes,
   formatPeso,
   HERO_IMAGE_PRELOAD,
+  reverseTransferRouteSlug,
   STATIC_PUBLIC_TITLES,
+  type TransferDirection,
+  type TransferPlaceType,
+  type TransferPricingMode,
 } from '@rg/shared';
 import { and, asc, eq, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/mysql-core';
 import {
   readContentUnverified,
   readSettingBlock,
@@ -30,14 +36,25 @@ import {
   resolvePaymentMethods,
 } from '../content/settings';
 import { getDb } from '../db/client';
-import { destinations, packages, tourImages, tourPriceTiers, tours } from '../db/schema';
+import {
+  destinations,
+  packages,
+  tourImages,
+  tourPriceTiers,
+  tours,
+  transferPlaces,
+  transferRoutes,
+  transferRouteVehiclePrices,
+} from '../db/schema';
 import { env } from '../env';
 import { isPrivatePath, type NOINDEX_PATH_PREFIXES } from '../middleware/robots-header';
 import { realAggregate } from '../services/ratings';
 import { BRAND, LEGAL_OPERATOR } from './brand';
 import {
   aggregateRatingNode,
+  breadcrumbListNode,
   faqPageNode,
+  serviceNode,
   touristTripNode,
   travelAgencyNode,
   type JsonLdNode,
@@ -161,6 +178,246 @@ export interface PackageSeoRow {
   newPriceCentavos: number;
   /** Integer centavos, or null when there is no "was" price. */
   oldPriceCentavos: number | null;
+}
+
+// ---------------------------------------------------------------------------
+// Transfer route landing pages (SEO fixes, 2026-11-24, Task 8)
+//
+// One URL per DIRECTION of a `reverseEnabled` route, not one per route (owner
+// decision 2026-11-24, superseding the plan's original single-direction
+// design). No second `slug` column: the reverse URL is DERIVED from the
+// stored forward slug via `reverseTransferRouteSlug` (`@rg/shared`) — see
+// that function's own doc comment.
+// ---------------------------------------------------------------------------
+
+export interface TransferRouteSeoRow {
+  id: number;
+  /** The slug THIS page answers to — the stored forward slug, or the derived reverse one. */
+  slug: string;
+  direction: TransferDirection;
+  /** PICKUP for this direction (swapped from the stored row when `direction === 'reverse'`). */
+  fromPlaceName: string;
+  fromPlaceType: TransferPlaceType;
+  /** DROPOFF for this direction. */
+  toPlaceName: string;
+  toPlaceType: TransferPlaceType;
+  reverseEnabled: boolean;
+  estimatedDurationMinutes: number;
+  freeCancelHours: number;
+  inclusionsText: string | null;
+  exclusionsText: string | null;
+  pricingMode: TransferPricingMode;
+  minPayingPax: number;
+  updatedAt: Date;
+  /**
+   * The lowest `oneWayPriceCentavos` across every PRICED vehicle type on this
+   * route — deliberately NOT filtered by `sellableVehiclesByType()` (live
+   * fleet status: a van going `on_trip` or `for_repair` flips that set
+   * minute to minute). Indexed meta (`<title>`, description) and the
+   * sitemap must describe a STABLE fact — the catalog's own price list —
+   * not whichever vehicle happens to be sellable at crawl time, or the same
+   * URL's title would alternate between "from ₱2,500" and no price clause
+   * across two crawls of the same, unchanged route. Null only when the
+   * route has no price row at all (should not happen in practice; the admin
+   * route form requires at least one, but this stays defensive). Identical
+   * either direction — price and duration do not change by direction
+   * (CLAUDE.md-adjacent product rule, already true of the booking flow).
+   */
+  cheapestOneWayCentavos: number | null;
+  /** The DROPOFF place's own linked destination photo for this direction, or null. */
+  imagePath: string | null;
+}
+
+/** One row of the active, both-places-active route catalog — the base every direction match is tried against. */
+export interface ActiveTransferRouteBaseRow {
+  id: number;
+  slug: string;
+  fromPlaceName: string;
+  fromPlaceType: TransferPlaceType;
+  fromPlaceDestinationId: number | null;
+  toPlaceName: string;
+  toPlaceType: TransferPlaceType;
+  toPlaceDestinationId: number | null;
+  reverseEnabled: boolean;
+  estimatedDurationMinutes: number;
+  freeCancelHours: number;
+  inclusionsText: string | null;
+  exclusionsText: string | null;
+  pricingMode: TransferPricingMode;
+  minPayingPax: number;
+  updatedAt: Date;
+}
+
+const seoFromPlace = alias(transferPlaces, 'seoFromPlace');
+const seoToPlace = alias(transferPlaces, 'seoToPlace');
+
+/**
+ * Every active route whose from/to place is also active — the same filter
+ * `transferRoutes.list` (public router) and `collectSitemapUrls` both apply.
+ * One query, reused by the forward-or-reverse match below AND by the
+ * sitemap — a route table small enough (seeded: 4 rows) that a full scan per
+ * request is the same order of cost `transferRoutes.list` already pays on
+ * every page view.
+ *
+ * Exported so `seo/sitemap.ts` reuses it rather than re-querying — this
+ * file's own "no URL whose own resolver says noindex" discipline, applied to
+ * which routes qualify at all.
+ */
+export async function loadActiveTransferRouteRows(): Promise<ActiveTransferRouteBaseRow[]> {
+  const db = getDb();
+  return db
+    .select({
+      id: transferRoutes.id,
+      slug: transferRoutes.slug,
+      fromPlaceName: seoFromPlace.name,
+      fromPlaceType: seoFromPlace.placeType,
+      fromPlaceDestinationId: seoFromPlace.destinationId,
+      toPlaceName: seoToPlace.name,
+      toPlaceType: seoToPlace.placeType,
+      toPlaceDestinationId: seoToPlace.destinationId,
+      reverseEnabled: transferRoutes.reverseEnabled,
+      estimatedDurationMinutes: transferRoutes.estimatedDurationMinutes,
+      freeCancelHours: transferRoutes.freeCancelHours,
+      inclusionsText: transferRoutes.inclusionsText,
+      exclusionsText: transferRoutes.exclusionsText,
+      pricingMode: transferRoutes.pricingMode,
+      minPayingPax: transferRoutes.minPayingPax,
+      updatedAt: transferRoutes.updatedAt,
+    })
+    .from(transferRoutes)
+    .innerJoin(seoFromPlace, eq(seoFromPlace.id, transferRoutes.fromPlaceId))
+    .innerJoin(seoToPlace, eq(seoToPlace.id, transferRoutes.toPlaceId))
+    .where(
+      and(
+        eq(transferRoutes.isActive, true),
+        eq(seoFromPlace.isActive, true),
+        eq(seoToPlace.isActive, true),
+      ),
+    );
+}
+
+async function finishTransferRouteSeoRow(
+  row: ActiveTransferRouteBaseRow,
+  direction: TransferDirection,
+  requestedSlug: string,
+): Promise<TransferRouteSeoRow> {
+  const db = getDb();
+  const priceRows = await db
+    .select({ oneWayPriceCentavos: transferRouteVehiclePrices.oneWayPriceCentavos })
+    .from(transferRouteVehiclePrices)
+    .where(eq(transferRouteVehiclePrices.routeId, row.id));
+  // Deliberately NOT filtered by current fleet sellability — see this
+  // interface's own field comment above. Meta describes the catalog price
+  // list, not a live dispatch fact.
+  const cheapestOneWayCentavos =
+    priceRows.length === 0 ? null : Math.min(...priceRows.map((p) => p.oneWayPriceCentavos));
+
+  // The DROPOFF place for THIS direction owns the illustrative photo, if any.
+  const dropoffDestinationId =
+    direction === 'forward' ? row.toPlaceDestinationId : row.fromPlaceDestinationId;
+  const imagePath =
+    dropoffDestinationId === null
+      ? null
+      : ((
+          await db
+            .select({ imagePath: destinations.imagePath })
+            .from(destinations)
+            .where(eq(destinations.id, dropoffDestinationId))
+        )[0]?.imagePath ?? null);
+
+  return {
+    id: row.id,
+    slug: requestedSlug,
+    direction,
+    fromPlaceName: direction === 'forward' ? row.fromPlaceName : row.toPlaceName,
+    fromPlaceType: direction === 'forward' ? row.fromPlaceType : row.toPlaceType,
+    toPlaceName: direction === 'forward' ? row.toPlaceName : row.fromPlaceName,
+    toPlaceType: direction === 'forward' ? row.toPlaceType : row.fromPlaceType,
+    reverseEnabled: row.reverseEnabled,
+    estimatedDurationMinutes: row.estimatedDurationMinutes,
+    freeCancelHours: row.freeCancelHours,
+    inclusionsText: row.inclusionsText,
+    exclusionsText: row.exclusionsText,
+    pricingMode: row.pricingMode,
+    minPayingPax: row.minPayingPax,
+    updatedAt: row.updatedAt,
+    cheapestOneWayCentavos,
+    imagePath,
+  };
+}
+
+/**
+ * Tries a FORWARD match (`transfer_routes.slug === requestedSlug`) first,
+ * then a REVERSE one (`reverseTransferRouteSlug(route.slug) ===
+ * requestedSlug`, and only among `reverseEnabled` routes) — the forward slug
+ * is the stored, admin-chosen identity; the reverse slug is derived and
+ * never stored, so it cannot be looked up by an indexed `WHERE` and is
+ * matched in JS against the same small active-route scan the sitemap uses.
+ */
+export async function loadTransferRouteSeo(
+  requestedSlug: string,
+): Promise<TransferRouteSeoRow | null> {
+  const rows = await loadActiveTransferRouteRows();
+
+  const forwardMatch = rows.find((r) => r.slug === requestedSlug);
+  if (forwardMatch) return finishTransferRouteSeoRow(forwardMatch, 'forward', requestedSlug);
+
+  const reverseMatch = rows.find(
+    (r) => r.reverseEnabled && reverseTransferRouteSlug(r.slug) === requestedSlug,
+  );
+  if (reverseMatch) return finishTransferRouteSeoRow(reverseMatch, 'reverse', requestedSlug);
+
+  return null;
+}
+
+/**
+ * The single formula for a transfer route's title, direction included — the
+ * caller passes the DIRECTION-RESOLVED names `loadTransferRouteSeo` already
+ * swapped, so this needs no direction parameter of its own.
+ *
+ * Falls back through progressively shorter candidates, dropping the price
+ * clause and then the brand suffix, because the real place names in this
+ * catalog (`"Mactan-Cebu International Airport"`) do not leave room for
+ * either at the 60-character bound a title tag wants to stay under.
+ */
+export function transferRouteTitle(
+  route: Pick<TransferRouteSeoRow, 'fromPlaceName' | 'toPlaceName' | 'cheapestOneWayCentavos'>,
+): string {
+  const price =
+    route.cheapestOneWayCentavos === null ? null : formatPeso(route.cheapestOneWayCentavos);
+  const candidates = [
+    price &&
+      `${route.fromPlaceName} to ${route.toPlaceName} Private Transfer — from ${price} | ${BRAND}`,
+    `${route.fromPlaceName} to ${route.toPlaceName} Private Transfer | ${BRAND}`,
+    price && `${route.fromPlaceName} to ${route.toPlaceName} Transfer — from ${price}`,
+    `${route.fromPlaceName} to ${route.toPlaceName} Transfer`,
+  ].filter((c): c is string => Boolean(c));
+  return candidates.find((c) => c.length <= 60) ?? truncate(candidates[candidates.length - 1]!, 60);
+}
+
+/**
+ * The single formula for a transfer route's description, direction included
+ * — same reasoning as {@link transferRouteTitle}.
+ */
+export function transferRouteDescription(
+  route: Pick<
+    TransferRouteSeoRow,
+    | 'fromPlaceName'
+    | 'toPlaceName'
+    | 'estimatedDurationMinutes'
+    | 'cheapestOneWayCentavos'
+    | 'freeCancelHours'
+  >,
+): string {
+  const price =
+    route.cheapestOneWayCentavos === null ? null : formatPeso(route.cheapestOneWayCentavos);
+  const duration = formatDurationMinutes(route.estimatedDurationMinutes);
+  const priceClause = price ? `from ${price}` : 'contact us for pricing';
+  return truncate(
+    `Private transfer from ${route.fromPlaceName} to ${route.toPlaceName} with ${BRAND}, ${priceClause}. ` +
+      `About ${duration} door to door with a licensed driver. Free cancellation up to ${route.freeCancelHours} hours before pickup — book online in minutes.`,
+    160,
+  );
 }
 
 /**
@@ -773,6 +1030,61 @@ const resolvePackage: Resolver = async (params) => {
   };
 };
 
+/**
+ * `/transfers/:slug` — one direction of a transfer route (Task 8, SEO fixes,
+ * 2026-11-24). Direction-agnostic: `loadTransferRouteSeo` already resolved
+ * forward vs. reverse, so this resolver reads the row it returns and asks
+ * nothing further about direction.
+ */
+const resolveTransferRoute: Resolver = async (params) => {
+  const requestedSlug = params.slug ?? '';
+  const [route, site] = await Promise.all([loadTransferRouteSeo(requestedSlug), readSiteBlocks()]);
+  if (!route) return notFoundMeta(`/transfers/${requestedSlug}`);
+
+  const canonical = absoluteUrl(`/transfers/${route.slug}`);
+  const description = transferRouteDescription(route);
+  const ogImage = firstImageUrl(route.imagePath, site.siteSeo.ogImage, site.hero.imagePath);
+  const { agency } = await buildSiteGraph(site.siteSeo.description, ogImage);
+
+  const offers =
+    route.cheapestOneWayCentavos === null
+      ? []
+      : [
+          {
+            name: `${route.fromPlaceName} to ${route.toPlaceName}`,
+            priceCentavos: route.cheapestOneWayCentavos,
+          },
+        ];
+
+  return {
+    title: transferRouteTitle(route),
+    description,
+    canonical,
+    ogImage,
+    ogType: 'website',
+    jsonLd: [
+      serviceNode({
+        name: `${route.fromPlaceName} to ${route.toPlaceName} Private Transfer`,
+        url: canonical,
+        description,
+        imageUrl: ogImage,
+        siteUrl: absoluteUrl('/'),
+        areaServed: 'Cebu, Philippines',
+        offers,
+      }),
+      breadcrumbListNode([
+        { name: 'Home', url: absoluteUrl('/') },
+        { name: 'Transfers', url: absoluteUrl('/transfer') },
+        { name: `${route.fromPlaceName} to ${route.toPlaceName}`, url: canonical },
+      ]),
+      agency,
+    ],
+    preload: null,
+    status: 200,
+    robots: 'index,follow',
+  };
+};
+
 // ---------------------------------------------------------------------------
 // The route table
 // ---------------------------------------------------------------------------
@@ -796,6 +1108,7 @@ export const ROUTES: RouteEntry[] = [
   { pattern: '/tours', resolve: resolveToursIndex },
   { pattern: '/tours/:slug', resolve: resolveTour },
   { pattern: '/packages/:slug', resolve: resolvePackage },
+  { pattern: '/transfers/:slug', resolve: resolveTransferRoute },
   { pattern: '/privacy', resolve: resolveLegal('privacy') },
   { pattern: '/terms', resolve: resolveLegal('terms') },
   { pattern: '/refund-policy', resolve: resolveLegal('refund') },

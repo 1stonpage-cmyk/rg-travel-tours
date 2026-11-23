@@ -286,6 +286,73 @@ function offerNode(priceCentavos: number | null, url: string): JsonLdNode | unde
  * `arrivalTime`/`departureTime`, which no row here holds), and inventing a
  * departure time to carry a 14-hour figure would be fabricating data.
  */
+// ---------------------------------------------------------------------------
+// Transfers — point-to-point private transfer routes (SEO fixes, 2026-11-24)
+// ---------------------------------------------------------------------------
+
+export interface TransferServiceInput {
+  name: string;
+  url: string;
+  description: string;
+  imageUrl: string | null;
+  siteUrl: string;
+  /** `"Cebu, Philippines"` — matches `travelAgencyNode`'s own literal. */
+  areaServed: string;
+  /** One Offer per OFFERED vehicle type, already filtered to priced+sellable. */
+  offers: { name: string; priceCentavos: number }[];
+}
+
+/**
+ * A `Service` for one transfer route (one direction). `Service`, not
+ * `TouristTrip`: a transfer is a point-to-point service, not an itinerary of
+ * visits to places, which is what `Trip`/`TouristTrip` models — using
+ * `TouristTrip` here would be the wrong type for a one-leg transfer, and
+ * `Service` is Schema.org's own fit for a bookable service rendered between
+ * two points.
+ */
+export function serviceNode(input: TransferServiceInput): JsonLdNode {
+  return compact({
+    '@context': CONTEXT,
+    '@type': 'Service',
+    serviceType: 'Private transfer',
+    name: input.name,
+    url: input.url,
+    description: input.description,
+    image: input.imageUrl ?? undefined,
+    areaServed: input.areaServed,
+    provider: { '@type': 'TravelAgency', '@id': organizationId(input.siteUrl), name: BRAND },
+    offers:
+      input.offers.length === 0
+        ? undefined
+        : input.offers.map((o) => ({
+            '@type': 'Offer',
+            name: o.name,
+            price: pesoAmount(o.priceCentavos),
+            priceCurrency: 'PHP',
+            url: input.url,
+          })),
+  });
+}
+
+export interface BreadcrumbItem {
+  name: string;
+  url: string;
+}
+
+/** A `BreadcrumbList` for a nested page — Home / Transfers / this route. */
+export function breadcrumbListNode(items: BreadcrumbItem[]): JsonLdNode {
+  return {
+    '@context': CONTEXT,
+    '@type': 'BreadcrumbList',
+    itemListElement: items.map((item, i) => ({
+      '@type': 'ListItem',
+      position: i + 1,
+      name: item.name,
+      item: item.url,
+    })),
+  };
+}
+
 export function touristTripNode(input: TripInput): JsonLdNode {
   const destination = text(input.destinationName);
 
