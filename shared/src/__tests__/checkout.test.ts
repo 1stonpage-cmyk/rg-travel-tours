@@ -10,6 +10,8 @@ import {
   DATE_BLOCKED,
   DATE_NOT_BOOKABLE,
   gatewayMinimumMessage,
+  guestPhoneSchema,
+  isLikelyInternationalPhone,
   NOTHING_TO_PAY_ONLINE,
   phPhoneSchema,
   quoteInput,
@@ -108,6 +110,39 @@ describe('phPhoneSchema', () => {
   });
 });
 
+describe('guestPhoneSchema', () => {
+  it('accepts PH local format and normalises to E.164', () => {
+    expect(guestPhoneSchema.parse('0917 123 4567')).toBe('+639171234567');
+  });
+  it('accepts PH E.164 format unchanged', () => {
+    expect(guestPhoneSchema.parse('+639171234567')).toBe('+639171234567');
+  });
+  it('accepts a US number with spaces/dashes/brackets stripped', () => {
+    expect(guestPhoneSchema.parse('(+1) 555-123-4567')).toBe('+15551234567');
+  });
+  it('accepts a UK number', () => {
+    expect(guestPhoneSchema.parse('+44 7911 123456')).toBe('+447911123456');
+  });
+  it('refuses junk with a guest-facing sentence', () => {
+    const r = guestPhoneSchema.safeParse('abc123');
+    expect(r.success).toBe(false);
+    expect(r.success || r.error.issues[0]!.message).toMatch(/mobile number/i);
+  });
+  it('refuses a too-short international number', () => {
+    expect(guestPhoneSchema.safeParse('+1234').success).toBe(false);
+  });
+});
+
+describe('isLikelyInternationalPhone', () => {
+  it('is false for PH local and PH E.164 forms', () => {
+    expect(isLikelyInternationalPhone('0917 123 4567')).toBe(false);
+    expect(isLikelyInternationalPhone('+639171234567')).toBe(false);
+  });
+  it('is true for a non-+63 country code', () => {
+    expect(isLikelyInternationalPhone('+1 555 123 4567')).toBe(true);
+  });
+});
+
 describe('createHoldInput', () => {
   it('requires the data-privacy consent to be true', () => {
     const base = {
@@ -121,6 +156,22 @@ describe('createHoldInput', () => {
     expect(createHoldInput.safeParse({ ...base, consent: false }).success).toBe(false);
     expect(createHoldInput.safeParse({ ...base }).success).toBe(false);
     expect(createHoldInput.safeParse({ ...base, consent: true }).success).toBe(true);
+  });
+
+  it('accepts international phone numbers in lead.phone via guestPhoneSchema', () => {
+    const result = createHoldInput.safeParse({
+      tourSlug: 'x',
+      date: '2026-12-25',
+      pax: 2,
+      payMode: 'deposit',
+      quoteId: QUOTE_ID,
+      lead: { name: 'A', email: 'a@b.com', phone: '+1 555 123 4567' },
+      consent: true,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.lead.phone).toBe('+15551234567');
+    }
   });
 
   /**

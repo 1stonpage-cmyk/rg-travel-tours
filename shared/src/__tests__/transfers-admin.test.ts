@@ -152,4 +152,14 @@ describe('transferQuoteConvertInput', () => {
       false,
     );
   });
+
+  it('accepts international phone numbers in leadPhone via guestPhoneSchema', () => {
+    const result = transferQuoteConvertInput.safeParse(
+      oneWayPayload({ leadPhone: '+1 555 123 4567' }),
+    );
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.leadPhone).toBe('+15551234567');
+    }
+  });
 });

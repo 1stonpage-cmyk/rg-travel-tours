@@ -59,6 +59,47 @@ export const phPhoneSchema = z
   .transform((value) => (value.startsWith('+') ? value : `+63${value.slice(1)}`));
 
 /**
+ * A guest's own contact number — unlike {@link phPhoneSchema} (drivers and
+ * vans, PH-only by owner instruction), a GUEST may be an international
+ * tourist with no PH SIM. Accepts every form `phPhoneSchema` does (PH local
+ * `09XXXXXXXXX`, PH E.164 `+639XXXXXXXXX`) OR a general E.164 number: `+`,
+ * a nonzero first digit, 6-14 more digits (7-15 digits total after the
+ * `+`, matching the ITU E.164 ceiling). Spaces, dashes and brackets are
+ * stripped first, exactly as `phPhoneSchema` already does, so a guest
+ * typing their number the way they read it is never rejected for it.
+ *
+ * Normalises to E.164 exactly as `phPhoneSchema` does for the PH forms
+ * (`0917...` -> `+63917...`); an already-`+`-prefixed number (PH or
+ * international) is returned unchanged. This is deliberately the SAME
+ * normalisation `phPhoneSchema` uses for its own two forms, so an old
+ * `bookings.leadPhone` value written before this schema existed still
+ * matches a guest retyping the identical PH number today.
+ */
+const INTERNATIONAL_PHONE_PATTERN = /^\+[1-9]\d{6,14}$/;
+
+export function isLikelyInternationalPhone(raw: string): boolean {
+  const stripped = raw.replace(/[\s()-]/g, '');
+  return stripped.startsWith('+') && !stripped.startsWith('+63');
+}
+
+export const guestPhoneSchema = z
+  .string()
+  .transform((value) => value.replace(/[\s()-]/g, ''))
+  .pipe(
+    z
+      .string()
+      .refine(
+        (value) =>
+          /^(09\d{9}|\+639\d{9})$/.test(value) || INTERNATIONAL_PHONE_PATTERN.test(value),
+        'Enter a valid mobile number, like 0917 123 4567 or +1 555 123 4567.',
+      ),
+  )
+  .transform((value) => (value.startsWith('+') ? value : `+63${value.slice(1)}`));
+
+/** Shown as the phone field's placeholder on every guest-facing form. */
+export const GUEST_PHONE_PLACEHOLDER = '09XX XXX XXXX or +1 555 123 4567';
+
+/**
  * What the browser may ask for. `.strict()` is load-bearing: the server
  * computes all money (CLAUDE.md), so a request carrying `totalCentavos` is a
  * bug or an attack, and either way it must be refused rather than ignored.
@@ -145,7 +186,7 @@ export const leadSchema = z
     email: z
       .email('Enter a valid email address.')
       .max(200, 'Enter a shorter email address (up to 200 characters).'),
-    phone: phPhoneSchema,
+    phone: guestPhoneSchema,
   })
   .strict();
 

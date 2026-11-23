@@ -39,7 +39,7 @@
  * service.
  */
 import { z } from 'zod';
-import { civilDateSchema, phPhoneSchema } from './checkout';
+import { civilDateSchema, guestPhoneSchema, phPhoneSchema } from './checkout';
 import { TRANSFER_PLACE_TYPES, TRANSFER_PRICING_MODES, TRANSFER_PRODUCT_TYPES } from './transfers';
 import type { TransferPlaceType, TransferPricingMode } from './transfers';
 import { MAX_CENTAVOS } from './tours-admin';
@@ -676,7 +676,7 @@ export const transferQuoteConvertInput = z
      * schema's own header note. Normalises exactly as `createHoldInput.lead`'s
      * own phone field does.
      */
-    leadPhone: phPhoneSchema,
+    leadPhone: guestPhoneSchema,
     /**
      * Pesos, converted to centavos by the client, re-validated as whole,
      * positive centavos here. `createTransferBooking()` still applies the
