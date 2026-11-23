@@ -38,6 +38,9 @@ importers:
       typescript-eslint:
         specifier: ^8.46.0
         version: 8.71.1(eslint@9.39.5(jiti@2.7.0)(supports-color@7.2.0))(supports-color@7.2.0)(typescript@5.9.3)
+      zod:
+        specifier: ^4.6.5
+        version: 4.6.5
 
   client:
     dependencies:

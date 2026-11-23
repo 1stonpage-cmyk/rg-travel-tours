@@ -20,8 +20,10 @@
  * populated the same way a real refusal populates it.
  */
 import { TRPCClientError } from '@trpc/client';
+import { z } from 'zod';
 import { describe, expect, it } from 'vitest';
 import {
+  clientSideErrors,
   firstValidationMessage,
   getFieldErrors,
   getFormErrors,
@@ -208,5 +210,20 @@ describe('splitFieldErrors', () => {
   it('returns null for a non-validation refusal, so the caller keeps its own path', () => {
     const error = refusal({ code: 'FORBIDDEN', httpStatus: 403 }, 'Only the owner may do that.');
     expect(splitFieldErrors(error, placed)).toBeNull();
+  });
+});
+
+describe('clientSideErrors', () => {
+  it('clientSideErrors reads through the SAME getFieldErrors/getNestedFieldError readers a server error uses', () => {
+    const schema = z.object({ lead: z.object({ phone: z.string().min(5, 'too short') }) });
+    const err = clientSideErrors(schema, { lead: { phone: 'x' } });
+    expect(err).not.toBeNull();
+    expect(getFieldErrors(err)?.lead).toBe('too short');
+    expect(getNestedFieldError(err, 'lead.phone')).toBe('too short');
+  });
+
+  it('clientSideErrors returns null when the payload is valid', () => {
+    const schema = z.object({ name: z.string().min(1) });
+    expect(clientSideErrors(schema, { name: 'ok' })).toBeNull();
   });
 });

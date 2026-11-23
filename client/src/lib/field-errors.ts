@@ -47,6 +47,9 @@
  */
 import { TRPCClientError } from '@trpc/client';
 
+import { flattenZodError } from '@rg/shared';
+import type { ZodType } from 'zod';
+
 /** One message per field, keyed by the field name the SERVER reported. */
 export type FieldErrors = Record<string, string>;
 
@@ -69,7 +72,37 @@ interface WireZodError {
   nestedFieldErrors?: unknown;
 }
 
+/**
+ * A pre-submit failure found by validating a guest's own typed input
+ * CLIENT-SIDE, against the exact same shared schema the server will run —
+ * never a second, drifting notion of "valid". Carries the identical
+ * `{formErrors, fieldErrors, nestedFieldErrors}` shape a server's
+ * `TRPCClientError.data.zodError` does, so every existing reader below
+ * (`getFieldErrors`, `getNestedFieldError`, `getFormErrors`,
+ * `firstValidationMessage`) works on it unchanged — this is a second
+ * PRODUCER of the shape those readers already consume, not a second shape.
+ */
+export class LocalValidationError extends Error {
+  constructor(public readonly zodError: WireZodError) {
+    super('Client-side validation failed.');
+  }
+}
+
+/**
+ * Validates `payload` against `schema`; returns a {@link LocalValidationError}
+ * ready to hand to `getFieldErrors`/`getNestedFieldError`/`ErrorSummary`, or
+ * `null` when the payload is valid. A form calls this BEFORE `mutate()` so an
+ * invalid submission never reaches the network and is never silent — see
+ * `CheckoutPage.tsx`/`TransferBookingPage.tsx`.
+ */
+export function clientSideErrors(schema: ZodType, payload: unknown): LocalValidationError | null {
+  const result = schema.safeParse(payload);
+  if (result.success) return null;
+  return new LocalValidationError(flattenZodError(result.error));
+}
+
 function readZodError(error: unknown): WireZodError | null {
+  if (error instanceof LocalValidationError) return error.zodError;
   if (!(error instanceof TRPCClientError)) return null;
   const data: unknown = error.data;
   if (typeof data !== 'object' || data === null) return null;
