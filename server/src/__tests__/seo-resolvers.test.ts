@@ -230,6 +230,32 @@ describeWithDb('page resolution', () => {
   });
 
   /**
+   * Task 11: SEO fixes, 2026-11-24. Terms and Refund descriptions must use
+   * transfer wording (not "tours") and stay within 140-160 characters for
+   * optimal display in search results (meta description length).
+   */
+  it('terms and refund descriptions do not say "tours" and are within 140-160 chars', async () => {
+    const terms = await resolvePage('/terms');
+    expect(terms.description).not.toMatch(/\btours?\b/i);
+    expect(terms.description.length).toBeGreaterThanOrEqual(140);
+    expect(terms.description.length).toBeLessThanOrEqual(160);
+
+    const refund = await resolvePage('/refund-policy');
+    expect(refund.description).not.toMatch(/\btours?\b/i);
+    expect(refund.description.length).toBeGreaterThanOrEqual(140);
+    expect(refund.description.length).toBeLessThanOrEqual(160);
+  });
+
+  /**
+   * Task 11: Verify 404 description does not reference tours and meets
+   * length standards for a fallback meta description.
+   */
+  it('404 description does not reference tours and stays within reasonable length', async () => {
+    const meta = await resolvePage('/nonsense');
+    expect(meta.description).not.toMatch(/\btours?\b/i);
+  });
+
+  /**
    * Task 1D (owner decision 2026-11-10). Unlike the four legal pages above,
    * `/photo-credits` must answer 200 with its own title (the BUG-116/QA-1
    * defect this file already guards against for `/checkout` et al.) but

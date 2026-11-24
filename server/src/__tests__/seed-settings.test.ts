@@ -98,3 +98,18 @@ describeWithDb('the settings seed is insert-only', () => {
     expect(await storedValue()).toEqual(SEED_SETTINGS[KEY]);
   }, 60_000);
 });
+
+/**
+ * Task 11: SEO fixes, 2026-11-24. The home page's meta description comes
+ * from `settings.site_seo` (admin-entered, verbatim), and audit found 176 chars
+ * in production (over the 160 target). The seed value is already compliant
+ * (141 chars). This regression test pins the seed's own length so it cannot
+ * grow past 160 without failing the build — proving the fix is to edit the
+ * database on already-seeded environments, not to change the seed itself.
+ */
+describeWithDb('the site_seo seed description length', () => {
+  it('is between 140 and 160 characters', () => {
+    expect(SEED_SETTINGS.site_seo.description.length).toBeGreaterThanOrEqual(140);
+    expect(SEED_SETTINGS.site_seo.description.length).toBeLessThanOrEqual(160);
+  });
+});

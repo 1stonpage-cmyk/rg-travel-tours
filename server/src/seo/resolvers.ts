@@ -864,12 +864,14 @@ const LEGAL_PAGES = {
   terms: {
     path: '/terms',
     title: `${STATIC_PUBLIC_TITLES['/terms']} | ${BRAND}`,
-    description: `Booking, payment, cancellation and safety terms for Cebu tours operated by ${LEGAL_OPERATOR}.`,
+    description:
+      'Find out about booking, payment, cancellation and safety rules for private airport and island transfers in Cebu with TravelSugbo. Reserve online in minutes.',
   },
   refund: {
     path: '/refund-policy',
     title: `${STATIC_PUBLIC_TITLES['/refund-policy']} | ${BRAND}`,
-    description: `Cancellation windows, refund rules and how refunds are paid for ${BRAND} tours operated by ${LEGAL_OPERATOR}.`,
+    description:
+      'Learn about our cancellation windows, refund policy and how to claim refunds for private airport and island transfers in Cebu with TravelSugbo.',
   },
   cookies: {
     path: '/cookies',
