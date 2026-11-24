@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import {
   formatPeso,
@@ -10,6 +11,7 @@ import { useRawDocumentTitle } from '@/hooks/useDocumentTitle';
 import { EmptyState } from '@/components/common/QueryBoundary';
 import { Skeleton } from '@/components/common/Skeleton';
 import { Button } from '@/components/ui/button';
+import { trackEvent } from '@/lib/consent/scripts';
 import { trpc } from '@/lib/trpc';
 
 /**
@@ -136,6 +138,30 @@ export default function TransferRoutePage() {
   // of a title on client-side nav, not only to the server's two injection
   // surfaces.
   useRawDocumentTitle(view?.pageTitle ?? null);
+
+  /*
+   * `view_route` (Task 12, SEO fixes, 2026-11-24) — fired once per
+   * direction-specific slug, not once per route id. A reversible route's
+   * forward and reverse pages share one `route.id` but have swapped
+   * pickup/dropoff places, so keying the fire-once guard on `view.slug` (the
+   * REQUESTED slug, which differs between the two directions) is what keeps
+   * a guest who navigates forward→reverse from being silently skipped, and
+   * `view.pickupPlace`/`view.dropoffPlace` (already direction-resolved by
+   * `matchRouteDirection`, not the route's own raw `fromPlace`/`toPlace`) is
+   * what keeps a reverse-direction view from reporting the forward names.
+   */
+  const trackedViewSlugRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!view) return;
+    if (trackedViewSlugRef.current === view.slug) return;
+    trackedViewSlugRef.current = view.slug;
+    trackEvent('view_route', {
+      routeId: view.route.id,
+      fromPlace: view.pickupPlace.name,
+      toPlace: view.dropoffPlace.name,
+      direction: view.direction,
+    });
+  }, [view]);
 
   if (routesQuery.isPending) {
     return (

@@ -157,6 +157,25 @@ export function removeMetaPixel(): void {
   deleteCookiesMatching(/^_fb[pc]$/);
 }
 
+/**
+ * Fires a GA4 custom event (and, when the Pixel is also installed, a
+ * matching Meta `trackCustom`). Both are already consent-gated at the
+ * INSTALL step (`injectGA4`/`injectMetaPixel` only ever run post-consent, per
+ * `canLoadAnalytics`/`canLoadMarketing`), so this function's only job is to
+ * no-op when neither script is present — never a second consent check here,
+ * which would be a second place to get the gate wrong.
+ *
+ * Callers must pass only non-personal data (Task 12, SEO fixes 2026-11-24):
+ * no guest name, email, or phone, ever, in `params`. A booking reference
+ * alone (`ref`) is the one guest-scoped value this project already treats as
+ * safe to carry (same reasoning as `portal.login`'s own comment on why a
+ * bare booking ref reveals nothing).
+ */
+export function trackEvent(name: string, params: Record<string, unknown> = {}): void {
+  if (typeof window.gtag === 'function') window.gtag('event', name, params);
+  if (typeof window.fbq === 'function') window.fbq('trackCustom', name, params);
+}
+
 /** Best-effort — a cookie set `HttpOnly` or on a different path can't be cleared from here. */
 function deleteCookiesMatching(pattern: RegExp): void {
   try {

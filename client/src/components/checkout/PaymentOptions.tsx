@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import PayNowButton from '@/components/checkout/PayNowButton';
 import { Skeleton } from '@/components/common/Skeleton';
 import { Button } from '@/components/ui/button';
+import { trackEvent } from '@/lib/consent/scripts';
 import { SITE, telLink, whatsappLink } from '@/lib/site';
 import { trpc } from '@/lib/trpc';
 
@@ -59,6 +60,19 @@ function manualPayPath(bookingRef: string): string {
   return `/portal/login?ref=${encodeURIComponent(bookingRef)}&next=/portal/pay`;
 }
 
+/**
+ * `payment_started` (Task 12, SEO fixes, 2026-11-24) for the manual-transfer
+ * path — the two `<Link>`s below are the guest's "proceed to pay" moment on
+ * this branch, the same way clicking `<PayNowButton>` is on the online one.
+ * `ref` only (CLAUDE.md). `payMode: 'manual'` is the payment CHANNEL, not
+ * `@rg/shared`'s own `PayMode` (`'full' | 'deposit'`) — see
+ * `PayNowButton.tsx`'s identical note on the two unrelated meanings sharing
+ * one name.
+ */
+function trackManualPaymentStarted(bookingRef: string): void {
+  trackEvent('payment_started', { ref: bookingRef, payMode: 'manual' });
+}
+
 /** State 3's fallback: the site's real contact details, never new copy of its own. */
 function ContactToPay({ bookingRef }: { bookingRef: string }) {
   const message = `Hi ${SITE.name}! I'd like to pay for booking ${bookingRef}.`;
@@ -113,6 +127,7 @@ export default function PaymentOptions({ bookingRef, payLabel }: Props) {
           <p className="text-center text-sm">
             <Link
               to={manualPayPath(bookingRef)}
+              onClick={() => trackManualPaymentStarted(bookingRef)}
               className="text-brand-blue-700 hover:text-brand-blue-900 tap-target inline-flex items-center font-semibold underline transition-colors"
             >
               Pay by GCash, Maya or bank transfer instead
@@ -131,7 +146,12 @@ export default function PaymentOptions({ bookingRef, payLabel }: Props) {
           you can upload your receipt for us to confirm.
         </p>
         <Button asChild size="lg" className="tap-target w-full">
-          <Link to={manualPayPath(bookingRef)}>Pay by GCash, Maya or bank transfer</Link>
+          <Link
+            to={manualPayPath(bookingRef)}
+            onClick={() => trackManualPaymentStarted(bookingRef)}
+          >
+            Pay by GCash, Maya or bank transfer
+          </Link>
         </Button>
       </div>
     );

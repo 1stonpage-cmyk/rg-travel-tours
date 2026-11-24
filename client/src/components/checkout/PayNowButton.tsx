@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button';
+import { trackEvent } from '@/lib/consent/scripts';
 import { firstValidationMessage } from '@/lib/field-errors';
 import { describeCheckoutError } from '@/lib/mutation-errors';
 import { trpc } from '@/lib/trpc';
@@ -52,7 +53,19 @@ export default function PayNowButton({ bookingRef, label = 'Pay now' }: Props) {
         size="lg"
         className="tap-target w-full"
         disabled={startPayment.isPending}
-        onClick={() =>
+        onClick={() => {
+          /*
+           * `payment_started` (Task 12, SEO fixes, 2026-11-24) — fired the
+           * instant the guest actually proceeds to pay online, before the
+           * gateway redirect leaves the page. `ref` only (CLAUDE.md — never
+           * `lead`/email/phone). The `payMode` value here is `'online'` vs
+           * `'manual'` — the PAYMENT CHANNEL the guest chose — and is NOT
+           * `@rg/shared`'s own `PayMode` type (`'full' | 'deposit'`, the
+           * amount-due choice made back at hold time); the two happen to
+           * share a name but answer different questions, and neither
+           * component in this flow has the deposit/full choice in scope.
+           */
+          trackEvent('payment_started', { ref: bookingRef, payMode: 'online' });
           startPayment.mutate(
             { ref: bookingRef },
             {
@@ -60,8 +73,8 @@ export default function PayNowButton({ bookingRef, label = 'Pay now' }: Props) {
                 window.location.assign(result.redirectUrl);
               },
             },
-          )
-        }
+          );
+        }}
       >
         {startPayment.isPending ? 'Starting payment…' : label}
       </Button>

@@ -21,6 +21,7 @@ import {
   getNestedFieldError,
   hasAnyNestedFieldError,
 } from '@/lib/field-errors';
+import { trackEvent } from '@/lib/consent/scripts';
 import { describeCheckoutError } from '@/lib/mutation-errors';
 import { scrollToAndFocus } from '@/lib/scroll-to-field';
 import { trpc } from '@/lib/trpc';
@@ -280,6 +281,13 @@ export default function CheckoutPage() {
     { enabled: hasSelection, retry: false, placeholderData: keepPreviousData },
   );
   const createHold = trpc.checkout.createHold.useMutation({
+    // `hold_created` (Task 12, SEO fixes, 2026-11-24) — this page did not
+    // already fire an equivalent event; a mutation's `onSuccess` fires
+    // exactly once per successful mutation, so no ref/effect guard is
+    // needed. `ref` only — never `lead`/email/phone (CLAUDE.md).
+    onSuccess: (data) => {
+      trackEvent('hold_created', { ref: data.ref });
+    },
     onError: () => {
       setTurnstileToken(undefined);
       setTurnstileResetKey((key) => key + 1);

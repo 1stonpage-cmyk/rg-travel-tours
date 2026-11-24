@@ -1,5 +1,5 @@
 import { keepPreviousData } from '@tanstack/react-query';
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
@@ -34,6 +34,7 @@ import VehicleOptionCard from '@/components/transfer/VehicleOptionCard';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { trackEvent } from '@/lib/consent/scripts';
 import {
   clientSideErrors,
   firstValidationMessage,
@@ -423,6 +424,29 @@ export default function TransferBookingPage() {
     if (productType) setRouteBeforeTypeHint(null);
   }, [productType]);
 
+  /*
+   * `begin_booking` (Task 12, SEO fixes, 2026-11-24) — fired once per visit,
+   * the instant `productType` first becomes non-null, never again on a
+   * later re-render or re-selection. A `hasFiredRef` guard (same shape
+   * `FloatingWhatsApp.tsx`'s own one-shot pulse uses, minus the
+   * cross-reload `sessionStorage` persistence that component needs and this
+   * one-mount event does not) rather than an effect dependency alone,
+   * because `productType` toggling between two non-null values must NOT
+   * re-fire this. `productType` itself carries no personal data, so it is
+   * the one param worth sending.
+   *
+   * Deliberately also fires on first mount when a deep link already sets
+   * `?productType=...` (read into the initial `useState` above) — that is
+   * still "booking begun", just begun by a link instead of a click.
+   */
+  const hasFiredBeginBookingRef = useRef(false);
+  useEffect(() => {
+    if (productType && !hasFiredBeginBookingRef.current) {
+      hasFiredBeginBookingRef.current = true;
+      trackEvent('begin_booking', { productType });
+    }
+  }, [productType]);
+
   const routesQuery = trpc.transferRoutes.list.useQuery();
 
   /*
@@ -793,6 +817,12 @@ export default function TransferBookingPage() {
   }, [pax, vehicleOptions, vehicleTypeId]);
 
   const createHoldTransfer = trpc.checkout.createHoldTransfer.useMutation({
+    // `hold_created` (Task 12) — a mutation's `onSuccess` fires exactly once
+    // per successful mutation by construction, so no ref/effect guard is
+    // needed here. `ref` only — never `lead`/email/phone (CLAUDE.md).
+    onSuccess: (data) => {
+      trackEvent('hold_created', { ref: data.ref });
+    },
     onError: () => {
       setTurnstileToken(undefined);
       setTurnstileResetKey((key) => key + 1);
