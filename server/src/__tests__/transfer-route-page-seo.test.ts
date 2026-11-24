@@ -292,6 +292,54 @@ describeWithDb('loadTransferRouteSeo — direction match', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Bug 1D (2026-11-24): an inactive vehicle type's price must never win
+// "cheapest" — the gap the pinned stability test above does NOT cover (that
+// one is about sellability, never active/inactive).
+// ---------------------------------------------------------------------------
+
+describeWithDb('loadTransferRouteSeo — vehicle_types.is_active filter (bug 1D)', () => {
+  it('cheapestOneWayCentavos ignores a lower price on an INACTIVE vehicle type', async () => {
+    try {
+      const activeVehicleTypeId = await makeVehicleType();
+      const inactiveVehicleTypeId = await makeVehicleType();
+      await getDb()
+        .update(vehicleTypes)
+        .set({ isActive: false })
+        .where(eq(vehicleTypes.id, inactiveVehicleTypeId));
+
+      const fromPlaceId = await makePlace({ name: `Bug 1D Origin ${unique()}` });
+      const toPlaceId = await makePlace({ name: `Bug 1D Destination ${unique()}` });
+      const { id: routeId, slug } = await makeRoute({ fromPlaceId, toPlaceId });
+
+      // Active type: higher price (₱6,000). Inactive type: lower price
+      // (₱5,000) — the lower price must NOT win.
+      await getDb()
+        .insert(transferRouteVehiclePrices)
+        .values([
+          {
+            routeId,
+            vehicleTypeId: activeVehicleTypeId,
+            oneWayPriceCentavos: 600_000,
+            dayUsePriceCentavos: 900_000,
+          },
+          {
+            routeId,
+            vehicleTypeId: inactiveVehicleTypeId,
+            oneWayPriceCentavos: 500_000,
+            dayUsePriceCentavos: 800_000,
+          },
+        ]);
+
+      const row = await loadTransferRouteSeo(slug);
+      expect(row).not.toBeNull();
+      expect(row!.cheapestOneWayCentavos).toBe(600_000);
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Step 3: title / description — brief fixtures plus real seeded data,
 // both directions.
 // ---------------------------------------------------------------------------

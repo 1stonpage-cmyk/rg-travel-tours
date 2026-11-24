@@ -55,7 +55,7 @@ import {
   transferRoutes,
   vehicleTypes,
 } from '../../db/schema';
-import { transferRouteTitle } from '../../seo/resolvers';
+import { cheapestActiveOneWayCentavos, transferRouteTitle } from '../../seo/resolvers';
 import { sellableVehiclesByType } from '../../services/transfers/capacity';
 import { publicProcedure, router } from '../../trpc';
 
@@ -142,6 +142,15 @@ export const transferRoutesRouter = router({
     // The ONE fleet count this whole list needs — see this module's header.
     const sellable = await sellableVehiclesByType(db);
 
+    // One call per route, via the SAME shared function
+    // `seo/resolvers.ts`'s meta/JSON-LD reads — see that function's own doc
+    // comment (bug 1D, 2026-11-24). Route-catalog-sized, not a hot path.
+    const cheapestByRouteId = new Map(
+      await Promise.all(
+        rows.map(async (row) => [row.id, await cheapestActiveOneWayCentavos(row.id)] as const),
+      ),
+    );
+
     const priceMap = new Map<
       string,
       { oneWayPriceCentavos: number; dayUsePriceCentavos: number }
@@ -170,19 +179,14 @@ export const transferRoutesRouter = router({
 
       /*
        * Task 9, Step 0 (SEO fixes, 2026-11-24). The SAME stable (non-
-       * sellability-filtered) cheapest price `loadTransferRouteSeo`
-       * (`seo/resolvers.ts`) uses for the `<title>` tag — deliberately
-       * SEPARATE from `vehiclePrices` above, which stays sellability-
-       * filtered for booking UX. A fleet temporarily having nothing to sell
-       * must not make a route's page title lose its price clause on one
-       * crawl and regain it on the next.
+       * sellability-filtered, active-vehicle-type-only) cheapest price
+       * `loadTransferRouteSeo` (`seo/resolvers.ts`) uses for the `<title>`
+       * tag — deliberately SEPARATE from `vehiclePrices` above, which stays
+       * sellability-filtered for booking UX. A fleet temporarily having
+       * nothing to sell must not make a route's page title lose its price
+       * clause on one crawl and regain it on the next.
        */
-      const stableCheapestOneWayCentavos =
-        priceRows.filter((p) => p.routeId === row.id).length === 0
-          ? null
-          : Math.min(
-              ...priceRows.filter((p) => p.routeId === row.id).map((p) => p.oneWayPriceCentavos),
-            );
+      const stableCheapestOneWayCentavos = cheapestByRouteId.get(row.id) ?? null;
 
       return {
         id: row.id,

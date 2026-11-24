@@ -168,4 +168,54 @@ describeWithDb('transferRoutes.list — pageTitle / reversePageTitle', () => {
       await cleanup();
     }
   });
+
+  /**
+   * Bug 1D (2026-11-24): the page's OWN `pageTitle` (not just `resolvePage`'s
+   * SEO meta) must exclude an inactive vehicle type's lower price — the
+   * "visible prices and meta/JSON-LD cannot drift" half of the fix. Both
+   * `transferRoutes.list` and `resolvePage` now call the SAME shared
+   * `cheapestActiveOneWayCentavos`, so this also re-proves they agree.
+   */
+  it("pageTitle's price clause ignores a lower price on an INACTIVE vehicle type", async () => {
+    try {
+      const activeVehicleTypeId = await makeVehicleType();
+      const inactiveVehicleTypeId = await makeVehicleType();
+      await getDb()
+        .update(vehicleTypes)
+        .set({ isActive: false })
+        .where(eq(vehicleTypes.id, inactiveVehicleTypeId));
+
+      const fromPlaceId = await makePlace('Bug 1D Router A');
+      const toPlaceId = await makePlace('Bug 1D Router B');
+      const { id: routeId, slug } = await makeRoute({ fromPlaceId, toPlaceId });
+      await getDb()
+        .insert(transferRouteVehiclePrices)
+        .values([
+          {
+            routeId,
+            vehicleTypeId: activeVehicleTypeId,
+            oneWayPriceCentavos: 600_000,
+            dayUsePriceCentavos: 900_000,
+          },
+          {
+            routeId,
+            vehicleTypeId: inactiveVehicleTypeId,
+            oneWayPriceCentavos: 500_000,
+            dayUsePriceCentavos: 800_000,
+          },
+        ]);
+
+      const rows = await caller.transferRoutes.list();
+      const row = rows.find((r) => r.id === routeId);
+      expect(row).toBeDefined();
+      // The active type's ₱6,000 must win — never the inactive type's ₱5,000.
+      expect(row!.pageTitle).toContain('6,000');
+      expect(row!.pageTitle).not.toContain('5,000');
+
+      const forwardMeta = await resolvePage(`/transfers/${slug}`);
+      expect(row!.pageTitle).toBe(forwardMeta.title);
+    } finally {
+      await cleanup();
+    }
+  });
 });

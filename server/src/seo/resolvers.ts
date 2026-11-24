@@ -45,6 +45,7 @@ import {
   transferPlaces,
   transferRoutes,
   transferRouteVehiclePrices,
+  vehicleTypes,
 } from '../db/schema';
 import { env } from '../env';
 import { isPrivatePath, type NOINDEX_PATH_PREFIXES } from '../middleware/robots-header';
@@ -296,21 +297,35 @@ export async function loadActiveTransferRouteRows(): Promise<ActiveTransferRoute
     );
 }
 
+/**
+ * The cheapest one-way price among a route's ACTIVE vehicle types —
+ * "active" meaning `vehicle_types.is_active`, deliberately never fleet
+ * sellability (see `loadTransferRouteSeo`'s stability note / the pinned
+ * test in transfer-route-page-seo.test.ts: a route's advertised "from"
+ * price must not flicker with which vans happen to be sellable right now).
+ * The ONE function both the public page's own title clause
+ * (`routers/public/transfers.ts`) and this file's meta description/JSON-LD
+ * read, so the two can never independently drift (bug 1D, 2026-11-24).
+ */
+export async function cheapestActiveOneWayCentavos(routeId: number): Promise<number | null> {
+  const rows = await getDb()
+    .select({ oneWayPriceCentavos: transferRouteVehiclePrices.oneWayPriceCentavos })
+    .from(transferRouteVehiclePrices)
+    .innerJoin(vehicleTypes, eq(vehicleTypes.id, transferRouteVehiclePrices.vehicleTypeId))
+    .where(and(eq(transferRouteVehiclePrices.routeId, routeId), eq(vehicleTypes.isActive, true)));
+  return rows.length === 0 ? null : Math.min(...rows.map((p) => p.oneWayPriceCentavos));
+}
+
 async function finishTransferRouteSeoRow(
   row: ActiveTransferRouteBaseRow,
   direction: TransferDirection,
   requestedSlug: string,
 ): Promise<TransferRouteSeoRow> {
   const db = getDb();
-  const priceRows = await db
-    .select({ oneWayPriceCentavos: transferRouteVehiclePrices.oneWayPriceCentavos })
-    .from(transferRouteVehiclePrices)
-    .where(eq(transferRouteVehiclePrices.routeId, row.id));
   // Deliberately NOT filtered by current fleet sellability — see this
   // interface's own field comment above. Meta describes the catalog price
-  // list, not a live dispatch fact.
-  const cheapestOneWayCentavos =
-    priceRows.length === 0 ? null : Math.min(...priceRows.map((p) => p.oneWayPriceCentavos));
+  // list (among ACTIVE vehicle types), not a live dispatch fact.
+  const cheapestOneWayCentavos = await cheapestActiveOneWayCentavos(row.id);
 
   // The DROPOFF place for THIS direction owns the illustrative photo, if any.
   const dropoffDestinationId =
