@@ -211,18 +211,19 @@ export interface TransferRouteSeoRow {
   minPayingPax: number;
   updatedAt: Date;
   /**
-   * The lowest `oneWayPriceCentavos` across every PRICED vehicle type on this
-   * route — deliberately NOT filtered by `sellableVehiclesByType()` (live
-   * fleet status: a van going `on_trip` or `for_repair` flips that set
-   * minute to minute). Indexed meta (`<title>`, description) and the
-   * sitemap must describe a STABLE fact — the catalog's own price list —
-   * not whichever vehicle happens to be sellable at crawl time, or the same
-   * URL's title would alternate between "from ₱2,500" and no price clause
-   * across two crawls of the same, unchanged route. Null only when the
-   * route has no price row at all (should not happen in practice; the admin
-   * route form requires at least one, but this stays defensive). Identical
-   * either direction — price and duration do not change by direction
-   * (CLAUDE.md-adjacent product rule, already true of the booking flow).
+   * The lowest `oneWayPriceCentavos` across the route's ACTIVE vehicle types
+   * only (`vehicle_types.is_active` — see `cheapestActiveOneWayCentavosByRoute`)
+   * — deliberately NOT filtered by `sellableVehiclesByType()` (live fleet
+   * status: a van going `on_trip` or `for_repair` flips that set minute to
+   * minute). Indexed meta (`<title>`, description) and the sitemap must
+   * describe a STABLE fact — the catalog's own price list — not whichever
+   * vehicle happens to be sellable at crawl time, or the same URL's title
+   * would alternate between "from ₱2,500" and no price clause across two
+   * crawls of the same, unchanged route. Null when the route has no price
+   * row at all, OR when every price row it has belongs to a now-deactivated
+   * vehicle type. Identical either direction — price and duration do not
+   * change by direction (CLAUDE.md-adjacent product rule, already true of
+   * the booking flow).
    */
   cheapestOneWayCentavos: number | null;
   /** The DROPOFF place's own linked destination photo for this direction, or null. */
