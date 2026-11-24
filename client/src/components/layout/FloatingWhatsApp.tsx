@@ -16,13 +16,19 @@ import { cn } from '@/lib/utils';
  *
  * Raising the offset or padding the page does not fix that: a fixed element
  * still passes over everything on the way down. So both the desktop bubble
- * and the mobile bottom bar below hide while the search form is on screen
- * and return once it scrolls away. Scoped deliberately to the hero form
+ * and the mobile bottom bar below hide while either search form is on screen
+ * and return once both scroll away. Scoped deliberately to the hero forms
  * rather than the whole hero section, so the controls come back as soon as
- * the CTA they were covering is gone. Pages without that form (e.g. /tours)
+ * the CTAs they were covering are gone. Pages without these forms (e.g. /tours)
  * are unaffected — both show throughout.
+ *
+ * On transfers-only launch (show_tours = false), only the transfer form
+ * renders, so the observer must watch both selectors to work in both cases.
  */
-const HERO_SEARCH_FORM = 'form[aria-label="Search tours"]';
+const HERO_FORM_SELECTORS = [
+  'form[aria-label="Find a transfer"]',
+  'form[aria-label="Search tours"]',
+];
 
 /**
  * The bottom bar additionally hides once the footer starts to arrive (spec
@@ -62,12 +68,12 @@ function markPulseShown() {
 }
 
 /**
- * True while the hero's search form is intersecting the viewport. Computed
- * once here and shared by both the desktop bubble and the mobile bottom bar
- * below (both read the same boolean from the same render) rather than each
- * standing up its own IntersectionObserver against the same element — one
- * fewer observer, and one piece of state instead of two that could
- * disagree about which render they flip on.
+ * True while any of the hero's search forms is intersecting the viewport.
+ * Computed once here and shared by both the desktop bubble and the mobile
+ * bottom bar below (both read the same boolean from the same render) rather
+ * than each standing up its own IntersectionObserver against the same
+ * elements — one fewer observer, and one piece of state instead of two that
+ * could disagree about which render they flip on.
  */
 function useCoversHeroSearch(pathname: string): boolean {
   const [covers, setCovers] = useState(false);
@@ -77,16 +83,27 @@ function useCoversHeroSearch(pathname: string): boolean {
     // than throwing. Real behaviour is verified in a browser.
     if (typeof IntersectionObserver === 'undefined') return;
 
-    const target = document.querySelector(HERO_SEARCH_FORM);
-    if (!target) {
+    const targets = HERO_FORM_SELECTORS.map((sel) => document.querySelector(sel)).filter(
+      (el): el is Element => el !== null,
+    );
+    if (targets.length === 0) {
       setCovers(false);
       return;
     }
 
-    const observer = new IntersectionObserver(([entry]) =>
-      setCovers(entry?.isIntersecting ?? false),
-    );
-    observer.observe(target);
+    // Track each target's own intersecting state (IntersectionObserver's
+    // callback only reports entries that CHANGED since the last call, so a
+    // single boolean cannot be derived from one callback invocation alone
+    // when there is more than one observed target).
+    const intersecting = new Set<Element>();
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) intersecting.add(entry.target);
+        else intersecting.delete(entry.target);
+      }
+      setCovers(intersecting.size > 0);
+    });
+    targets.forEach((t) => observer.observe(t));
     return () => observer.disconnect();
   }, [pathname]);
 
