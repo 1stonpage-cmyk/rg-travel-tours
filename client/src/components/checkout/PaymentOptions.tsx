@@ -49,14 +49,34 @@ type Props = {
   bookingRef: string;
   /** `<PayNowButton>`'s wording; the status page's retry says "Try paying again". */
   payLabel?: string;
+  /**
+   * Bug 1B fix: true only when THIS request's `createHold`/`createHoldTransfer`
+   * call just minted the guest's `rg_customer_session` cookie (see
+   * `checkout.ts`'s own note on those two mutations) — i.e. `CheckoutPage` and
+   * `TransferBookingPage`'s own just-created-hold screens, and ONLY those.
+   * `BookingStatusPage`'s retry reaches this component via a ref/URL alone,
+   * with no guarantee of a live session (a different device, a gateway
+   * redirect, a saved link), so it must omit this and keep going through
+   * `/portal/login`. Defaults to `false` — the existing sign-in-first
+   * behaviour — so an omitted prop changes nothing.
+   */
+  justHeld?: boolean;
 };
 
 /**
- * Through the portal sign-in, which is where the guest session — and so the
- * amount and the account details — comes from. Unchanged from the link
- * `CheckoutPage` has carried since Week 4 Task 8.
+ * Where "pay by GCash, Maya or bank transfer" sends the guest.
+ *
+ * `justHeld` (Bug 1B) skips the portal sign-in entirely and goes straight to
+ * `/portal/pay`: the guest who just created this exact hold is already
+ * signed in — `checkout.createHold`/`checkout.createHoldTransfer` mint the
+ * `rg_customer_session` cookie the instant the hold commits — so asking them
+ * to re-prove a ref + email they typed moments ago was the bug. Omitted (or
+ * false), this is unchanged: through the portal sign-in, which is where the
+ * guest session — and so the amount and the account details — comes from for
+ * anyone who does NOT already have one (a returning guest, another device).
  */
-function manualPayPath(bookingRef: string): string {
+function manualPayPath(bookingRef: string, justHeld: boolean): string {
+  if (justHeld) return '/portal/pay';
   return `/portal/login?ref=${encodeURIComponent(bookingRef)}&next=/portal/pay`;
 }
 
@@ -109,7 +129,7 @@ function ContactToPay({ bookingRef }: { bookingRef: string }) {
   );
 }
 
-export default function PaymentOptions({ bookingRef, payLabel }: Props) {
+export default function PaymentOptions({ bookingRef, payLabel, justHeld = false }: Props) {
   /*
    * The same cache entry every other page's `settings.get` uses — TanStack
    * dedupes by key — so this costs no extra request on the checkout, which
@@ -126,7 +146,7 @@ export default function PaymentOptions({ bookingRef, payLabel }: Props) {
         {manualEnabled ? (
           <p className="text-center text-sm">
             <Link
-              to={manualPayPath(bookingRef)}
+              to={manualPayPath(bookingRef, justHeld)}
               onClick={() => trackManualPaymentStarted(bookingRef)}
               className="text-brand-blue-700 hover:text-brand-blue-900 tap-target inline-flex items-center font-semibold underline transition-colors"
             >
@@ -147,7 +167,7 @@ export default function PaymentOptions({ bookingRef, payLabel }: Props) {
         </p>
         <Button asChild size="lg" className="tap-target w-full">
           <Link
-            to={manualPayPath(bookingRef)}
+            to={manualPayPath(bookingRef, justHeld)}
             onClick={() => trackManualPaymentStarted(bookingRef)}
           >
             Pay by GCash, Maya or bank transfer

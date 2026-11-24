@@ -152,6 +152,8 @@ import {
 } from '../../services/create-hold';
 import { findBookingByCredentials } from '../../services/portal-auth';
 import { loadQuoteInputs, priceQuote, quoteDigest, type QuoteCoupon } from '../../services/pricing';
+import { createSession } from '../../services/sessions';
+import { setSessionCookie } from '../../middleware/session-cookie';
 import {
   quoteTransfer as quoteTransferPrice,
   transferSubtotalCentavos,
@@ -1196,6 +1198,23 @@ export const checkoutRouter = router({
    * Rate-limited to 5 per IP per 15 minutes (Ruling 5, owner decision Q4) —
    * see `middleware/rate-limit.ts`'s `createCheckoutHoldLimiter()`, mounted
    * in `app.ts`.
+   *
+   * **Bug 1B fix: a successful hold also signs the guest in, on the spot.**
+   * Before this, the guest who had just created the hold was sent to
+   * `/portal/login` to re-prove a ref + email they had typed thirty seconds
+   * earlier. `createHoldService(input)` already returns only once its
+   * transaction has committed — the booking is real by the time this `await`
+   * resolves — so minting the session AFTER that call and BEFORE the
+   * `return` is exactly `portal.login`'s own mechanism
+   * (`createSession('customer', bookingId, now)` + `setSessionCookie`), run
+   * once more here rather than reimplemented: same cookie name
+   * (`rg_customer_session`), same flags, same 24h customer TTL — no new
+   * cookie, no new TTL, no per-call override. A FRESH token is minted every
+   * time (`createSession` always calls `randomBytes` itself), so there is no
+   * session-fixation surface from a token the browser sent. On any refusal —
+   * Turnstile, capacity, the gateway floor, hold contention, a coupon rule —
+   * execution never reaches this line; it goes straight to `catch` and
+   * `translateHoldError`, so a failed hold sets no cookie at all.
    */
   createHold: publicProcedure.input(createHoldInput).mutation(async ({ input, ctx }) => {
     // Cloudflare Turnstile (Task 12) — checked BEFORE the service call, so a
@@ -1207,7 +1226,10 @@ export const checkoutRouter = router({
       throw turnstileRefusedError();
     }
     try {
-      return await createHoldService(input);
+      const result = await createHoldService(input);
+      const { token, expiresAt } = await createSession('customer', result.bookingId, new Date());
+      setSessionCookie(ctx.res, 'customer', token, expiresAt);
+      return result;
     } catch (error) {
       throw translateHoldError(error);
     }
@@ -1253,6 +1275,11 @@ export const checkoutRouter = router({
    * identical property against `availability`/`createHold` — and the refusal
    * when it happens is one of the guest-actionable sentences above, never a
    * crash.
+   *
+   * **Bug 1B fix: the same on-the-spot sign-in `createHold` now gets.** See
+   * that mutation's own note — the mechanism, the reasoning and the
+   * fail-closed guarantee are identical, just over `createTransferBooking()`'s
+   * result instead.
    */
   createHoldTransfer: publicProcedure
     .input(createHoldTransferInput)
@@ -1263,7 +1290,7 @@ export const checkoutRouter = router({
         throw turnstileRefusedError();
       }
       try {
-        return await createTransferBooking({
+        const result = await createTransferBooking({
           date: input.date,
           routeId: input.routeId,
           customRouteDescription: null,
@@ -1295,6 +1322,9 @@ export const checkoutRouter = router({
           lead: input.lead,
           priceSource: { kind: 'catalog' },
         });
+        const { token, expiresAt } = await createSession('customer', result.bookingId, new Date());
+        setSessionCookie(ctx.res, 'customer', token, expiresAt);
+        return result;
       } catch (error) {
         throw translateHoldTransferError(error);
       }

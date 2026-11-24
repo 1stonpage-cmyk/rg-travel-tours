@@ -963,7 +963,7 @@ export default function TransferBookingPage() {
               arrange that before the hold below runs out, and keep this reference for your records.
             </p>
           </div>
-          <PaymentOptions bookingRef={createHoldTransfer.data.ref} />
+          <PaymentOptions bookingRef={createHoldTransfer.data.ref} justHeld />
           <HoldCountdown expiresAt={createHoldTransfer.data.holdExpiresAt} />
         </div>
       ) : (

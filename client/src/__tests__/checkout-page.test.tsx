@@ -340,9 +340,11 @@ describe('CheckoutPage — pay now (Task 8b)', () => {
     await user.click(within(form).getByRole('button', { name: /book now/i }));
 
     const link = await screen.findByRole('link', { name: /gcash, maya or bank transfer/i });
-    // Through the portal sign-in, which is where the guest session — and so
-    // the amount and the account details — comes from.
-    expect(link).toHaveAttribute('href', `/portal/login?ref=${HOLD_RESULT.ref}&next=/portal/pay`);
+    // Bug 1B: the guest who just created THIS hold is already signed in —
+    // `checkout.createHold` minted the session cookie the instant the hold
+    // committed — so `CheckoutPage` passes `justHeld` and the link skips the
+    // portal sign-in round trip entirely.
+    expect(link).toHaveAttribute('href', '/portal/pay');
   });
 
   /* ====================================================================
@@ -394,7 +396,8 @@ describe('CheckoutPage — pay now (Task 8b)', () => {
     });
 
     const link = await screen.findByRole('link', { name: /gcash, maya or bank transfer/i });
-    expect(link).toHaveAttribute('href', `/portal/login?ref=${HOLD_RESULT.ref}&next=/portal/pay`);
+    // Bug 1B: see the other `/portal/pay` assertion above.
+    expect(link).toHaveAttribute('href', '/portal/pay');
 
     // Not rendered at all — not merely disabled.
     expect(screen.queryByRole('button', { name: /^pay now$/i })).not.toBeInTheDocument();

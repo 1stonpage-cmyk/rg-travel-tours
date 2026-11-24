@@ -191,6 +191,54 @@ describe('TransferBookingPage — happy path', () => {
     expect(capturedHoldInput?.vehicleTypeId).toBe(1);
     expect(capturedHoldInput?.direction).toBe('forward');
   });
+
+  /**
+   * Bug 1B: the guest who just created THIS transfer hold is already signed
+   * in — `checkout.createHoldTransfer` minted the `rg_customer_session`
+   * cookie the instant the hold committed — so `TransferBookingPage` passes
+   * `<PaymentOptions justHeld>` and the manual-transfer link must skip the
+   * portal sign-in round trip entirely, going straight to `/portal/pay`.
+   * Same walk as the happy path above, with `manualTransferEnabled: true`
+   * so the link actually renders.
+   */
+  it('the manual-transfer link skips portal sign-in and goes straight to /portal/pay', async () => {
+    mockTrpc({
+      'transferRoutes.list': [MACTAN],
+      'checkout.quoteTransfer': quoteByVehicleTypeId,
+      'checkout.createHoldTransfer': () => HOLD_RESULT,
+      'settings.get': { ...SETTINGS_FIXTURE, manualTransferEnabled: true },
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await selectTypeAndRoute(user);
+
+    const vanRadio = await screen.findByRole('radio', { name: /^van/i });
+    await waitFor(() => expect(vanRadio).not.toBeDisabled());
+    await user.click(vanRadio);
+
+    const form = await screen.findByRole('form', { name: /transfer booking form/i });
+    fireEvent.change(within(form).getByLabelText(/pickup date/i), {
+      target: { value: '2026-12-15' },
+    });
+    fireEvent.change(within(form).getByLabelText(/pickup time/i), {
+      target: { value: '08:30' },
+    });
+    fireEvent.change(within(form).getByLabelText(/^passengers$/i), { target: { value: '2' } });
+    fireEvent.change(within(form).getByLabelText(/luggage \(bags\)/i), { target: { value: '1' } });
+    await user.type(within(form).getByLabelText(/drop-off address/i), 'SM Seaside, Cebu City');
+    await user.type(within(form).getByLabelText(/^flight number$/i), 'PR123');
+    await user.type(within(form).getByLabelText(/^airline$/i), 'Philippine Airlines');
+    await user.type(within(form).getByLabelText(/full name/i), 'Juan Dela Cruz');
+    await user.type(within(form).getByLabelText(/^email$/i), 'juan@example.com');
+    await user.type(within(form).getByLabelText(/whatsapp.*mobile number/i), '0917 123 4567');
+    await user.click(within(form).getByLabelText(/i agree/i));
+
+    await user.click(within(form).getByRole('button', { name: /book now/i }));
+
+    const link = await screen.findByRole('link', { name: /gcash, maya or bank transfer/i });
+    expect(link).toHaveAttribute('href', '/portal/pay');
+  });
 });
 
 /**

@@ -543,7 +543,7 @@ export default function CheckoutPage() {
                    * a mutation (owner decision Q5, option c), and nothing
                    * about the hold above changed.
                    */}
-                  <PaymentOptions bookingRef={createHold.data.ref} />
+                  <PaymentOptions bookingRef={createHold.data.ref} justHeld />
                 </div>
               ) : (
                 <form aria-label="Checkout form" onSubmit={handleSubmit} className="space-y-6">
