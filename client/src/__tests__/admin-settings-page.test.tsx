@@ -356,6 +356,31 @@ describe('AdminSettingsPage', () => {
   });
 
   /**
+   * Task 13: The payment_qr validation message changed from dev-text to
+   * plain English. This test proves the new message surfaces end-to-end in
+   * the admin UI, not just that the server validates correctly.
+   */
+  it('shows the plain-English payment_qr message when isConfigured is true with empty fields', async () => {
+    const message =
+      'settings.payment_qr was not saved — Add the QR image, account name and account number before turning on manual transfer.';
+    mockOwner();
+    mockTrpcError('admin.settings.write', 'BAD_REQUEST', message);
+    renderPage();
+
+    const details = await openBlock('Transfer QR and account');
+    // Set isConfigured to "Yes" (true) — it's a select element
+    const isConfiguredSelect = within(details).getByDisplayValue('No') as HTMLSelectElement;
+    await user.selectOptions(isConfiguredSelect, 'true');
+    // Leave account name, account number and instructions empty, and click Save
+    await user.click(within(details).getByRole('button', { name: 'Save' }));
+
+    const alert = await within(details).findByRole('alert');
+    expect(alert).toHaveTextContent(
+      'Add the QR image, account name and account number before turning on manual transfer.',
+    );
+  });
+
+  /**
    * Clearing `content_unverified` publishes the whole site to every search
    * index. One tap must not do it.
    */
