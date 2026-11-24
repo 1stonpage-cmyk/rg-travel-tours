@@ -97,7 +97,33 @@ const RELATED: TransferRoutePublicRow = {
   vehiclePrices: [],
 };
 
-const ROUTES = [REVERSIBLE, NON_REVERSIBLE, RELATED];
+/**
+ * Shares ONLY `dropoffPlace` (Moalboal, id 11) with the REVERSIBLE route's
+ * forward view — nothing in common with `pickupPlace` (Mactan Airport,
+ * id 10). Final review fix 1: the related-routes filter used to match a
+ * route sharing EITHER endpoint with EITHER of the page's two places, which
+ * would list this route under the heading "Other transfers from
+ * Mactan-Cebu International Airport" — a false claim, since this route
+ * never touches the airport at all.
+ */
+const UNRELATED_SHARES_DROPOFF_ONLY: TransferRoutePublicRow = {
+  id: 4,
+  fromPlace: { id: 11, name: 'Moalboal', placeType: 'destination' },
+  toPlace: { id: 14, name: 'Badian', placeType: 'destination' },
+  reverseEnabled: false,
+  slug: 'moalboal-to-badian',
+  estimatedDurationMinutes: 30,
+  freeCancelHours: 24,
+  inclusionsText: null,
+  exclusionsText: null,
+  pricingMode: 'per_vehicle',
+  minPayingPax: 1,
+  pageTitle: 'Moalboal to Badian Private Transfer',
+  reversePageTitle: null,
+  vehiclePrices: [],
+};
+
+const ROUTES = [REVERSIBLE, NON_REVERSIBLE, RELATED, UNRELATED_SHARES_DROPOFF_ONLY];
 
 function renderAt(entry: string) {
   return render(
@@ -160,6 +186,22 @@ describe('TransferRoutePage — forward direction', () => {
       name: /mactan-cebu international airport to cebu city/i,
     });
     expect(relatedLink).toHaveAttribute('href', '/transfers/mactan-airport-to-cebu-city');
+  });
+
+  /**
+   * Final review fix 1. The heading reads "Other transfers from
+   * Mactan-Cebu International Airport" (pickupPlace.name) — a route that
+   * only shares the DROPOFF place (Moalboal) and never touches the airport
+   * must not be listed under it, or the heading states a false relationship.
+   */
+  it('does not list a route that shares only the dropoff place, with nothing in common with the pickup place', async () => {
+    mockTrpc({ 'transferRoutes.list': ROUTES });
+    renderAt('/transfers/mactan-airport-to-moalboal');
+
+    await screen.findByRole('heading', {
+      name: /private transfer from mactan-cebu international airport to moalboal/i,
+    });
+    expect(screen.queryByRole('link', { name: /moalboal to badian/i })).not.toBeInTheDocument();
   });
 });
 
@@ -311,5 +353,60 @@ describe('TransferRoutePage — view_route analytics (Task 12, review fix)', () 
       toPlace: 'Mactan-Cebu International Airport',
       direction: 'reverse',
     });
+  });
+});
+
+/** Shares `REVERSIBLE`'s shape but with a SECOND vehicle type offered. */
+const MULTI_VEHICLE: TransferRoutePublicRow = {
+  ...REVERSIBLE,
+  id: 5,
+  slug: 'mactan-airport-to-multi',
+  reverseEnabled: false,
+  reversePageTitle: null,
+  pageTitle: 'Mactan-Cebu International Airport to Multi Private Transfer',
+  vehiclePrices: [
+    {
+      vehicleTypeId: 1,
+      vehicleTypeName: 'Van',
+      slug: 'van',
+      oneWayPriceCentavos: 250_000,
+      dayUsePriceCentavos: 500_000,
+      defaultSeats: 10,
+    },
+    {
+      vehicleTypeId: 2,
+      vehicleTypeName: 'Sedan',
+      slug: 'sedan',
+      oneWayPriceCentavos: 180_000,
+      dayUsePriceCentavos: 400_000,
+      defaultSeats: 4,
+    },
+  ],
+};
+
+/**
+ * Final review fix 3 (cheap Minor). The "How much does this transfer cost?"
+ * FAQ answer used to append ", depending on which vehicle you choose." even
+ * for a route with exactly one offered vehicle type — mildly redundant/
+ * misleading copy. The clause must appear only when `vehiclePrices.length`
+ * is more than one.
+ */
+describe('TransferRoutePage — FAQ cost copy (final review fix 3)', () => {
+  it('states the price with no "depending on which vehicle" clause when only one vehicle type is offered', async () => {
+    mockTrpc({ 'transferRoutes.list': ROUTES });
+    renderAt('/transfers/mactan-airport-to-moalboal');
+
+    const answer = await screen.findByText(/^from ₱2,500 for the vehicle\.$/i);
+    expect(answer.textContent).not.toMatch(/depending on which vehicle/i);
+  });
+
+  it('appends the "depending on which vehicle you choose" clause when more than one vehicle type is offered', async () => {
+    mockTrpc({ 'transferRoutes.list': [MULTI_VEHICLE] });
+    renderAt('/transfers/mactan-airport-to-multi');
+
+    const answer = await screen.findByText(/depending on which vehicle you choose/i);
+    expect(answer.textContent).toMatch(
+      /^From ₱1,800 for the vehicle, depending on which vehicle you choose\.$/i,
+    );
   });
 });

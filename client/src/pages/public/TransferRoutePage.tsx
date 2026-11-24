@@ -188,13 +188,13 @@ export default function TransferRoutePage() {
 
   const { route, direction, pickupPlace, dropoffPlace, otherSlug } = view;
   const cheapest = cheapestOffer(route);
+  // Matched on `pickupPlace` ONLY (final review fix 1) — the heading below
+  // reads "Other transfers from {pickupPlace.name}", so a route that shares
+  // only `dropoffPlace` genuinely has nothing to do with the named place and
+  // must not be listed under it.
   const relatedRoutes = routesQuery.data!.filter(
     (r) =>
-      r.id !== route.id &&
-      (r.fromPlace.id === pickupPlace.id ||
-        r.toPlace.id === pickupPlace.id ||
-        r.fromPlace.id === dropoffPlace.id ||
-        r.toPlace.id === dropoffPlace.id),
+      r.id !== route.id && (r.fromPlace.id === pickupPlace.id || r.toPlace.id === pickupPlace.id),
   );
   const pickupNote = pickupGuidance(pickupPlace.placeType);
   const dropoffNote = dropoffGuidance(dropoffPlace.placeType);
@@ -255,7 +255,11 @@ export default function TransferRoutePage() {
             <dt className="font-medium">How much does this transfer cost?</dt>
             <dd className="text-muted-foreground mt-1">
               {cheapest
-                ? `From ${formatPeso(cheapest.oneWayPriceCentavos)}${route.pricingMode === 'per_person' ? ' per person' : ' for the vehicle'}, depending on which vehicle you choose.`
+                ? `From ${formatPeso(cheapest.oneWayPriceCentavos)}${route.pricingMode === 'per_person' ? ' per person' : ' for the vehicle'}${
+                    route.vehiclePrices.length > 1
+                      ? ', depending on which vehicle you choose.'
+                      : '.'
+                  }`
                 : 'Contact us for current pricing.'}
             </dd>
           </div>
