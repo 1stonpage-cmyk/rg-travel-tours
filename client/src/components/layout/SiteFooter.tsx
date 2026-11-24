@@ -104,6 +104,17 @@ export default function SiteFooter() {
   const showTours = settings?.showTours ?? false;
   const nav = visibleNav(showTours, settings?.hasRealReviews ?? false);
   const paymentMethods = settings?.paymentMethods ?? [];
+  /**
+   * Bug 1C: the footer used to claim "Payments processed securely by
+   * PayMongo" unconditionally, even on a box where PayMongo isn't
+   * configured and only manual QR transfer is enabled. Gated the same way
+   * `PaymentOptions.tsx` gates its own three payment states — on the
+   * server-computed `onlinePaymentEnabled`/`manualTransferEnabled` booleans,
+   * `=== true` so the brief pre-resolution gap (`settings` still
+   * undefined) reads as neither enabled rather than guessing "yes".
+   */
+  const onlineEnabled = settings?.onlinePaymentEnabled === true;
+  const manualEnabled = settings?.manualTransferEnabled === true;
   /** BUG-100 — same source as ContactSection's hours. See the Clock row below. */
   const hoursNote = settings?.contact.hoursNote ?? null;
   const permitRows = [
@@ -323,7 +334,26 @@ export default function SiteFooter() {
               </button>
             </nav>
           </div>
-          <p>Payments processed securely by PayMongo. Card details never touch our servers.</p>
+          {/*
+           * Three states, mirroring PaymentOptions.tsx's own three-way
+           * split — but this is site-wide trust copy, not a booking's
+           * payment step, so there is no button and no "pay now" wording
+           * here (CLAUDE.md: copy outside <PaymentOptions> stays
+           * state-neutral about an in-progress checkout; this line is the
+           * one place allowed to be state-SPECIFIC, because it only
+           * describes capability). Online wins when both are configured,
+           * same precedence PaymentOptions uses. Neither configured omits
+           * the line outright — there is no accurate capability claim left
+           * to make, and a sentence naming no method would read oddly in a
+           * footer trust line.
+           */}
+          {onlineEnabled ? (
+            <p>Payments processed securely by PayMongo. Card details never touch our servers.</p>
+          ) : manualEnabled ? (
+            <p>
+              Pay by GCash, Maya or bank transfer (QR Ph). Your receipt is verified by our team.
+            </p>
+          ) : null}
           <p className="text-brand-blue-300 mt-1 text-xs sm:mt-0">
             Powered by{' '}
             <a

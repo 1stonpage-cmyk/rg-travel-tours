@@ -506,6 +506,62 @@ describe('payment methods — footer and FAQ composed from the same settings.pay
   });
 });
 
+/**
+ * Bug 1C: the footer's payment-trust line used to say "Payments processed
+ * securely by PayMongo. Card details never touch our servers." unconditionally
+ * — even on a box where PayMongo isn't configured and only manual QR transfer
+ * is enabled, which is a false claim about how the guest's payment is handled.
+ * Gated the same way `PaymentOptions.tsx` gates its own three payment states,
+ * on the server-computed `onlinePaymentEnabled`/`manualTransferEnabled`
+ * booleans — never re-derived client-side.
+ *
+ * Each test waits for the settled settings query via the "We accept" chip
+ * list (`GCash`), which neither flag under test touches — an assertion made
+ * before that lands would pass for the loading state, not the branch under
+ * test, since the implementation renders neither sentence while loading too.
+ */
+describe('footer payment trust line is gated by onlinePaymentEnabled/manualTransferEnabled (bug 1C)', () => {
+  const PAYMONGO_SENTENCE =
+    'Payments processed securely by PayMongo. Card details never touch our servers.';
+  const MANUAL_SENTENCE =
+    'Pay by GCash, Maya or bank transfer (QR Ph). Your receipt is verified by our team.';
+
+  it('shows the unchanged PayMongo/card-safety sentence when online payment is enabled', async () => {
+    mockTrpc({
+      'settings.get': settingsWith({ onlinePaymentEnabled: true, manualTransferEnabled: false }),
+    });
+    renderWithTrpc(<SiteFooter />);
+
+    const footer = screen.getByRole('contentinfo');
+    expect(await within(footer).findByText(PAYMONGO_SENTENCE)).toBeInTheDocument();
+  });
+
+  it('shows the manual-transfer sentence, never a PayMongo or card-processing claim, when only manual transfer is enabled', async () => {
+    mockTrpc({
+      'settings.get': settingsWith({ onlinePaymentEnabled: false, manualTransferEnabled: true }),
+    });
+    renderWithTrpc(<SiteFooter />);
+
+    const footer = screen.getByRole('contentinfo');
+    await within(footer).findByText('GCash');
+    expect(within(footer).getByText(MANUAL_SENTENCE)).toBeInTheDocument();
+    expect(footer.textContent).not.toMatch(/PayMongo/);
+    expect(footer.textContent).not.toMatch(/card details/i);
+  });
+
+  it('claims neither specific payment capability when online payment and manual transfer are both unavailable', async () => {
+    mockTrpc({
+      'settings.get': settingsWith({ onlinePaymentEnabled: false, manualTransferEnabled: false }),
+    });
+    renderWithTrpc(<SiteFooter />);
+
+    const footer = screen.getByRole('contentinfo');
+    await within(footer).findByText('GCash');
+    expect(within(footer).queryByText(PAYMONGO_SENTENCE)).not.toBeInTheDocument();
+    expect(within(footer).queryByText(MANUAL_SENTENCE)).not.toBeInTheDocument();
+  });
+});
+
 describe('permits', () => {
   it('renders "— pending —" for every empty permit', async () => {
     mockTrpc({
