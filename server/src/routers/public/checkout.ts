@@ -1227,8 +1227,18 @@ export const checkoutRouter = router({
     }
     try {
       const result = await createHoldService(input);
-      const { token, expiresAt } = await createSession('customer', result.bookingId, new Date());
-      setSessionCookie(ctx.res, 'customer', token, expiresAt);
+      try {
+        const { token, expiresAt } = await createSession('customer', result.bookingId, new Date());
+        setSessionCookie(ctx.res, 'customer', token, expiresAt);
+      } catch (sessionError) {
+        // The hold's own transaction already committed — a failure minting
+        // the auto-sign-in session must not report a real booking as a
+        // failed one. Same principle CLAUDE.md states for `notify()`: "a
+        // notification failure must not roll back the thing it was
+        // reporting." Degraded, not broken: this guest falls back to the
+        // pre-1B path (sign in via /portal/login to pay).
+        console.error('[checkout] session mint failed after hold committed:', sessionError);
+      }
       return result;
     } catch (error) {
       throw translateHoldError(error);
@@ -1322,8 +1332,19 @@ export const checkoutRouter = router({
           lead: input.lead,
           priceSource: { kind: 'catalog' },
         });
-        const { token, expiresAt } = await createSession('customer', result.bookingId, new Date());
-        setSessionCookie(ctx.res, 'customer', token, expiresAt);
+        try {
+          const { token, expiresAt } = await createSession(
+            'customer',
+            result.bookingId,
+            new Date(),
+          );
+          setSessionCookie(ctx.res, 'customer', token, expiresAt);
+        } catch (sessionError) {
+          // See `createHold`'s identical inner try/catch above for the
+          // reasoning: the hold already committed, so a session-mint
+          // failure here must not report this booking as a failed one.
+          console.error('[checkout] session mint failed after hold committed:', sessionError);
+        }
         return result;
       } catch (error) {
         throw translateHoldTransferError(error);

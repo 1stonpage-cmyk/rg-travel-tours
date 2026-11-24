@@ -19,7 +19,7 @@
  * a test needs to OBSERVE `res.cookie()` calls, which `helpers/ctx.ts`'s
  * `testContext()` deliberately discards.
  */
-import { afterEach, beforeAll, expect, it } from 'vitest';
+import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import type { Request, Response } from 'express';
 import { eq } from 'drizzle-orm';
 import { manilaCivilDate } from '@rg/shared';
@@ -39,6 +39,31 @@ import { SESSION_COOKIE_BY_SUBJECT } from '../middleware/session-cookie';
 import { appRouter } from '../routers/_app';
 import { readSession } from '../services/sessions';
 import { describeWithDb } from './helpers/db';
+
+/* -------------------------------------------------------------------------
+ * Bug 1B (fixes batch, 2026-11-24): proves a session-mint failure AFTER the
+ * hold's own transaction has committed does not report the booking as
+ * failed. `vi.hoisted` is the same pattern `checkout-payment.test.ts` uses
+ * for its own mocked-service flag, for the same reason: the flag is read
+ * inside a `vi.mock` factory, which is hoisted above this file's own
+ * imports, so a plain `let` declared later would not yet be initialised
+ * when the factory closure is first evaluated.
+ * ---------------------------------------------------------------------- */
+
+const sessionMint = vi.hoisted(() => ({ forceFailure: false }));
+
+vi.mock('../services/sessions', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/sessions')>();
+  return {
+    ...actual,
+    createSession: (...args: Parameters<typeof actual.createSession>) => {
+      if (sessionMint.forceFailure) {
+        throw new Error('simulated session-mint failure (e.g. pool exhaustion)');
+      }
+      return actual.createSession(...args);
+    },
+  };
+});
 
 /** Thirty days out, same offset `checkout-router.test.ts`'s own `DAY` uses. */
 const DAY = manilaCivilDate(new Date(Date.now() + 30 * 86_400_000));
@@ -406,5 +431,64 @@ describeWithDb('checkout.createHold / createHoldTransfer — Bug 1B session', ()
     const { cookies } = await holdTransfer();
     expect(cookies.some((c) => c.name === SESSION_COOKIE_BY_SUBJECT.user)).toBe(false);
     expect(cookies.some((c) => c.name === SESSION_COOKIE_BY_SUBJECT.driver)).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // 6 — Bug 1B: a session-mint failure AFTER the hold commits must not report
+  // the booking as failed. `createHoldService`/`createTransferBooking` run to
+  // completion and commit; only the SUBSEQUENT `createSession` call throws
+  // (forced via the hoisted mock above). The mutation must still resolve with
+  // the real booking's `ref`/`bookingId`, with no cookie set — degraded (the
+  // guest falls back to signing in at /portal/login), not broken.
+  //
+  // **Proven able to fail**: removing the inner try/catch around the
+  // `createSession`/`setSessionCookie` pair in `checkout.ts` (so the mint
+  // failure propagates to the outer catch) turns both of these red — the
+  // mutation rejects with `INTERNAL_SERVER_ERROR` instead of resolving — and
+  // restoring the inner try/catch turns them green again.
+  // -------------------------------------------------------------------------
+
+  it('createHold still resolves when session-mint fails after the hold commits, and sets no cookie', async () => {
+    const tour = await makeTour();
+    await makeFleet();
+    const { api, cookies } = callerWithCookies();
+    const quote = await api.checkout.quote({
+      tourSlug: tour.slug,
+      date: DAY,
+      pax: 2,
+      addonIds: [],
+    });
+
+    sessionMint.forceFailure = true;
+    try {
+      const result = await api.checkout.createHold(
+        validHoldInput({ tourSlug: tour.slug, date: DAY, pax: 2, quoteId: quote.quoteId }),
+      );
+      created.bookingIds.push(result.bookingId);
+      expect(result.bookingId).toBeTypeOf('number');
+      expect(result.ref).toBeTruthy();
+    } finally {
+      sessionMint.forceFailure = false;
+    }
+
+    expect(cookies, 'a session-mint failure must set no cookie').toHaveLength(0);
+  });
+
+  it('createHoldTransfer still resolves when session-mint fails after the hold commits, and sets no cookie', async () => {
+    const routeId = await makeRoute();
+    await makeFleet();
+    const { api, cookies } = callerWithCookies();
+
+    sessionMint.forceFailure = true;
+    try {
+      const result = await api.checkout.createHoldTransfer(transferHoldInput({ routeId }) as never);
+      created.bookingIds.push(result.bookingId);
+      expect(result.bookingId).toBeTypeOf('number');
+      expect(result.ref).toBeTruthy();
+    } finally {
+      sessionMint.forceFailure = false;
+    }
+
+    expect(cookies, 'a session-mint failure must set no cookie').toHaveLength(0);
   });
 });
