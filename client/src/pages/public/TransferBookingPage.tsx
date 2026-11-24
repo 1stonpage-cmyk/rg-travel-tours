@@ -156,10 +156,27 @@ import { trpc } from '@/lib/trpc';
  * `admin.vehicleTypes.*` router is unrelated.)
  */
 
-function readInitialProductType(raw: string | null): TransferProductType | null {
-  return raw && (TRANSFER_PRODUCT_TYPES as readonly string[]).includes(raw)
-    ? (raw as TransferProductType)
-    : null;
+/**
+ * Bug 1A fix: `/transfers/:slug`'s "Book this transfer" CTA used to link to
+ * `/transfer?routeId=<id>&direction=<dir>` with no `productType` at all, so
+ * the route arrived preselected but the Airport Transfer product type never
+ * did — and the whole date/pax/vehicle/guest section stays hidden on
+ * `vehiclePricingEnabled` (`productType !== null && routeId !== null`) below
+ * until a guest re-picks a type by hand. That CTA now sends `productType`
+ * too (`TransferRoutePage.tsx`), but this reads a `routeId` as the signal to
+ * default `productType` defensively, for any other caller — present or
+ * future — that forgets the param the same way. Only "routeId present,
+ * productType absent/invalid" gets the new default: a URL with no `routeId`
+ * at all keeps falling through to `null`, same as before.
+ */
+function readInitialProductType(
+  rawProductType: string | null,
+  rawRouteId: string | null,
+): TransferProductType | null {
+  if (rawProductType && (TRANSFER_PRODUCT_TYPES as readonly string[]).includes(rawProductType)) {
+    return rawProductType as TransferProductType;
+  }
+  return readInitialRouteId(rawRouteId) !== null ? 'transfer_one_way' : null;
 }
 
 function readInitialRouteId(raw: string | null): number | null {
@@ -377,7 +394,7 @@ export default function TransferBookingPage() {
   const [searchParams] = useSearchParams();
 
   const [productType, setProductType] = useState<TransferProductType | null>(() =>
-    readInitialProductType(searchParams.get('productType')),
+    readInitialProductType(searchParams.get('productType'), searchParams.get('routeId')),
   );
   const [routeId, setRouteId] = useState<number | null>(() =>
     readInitialRouteId(searchParams.get('routeId')),

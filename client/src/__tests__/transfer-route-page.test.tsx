@@ -165,7 +165,10 @@ describe('TransferRoutePage — forward direction', () => {
     renderAt('/transfers/mactan-airport-to-moalboal');
 
     const bookLink = await screen.findByRole('link', { name: /book this transfer/i });
-    expect(bookLink).toHaveAttribute('href', '/transfer?routeId=1&direction=forward');
+    expect(bookLink).toHaveAttribute(
+      'href',
+      '/transfer?productType=transfer_one_way&routeId=1&direction=forward',
+    );
   });
 
   it('shows a cross-link to the reverse direction page when reverseEnabled', async () => {
@@ -232,7 +235,10 @@ describe('TransferRoutePage — reverse direction', () => {
     renderAt(`/transfers/${reverseSlug}`);
 
     const bookLink = await screen.findByRole('link', { name: /book this transfer/i });
-    expect(bookLink).toHaveAttribute('href', '/transfer?routeId=1&direction=reverse');
+    expect(bookLink).toHaveAttribute(
+      'href',
+      '/transfer?productType=transfer_one_way&routeId=1&direction=reverse',
+    );
   });
 
   it('cross-links back to the forward direction page', async () => {

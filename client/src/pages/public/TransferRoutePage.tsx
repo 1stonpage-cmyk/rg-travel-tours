@@ -297,7 +297,9 @@ export default function TransferRoutePage() {
 
       <div className="mt-8 flex flex-wrap gap-3">
         <Button asChild size="lg" className="tap-target">
-          <Link to={`/transfer?routeId=${route.id}&direction=${direction}`}>
+          <Link
+            to={`/transfer?productType=transfer_one_way&routeId=${route.id}&direction=${direction}`}
+          >
             Book this transfer
           </Link>
         </Button>

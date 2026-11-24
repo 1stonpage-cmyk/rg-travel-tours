@@ -925,6 +925,33 @@ describe('TransferBookingPage — reads direction from the URL (Task 7, 1D)', ()
 });
 
 /**
+ * Bug 1A regression. `/transfers/:slug`'s "Book this transfer" CTA used to
+ * link to `/transfer?routeId=<id>&direction=<dir>` with no `productType` at
+ * all, so `productType` stayed `null`, `vehiclePricingEnabled` (`productType
+ * !== null && routeId !== null`) stayed false, and the whole
+ * date/pax/vehicle/guest section — including the Passengers field — never
+ * rendered, even though the route itself showed as preselected. The fix
+ * makes `readInitialProductType` default to `'transfer_one_way'` whenever
+ * the URL carries a valid `routeId` but no (or no valid) `productType`.
+ */
+describe('TransferBookingPage — routeId with no productType in the URL (Bug 1A)', () => {
+  it('still shows the date/pax/vehicle/guest form section when the URL has a routeId but no productType', async () => {
+    mockTrpc({
+      'transferRoutes.list': [MACTAN],
+      'checkout.quoteTransfer': quoteByVehicleTypeId,
+    });
+    renderPage('/transfer?routeId=1&direction=forward');
+
+    // The Passengers field only renders once `vehiclePricingEnabled` is
+    // true, which requires both `productType` and `routeId` to be set — so
+    // finding it proves `productType` defaulted to `transfer_one_way`
+    // despite the URL never naming it.
+    await screen.findByLabelText(/^passengers$/i);
+    await screen.findByRole('radio', { name: /^van/i });
+  });
+});
+
+/**
  * Task 5 (owner decision 2026-11-18, per-person pricing plan). `pax`/
  * `luggageCount` moved from `TransferGuestDetailsForm` up to page-level
  * state, rendered between the route picker and the vehicle-option cards
