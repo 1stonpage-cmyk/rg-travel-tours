@@ -20,6 +20,7 @@ import {
 } from '../db/schema';
 import { SEED_TRANSFER_AIRPORT_NAME, SEED_TRANSFER_ROUTES } from '../db/seed-data';
 import {
+  cheapestActiveOneWayCentavosByRoute,
   loadTransferRouteSeo,
   transferRouteDescription,
   transferRouteTitle,
@@ -333,6 +334,93 @@ describeWithDb('loadTransferRouteSeo — vehicle_types.is_active filter (bug 1D)
       const row = await loadTransferRouteSeo(slug);
       expect(row).not.toBeNull();
       expect(row!.cheapestOneWayCentavos).toBe(600_000);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  /**
+   * Fix 1D (review batch, 2026-11-24): `cheapestActiveOneWayCentavosByRoute`
+   * was made batch-capable so the home page's `transferRoutes.list` (via
+   * `HeroSection.tsx`) runs ONE query instead of 1+N. The property that
+   * batching could break — and that a "simplify it back to one global
+   * `Math.min`" regression would break silently — is that each route's
+   * minimum is computed independently of every OTHER route in the same
+   * call. Route A's inactive-vehicle-type price (₱1,000) is excluded by the
+   * SQL join before any grouping happens, so it can never win regardless of
+   * grouping — that is `vehicle_types.is_active filter`'s own test above.
+   * What THIS fixture catches is different: the rows a naive, ungrouped
+   * `Math.min` WOULD see are route A's ₱3,000, route B's ₱7,000 and route
+   * B's ₱5,000 — a global min over those is ₱3,000, which is route A's own
+   * correct answer but the WRONG answer for route B (should be ₱5,000) and
+   * for route C (should be null, having no price rows at all). A regression
+   * that drops the per-route grouping hands every route in the batch that
+   * same ₱3,000 instead.
+   */
+  it('cheapestActiveOneWayCentavosByRoute keeps each route’s minimum independent of the others in the same batch', async () => {
+    try {
+      const routeAActiveType = await makeVehicleType();
+      const routeAInactiveType = await makeVehicleType();
+      await getDb()
+        .update(vehicleTypes)
+        .set({ isActive: false })
+        .where(eq(vehicleTypes.id, routeAInactiveType));
+      const routeAFrom = await makePlace({ name: `Batch A Origin ${unique()}` });
+      const routeATo = await makePlace({ name: `Batch A Destination ${unique()}` });
+      const { id: routeAId } = await makeRoute({ fromPlaceId: routeAFrom, toPlaceId: routeATo });
+      await getDb()
+        .insert(transferRouteVehiclePrices)
+        .values([
+          {
+            routeId: routeAId,
+            vehicleTypeId: routeAActiveType,
+            oneWayPriceCentavos: 300_000,
+            dayUsePriceCentavos: 500_000,
+          },
+          {
+            // Inactive, and far cheaper — must never win for route A, and
+            // must never leak into route B's answer either.
+            routeId: routeAId,
+            vehicleTypeId: routeAInactiveType,
+            oneWayPriceCentavos: 100_000,
+            dayUsePriceCentavos: 150_000,
+          },
+        ]);
+
+      const routeBTypeOne = await makeVehicleType();
+      const routeBTypeTwo = await makeVehicleType();
+      const routeBFrom = await makePlace({ name: `Batch B Origin ${unique()}` });
+      const routeBTo = await makePlace({ name: `Batch B Destination ${unique()}` });
+      const { id: routeBId } = await makeRoute({ fromPlaceId: routeBFrom, toPlaceId: routeBTo });
+      await getDb()
+        .insert(transferRouteVehiclePrices)
+        .values([
+          {
+            routeId: routeBId,
+            vehicleTypeId: routeBTypeOne,
+            oneWayPriceCentavos: 700_000,
+            dayUsePriceCentavos: 900_000,
+          },
+          {
+            routeId: routeBId,
+            vehicleTypeId: routeBTypeTwo,
+            oneWayPriceCentavos: 500_000,
+            dayUsePriceCentavos: 650_000,
+          },
+        ]);
+
+      // A third route with no price rows at all — must come back null, not
+      // dropped from the map and not accidentally inheriting another
+      // route's minimum.
+      const routeCFrom = await makePlace({ name: `Batch C Origin ${unique()}` });
+      const routeCTo = await makePlace({ name: `Batch C Destination ${unique()}` });
+      const { id: routeCId } = await makeRoute({ fromPlaceId: routeCFrom, toPlaceId: routeCTo });
+
+      const result = await cheapestActiveOneWayCentavosByRoute([routeAId, routeBId, routeCId]);
+
+      expect(result.get(routeAId)).toBe(300_000);
+      expect(result.get(routeBId)).toBe(500_000);
+      expect(result.get(routeCId)).toBeNull();
     } finally {
       await cleanup();
     }

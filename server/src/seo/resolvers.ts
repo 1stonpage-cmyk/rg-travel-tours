@@ -27,7 +27,7 @@ import {
   type TransferPlaceType,
   type TransferPricingMode,
 } from '@rg/shared';
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/mysql-core';
 import {
   readContentUnverified,
@@ -298,22 +298,39 @@ export async function loadActiveTransferRouteRows(): Promise<ActiveTransferRoute
 }
 
 /**
- * The cheapest one-way price among a route's ACTIVE vehicle types —
- * "active" meaning `vehicle_types.is_active`, deliberately never fleet
- * sellability (see `loadTransferRouteSeo`'s stability note / the pinned
- * test in transfer-route-page-seo.test.ts: a route's advertised "from"
- * price must not flicker with which vans happen to be sellable right now).
- * The ONE function both the public page's own title clause
- * (`routers/public/transfers.ts`) and this file's meta description/JSON-LD
- * read, so the two can never independently drift (bug 1D, 2026-11-24).
+ * The cheapest one-way price among a route's ACTIVE vehicle types, for
+ * every routeId given — "active" meaning `vehicle_types.is_active`,
+ * deliberately never fleet sellability (see `loadTransferRouteSeo`'s
+ * stability note / the pinned test in transfer-route-page-seo.test.ts). The
+ * ONE function both the public page's own title clause
+ * (`routers/public/transfers.ts`) and this file's meta description/
+ * JSON-LD read, so the two can never independently drift (bug 1D,
+ * 2026-11-24). Batched — one query for any number of routes — since its
+ * first caller batches several routes at once on the home page; a
+ * single-route caller passes a one-element array and reads the one key.
  */
-export async function cheapestActiveOneWayCentavos(routeId: number): Promise<number | null> {
+export async function cheapestActiveOneWayCentavosByRoute(
+  routeIds: number[],
+): Promise<Map<number, number | null>> {
+  const result = new Map<number, number | null>(routeIds.map((id) => [id, null]));
+  if (routeIds.length === 0) return result;
   const rows = await getDb()
-    .select({ oneWayPriceCentavos: transferRouteVehiclePrices.oneWayPriceCentavos })
+    .select({
+      routeId: transferRouteVehiclePrices.routeId,
+      oneWayPriceCentavos: transferRouteVehiclePrices.oneWayPriceCentavos,
+    })
     .from(transferRouteVehiclePrices)
     .innerJoin(vehicleTypes, eq(vehicleTypes.id, transferRouteVehiclePrices.vehicleTypeId))
-    .where(and(eq(transferRouteVehiclePrices.routeId, routeId), eq(vehicleTypes.isActive, true)));
-  return rows.length === 0 ? null : Math.min(...rows.map((p) => p.oneWayPriceCentavos));
+    .where(
+      and(inArray(transferRouteVehiclePrices.routeId, routeIds), eq(vehicleTypes.isActive, true)),
+    );
+  for (const row of rows) {
+    const current = result.get(row.routeId);
+    if (current === null || current === undefined || row.oneWayPriceCentavos < current) {
+      result.set(row.routeId, row.oneWayPriceCentavos);
+    }
+  }
+  return result;
 }
 
 async function finishTransferRouteSeoRow(
@@ -325,7 +342,8 @@ async function finishTransferRouteSeoRow(
   // Deliberately NOT filtered by current fleet sellability — see this
   // interface's own field comment above. Meta describes the catalog price
   // list (among ACTIVE vehicle types), not a live dispatch fact.
-  const cheapestOneWayCentavos = await cheapestActiveOneWayCentavos(row.id);
+  const cheapestOneWayCentavos =
+    (await cheapestActiveOneWayCentavosByRoute([row.id])).get(row.id) ?? null;
 
   // The DROPOFF place for THIS direction owns the illustrative photo, if any.
   const dropoffDestinationId =

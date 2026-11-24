@@ -55,7 +55,7 @@ import {
   transferRoutes,
   vehicleTypes,
 } from '../../db/schema';
-import { cheapestActiveOneWayCentavos, transferRouteTitle } from '../../seo/resolvers';
+import { cheapestActiveOneWayCentavosByRoute, transferRouteTitle } from '../../seo/resolvers';
 import { sellableVehiclesByType } from '../../services/transfers/capacity';
 import { publicProcedure, router } from '../../trpc';
 
@@ -142,14 +142,12 @@ export const transferRoutesRouter = router({
     // The ONE fleet count this whole list needs — see this module's header.
     const sellable = await sellableVehiclesByType(db);
 
-    // One call per route, via the SAME shared function
+    // One BATCHED call for every route, via the SAME shared function
     // `seo/resolvers.ts`'s meta/JSON-LD reads — see that function's own doc
-    // comment (bug 1D, 2026-11-24). Route-catalog-sized, not a hot path.
-    const cheapestByRouteId = new Map(
-      await Promise.all(
-        rows.map(async (row) => [row.id, await cheapestActiveOneWayCentavos(row.id)] as const),
-      ),
-    );
+    // comment (bug 1D, 2026-11-24). Called from the home page
+    // (`HeroSection.tsx`), not just route detail pages, so this used to be
+    // 1+N queries (one per route via `Promise.all`) rather than one.
+    const cheapestByRouteId = await cheapestActiveOneWayCentavosByRoute(rows.map((row) => row.id));
 
     const priceMap = new Map<
       string,

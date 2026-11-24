@@ -174,7 +174,7 @@ describeWithDb('transferRoutes.list — pageTitle / reversePageTitle', () => {
    * SEO meta) must exclude an inactive vehicle type's lower price — the
    * "visible prices and meta/JSON-LD cannot drift" half of the fix. Both
    * `transferRoutes.list` and `resolvePage` now call the SAME shared
-   * `cheapestActiveOneWayCentavos`, so this also re-proves they agree.
+   * `cheapestActiveOneWayCentavosByRoute`, so this also re-proves they agree.
    */
   it("pageTitle's price clause ignores a lower price on an INACTIVE vehicle type", async () => {
     try {
