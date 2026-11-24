@@ -19,6 +19,17 @@ import { TrpcProviders } from '@/lib/trpc';
 import { SETTINGS_FIXTURE } from './helpers/fixtures';
 import { mockTrpc, trpcError, trpcValidationError } from './helpers/mock-trpc';
 
+// Task 12 (SEO fixes, 2026-11-24) — `begin_booking`/`hold_created`
+// analytics. This page imports nothing else from `@/lib/consent/scripts`,
+// so replacing the module wholesale is safe, and asserting on the mock
+// itself is the only way to pin exactly what `trackEvent` was called with
+// and how many times.
+vi.mock('@/lib/consent/scripts', () => ({
+  trackEvent: vi.fn(),
+}));
+
+import { trackEvent } from '@/lib/consent/scripts';
+
 const MACTAN: TransferRoutePublicRow = {
   id: 1,
   fromPlace: { id: 10, name: 'Mactan-Cebu International Airport', placeType: 'airport' },
@@ -88,6 +99,10 @@ const HOLD_RESULT = {
   bookingId: 99,
   holdExpiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
 };
+
+afterEach(() => {
+  vi.mocked(trackEvent).mockClear();
+});
 
 function renderPage(entry = '/transfer') {
   return render(
@@ -1516,5 +1531,100 @@ describe('TransferBookingPage — minimum paying passengers (final review, Findi
     await selectTypeAndRoute(user);
     await screen.findByLabelText(/^passengers$/i);
     expect(screen.queryByText(/paying passengers/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('TransferBookingPage — begin_booking analytics (Task 12, review fix)', () => {
+  it('fires begin_booking exactly once on first type selection, and does not re-fire when the type is changed again (the hasFiredRef guard, not the dependency array, is what must suppress it)', async () => {
+    mockTrpc({
+      'transferRoutes.list': [MACTAN],
+      'checkout.quoteTransfer': quoteByVehicleTypeId,
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('radio', { name: /airport transfer/i }));
+
+    expect(trackEvent).toHaveBeenCalledTimes(1);
+    expect(trackEvent).toHaveBeenCalledWith('begin_booking', { productType: 'transfer_one_way' });
+
+    /*
+     * `productType` changing value at all (one non-null value to another)
+     * DOES re-run the effect — its dependency array is `[productType]`, and
+     * the new value is not `Object.is`-equal to the old one. So this is the
+     * one real test of the `hasFiredRef` guard's load-bearing case: the
+     * guard, not the dependency array, is what must stop a second real fire
+     * here. (A plain re-render with `productType` UNCHANGED would never
+     * even re-invoke this effect body at all — a much weaker, closer-to-
+     * vacuous test than this one.)
+     */
+    await user.click(await screen.findByRole('radio', { name: /day use/i }));
+    expect(trackEvent).toHaveBeenCalledTimes(1);
+
+    // And switching back to the original type a second time must not
+    // re-fire it either.
+    await user.click(await screen.findByRole('radio', { name: /airport transfer/i }));
+    expect(trackEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it('carries no personal data — only productType', async () => {
+    mockTrpc({
+      'transferRoutes.list': [MACTAN],
+      'checkout.quoteTransfer': quoteByVehicleTypeId,
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('radio', { name: /day use/i }));
+
+    expect(trackEvent).toHaveBeenCalledWith('begin_booking', { productType: 'transfer_day_use' });
+    const params = vi.mocked(trackEvent).mock.calls[0]?.[1];
+    expect(params).not.toHaveProperty('email');
+    expect(params).not.toHaveProperty('phone');
+    expect(params).not.toHaveProperty('name');
+  });
+});
+
+describe('TransferBookingPage — hold_created analytics (Task 12, review fix)', () => {
+  it('fires hold_created exactly once, with the ref only, when the hold succeeds', async () => {
+    mockTrpc({
+      'transferRoutes.list': [MACTAN],
+      'checkout.quoteTransfer': quoteByVehicleTypeId,
+      'checkout.createHoldTransfer': () => HOLD_RESULT,
+      'settings.get': SETTINGS_FIXTURE,
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await selectTypeAndRoute(user);
+    const vanRadio = await screen.findByRole('radio', { name: /^van/i });
+    await waitFor(() => expect(vanRadio).not.toBeDisabled());
+    await user.click(vanRadio);
+
+    const form = await screen.findByRole('form', { name: /transfer booking form/i });
+    fireEvent.change(within(form).getByLabelText(/pickup date/i), {
+      target: { value: '2026-12-15' },
+    });
+    fireEvent.change(within(form).getByLabelText(/pickup time/i), {
+      target: { value: '08:30' },
+    });
+    fireEvent.change(within(form).getByLabelText(/^passengers$/i), { target: { value: '2' } });
+    fireEvent.change(within(form).getByLabelText(/luggage \(bags\)/i), { target: { value: '1' } });
+    await user.type(within(form).getByLabelText(/drop-off address/i), 'SM Seaside, Cebu City');
+    await user.type(within(form).getByLabelText(/^flight number$/i), 'PR123');
+    await user.type(within(form).getByLabelText(/^airline$/i), 'Philippine Airlines');
+    await user.type(within(form).getByLabelText(/full name/i), 'Juan Dela Cruz');
+    await user.type(within(form).getByLabelText(/^email$/i), 'juan@example.com');
+    await user.type(within(form).getByLabelText(/whatsapp.*mobile number/i), '0917 123 4567');
+    await user.click(within(form).getByLabelText(/i agree/i));
+    await user.click(screen.getByRole('button', { name: /book now, hold my spot/i }));
+
+    await screen.findByText(/^your spot is held!$/i);
+
+    const holdCreatedCalls = vi
+      .mocked(trackEvent)
+      .mock.calls.filter(([name]) => name === 'hold_created');
+    expect(holdCreatedCalls).toHaveLength(1);
+    expect(holdCreatedCalls[0]?.[1]).toEqual({ ref: HOLD_RESULT.ref });
   });
 });
