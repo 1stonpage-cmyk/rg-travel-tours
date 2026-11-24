@@ -237,6 +237,22 @@ describe('settings schemas', () => {
         }).success,
       ).toBe(true);
     });
+
+    it('refuses an unconfigured-but-flagged payment_qr with a plain-English message', () => {
+      const result = schema.safeParse({
+        imagePath: null,
+        accountName: null,
+        accountNumber: null,
+        instructions: null,
+        isConfigured: true,
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues[0]!.message).toBe(
+          'Add the QR image, account name and account number before turning on manual transfer.',
+        );
+      }
+    });
   });
 
   /**

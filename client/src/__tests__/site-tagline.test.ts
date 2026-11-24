@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { siteTagline } from '@/lib/site';
+import { siteTagline, phoneWhatsappLink, phoneViberLink } from '@/lib/site';
 
 /**
  * Owner decision 2026-11-11, 1C: the public footer tagline must be
@@ -23,5 +23,33 @@ describe('siteTagline', () => {
     expect(siteTagline(false)).toBe(
       'Private airport and island transfers across Cebu, booked direct.',
     );
+  });
+});
+
+describe('phoneWhatsappLink', () => {
+  it('builds a wa.me link from an E.164 phone number', () => {
+    expect(phoneWhatsappLink('+15551234567')).toBe('https://wa.me/15551234567');
+  });
+
+  it('encodes an optional message', () => {
+    const link = phoneWhatsappLink('+15551234567', 'Hello World');
+    expect(link).toContain('https://wa.me/15551234567?text=');
+    expect(link).toContain('Hello%20World');
+  });
+
+  it('handles PH numbers', () => {
+    expect(phoneWhatsappLink('+639171234567')).toBe('https://wa.me/639171234567');
+  });
+});
+
+describe('phoneViberLink', () => {
+  it('builds a viber:// link from an E.164 phone number', () => {
+    expect(phoneViberLink('+15551234567')).toBe('viber://chat?number=%2B15551234567');
+  });
+
+  it('percent-encodes the plus sign', () => {
+    const link = phoneViberLink('+639171234567');
+    expect(link).toContain('%2B');
+    expect(link).toContain('639171234567');
   });
 });

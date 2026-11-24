@@ -207,7 +207,7 @@ const paymentQrSchema = z
       Boolean(qr.imagePath?.trim() && qr.accountName?.trim() && qr.accountNumber?.trim()),
     {
       message:
-        'payment_qr.isConfigured cannot be true without imagePath, accountName and accountNumber',
+        'Add the QR image, account name and account number before turning on manual transfer.',
     },
   );
 

@@ -181,3 +181,19 @@ export function viberLink() {
 export function telLink(tel: string) {
   return `tel:${tel}`;
 }
+
+/** Builds a wa.me deep link for a specific E.164 phone number with an optional message. */
+export function phoneWhatsappLink(e164: string, message?: string): string {
+  const digits = e164.replace(/^\+/, '');
+  const base = `https://wa.me/${digits}`;
+  return message ? `${base}?text=${encodeURIComponent(message)}` : base;
+}
+
+/**
+ * Viber deep link for a specific E.164 phone number. The number must be
+ * percent-encoded ("+" becomes %2B) or Viber reads it as a space and the
+ * chat opens on an empty recipient.
+ */
+export function phoneViberLink(e164: string): string {
+  return `viber://chat?number=${encodeURIComponent(e164)}`;
+}

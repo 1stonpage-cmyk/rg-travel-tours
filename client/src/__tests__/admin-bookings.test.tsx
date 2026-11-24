@@ -1096,4 +1096,35 @@ describe('AdminBookingDetailPage — staff notes', () => {
     renderDetail();
     expect(await screen.findByLabelText(/add a note/i)).toBeInTheDocument();
   });
+
+  it('shows an international tag and WhatsApp/Viber links for a non-PH leadPhone', async () => {
+    mockTrpc({
+      'admin.bookings.detail': { ...DETAIL, leadPhone: '+15551234567' },
+      'staffAuth.me': { userId: 1, role: 'owner' },
+    });
+    renderDetail();
+
+    await screen.findByRole('heading', { name: 'RG-AAAAA1' });
+    expect(screen.getByText(/international/i)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /whatsapp/i })).toHaveAttribute(
+      'href',
+      expect.stringContaining('wa.me/15551234567'),
+    );
+    expect(screen.getByRole('link', { name: /viber/i })).toHaveAttribute(
+      'href',
+      expect.stringContaining('viber://'),
+    );
+  });
+
+  it('shows neither tag nor links for a PH leadPhone', async () => {
+    mockTrpc({
+      'admin.bookings.detail': { ...DETAIL, leadPhone: '+639171234567' },
+      'staffAuth.me': { userId: 1, role: 'owner' },
+    });
+    renderDetail();
+
+    await screen.findByRole('heading', { name: 'RG-AAAAA1' });
+    expect(screen.queryByText(/international/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /whatsapp/i })).not.toBeInTheDocument();
+  });
 });

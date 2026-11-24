@@ -52,6 +52,7 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { splitFieldErrors } from '@/lib/field-errors';
 import { trpc } from '@/lib/trpc';
+import { phoneWhatsappLink, phoneViberLink } from '@/lib/site';
 import AdminPageHeader from '@/components/admin/AdminPageHeader';
 import AssignPanel from '@/components/admin/AssignPanel';
 import CancelRefundPanel from '@/components/admin/CancelRefundPanel';
@@ -272,7 +273,30 @@ export default function AdminBookingDetailPage() {
           </div>
           <div className="flex gap-2">
             <dt className="text-brand-error w-24 shrink-0">Phone</dt>
-            <dd className="text-brand-ink">{booking.leadPhone}</dd>
+            <dd className="text-brand-ink flex flex-wrap items-center gap-2">
+              {booking.leadPhone}
+              {!booking.leadPhone.startsWith('+63') && (
+                <>
+                  <span className="bg-brand-gold-100 text-brand-gold-800 rounded-full px-2 py-0.5 text-xs font-medium">
+                    International — reach via WhatsApp/Viber
+                  </span>
+                  <a
+                    href={phoneWhatsappLink(booking.leadPhone)}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="text-brand-blue-700 underline"
+                  >
+                    WhatsApp
+                  </a>
+                  <a
+                    href={phoneViberLink(booking.leadPhone)}
+                    className="text-brand-blue-700 underline"
+                  >
+                    Viber
+                  </a>
+                </>
+              )}
+            </dd>
           </div>
         </dl>
       </section>
