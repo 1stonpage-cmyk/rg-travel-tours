@@ -188,6 +188,24 @@ export interface TransferRoutePublicRow {
    */
   pricingMode: TransferPricingMode;
   minPayingPax: number;
+  /**
+   * The server's own `transferRouteTitle()` output (`server/src/seo/
+   * resolvers.ts`) for THIS route's FORWARD direction — a complete,
+   * fully-formed title string, computed from the SAME stable (non-
+   * sellability-filtered) cheapest price `loadTransferRouteSeo` uses for the
+   * `<title>` tag at `/transfers/{slug}` (SEO fixes, 2026-11-24, Task 9, Step
+   * 0). CLAUDE.md: "Never build meta in a surface — if a title is wrong it
+   * is wrong in the resolver, for both." `TransferRoutePage.tsx` reads this
+   * VERBATIM via `useRawDocumentTitle`, never recomposing it client-side.
+   */
+  pageTitle: string;
+  /**
+   * The same formula for the REVERSE direction (places swapped) — `null`
+   * exactly when `reverseEnabled` is `false`, since there is no reverse page
+   * to title. Matches `resolvePage('/transfers/{reverseSlug}')`'s own
+   * injected title byte-for-byte.
+   */
+  reversePageTitle: string | null;
 }
 
 /**
@@ -205,6 +223,13 @@ export interface TransferRoutePublicRow {
  */
 export interface TransferRouteHomeCard {
   id: number;
+  /**
+   * The route's own FORWARD slug (Task 9, SEO fixes 2026-11-24) — a home
+   * card always shows one card per `show_on_home_page` route, and the
+   * forward direction is the one its own copy/price describes, so this
+   * links straight to `/transfers/{slug}` with no direction ambiguity.
+   */
+  slug: string;
   fromPlace: { id: number; name: string; placeType: TransferPlaceType };
   toPlace: { id: number; name: string; placeType: TransferPlaceType };
   estimatedDurationMinutes: number;

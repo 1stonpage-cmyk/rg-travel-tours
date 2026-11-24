@@ -663,6 +663,7 @@ export const REVIEWS_FIXTURE: ReviewsPublishedResult = {
 export const TRANSFER_HOME_CARDS_FIXTURE: TransferRouteHomeCard[] = [
   {
     id: 101,
+    slug: 'mactan-airport-to-oslob',
     fromPlace: { id: 1, name: 'Mactan-Cebu International Airport', placeType: 'airport' },
     toPlace: { id: 2, name: 'Oslob', placeType: 'destination' },
     estimatedDurationMinutes: 180,
@@ -677,6 +678,7 @@ export const TRANSFER_HOME_CARDS_FIXTURE: TransferRouteHomeCard[] = [
   },
   {
     id: 102,
+    slug: 'mactan-airport-to-moalboal',
     fromPlace: { id: 1, name: 'Mactan-Cebu International Airport', placeType: 'airport' },
     toPlace: { id: 3, name: 'Moalboal', placeType: 'destination' },
     estimatedDurationMinutes: 150,

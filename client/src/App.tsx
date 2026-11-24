@@ -46,6 +46,7 @@ import TermsPage from '@/pages/public/TermsPage';
 import TourDetailPage from '@/pages/public/TourDetailPage';
 import ToursPage from '@/pages/public/ToursPage';
 import TransferBookingPage from '@/pages/public/TransferBookingPage';
+import TransferRoutePage from '@/pages/public/TransferRoutePage';
 
 /**
  * `BOOKING_PAGE_ROUTE` (`@rg/shared`) is `'/booking/:ref'` — an absolute
@@ -89,6 +90,14 @@ export default function App() {
          * landing on `/transfer` directly sees the same flow from step 1.
          */}
         <Route path="transfer" element={<TransferBookingPage />} />
+        {/*
+         * Task 9 (SEO fixes, 2026-11-24) — direction-specific transfer route
+         * landing pages. One route pattern serves BOTH directions of a
+         * reversible route; `TransferRoutePage` itself decides which, via
+         * `matchRouteDirection`. Placed below the static `transfer` segment,
+         * same reasoning as `tours`/`tours/:slug` above.
+         */}
+        <Route path="transfers/:slug" element={<TransferRoutePage />} />
         {/*
          * The package detail page (Week 7 plan, Task 3) — `/packages/:slug`
          * now renders, which is what lets `resolvePackage` (seo/resolvers.ts)

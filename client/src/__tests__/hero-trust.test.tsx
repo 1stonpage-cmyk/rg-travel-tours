@@ -63,6 +63,8 @@ const MACTAN: TransferRoutePublicRow = {
   exclusionsText: null,
   pricingMode: 'per_vehicle',
   minPayingPax: 1,
+  pageTitle: 'Mactan-Cebu International Airport to Moalboal Private Transfer',
+  reversePageTitle: null,
   vehiclePrices: [
     {
       vehicleTypeId: 1,

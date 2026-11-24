@@ -55,6 +55,7 @@ import {
   transferRoutes,
   vehicleTypes,
 } from '../../db/schema';
+import { transferRouteTitle } from '../../seo/resolvers';
 import { sellableVehiclesByType } from '../../services/transfers/capacity';
 import { publicProcedure, router } from '../../trpc';
 
@@ -166,6 +167,23 @@ export const transferRoutesRouter = router({
           ...price,
         });
       }
+
+      /*
+       * Task 9, Step 0 (SEO fixes, 2026-11-24). The SAME stable (non-
+       * sellability-filtered) cheapest price `loadTransferRouteSeo`
+       * (`seo/resolvers.ts`) uses for the `<title>` tag — deliberately
+       * SEPARATE from `vehiclePrices` above, which stays sellability-
+       * filtered for booking UX. A fleet temporarily having nothing to sell
+       * must not make a route's page title lose its price clause on one
+       * crawl and regain it on the next.
+       */
+      const stableCheapestOneWayCentavos =
+        priceRows.filter((p) => p.routeId === row.id).length === 0
+          ? null
+          : Math.min(
+              ...priceRows.filter((p) => p.routeId === row.id).map((p) => p.oneWayPriceCentavos),
+            );
+
       return {
         id: row.id,
         fromPlace: {
@@ -183,6 +201,18 @@ export const transferRoutesRouter = router({
         vehiclePrices,
         pricingMode: row.pricingMode,
         minPayingPax: row.minPayingPax,
+        pageTitle: transferRouteTitle({
+          fromPlaceName: row.fromPlaceName,
+          toPlaceName: row.toPlaceName,
+          cheapestOneWayCentavos: stableCheapestOneWayCentavos,
+        }),
+        reversePageTitle: row.reverseEnabled
+          ? transferRouteTitle({
+              fromPlaceName: row.toPlaceName,
+              toPlaceName: row.fromPlaceName,
+              cheapestOneWayCentavos: stableCheapestOneWayCentavos,
+            })
+          : null,
       };
     });
   }),
@@ -204,6 +234,7 @@ export const transferRoutesRouter = router({
     const rows = await db
       .select({
         id: transferRoutes.id,
+        slug: transferRoutes.slug,
         fromPlaceId: fromPlace.id,
         fromPlaceName: fromPlace.name,
         fromPlaceType: fromPlace.placeType,
@@ -296,6 +327,7 @@ export const transferRoutesRouter = router({
 
       return {
         id: row.id,
+        slug: row.slug,
         fromPlace: { id: row.fromPlaceId, name: row.fromPlaceName, placeType: row.fromPlaceType },
         toPlace: { id: row.toPlaceId, name: row.toPlaceName, placeType: row.toPlaceType },
         estimatedDurationMinutes: row.estimatedDurationMinutes,

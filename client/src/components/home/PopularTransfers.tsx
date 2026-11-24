@@ -93,12 +93,23 @@ export default function PopularTransfers() {
                       </span>
                     </div>
                     <div className="p-4">
-                      <p className="text-brand-blue-900 flex items-center gap-1.5 text-base font-semibold">
+                      {/*
+                       * Task 9 (SEO fixes, 2026-11-24) — links the home card
+                       * through to its own FORWARD-direction landing page
+                       * (`/transfers/{slug}`), never the reverse: a home card
+                       * always shows one card per `show_on_home_page` route,
+                       * and the forward direction is the one this card's own
+                       * copy/price describes.
+                       */}
+                      <Link
+                        to={`/transfers/${route.slug}`}
+                        className="text-brand-blue-900 flex items-center gap-1.5 text-base font-semibold underline-offset-2 hover:underline"
+                      >
                         <Icon className="size-4 shrink-0" aria-hidden="true" />
                         {route.fromPlace.name}
                         <ArrowRight className="size-3.5 shrink-0" aria-hidden="true" />
                         {route.toPlace.name}
-                      </p>
+                      </Link>
                       {route.shortDescription ? (
                         <p className="text-muted-foreground mt-1.5 text-sm">
                           {route.shortDescription}

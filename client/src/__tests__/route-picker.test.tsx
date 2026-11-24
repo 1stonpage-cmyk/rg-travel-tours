@@ -26,6 +26,8 @@ const MACTAN: TransferRoutePublicRow = {
   exclusionsText: null,
   pricingMode: 'per_vehicle',
   minPayingPax: 1,
+  pageTitle: 'Mactan-Cebu International Airport to Moalboal Private Transfer',
+  reversePageTitle: null,
   vehiclePrices: [
     {
       vehicleTypeId: 1,
@@ -58,6 +60,8 @@ const OSLOB: TransferRoutePublicRow = {
   exclusionsText: null,
   pricingMode: 'per_vehicle',
   minPayingPax: 1,
+  pageTitle: 'Mactan-Cebu International Airport to Oslob Private Transfer',
+  reversePageTitle: null,
   vehiclePrices: [],
 };
 
@@ -74,6 +78,8 @@ const REVERSIBLE: TransferRoutePublicRow = {
   exclusionsText: null,
   pricingMode: 'per_vehicle',
   minPayingPax: 1,
+  pageTitle: 'Mactan-Cebu International Airport to Cebu City Private Transfer',
+  reversePageTitle: 'Cebu City to Mactan-Cebu International Airport Private Transfer',
   vehiclePrices: [
     {
       vehicleTypeId: 1,

@@ -1,11 +1,12 @@
 import { keepPreviousData } from '@tanstack/react-query';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { AlertTriangle } from 'lucide-react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   createHoldTransferInput,
   formatPeso,
   quoteTransferInput,
+  reverseTransferRouteSlug,
   TRANSFER_PRODUCT_TYPES,
   type PayMode,
   type QuoteTransferResult,
@@ -1189,6 +1190,42 @@ export default function TransferBookingPage() {
               </>
             )}
         </form>
+      )}
+
+      {/*
+       * Task 9, Step 7 (SEO fixes, 2026-11-24) — "All transfer routes": one
+       * plain link per FORWARD slug, plus (only where `reverseEnabled`) a
+       * second link per derived reverse slug. Reads `routesQuery.data`
+       * directly, never `displayRoutes` — that copy's day-use price swap is
+       * irrelevant to a plain route-link list.
+       */}
+      {routesQuery.data && routesQuery.data.length > 0 && (
+        <section className="mt-12 border-t pt-8">
+          <h2 className="text-brand-blue-900 text-lg font-bold">All transfer routes</h2>
+          <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+            {routesQuery.data.map((route) => (
+              <li key={route.id}>
+                <Link
+                  to={`/transfers/${route.slug}`}
+                  className="text-brand-blue-700 underline underline-offset-2"
+                >
+                  {route.fromPlace.name} to {route.toPlace.name}
+                </Link>
+                {route.reverseEnabled && (
+                  <>
+                    {' · '}
+                    <Link
+                      to={`/transfers/${reverseTransferRouteSlug(route.slug)}`}
+                      className="text-brand-blue-700 underline underline-offset-2"
+                    >
+                      {route.toPlace.name} to {route.fromPlace.name}
+                    </Link>
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
     </div>
   );

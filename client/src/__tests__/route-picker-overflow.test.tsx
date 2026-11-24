@@ -33,6 +33,8 @@ const LONG_NAMES_ROUTE: TransferRoutePublicRow = {
   exclusionsText: null,
   pricingMode: 'per_vehicle',
   minPayingPax: 1,
+  pageTitle: 'Mactan-Cebu International Airport to Cebu City Private Transfer',
+  reversePageTitle: null,
   vehiclePrices: [],
 };
 
