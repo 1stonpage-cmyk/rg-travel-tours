@@ -7,6 +7,7 @@ import {
   readSettings,
   readRawSettings,
   readShowTours,
+  resolvePermits,
   toSettingsPayload,
   readTransferOperationsSettings,
   readTransferOperationsSettingsTx,
@@ -79,7 +80,13 @@ function validValueFor(key: string): unknown {
     case 'payment_methods':
       return [{ key: 'gcash', label: 'GCash', enabled: true, sortOrder: 0 }];
     case 'permits':
-      return { dot: null, dti: null, bir: null };
+      return {
+        items: [
+          { key: 'dot', label: 'DOT Accreditation No.', number: null, show: false, builtin: true },
+          { key: 'dti', label: 'DTI Registration No.', number: null, show: false, builtin: true },
+          { key: 'bir', label: 'BIR TIN', number: null, show: false, builtin: true },
+        ],
+      };
     case 'how_it_works':
       return [{ step: 1, title: 'Pick a tour', body: 'Browse our catalog' }];
     case 'why_book_direct':
@@ -169,7 +176,13 @@ describeWithDb('readSettings()', () => {
     expect(blocks.content_unverified).toBe(true);
     expect(blocks.business_hours).toHaveLength(7);
     expect(blocks.announcement.style).toBe('info');
-    expect(blocks.permits).toEqual({ dot: null, dti: null, bir: null });
+    expect(blocks.permits).toEqual({
+      items: [
+        { key: 'dot', label: 'DOT Accreditation No.', number: null, show: false, builtin: true },
+        { key: 'dti', label: 'DTI Registration No.', number: null, show: false, builtin: true },
+        { key: 'bir', label: 'BIR TIN', number: null, show: false, builtin: true },
+      ],
+    });
   });
 
   it('throws naming the key when a setting is missing from the table', async () => {
@@ -309,6 +322,70 @@ describe('toSettingsPayload() — hasRealReviews threading (Task 1A)', () => {
   it('publishes hasRealReviews: false exactly as given', () => {
     const payload = toSettingsPayload(blocksFixture(), NOW, true, false);
     expect(payload.hasRealReviews).toBe(false);
+  });
+});
+
+/**
+ * `resolvePermits()` / the `permits` field of `toSettingsPayload()` (Task
+ * 1A): only shown items with a real number reach the client, in stored
+ * order, and the `show`/`builtin` flags never do.
+ */
+describe('resolvePermits() / toSettingsPayload() — permits (Task 1A)', () => {
+  it('omits an item with show: false even though it has a real number', () => {
+    const permits = {
+      items: [
+        { key: 'dot', label: 'DOT Accreditation No.', number: 'DOT-1', show: false, builtin: true },
+        { key: 'dti', label: 'DTI Registration No.', number: null, show: false, builtin: true },
+        { key: 'bir', label: 'BIR TIN', number: null, show: false, builtin: true },
+      ],
+    };
+    expect(resolvePermits(permits)).toEqual([]);
+  });
+
+  it('includes an item with show: true and a real number', () => {
+    const permits = {
+      items: [
+        { key: 'dot', label: 'DOT Accreditation No.', number: 'DOT-1', show: true, builtin: true },
+        { key: 'dti', label: 'DTI Registration No.', number: null, show: false, builtin: true },
+        { key: 'bir', label: 'BIR TIN', number: null, show: false, builtin: true },
+      ],
+    };
+    expect(resolvePermits(permits)).toEqual([
+      { key: 'dot', label: 'DOT Accreditation No.', number: 'DOT-1' },
+    ]);
+  });
+
+  it('preserves stored order and never reaches the client with show/builtin', () => {
+    const permits = {
+      items: [
+        { key: 'dot', label: 'DOT Accreditation No.', number: null, show: false, builtin: true },
+        { key: 'mayors', label: "Mayor's Permit No.", number: 'MP-1', show: true, builtin: false },
+        { key: 'dti', label: 'DTI Registration No.', number: 'DTI-2', show: true, builtin: true },
+        { key: 'bir', label: 'BIR TIN', number: null, show: false, builtin: true },
+      ],
+    };
+    const resolved = resolvePermits(permits);
+    expect(resolved).toEqual([
+      { key: 'mayors', label: "Mayor's Permit No.", number: 'MP-1' },
+      { key: 'dti', label: 'DTI Registration No.', number: 'DTI-2' },
+    ]);
+    for (const item of resolved) {
+      expect(Object.keys(item).sort()).toEqual(['key', 'label', 'number']);
+    }
+  });
+
+  it('toSettingsPayload threads permits through resolvePermits', () => {
+    const permits = {
+      items: [
+        { key: 'dot', label: 'DOT Accreditation No.', number: 'DOT-1', show: true, builtin: true },
+        { key: 'dti', label: 'DTI Registration No.', number: null, show: false, builtin: true },
+        { key: 'bir', label: 'BIR TIN', number: null, show: false, builtin: true },
+      ],
+    };
+    const payload = toSettingsPayload(blocksFixture({ permits }), NOW, true, true);
+    expect(payload.permits).toEqual([
+      { key: 'dot', label: 'DOT Accreditation No.', number: 'DOT-1' },
+    ]);
   });
 });
 

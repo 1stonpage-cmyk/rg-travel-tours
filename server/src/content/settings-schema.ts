@@ -17,13 +17,6 @@ const clockTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 /** ISO-8601 UTC instant, or null when the schedule field is unset. */
 const isoInstantOrNull = z.string().datetime().nullable();
 
-/**
- * `z.string().min(1).nullable()` — an empty permit string is forbidden.
- * Missing/pending permits are `null`, which the UI renders as "— pending —".
- * Never invent an accreditation number.
- */
-const permitField = z.string().min(1).nullable();
-
 const siteSeoSchema = z.object({
   title: z.string(),
   description: z.string(),
@@ -98,11 +91,159 @@ const paymentMethodSchema = z.object({
   sortOrder: z.number().int(),
 });
 
-const permitsSchema = z.object({
-  dot: permitField,
-  dti: permitField,
-  bir: permitField,
-});
+/**
+ * Accreditation numbers, as an admin-managed LIST (owner decision 2026-11-26,
+ * Task 1A — replacing the fixed three-field `{ dot, dti, bir }` block). Each
+ * item has its own Show switch; the three builtins (DOT/DTI/BIR) can never
+ * be deleted, only hidden — enforced below, not left as a UI courtesy.
+ *
+ * `BUILTIN_PERMITS` below is the one place their EXACT canonical labels live
+ * in server code — `seed-data.ts` imports it rather than repeating the
+ * wording, and `accreditationBlockSchema` refuses any save that drops,
+ * renames or un-builtins one of them.
+ */
+export const BUILTIN_PERMITS = [
+  { key: 'dot', label: 'DOT Accreditation No.' },
+  { key: 'dti', label: 'DTI Registration No.' },
+  { key: 'bir', label: 'BIR TIN' },
+] as const satisfies ReadonlyArray<{ key: string; label: string }>;
+
+const BUILTIN_PERMIT_KEYS: Set<string> = new Set(BUILTIN_PERMITS.map((b) => b.key));
+
+/**
+ * `number`, trimmed before length-checked — "store trimmed values, don't
+ * rely on the client to trim." `null` passes straight through; a non-null
+ * value that trims to zero length is refused (1-60 chars after trimming).
+ */
+const accreditationNumberSchema = z.preprocess(
+  (value) => (typeof value === 'string' ? value.trim() : value),
+  z.string().min(1).max(60).nullable(),
+);
+
+const accreditationItemSchema = z
+  .object({
+    key: z.string().min(1).max(100),
+    label: z.string().min(1).max(60),
+    number: accreditationNumberSchema,
+    show: z.boolean(),
+    builtin: z.boolean(),
+  })
+  .refine((item) => !item.show || item.number !== null, {
+    message: 'An item must have a number before it can be shown.',
+  });
+
+/** Derived from the schema above, not hand-written, so the two can never drift. */
+export type AccreditationItem = z.infer<typeof accreditationItemSchema>;
+
+/**
+ * Cross-item rules: exactly the three builtins (present, correctly labelled,
+ * flagged `builtin: true`), no custom item impersonating one of them, unique
+ * keys, unique labels. `z.array(...).max(10)` is the straightforward overall
+ * cap (3 builtins + at most 7 custom).
+ */
+const accreditationBlockSchema = z
+  .object({
+    items: z.array(accreditationItemSchema).max(10, 'At most 10 accreditation items are allowed.'),
+  })
+  .superRefine((block, ctx) => {
+    const items = block.items;
+
+    for (const builtin of BUILTIN_PERMITS) {
+      const match = items.find((item) => item.key === builtin.key);
+      if (!match) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Missing builtin accreditation item "${builtin.key}".`,
+        });
+        continue;
+      }
+      if (!match.builtin) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `"${builtin.key}" must remain a builtin item (builtin: true).`,
+        });
+      }
+      if (match.label !== builtin.label) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `"${builtin.key}" label must be "${builtin.label}".`,
+        });
+      }
+    }
+
+    for (const item of items) {
+      if (BUILTIN_PERMIT_KEYS.has(item.key)) continue; // checked above
+      if (item.builtin) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `"${item.key}" is not a builtin key and must not be flagged builtin.`,
+        });
+      }
+    }
+
+    const keyCounts = new Map<string, number>();
+    for (const item of items) keyCounts.set(item.key, (keyCounts.get(item.key) ?? 0) + 1);
+    for (const [key, count] of keyCounts) {
+      if (count > 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Duplicate accreditation key "${key}".`,
+        });
+      }
+    }
+
+    const labelCounts = new Map<string, number>();
+    for (const item of items) labelCounts.set(item.label, (labelCounts.get(item.label) ?? 0) + 1);
+    for (const [label, count] of labelCounts) {
+      if (count > 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Duplicate accreditation label "${label}".`,
+        });
+      }
+    }
+  });
+
+/** Derived from the schema above, not hand-written, so the two can never drift. */
+export type AccreditationBlock = z.infer<typeof accreditationBlockSchema>;
+
+/**
+ * Upgrades the OLD stored shape (`{ dot, dti, bir }`, each `string | null`)
+ * into the new `{ items: [...] }` shape. Nothing was ever "shown" under the
+ * old binary pending/number model — it rendered unconditionally — so an
+ * upgraded item defaults to `show: false`: an owner reviews before
+ * publishing. Exported so a legacy row can be upgraded wherever it's useful
+ * to reason about (e.g. admin UI), not only inside this schema's own parse.
+ */
+export function upgradeLegacyPermits(value: Record<string, unknown>): AccreditationBlock {
+  return {
+    items: BUILTIN_PERMITS.map((builtin) => {
+      const raw = value[builtin.key];
+      return {
+        key: builtin.key,
+        label: builtin.label,
+        number: typeof raw === 'string' ? raw : null,
+        show: false,
+        builtin: true,
+      };
+    }),
+  };
+}
+
+/** An object with no `items` key is the OLD shape — detect and upgrade it
+ * before the real validator ever runs, so both a freshly-submitted write and
+ * a freshly-read legacy row flow through the SAME final validator (and its
+ * refusal rules — including builtin-presence) rather than dodging them. */
+function isLegacyPermitsShape(value: unknown): value is Record<string, unknown> {
+  return (
+    typeof value === 'object' && value !== null && !Array.isArray(value) && !('items' in value)
+  );
+}
+
+export const permitsSchema = z.preprocess(
+  (value) => (isLegacyPermitsShape(value) ? upgradeLegacyPermits(value) : value),
+  accreditationBlockSchema,
+);
 
 const howItWorksStepSchema = z.object({
   step: z.number().int(),

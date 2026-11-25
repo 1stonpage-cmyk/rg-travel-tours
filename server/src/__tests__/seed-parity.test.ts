@@ -54,8 +54,14 @@ describe('seeded contact settings mirror site.ts', () => {
 });
 
 describe('seeded content honours the no-fake-numbers rule', () => {
-  it('leaves every permit number empty', () => {
-    expect(SEED_SETTINGS.permits).toEqual({ dot: null, dti: null, bir: null });
+  it('leaves every permit number empty and every item hidden', () => {
+    expect(SEED_SETTINGS.permits).toEqual({
+      items: [
+        { key: 'dot', label: 'DOT Accreditation No.', number: null, show: false, builtin: true },
+        { key: 'dti', label: 'DTI Registration No.', number: null, show: false, builtin: true },
+        { key: 'bir', label: 'BIR TIN', number: null, show: false, builtin: true },
+      ],
+    });
   });
 
   it('flags the content as unverified', () => {

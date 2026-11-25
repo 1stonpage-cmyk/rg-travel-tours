@@ -25,6 +25,7 @@
  * Permit numbers are null: never invent an accreditation number.
  */
 import type { TransferPlaceType } from '@rg/shared';
+import { BUILTIN_PERMITS } from '../content/settings-schema';
 import type { SettingsBlocks } from '../content/settings-schema';
 
 const placeholderImage = (slug: string) => `/placeholders/${slug}.svg`;
@@ -609,8 +610,17 @@ export const SEED_SETTINGS: SettingsBlocks = {
     }),
   ),
 
-  // From SITE.permits — never invent an accreditation number.
-  permits: { dot: null, dti: null, bir: null },
+  // Admin-managed list (owner decision 2026-11-26, Task 1A). The three
+  // builtins, all hidden, no numbers — never invent an accreditation number.
+  permits: {
+    items: BUILTIN_PERMITS.map((builtin) => ({
+      key: builtin.key,
+      label: builtin.label,
+      number: null,
+      show: false,
+      builtin: true,
+    })),
+  },
 
   // Verbatim from HOW_IT_WORKS.
   how_it_works: [

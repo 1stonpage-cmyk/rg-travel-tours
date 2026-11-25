@@ -17,10 +17,12 @@
  * `settings.trust.ratingAverage` (a client-supplied marketing figure, 4.9
  * today) is NOT a review average and never reaches structured data.
  *
- * Likewise absent: permit numbers. `settings.permits` is `null` across the
- * board and renders as "— pending —" on the page; an accreditation claim in
- * machine-readable form would be worse than one in prose, so there is no
- * `hasCredential` here and `trust.dotAccredited` is not emitted.
+ * Likewise absent: permit numbers. `settings.permits` is an admin-managed
+ * list that CAN carry real numbers once an admin shows them (owner decision
+ * 2026-11-26, Task 1A) — but nothing in this file reads it, and nothing
+ * should: an accreditation claim in machine-readable form would be worse
+ * than one in prose, so there is no `hasCredential` here and
+ * `trust.dotAccredited` is not emitted either.
  */
 import type { SettingsBlocks } from '../content/settings-schema';
 import type { Aggregate } from '../services/ratings';

@@ -358,6 +358,13 @@ export interface ResolvedPaymentMethod {
   label: string;
 }
 
+export interface ResolvedAccreditationItem {
+  key: string;
+  label: string;
+  /** Non-nullable here: "shown" implies a real number (schema rule). */
+  number: string;
+}
+
 export interface SettingsPayload {
   contentUnverified: SettingsBlocks['content_unverified'];
   /**
@@ -380,7 +387,12 @@ export interface SettingsPayload {
   openState: OpenState;
   /** Enabled only, sorted by sortOrder. The `enabled` flag itself never reaches the client. */
   paymentMethods: ResolvedPaymentMethod[];
-  permits: SettingsBlocks['permits'];
+  /**
+   * Shown items only, with a real number — stored order preserved, no
+   * sorting. The `show` and `builtin` flags, and any hidden item's number,
+   * never reach the client (owner decision 2026-11-26, Task 1A).
+   */
+  permits: ResolvedAccreditationItem[];
   howItWorks: SettingsBlocks['how_it_works'];
   whyBookDirect: SettingsBlocks['why_book_direct'];
   faqs: SettingsBlocks['faqs'];
@@ -495,6 +507,17 @@ export function resolvePaymentMethods(
 }
 
 /**
+ * Shown items with a real number, in stored order (no sorting) — mirrors
+ * `resolvePaymentMethods` above. A hidden item's number, and the `show`/
+ * `builtin` flags themselves, never reach the client.
+ */
+export function resolvePermits(block: SettingsBlocks['permits']): ResolvedAccreditationItem[] {
+  return block.items
+    .filter((item) => item.show && item.number !== null && item.number !== '')
+    .map((item) => ({ key: item.key, label: item.label, number: item.number as string }));
+}
+
+/**
  * Pure — takes already-parsed blocks plus the instant to resolve schedules
  * against, so it's testable with no DB and no real clock.
  *
@@ -522,7 +545,7 @@ export function toSettingsPayload(
     promo: resolvePromo(blocks.promo, now),
     openState: resolveOpenState(blocks.business_hours, now),
     paymentMethods: enabledPaymentMethods,
-    permits: blocks.permits,
+    permits: resolvePermits(blocks.permits),
     howItWorks: blocks.how_it_works,
     whyBookDirect: blocks.why_book_direct,
     faqs: blocks.faqs,

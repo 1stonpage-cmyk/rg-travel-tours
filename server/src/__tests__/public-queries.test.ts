@@ -25,7 +25,9 @@ describeWithDb('public queries', () => {
     const s = await caller.settings.get();
     expect(s.trust.depositPercent).toBe(30);
     expect(s.faqs.length).toBeGreaterThan(0);
-    expect(s.permits).toEqual({ dot: null, dti: null, bir: null });
+    // The seed ships every accreditation item hidden, so the resolved public
+    // payload (shown items only) is an empty array (Task 1A).
+    expect(s.permits).toEqual([]);
     expect(s.paymentMethods.every((m) => typeof m.label === 'string')).toBe(true);
     expect(typeof s.openState.isOpen).toBe('boolean');
   });

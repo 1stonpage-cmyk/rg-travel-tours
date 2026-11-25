@@ -44,19 +44,117 @@ describe('settings schemas', () => {
     );
   });
 
-  it('permits may be null but never an empty string pretending to be a number', () => {
-    expect(SETTING_SCHEMAS.permits.safeParse({ dot: null, dti: null, bir: null }).success).toBe(
-      true,
-    );
-    expect(SETTING_SCHEMAS.permits.safeParse({ dot: '', dti: null, bir: null }).success).toBe(
-      false,
-    );
-  });
+  describe('permits (accreditation list, Task 1A)', () => {
+    const BUILTIN_ITEMS = [
+      { key: 'dot', label: 'DOT Accreditation No.', number: null, show: false, builtin: true },
+      { key: 'dti', label: 'DTI Registration No.', number: null, show: false, builtin: true },
+      { key: 'bir', label: 'BIR TIN', number: null, show: false, builtin: true },
+    ];
 
-  it('accepts a real permit string', () => {
-    expect(
-      SETTING_SCHEMAS.permits.safeParse({ dot: 'DOT-R-123', dti: null, bir: null }).success,
-    ).toBe(true);
+    it('upgrades the old { dot, dti, bir } shape, defaulting every item to hidden', () => {
+      const result = SETTING_SCHEMAS.permits.safeParse({ dot: null, dti: null, bir: null });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toEqual({ items: BUILTIN_ITEMS });
+      }
+    });
+
+    it('upgrades an old shape with a real value onto the matching builtin, still hidden', () => {
+      const result = SETTING_SCHEMAS.permits.safeParse({ dot: 'DOT-123', dti: null, bir: null });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const dot = result.data.items.find((item) => item.key === 'dot');
+        expect(dot).toEqual({
+          key: 'dot',
+          label: 'DOT Accreditation No.',
+          number: 'DOT-123',
+          show: false,
+          builtin: true,
+        });
+        expect(result.data.items.every((item) => item.show === false)).toBe(true);
+      }
+    });
+
+    it('refuses an item with show: true and an empty/null number', () => {
+      const items = BUILTIN_ITEMS.map((item) =>
+        item.key === 'dot' ? { ...item, show: true, number: null } : item,
+      );
+      expect(SETTING_SCHEMAS.permits.safeParse({ items }).success).toBe(false);
+
+      const itemsEmptyString = BUILTIN_ITEMS.map((item) =>
+        item.key === 'dot' ? { ...item, show: true, number: '   ' } : item,
+      );
+      expect(SETTING_SCHEMAS.permits.safeParse({ items: itemsEmptyString }).success).toBe(false);
+    });
+
+    it('refuses a submission missing one of the three builtins', () => {
+      const items = BUILTIN_ITEMS.filter((item) => item.key !== 'bir');
+      expect(SETTING_SCHEMAS.permits.safeParse({ items }).success).toBe(false);
+    });
+
+    it('refuses a builtin with the wrong label', () => {
+      const items = BUILTIN_ITEMS.map((item) =>
+        item.key === 'dot' ? { ...item, label: 'DOT Permit Number' } : item,
+      );
+      expect(SETTING_SCHEMAS.permits.safeParse({ items }).success).toBe(false);
+    });
+
+    it('refuses a builtin flagged builtin: false', () => {
+      const items = BUILTIN_ITEMS.map((item) =>
+        item.key === 'dot' ? { ...item, builtin: false } : item,
+      );
+      expect(SETTING_SCHEMAS.permits.safeParse({ items }).success).toBe(false);
+    });
+
+    it('refuses a custom item flagged builtin: true', () => {
+      const items = [
+        ...BUILTIN_ITEMS,
+        { key: 'mayors', label: "Mayor's Permit No.", number: 'MP-1', show: true, builtin: true },
+      ];
+      expect(SETTING_SCHEMAS.permits.safeParse({ items }).success).toBe(false);
+    });
+
+    it('refuses 11 or more items', () => {
+      const custom = Array.from({ length: 8 }, (_, i) => ({
+        key: `custom-${i}`,
+        label: `Custom ${i}`,
+        number: 'X',
+        show: true,
+        builtin: false,
+      }));
+      expect(
+        SETTING_SCHEMAS.permits.safeParse({ items: [...BUILTIN_ITEMS, ...custom] }).success,
+      ).toBe(false);
+    });
+
+    it('refuses duplicate keys', () => {
+      const items = [
+        ...BUILTIN_ITEMS,
+        { key: 'dot', label: 'Something else', number: null, show: false, builtin: false },
+      ];
+      // duplicate key "dot" collides with the builtin itself
+      expect(SETTING_SCHEMAS.permits.safeParse({ items }).success).toBe(false);
+    });
+
+    it('refuses duplicate labels', () => {
+      const items = [
+        ...BUILTIN_ITEMS,
+        { key: 'custom-a', label: 'Mayor', number: 'A', show: true, builtin: false },
+        { key: 'custom-b', label: 'Mayor', number: 'B', show: true, builtin: false },
+      ];
+      expect(SETTING_SCHEMAS.permits.safeParse({ items }).success).toBe(false);
+    });
+
+    it('accepts a valid submission with the three builtins plus custom items', () => {
+      const items = [
+        { ...BUILTIN_ITEMS[0], number: 'DOT-R-123', show: true },
+        BUILTIN_ITEMS[1],
+        { ...BUILTIN_ITEMS[2], number: 'BIR-999', show: true },
+        { key: 'mayors', label: "Mayor's Permit No.", number: 'MP-1', show: true, builtin: false },
+        { key: 'sec', label: 'SEC Registration No.', number: null, show: false, builtin: false },
+      ];
+      expect(SETTING_SCHEMAS.permits.safeParse({ items }).success).toBe(true);
+    });
   });
 
   it('requires startsAt/endsAt to be ISO-8601 datetimes or null, never bare dates', () => {
