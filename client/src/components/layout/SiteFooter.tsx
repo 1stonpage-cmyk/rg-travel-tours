@@ -16,21 +16,6 @@ import { trpc } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
 
 /**
- * The permit *labels* ("DOT Accreditation No.", ...) are static site chrome
- * — `settings.permits` (server/src/content/settings-schema.ts) only ever
- * carries the three values, never their captions. The values below come
- * from the live settings query instead of `SITE.permits.*.value`, which is
- * why only the labels are pulled from `SITE.permits` here.
- */
-const PERMIT_LABELS = {
-  dot: SITE.permits.dot.label,
-  dti: SITE.permits.dti.label,
-  bir: SITE.permits.bir.label,
-};
-
-const NO_PERMITS = { dot: null, dti: null, bir: null } as const;
-
-/**
  * One line of reserved height for the hours row while `settings.get` is in
  * flight (BUG-100). A non-breaking space, built from its code point rather
  * than written as a string: Prettier rewrites a U+00A0 escape sequence into
@@ -86,19 +71,23 @@ function ChatButton({
 
 export default function SiteFooter() {
   /**
-   * Permits (spec task 6G) and payment methods (6F) both come from
-   * `settings.get` now, rather than the static `SITE.permits`/
-   * `SITE.paymentMethods` arrays this used to render — `settings.paymentMethods`
-   * is already enabled-only and sorted (`resolvePaymentMethods`,
-   * server/src/content/settings.ts), so these chips and FaqSection's
-   * payment-methods answer can never show a different set of methods; see
-   * PAYMENT_METHODS_QUESTION in FaqSection.tsx. Defaults below cover only
-   * the brief gap before the query resolves — not a real "no settings"
-   * state, since `readSettings()` throws rather than omitting a key.
+   * Permits (spec task 6G, now the admin-managed list of Task 1A/1C) and
+   * payment methods (6F) both come from `settings.get` now, rather than the
+   * static `SITE.permits`/`SITE.paymentMethods` arrays this used to render —
+   * `settings.paymentMethods` is already enabled-only and sorted
+   * (`resolvePaymentMethods`, server/src/content/settings.ts), so these
+   * chips and FaqSection's payment-methods answer can never show a different
+   * set of methods; see PAYMENT_METHODS_QUESTION in FaqSection.tsx.
+   * `settings.permits` is likewise already resolved server-side
+   * (`resolvePermits`) to only the items an admin has switched to show AND
+   * given a real number — there is no hidden-but-present data on the wire,
+   * so nothing here re-filters it. Defaults below cover only the brief gap
+   * before the query resolves — not a real "no settings" state, since
+   * `readSettings()` throws rather than omitting a key.
    */
   const { reopen: reopenCookieSettings } = useConsent();
   const { data: settings } = trpc.settings.get.useQuery();
-  const permits = settings?.permits ?? NO_PERMITS;
+  const permits = settings?.permits ?? [];
   // `show_tours` gate (transfers-launch plan, Task T16) — see `visibleNav`'s
   // own comment. Hidden by default before this resolves, same as SiteHeader.
   const showTours = settings?.showTours ?? false;
@@ -117,11 +106,6 @@ export default function SiteFooter() {
   const manualEnabled = settings?.manualTransferEnabled === true;
   /** BUG-100 — same source as ContactSection's hours. See the Clock row below. */
   const hoursNote = settings?.contact.hoursNote ?? null;
-  const permitRows = [
-    { label: PERMIT_LABELS.dot, value: permits.dot },
-    { label: PERMIT_LABELS.dti, value: permits.dti },
-    { label: PERMIT_LABELS.bir, value: permits.bir },
-  ];
 
   return (
     <footer className="bg-brand-blue-950 text-brand-blue-100 mt-16">
@@ -257,24 +241,39 @@ export default function SiteFooter() {
         </nav>
 
         <div>
-          <p className="text-brand-gold-300 text-sm font-semibold uppercase tracking-wider">
-            Accreditation
-          </p>
-          {/* The permits below belong to the licensed operator, not to the
-              TravelSugbo trading brand — so the credit sits directly above them. */}
+          {/*
+           * Admin-managed list (owner decision 2026-11-26, Task 1A/1C):
+           * `settings.permits` already carries only the items an admin has
+           * switched to show AND given a real number, in stored order — an
+           * empty array is "nothing published right now", not "three
+           * pending slots" (there is no more fixed DOT/DTI/BIR trio to
+           * render as pending). The heading only renders when there is at
+           * least one item to put it above; a page with nothing to show
+           * under "Accreditation" should not show the word "Accreditation".
+           */}
+          {permits.length > 0 && (
+            <p className="text-brand-gold-300 text-sm font-semibold uppercase tracking-wider">
+              Accreditation
+            </p>
+          )}
+          {/* The permits below (when there are any) belong to the licensed
+              operator, not to the TravelSugbo trading brand — so the credit
+              sits directly above them. This line is the legal-operator
+              credit CLAUDE.md requires and renders unconditionally,
+              regardless of whether any permit is currently published. */}
           <p className="text-brand-blue-100 mt-3 text-sm font-medium">
             Operated by {SITE.legalOperator}
           </p>
-          <dl className="mt-4 space-y-2 text-sm">
-            {permitRows.map((permit) => (
-              <div key={permit.label}>
-                <dt className="text-brand-blue-300">{permit.label}</dt>
-                <dd className="font-mono">
-                  {permit.value ?? <span className="text-brand-gold-200">— pending —</span>}
-                </dd>
-              </div>
-            ))}
-          </dl>
+          {permits.length > 0 && (
+            <dl className="mt-4 space-y-2 text-sm">
+              {permits.map((permit) => (
+                <div key={permit.key}>
+                  <dt className="text-brand-blue-300">{permit.label}</dt>
+                  <dd className="font-mono">{permit.number}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
 
           <p className="text-brand-gold-300 mt-6 text-sm font-semibold uppercase tracking-wider">
             We accept

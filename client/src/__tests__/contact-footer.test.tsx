@@ -563,38 +563,77 @@ describe('footer payment trust line is gated by onlinePaymentEnabled/manualTrans
 });
 
 describe('permits', () => {
-  it('renders "— pending —" for every empty permit', async () => {
-    mockTrpc({
-      'settings.get': settingsWith({ permits: { dot: null, dti: null, bir: null } }),
-    });
+  // Owner decision 2026-11-26 (Task 1A/1C): the fixed three-permit footer
+  // block became an admin-managed list. `settings.permits` is already
+  // resolved server-side to only the items an admin switched to show AND
+  // gave a real number — there is no hidden-but-present data on the wire,
+  // so the footer renders exactly what it is given and nothing it isn't.
+
+  it('shows no "Accreditation" heading, and never the string "— pending —", when nothing is published', async () => {
+    mockTrpc({ 'settings.get': settingsWith({ permits: [] }) });
     renderWithTrpc(<SiteFooter />);
 
     const footer = screen.getByRole('contentinfo');
-    const pendingMarks = await within(footer).findAllByText('— pending —');
-    expect(pendingMarks).toHaveLength(3);
+    // Wait for the footer's async content to settle before asserting an
+    // absence, otherwise this would pass trivially pre-resolution.
+    await within(footer).findByText('GCash');
+    expect(screen.queryByText('Accreditation')).not.toBeInTheDocument();
+    expect(footer.textContent).not.toMatch(/— pending —/);
   });
 
-  it('renders a real permit number once settings supply one', async () => {
+  it('renders exactly the published items, in the given order, with their own label and number', async () => {
     mockTrpc({
       'settings.get': settingsWith({
-        permits: { dot: 'DOT-2026-001234', dti: null, bir: null },
+        permits: [
+          { key: 'dot', label: 'DOT Accreditation No.', number: 'DOT-2026-001234' },
+          { key: 'custom-1', label: "Mayor's Permit No.", number: 'MP-99' },
+        ],
       }),
     });
     renderWithTrpc(<SiteFooter />);
 
     const footer = screen.getByRole('contentinfo');
-    expect(await within(footer).findByText('DOT-2026-001234')).toBeInTheDocument();
-    const pendingMarks = within(footer).getAllByText('— pending —');
-    expect(pendingMarks).toHaveLength(2);
+    await within(footer).findByText('DOT-2026-001234');
+
+    expect(within(footer).getByText('DOT Accreditation No.')).toBeInTheDocument();
+    expect(within(footer).getByText('MP-99')).toBeInTheDocument();
+    expect(within(footer).getByText("Mayor's Permit No.")).toBeInTheDocument();
+
+    // Order check, not just presence: the two <dt> terms must appear in the
+    // same order the settings payload gave them.
+    const terms = within(footer)
+      .getAllByText(/Accreditation No\.|Mayor's Permit No\./)
+      .map((el) => el.textContent);
+    expect(terms).toEqual(['DOT Accreditation No.', "Mayor's Permit No."]);
   });
 
-  it('credits R&G Travel & Tours, not TravelSugbo, beside the permits', async () => {
+  it('renders only what it is given — a permit number absent from the payload never appears', async () => {
+    mockTrpc({
+      'settings.get': settingsWith({
+        permits: [{ key: 'dti', label: 'DTI Registration No.', number: 'DTI-SHOWN-1' }],
+      }),
+    });
+    renderWithTrpc(<SiteFooter />);
+
+    const footer = screen.getByRole('contentinfo');
+    await within(footer).findByText('DTI-SHOWN-1');
+
+    // A hidden item's number is never even present in the resolved payload
+    // (that filtering is the server's job) — so the client-side guarantee to
+    // pin is simply that a value NOT in `permits` never renders.
+    expect(footer.textContent).not.toMatch(/DOT-NOT-SHOWN/);
+  });
+
+  it('credits R&G Travel & Tours, not TravelSugbo, beside the permits — and still does with nothing published', async () => {
     mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
     renderWithTrpc(<SiteFooter />);
 
     const footer = screen.getByRole('contentinfo');
     expect(await within(footer).findByText(/Operated by R&G Travel & Tours/)).toBeInTheDocument();
     expect(footer.textContent).not.toMatch(/Operated by TravelSugbo/);
+    // SETTINGS_FIXTURE.permits is [] — proves the operator credit renders
+    // even when there is nothing to show under "Accreditation" at all.
+    expect(screen.queryByText('Accreditation')).not.toBeInTheDocument();
   });
 });
 

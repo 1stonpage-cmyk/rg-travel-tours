@@ -219,10 +219,10 @@ describe('HeroSection — settings-driven', () => {
     const settings = {
       ...SETTINGS_FIXTURE,
       trust: { ...SETTINGS_FIXTURE.trust, guestsServed: null },
-      // Decision 4: set a real permit number so this test's unrelated "dot
+      // Decision 4: publish a real DOT permit so this test's unrelated "dot
       // accredited" assertion (proving the other items still render) keeps
       // working under the new gate.
-      permits: { ...SETTINGS_FIXTURE.permits, dot: 'DOT-R-IATO-12345' },
+      permits: [{ key: 'dot', label: 'DOT Accreditation No.', number: 'DOT-R-IATO-12345' }],
     };
     mockTrpc({ 'settings.get': settings, 'destinations.list': DESTINATIONS_FIXTURE });
     const { container } = renderHero();
@@ -394,14 +394,15 @@ describe('HeroCopySkeleton / TrustBarSkeleton — loading announced to screen re
 
 describe('TrustBar — settings-driven', () => {
   it('renders all four trust items from settings', async () => {
-    // Decision 4: the badge needs a real permit number too — SETTINGS_FIXTURE's
-    // own `permits.dot` is `null` (today's seed reality), so this test
-    // overrides it to keep asserting all four items; the null-permit case is
-    // covered by its own describe block below.
+    // Decision 4: the badge needs a published DOT permit too —
+    // SETTINGS_FIXTURE's own `permits` is `[]` (today's seed reality, every
+    // builtin hidden), so this test overrides it to keep asserting all four
+    // items; the not-published case is covered by its own describe block
+    // below.
     mockTrpc({
       'settings.get': {
         ...SETTINGS_FIXTURE,
-        permits: { ...SETTINGS_FIXTURE.permits, dot: 'DOT-R-IATO-12345' },
+        permits: [{ key: 'dot', label: 'DOT Accreditation No.', number: 'DOT-R-IATO-12345' }],
       },
     });
     renderTrustBar();
@@ -422,10 +423,10 @@ describe('TrustBar — settings-driven', () => {
     const settings = {
       ...SETTINGS_FIXTURE,
       trust: { ...SETTINGS_FIXTURE.trust, guestsServed: null },
-      // Decision 4: set a real permit number so this test's unrelated "dot
+      // Decision 4: publish a real DOT permit so this test's unrelated "dot
       // accredited" assertion (proving the other items still render) keeps
       // working under the new gate.
-      permits: { ...SETTINGS_FIXTURE.permits, dot: 'DOT-R-IATO-12345' },
+      permits: [{ key: 'dot', label: 'DOT Accreditation No.', number: 'DOT-R-IATO-12345' }],
     };
     mockTrpc({ 'settings.get': settings });
     renderTrustBar();
@@ -436,13 +437,13 @@ describe('TrustBar — settings-driven', () => {
   });
 });
 
-describe('DOT accredited badge requires a real permit number (Decision 4)', () => {
-  it('TrustBar hides "DOT accredited" when dotAccredited is true but permits.dot is null', async () => {
+describe('DOT accredited badge requires a real, published permit number (Decision 4)', () => {
+  it('TrustBar hides "DOT accredited" when dotAccredited is true but the dot permit is not switched on', async () => {
     mockTrpc({
       'settings.get': {
         ...SETTINGS_FIXTURE,
         trust: { ...SETTINGS_FIXTURE.trust, dotAccredited: true },
-        permits: { ...SETTINGS_FIXTURE.permits, dot: null },
+        permits: [],
       },
     });
     renderTrustBar();
@@ -450,24 +451,37 @@ describe('DOT accredited badge requires a real permit number (Decision 4)', () =
     expect(screen.queryByText(/dot accredited/i)).not.toBeInTheDocument();
   });
 
-  it('TrustBar shows "DOT accredited" when dotAccredited is true AND permits.dot is set', async () => {
+  it('TrustBar shows "DOT accredited" when dotAccredited is true AND the dot permit is published', async () => {
     mockTrpc({
       'settings.get': {
         ...SETTINGS_FIXTURE,
         trust: { ...SETTINGS_FIXTURE.trust, dotAccredited: true },
-        permits: { ...SETTINGS_FIXTURE.permits, dot: 'DOT-R-IATO-12345' },
+        permits: [{ key: 'dot', label: 'DOT Accreditation No.', number: 'DOT-R-IATO-12345' }],
       },
     });
     renderTrustBar();
     expect(await screen.findByText(/dot accredited/i)).toBeInTheDocument();
   });
 
-  it('HeroSection hides "DOT accredited" when permits.dot is null, even with dotAccredited true', async () => {
+  it('TrustBar hides "DOT accredited" when other permits are published but the dot key is absent', async () => {
     mockTrpc({
       'settings.get': {
         ...SETTINGS_FIXTURE,
         trust: { ...SETTINGS_FIXTURE.trust, dotAccredited: true },
-        permits: { ...SETTINGS_FIXTURE.permits, dot: null },
+        permits: [{ key: 'dti', label: 'DTI Registration No.', number: 'DTI-99999' }],
+      },
+    });
+    renderTrustBar();
+    await screen.findByText(/deposit to reserve/i);
+    expect(screen.queryByText(/dot accredited/i)).not.toBeInTheDocument();
+  });
+
+  it('HeroSection hides "DOT accredited" when the dot permit is not switched on, even with dotAccredited true', async () => {
+    mockTrpc({
+      'settings.get': {
+        ...SETTINGS_FIXTURE,
+        trust: { ...SETTINGS_FIXTURE.trust, dotAccredited: true },
+        permits: [],
       },
       'destinations.list': DESTINATIONS_FIXTURE,
     });

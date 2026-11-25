@@ -203,9 +203,15 @@ export default function HeroSection() {
               }
               // Decision 4 (2026-11-10): never claim DOT accreditation
               // without a real permit number — `trust.dotAccredited` alone
-              // is an admin toggle, not proof; `permits.dot` is the actual
-              // number, "— pending —" (null) until one exists.
-              if (trust.dotAccredited && permits.dot !== null) {
+              // is an admin toggle, not proof. Since Task 1A/1C (owner
+              // decision 2026-11-26), `permits` is the server-resolved,
+              // admin-managed accreditation list: an item only appears in
+              // it once an admin has BOTH entered a real number AND
+              // switched it to show on the website. So this condition now
+              // means "the DOT number is real and currently published" —
+              // the badge must never claim more than the footer itself is
+              // publishing.
+              if (trust.dotAccredited && permits.some((item) => item.key === 'dot')) {
                 trustItems.push(<li key="dot">DOT accredited</li>);
               }
               if (trust.guestsServed !== null) {

@@ -2,9 +2,8 @@
  * Static site configuration.
  *
  * The phone numbers and the Facebook URL are REAL, client-confirmed values.
- * The office address and permit numbers are still pending (spec task 8D);
- * permit numbers must never be invented — they render as an explicit pending
- * state. The email keeps its env override until the client confirms it.
+ * The office address is still pending (spec task 8D). The email keeps its
+ * env override until the client confirms it.
  *
  * BRAND vs LEGAL ENTITY — these are deliberately two different values:
  *   `name`          the public trading brand, shown everywhere on the site
@@ -13,6 +12,11 @@
  * Use `legalOperator` for anything regulatory or legal — the copyright notice,
  * the accreditation block, the "Operated by" credit. Everything customer-facing
  * uses `name`. Do not collapse them back into one value.
+ *
+ * Accreditation numbers themselves are no longer static here (owner decision
+ * 2026-11-26, Task 1A) — they come from the admin-managed list in
+ * `settings.permits`, already resolved server-side to only the items an
+ * admin has switched to show with a real number. See SiteFooter.tsx.
  */
 
 const env = import.meta.env;
@@ -83,15 +87,6 @@ export const SITE = {
     before: 'Need a van transfer, flights or a hotel?',
     link: 'Message us',
     after: '— R&G also handles airline booking, hotel reservations and spot transportation.',
-  },
-  /**
-   * Accreditation and registration numbers. Rendered as "pending" rather than
-   * fabricated; real numbers arrive from Settings (spec section 9).
-   */
-  permits: {
-    dot: { label: 'DOT Accreditation No.', value: null as string | null },
-    dti: { label: 'DTI Registration No.', value: null as string | null },
-    bir: { label: 'BIR TIN', value: null as string | null },
   },
   /** Text chips, not trademarked logo artwork. Real logos arrive in task 8D. */
   paymentMethods: ['GCash', 'Maya', 'GrabPay', 'QR Ph', 'Visa', 'Mastercard'],

@@ -114,7 +114,12 @@ export const SETTINGS_FIXTURE: SettingsPayload = {
     { key: 'visa', label: 'Visa' },
     { key: 'mastercard', label: 'Mastercard' },
   ],
-  permits: { dot: null, dti: null, bir: null },
+  // Admin-managed accreditation list (owner decision 2026-11-26, Task 1A):
+  // already resolved server-side to only shown items with a real number.
+  // The seed ships every builtin hidden, so the actual seeded default is an
+  // empty array — individual tests override this per-test when they need a
+  // specific permit visible.
+  permits: [],
   howItWorks: [
     {
       step: 1,

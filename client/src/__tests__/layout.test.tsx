@@ -42,9 +42,25 @@ describe('PublicLayout', () => {
     expect(screen.getByRole('main')).toBeInTheDocument();
   });
 
-  it('shows DOT, DTI, and BIR permit lines in the footer', () => {
+  it('shows DOT, DTI, and BIR permit lines in the footer once an admin has published them', async () => {
+    // Owner decision 2026-11-26 (Task 1A/1C): the footer no longer carries a
+    // fixed three-slot permit block — `settings.permits` is an admin-managed
+    // list, already resolved to shown items with a real number. The seed
+    // default is every builtin hidden (SETTINGS_FIXTURE.permits is []), so
+    // this test publishes all three to prove they render once they are.
+    mockTrpc({
+      'settings.get': {
+        ...SETTINGS_FIXTURE,
+        permits: [
+          { key: 'dot', label: 'DOT Accreditation No.', number: 'DOT-2026-001' },
+          { key: 'dti', label: 'DTI Registration No.', number: 'DTI-2026-002' },
+          { key: 'bir', label: 'BIR TIN', number: 'BIR-2026-003' },
+        ],
+      },
+    });
     renderLayout();
     const footer = screen.getByRole('contentinfo');
+    await within(footer).findAllByText(/DOT/);
     expect(footer).toHaveTextContent(/DOT/);
     expect(footer).toHaveTextContent(/DTI/);
     expect(footer).toHaveTextContent(/BIR/);
@@ -497,11 +513,20 @@ describe('brand vs legal operator', () => {
     expect(copyright).not.toMatch(/TravelSugbo/);
   });
 
-  it('keeps the permit labels under the operator and still unfabricated', () => {
+  it('never fabricates a permit number: with nothing published, no permit text or heading appears', async () => {
+    // SETTINGS_FIXTURE.permits is [] (the seed default — every builtin
+    // hidden). There is no fixed three-slot block to fall back to any more
+    // (Task 1A/1C), so the un-fabrication guarantee is simply: nothing
+    // renders under "Accreditation" when nothing has been published, and
+    // the "— pending —" placeholder string this used to render no longer
+    // exists anywhere.
     renderLayout();
     const footer = screen.getByRole('contentinfo');
-    for (const label of [/DOT/, /DTI/, /BIR/]) expect(footer).toHaveTextContent(label);
-    expect(footer).toHaveTextContent(/— pending —/);
+    // Wait for the settings query to actually resolve before asserting an
+    // absence, otherwise this would pass trivially pre-resolution.
+    await within(footer).findByText(/Operated by R&G Travel & Tours/);
+    expect(screen.queryByText('Accreditation')).not.toBeInTheDocument();
+    expect(footer.textContent).not.toMatch(/— pending —/);
   });
 
   it('carries no stale randgtraveltours.com reference', () => {

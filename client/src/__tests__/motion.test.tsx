@@ -405,11 +405,12 @@ describe('useCountUp — trust-stat count-up (spec task 2.9E)', () => {
     const settings = {
       ...SETTINGS_FIXTURE,
       trust: { ...SETTINGS_FIXTURE.trust, guestsServed: null },
-      // Decision 4 (2026-11-10): the badge now also requires a real permit
-      // number — SETTINGS_FIXTURE.permits.dot is null (today's seed
-      // reality), so this unrelated "dot accredited" assertion (proving the
-      // other items still render) needs a real number set here.
-      permits: { ...SETTINGS_FIXTURE.permits, dot: 'DOT-R-IATO-12345' },
+      // Decision 4 (2026-11-10): the badge now also requires a published
+      // permit — SETTINGS_FIXTURE.permits is [] (today's seed reality, every
+      // builtin hidden), so this unrelated "dot accredited" assertion
+      // (proving the other items still render) needs a published dot permit
+      // set here.
+      permits: [{ key: 'dot', label: 'DOT Accreditation No.', number: 'DOT-R-IATO-12345' }],
     };
     mockTrpc({ 'settings.get': settings });
     render(
