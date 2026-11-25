@@ -25,8 +25,8 @@
  * the way in. There is deliberately no delete: `settings` has exactly these
  * seventeen rows for the life of the site, `readSettings()` throws on a
  * missing one, and an empty block is expressed inside a block's own schema
- * (`announcement.isActive: false`, `permits.dot: null`) rather than by
- * removing a row.
+ * (`announcement.isActive: false`, `permits.items[].number: null`) rather
+ * than by removing a row.
  */
 import { settingWriteInput } from '@rg/shared';
 import { readRawSettings } from '../../content/settings';

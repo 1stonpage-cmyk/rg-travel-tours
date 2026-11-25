@@ -10,6 +10,7 @@
  * / 1.6's `SettingsPayload` assembly. This module only validates shape.
  */
 import { z } from 'zod';
+import { BUILTIN_PERMITS } from '@rg/shared';
 
 /** `HH:MM`, 24-hour, zero-padded. `'7am'` must fail. */
 const clockTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
@@ -97,16 +98,14 @@ const paymentMethodSchema = z.object({
  * item has its own Show switch; the three builtins (DOT/DTI/BIR) can never
  * be deleted, only hidden — enforced below, not left as a UI courtesy.
  *
- * `BUILTIN_PERMITS` below is the one place their EXACT canonical labels live
- * in server code — `seed-data.ts` imports it rather than repeating the
- * wording, and `accreditationBlockSchema` refuses any save that drops,
- * renames or un-builtins one of them.
+ * `BUILTIN_PERMITS` is imported from `@rg/shared` (not defined here) so the
+ * client's admin editor and this schema can never drift on the canonical
+ * labels — see that constant's own doc comment. Re-exported so `seed-data.ts`
+ * keeps importing it from this module rather than from `@rg/shared` directly,
+ * and `accreditationBlockSchema` refuses any save that drops, renames or
+ * un-builtins one of them.
  */
-export const BUILTIN_PERMITS = [
-  { key: 'dot', label: 'DOT Accreditation No.' },
-  { key: 'dti', label: 'DTI Registration No.' },
-  { key: 'bir', label: 'BIR TIN' },
-] as const satisfies ReadonlyArray<{ key: string; label: string }>;
+export { BUILTIN_PERMITS };
 
 const BUILTIN_PERMIT_KEYS: Set<string> = new Set(BUILTIN_PERMITS.map((b) => b.key));
 
@@ -120,10 +119,26 @@ const accreditationNumberSchema = z.preprocess(
   z.string().min(1).max(60).nullable(),
 );
 
+/**
+ * `label`/`key`, trimmed before length-checked — the same "store trimmed
+ * values, don't rely on the client to trim" rule `number` above follows.
+ * Unlike `number`, neither is nullable here: trimming to empty must still
+ * fail `min(1)`, because an all-whitespace label or key is not a valid one.
+ * Trimming server-side (rather than trusting the admin screen's own trim)
+ * is what keeps a direct tRPC call from storing — and the duplicate-label /
+ * builtin-impersonation checks below from missing — a value that differs
+ * from another item only by leading/trailing whitespace.
+ */
+const trimmedRequiredString = (max: number) =>
+  z.preprocess(
+    (value) => (typeof value === 'string' ? value.trim() : value),
+    z.string().min(1).max(max),
+  );
+
 const accreditationItemSchema = z
   .object({
-    key: z.string().min(1).max(100),
-    label: z.string().min(1).max(60),
+    key: trimmedRequiredString(100),
+    label: trimmedRequiredString(60),
     number: accreditationNumberSchema,
     show: z.boolean(),
     builtin: z.boolean(),
@@ -208,6 +223,21 @@ const accreditationBlockSchema = z
 export type AccreditationBlock = z.infer<typeof accreditationBlockSchema>;
 
 /**
+ * The OLD schema (`z.string().min(1).nullable()`, no trim) allowed a
+ * whitespace-only string through. The new `accreditationNumberSchema` trims
+ * first and refuses an empty result, so a legacy row carrying `'   '` must be
+ * normalized the SAME way here or it fails validation on every future read
+ * (`readSettings()` throws naming the key, which takes the whole public site
+ * down — BUG-023). A non-string legacy value (never producible by the old
+ * schema, but not provably impossible from a hand-written `UPDATE`) is an
+ * explicit, intentional `null` — the old schema would never have accepted it
+ * either, so dropping it silently is reasonable; the `typeof` check is what
+ * makes that branch deliberate rather than an accident of a looser ternary.
+ */
+const normalizeLegacyNumber = (raw: unknown): string | null =>
+  typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : null;
+
+/**
  * Upgrades the OLD stored shape (`{ dot, dti, bir }`, each `string | null`)
  * into the new `{ items: [...] }` shape. Nothing was ever "shown" under the
  * old binary pending/number model — it rendered unconditionally — so an
@@ -217,26 +247,39 @@ export type AccreditationBlock = z.infer<typeof accreditationBlockSchema>;
  */
 export function upgradeLegacyPermits(value: Record<string, unknown>): AccreditationBlock {
   return {
-    items: BUILTIN_PERMITS.map((builtin) => {
-      const raw = value[builtin.key];
-      return {
-        key: builtin.key,
-        label: builtin.label,
-        number: typeof raw === 'string' ? raw : null,
-        show: false,
-        builtin: true,
-      };
-    }),
+    items: BUILTIN_PERMITS.map((builtin) => ({
+      key: builtin.key,
+      label: builtin.label,
+      number: normalizeLegacyNumber(value[builtin.key]),
+      show: false,
+      builtin: true,
+    })),
   };
 }
 
-/** An object with no `items` key is the OLD shape — detect and upgrade it
- * before the real validator ever runs, so both a freshly-submitted write and
- * a freshly-read legacy row flow through the SAME final validator (and its
- * refusal rules — including builtin-presence) rather than dodging them. */
+/**
+ * An object shaped like the OLD legacy block — detect and upgrade it before
+ * the real validator ever runs, so both a freshly-submitted write and a
+ * freshly-read legacy row flow through the SAME final validator (and its
+ * refusal rules — including builtin-presence) rather than dodging them.
+ *
+ * Deliberately narrower than "any non-array object with no `items` key":
+ * that used to also match `{}` or a typo'd key like `{ itemz: [] }`, both of
+ * which would silently upgrade to three hidden, number-null builtins and
+ * report the write as a success — the exact shape of the BUG-118 incident
+ * (a write silently wiping real hand-entered configuration while claiming
+ * success). An object is only treated as legacy when it actually carries at
+ * least one of `dot`/`dti`/`bir` (even `null`) and no `items` key; anything
+ * else — including `{}` and `{ itemz: [] }` — falls through to the real
+ * validator and is refused outright.
+ */
 function isLegacyPermitsShape(value: unknown): value is Record<string, unknown> {
   return (
-    typeof value === 'object' && value !== null && !Array.isArray(value) && !('items' in value)
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    !('items' in value) &&
+    ('dot' in value || 'dti' in value || 'bir' in value)
   );
 }
 

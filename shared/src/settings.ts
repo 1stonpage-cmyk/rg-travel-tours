@@ -62,6 +62,29 @@ export const settingKeySchema = z.enum(SETTING_KEYS);
 export type SettingKey = (typeof SETTING_KEYS)[number];
 
 /**
+ * The three permanent accreditation items inside the `permits` settings
+ * block (owner decision 2026-11-26, Task 1A) — their canonical `{key, label}`
+ * pairs, and nothing else about them (number, show, builtin live only on a
+ * stored or form item, not here).
+ *
+ * Lives in `@rg/shared` rather than being defined once per package, same
+ * reasoning as `SETTING_KEYS` above: both `server/src/content/settings-schema.ts`
+ * (the one validator, which refuses a save that drops, renames or un-builtins
+ * one of them) and `client/src/components/admin/settings-blocks.ts` (the
+ * admin editor, which renders them and upgrades a legacy stored row) need the
+ * exact same three labels, and two copies is how a label rename on one side
+ * leaves the other stale — the admin screen would then be permanently
+ * unsaveable, since the editor always writes back its own canonical label and
+ * the server would refuse the mismatch. One definition here removes the
+ * drift instead of merely testing for it.
+ */
+export const BUILTIN_PERMITS = [
+  { key: 'dot', label: 'DOT Accreditation No.' },
+  { key: 'dti', label: 'DTI Registration No.' },
+  { key: 'bir', label: 'BIR TIN' },
+] as const satisfies ReadonlyArray<{ key: string; label: string }>;
+
+/**
  * What `admin.settings.write` takes.
  *
  * `.strict()`, so a third field cannot be smuggled past a resolver that reads

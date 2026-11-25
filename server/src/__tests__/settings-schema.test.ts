@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SETTING_SCHEMAS } from '../content/settings-schema';
+import { SETTING_SCHEMAS, upgradeLegacyPermits } from '../content/settings-schema';
 
 describe('settings schemas', () => {
   it('rejects business hours that are not exactly seven days', () => {
@@ -73,6 +73,65 @@ describe('settings schemas', () => {
         });
         expect(result.data.items.every((item) => item.show === false)).toBe(true);
       }
+    });
+
+    /**
+     * BUG candidate the final review flagged: the OLD schema
+     * (`z.string().min(1).nullable()`) allowed a whitespace-only legacy value
+     * through with no trim, but the NEW `number` field trims then requires
+     * `min(1)`. Without normalizing in `upgradeLegacyPermits`, a legacy row
+     * of `{ dot: '   ', ... }` would fail the real validator on every read —
+     * and `readSettings()` throwing takes the whole public site down
+     * (BUG-023). This must upgrade successfully, with `number: null`, not be
+     * refused.
+     */
+    it('upgrades a legacy row with a whitespace-only value, not refused, number becomes null', () => {
+      const result = SETTING_SCHEMAS.permits.safeParse({ dot: '   ', dti: null, bir: null });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const dot = result.data.items.find((item) => item.key === 'dot');
+        expect(dot?.number).toBeNull();
+      }
+    });
+
+    /**
+     * The whitespace TRIM itself. Driven against `upgradeLegacyPermits`
+     * directly rather than through `safeParse` — `accreditationNumberSchema`
+     * already trims on its own preprocess step, so a round trip through the
+     * full schema would pass with or without `upgradeLegacyPermits` doing any
+     * trimming of its own, which would make this assertion unable to fail.
+     */
+    it('upgradeLegacyPermits trims a legacy value surrounded by whitespace', () => {
+      const upgraded = upgradeLegacyPermits({ dot: '  DOT-123  ', dti: null, bir: null });
+      const dot = upgraded.items.find((item) => item.key === 'dot');
+      expect(dot?.number).toBe('DOT-123');
+    });
+
+    /**
+     * A legacy value stored as a non-string (never producible by the old
+     * schema, but not provably impossible from a hand-written `UPDATE`) is an
+     * explicit, intentional `null` rather than a refusal.
+     */
+    it('upgradeLegacyPermits drops a non-string legacy value to null', () => {
+      const upgraded = upgradeLegacyPermits({ dot: 123456789, dti: null, bir: null });
+      const dot = upgraded.items.find((item) => item.key === 'dot');
+      expect(dot?.number).toBeNull();
+    });
+
+    /**
+     * Review finding: ANY non-array object lacking an `items` key used to be
+     * treated as the legacy shape — so `{}` or a typo'd key silently upgraded
+     * to three hidden, number-null builtins and reported success, exactly the
+     * BUG-118 shape (a write silently wiping real configuration while
+     * claiming success). Neither should be treated as legacy; both must be
+     * refused outright.
+     */
+    it('refuses {} rather than silently treating it as three hidden builtins', () => {
+      expect(SETTING_SCHEMAS.permits.safeParse({}).success).toBe(false);
+    });
+
+    it("refuses a typo'd key ({ itemz: [] }) rather than silently upgrading it", () => {
+      expect(SETTING_SCHEMAS.permits.safeParse({ itemz: [] }).success).toBe(false);
     });
 
     it('refuses an item with show: true and an empty/null number', () => {
@@ -154,6 +213,44 @@ describe('settings schemas', () => {
         { key: 'sec', label: 'SEC Registration No.', number: null, show: false, builtin: false },
       ];
       expect(SETTING_SCHEMAS.permits.safeParse({ items }).success).toBe(true);
+    });
+
+    /**
+     * Fix 3 (final review): `label` and `key` used to accept un-trimmed
+     * values directly from a raw write — `number` already trimmed via its
+     * own preprocess step, and this closed the same gap one field over.
+     */
+    describe('label/key trimming', () => {
+      it('refuses an all-whitespace label (trimming to empty must still fail min(1))', () => {
+        const items = [
+          ...BUILTIN_ITEMS,
+          { key: 'custom-a', label: '   ', number: 'A', show: true, builtin: false },
+        ];
+        expect(SETTING_SCHEMAS.permits.safeParse({ items }).success).toBe(false);
+      });
+
+      it('accepts a label with leading/trailing whitespace but STORES it trimmed', () => {
+        const items = [
+          ...BUILTIN_ITEMS,
+          { key: 'custom-a', label: '  Mayor  ', number: 'A', show: true, builtin: false },
+        ];
+        const result = SETTING_SCHEMAS.permits.safeParse({ items });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          const custom = result.data.items.find((item) => item.key === 'custom-a');
+          expect(custom?.label).toBe('Mayor');
+        }
+      });
+
+      it('refuses a custom item whose label matches a builtin only after trimming ("BIR TIN ")', () => {
+        const items = [
+          ...BUILTIN_ITEMS,
+          { key: 'custom-a', label: 'BIR TIN ', number: 'A', show: true, builtin: false },
+        ];
+        // Untrimmed, "BIR TIN " !== "BIR TIN" — if label were not trimmed
+        // before the duplicate-label check runs, this would wrongly pass.
+        expect(SETTING_SCHEMAS.permits.safeParse({ items }).success).toBe(false);
+      });
     });
   });
 

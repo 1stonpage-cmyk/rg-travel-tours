@@ -21,7 +21,7 @@
  * key added to the shared list with no group would be a setting the owner has
  * no screen for, which is invisible rather than broken.
  */
-import type { SettingKey } from '@rg/shared';
+import { BUILTIN_PERMITS, type SettingKey } from '@rg/shared';
 import { manilaLocalToUtcIso, utcIsoToManilaLocal } from '@/lib/manila-datetime';
 
 export type FieldKind =
@@ -690,21 +690,23 @@ export function fromFormRow(
 /* ------------------------------------------------------- permits (Task 1B) */
 
 /**
- * The three permanent accreditation items — copied verbatim from
- * `server/src/content/settings-schema.ts`'s `BUILTIN_PERMITS` (Task 1A), NOT
- * imported from it: `@rg/client` depends only on `@rg/shared`
- * (`client/package.json`), never on `@rg/server` — the server package pulls
- * in node-only dependencies (mysql2 and friends) that a browser bundle must
- * never grow, and nothing in `@rg/shared` carries this constant either. If
- * the server's three labels ever change, this copy must change with them —
- * `AccreditationBlockEditor`'s tests below pin the exact strings so a drift
- * fails loudly rather than silently mislabelling a builtin row.
+ * The three permanent accreditation items, imported from `@rg/shared`'s
+ * `BUILTIN_PERMITS` rather than copied here: `@rg/client` depends only on
+ * `@rg/shared` (`client/package.json`), never on `@rg/server` — the server
+ * package pulls in node-only dependencies (mysql2 and friends) that a
+ * browser bundle must never grow — but `@rg/shared` is exactly the workspace
+ * both already depend on, and now carries this one definition instead of
+ * `@rg/server` and `@rg/client` each keeping their own copy. A previous
+ * version of this file held a hand-copied duplicate and claimed a test
+ * cross-checked it against the server's own constant; no such test existed
+ * (both sides of any comparison were this file's own literal), so a label
+ * rename on the server would have left this screen permanently unsaveable —
+ * `normalizePermitsBlock` always overwrites a builtin row's label with this
+ * constant's string on read, and the server's `superRefine` refuses a save
+ * whose label does not match its own. Importing the one shared definition
+ * removes that drift instead of merely testing for it.
  */
-export const ACCREDITATION_BUILTINS = [
-  { key: 'dot', label: 'DOT Accreditation No.' },
-  { key: 'dti', label: 'DTI Registration No.' },
-  { key: 'bir', label: 'BIR TIN' },
-] as const;
+export const ACCREDITATION_BUILTINS = BUILTIN_PERMITS;
 
 const ACCREDITATION_BUILTIN_KEYS: ReadonlySet<string> = new Set(
   ACCREDITATION_BUILTINS.map((b) => b.key),
@@ -734,10 +736,21 @@ function toAccreditationForm(raw: unknown): AccreditationItemForm {
 /**
  * The NEW shape has an `items` array; the OLD shape (pre-Task-1A, still
  * possibly sitting in a database row nobody has saved since) is a flat
- * `{ dot, dti, bir }` object with no `items` key at all — the same test
- * `server/src/content/settings-schema.ts`'s `isLegacyPermitsShape` uses.
- * `admin.settings.all` returns raw rows with zero parsing, so either shape
- * can arrive here.
+ * `{ dot, dti, bir }` object with no `items` key at all. `admin.settings.all`
+ * returns raw rows with zero parsing, so either shape — or something
+ * matching neither — can arrive here.
+ *
+ * Deliberately MORE lenient than the server's own `isLegacyPermitsShape`
+ * (`server/src/content/settings-schema.ts`), which — after the final review
+ * batch — refuses anything that isn't genuinely legacy-shaped (missing
+ * `items` AND at least one of `dot`/`dti`/`bir`) rather than silently
+ * upgrading it, precisely so a bad write is rejected instead of quietly
+ * wiping real configuration. This function has the opposite job: it must
+ * always produce SOMETHING to render, because `admin.settings.all` is the
+ * one screen that can repair a block the real validator would throw on —
+ * an `{}` row or any other malformed value falls through to the same
+ * "every item hidden, no number" fallback below rather than refusing to
+ * render at all.
  */
 function extractAccreditationItems(raw: unknown): AccreditationItemForm[] {
   if (

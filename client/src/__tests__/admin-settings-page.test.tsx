@@ -31,6 +31,7 @@ import {
   BLOCKS_BY_KEY,
   GROUPS,
   fromFormRow,
+  normalizePermitsBlock,
   toFormRow,
   type FieldSpec,
 } from '@/components/admin/settings-blocks';
@@ -771,5 +772,53 @@ describe('AdminSettingsPage', () => {
       'Only the owner can change the settings.',
     );
     expect(screen.queryByText('Business hours')).toBeNull();
+  });
+});
+
+/**
+ * `normalizePermitsBlock`'s LEGACY branch (final review batch, Fix 4). Zero
+ * coverage before this: `STORED.permits` above is only ever the new
+ * `{ items: [...] }` shape, but a legacy `{ dot, dti, bir }` raw row is
+ * exactly what the admin's FIRST real visit to this screen sees on a
+ * database no migration has touched.
+ */
+describe('normalizePermitsBlock', () => {
+  it('upgrades a legacy { dot, dti, bir } row to three builtin items, all hidden', () => {
+    const result = normalizePermitsBlock({ dot: 'DOT-1', dti: null, bir: null });
+
+    expect(result).toEqual([
+      { key: 'dot', label: 'DOT Accreditation No.', number: 'DOT-1', show: false, builtin: true },
+      { key: 'dti', label: 'DTI Registration No.', number: '', show: false, builtin: true },
+      { key: 'bir', label: 'BIR TIN', number: '', show: false, builtin: true },
+    ]);
+  });
+
+  /**
+   * `normalizePermitsBlock` builds `byKey` as `new Map(items.map(...))`,
+   * which is last-wins on a repeated key, and then derives the builtin rows
+   * from that map while filtering custom items down to "not a builtin key" —
+   * so a stored row with two entries both keyed `dot` collapses to the
+   * BUILTIN row only (the duplicate is not kept as a second, separate row),
+   * carrying whichever entry's fields were LAST in the array. Asserted here
+   * as the function's actual, real behavior — not a claim about what ought
+   * to happen with a row the server itself would already have refused.
+   */
+  it('a stored row with two entries sharing the builtin key "dot" keeps only the last one', () => {
+    const result = normalizePermitsBlock({
+      items: [
+        { key: 'dot', label: 'DOT Accreditation No.', number: 'FIRST', show: false, builtin: true },
+        { key: 'dot', label: 'DOT Accreditation No.', number: 'SECOND', show: true, builtin: true },
+      ],
+    });
+
+    expect(result).toHaveLength(3);
+    const dot = result.find((item) => item.key === 'dot');
+    expect(dot).toEqual({
+      key: 'dot',
+      label: 'DOT Accreditation No.',
+      number: 'SECOND',
+      show: true,
+      builtin: true,
+    });
   });
 });

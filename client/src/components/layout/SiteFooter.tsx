@@ -260,8 +260,15 @@ export default function SiteFooter() {
               operator, not to the TravelSugbo trading brand — so the credit
               sits directly above them. This line is the legal-operator
               credit CLAUDE.md requires and renders unconditionally,
-              regardless of whether any permit is currently published. */}
-          <p className="text-brand-blue-100 mt-3 text-sm font-medium">
+              regardless of whether any permit is currently published.
+              `mt-3` only applies when the "Accreditation" heading above it
+              is actually rendered — it was sized to sit below that heading,
+              and without it this line becomes the column's first visible
+              element (permits.length === 0) and would otherwise sit out of
+              alignment with its sibling columns' own headings. */}
+          <p
+            className={cn('text-brand-blue-100 text-sm font-medium', permits.length > 0 && 'mt-3')}
+          >
             Operated by {SITE.legalOperator}
           </p>
           {permits.length > 0 && (

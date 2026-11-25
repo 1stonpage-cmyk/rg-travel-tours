@@ -881,7 +881,7 @@ function AccreditationBlockEditor({ block, stored }: { block: BlockSpec; stored:
                   type="button"
                   role="switch"
                   aria-checked={item.show}
-                  aria-label={`Show ${item.label || 'this item'} on the website`}
+                  aria-label={`Show ${item.label || `accreditation item ${index + 1}`} on the website`}
                   onClick={() => update(index, { show: !item.show })}
                   className="tap-target focus-visible:ring-brand-blue-600 mt-6 inline-flex items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
                 >
@@ -901,41 +901,59 @@ function AccreditationBlockEditor({ block, stored }: { block: BlockSpec; stored:
                   </span>
                 </button>
 
-                <div className="min-w-0 flex-1 space-y-1.5">
-                  <Label htmlFor={nameId}>Name</Label>
-                  {item.builtin ? (
-                    <p
-                      id={nameId}
-                      className="text-brand-ink flex h-11 items-center text-sm font-semibold"
-                    >
-                      {item.label}
-                    </p>
-                  ) : (
+                {/*
+                 * Two fields, grid-wrapped exactly like `FieldGrid` above
+                 * ("One column at 360px, two from `sm:`") rather than a bare
+                 * `flex flex-wrap` of two `flex-1` children — `flex: 1 1 0%`
+                 * has a zero basis, so those two could never actually wrap.
+                 */}
+                <div className="grid min-w-0 flex-1 gap-4 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    {item.builtin ? (
+                      // Not a `<Label htmlFor>` — a builtin row's name is a
+                      // `<p>`, not a labelable form control, so `htmlFor`
+                      // would be an inert, fake association. A plain caption
+                      // with no `for`/`id` relationship, matching `Label`'s
+                      // own visual classes, says the same thing without
+                      // claiming one.
+                      <>
+                        <span className="flex select-none items-center gap-2 text-sm font-medium leading-none">
+                          Name
+                        </span>
+                        <p className="text-brand-ink flex h-11 items-center text-sm font-semibold">
+                          {item.label}
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <Label htmlFor={nameId}>Name</Label>
+                        <Input
+                          id={nameId}
+                          value={item.label}
+                          onChange={(event) => update(index, { label: event.target.value })}
+                          className={FIELD}
+                        />
+                      </>
+                    )}
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor={numberId}>Number</Label>
                     <Input
-                      id={nameId}
-                      value={item.label}
-                      onChange={(event) => update(index, { label: event.target.value })}
+                      id={numberId}
+                      value={item.number}
+                      aria-describedby={violated ? warnId : undefined}
+                      aria-invalid={violated ? true : undefined}
+                      onChange={(event) => update(index, { number: event.target.value })}
                       className={FIELD}
                     />
-                  )}
-                </div>
-
-                <div className="min-w-0 flex-1 space-y-1.5">
-                  <Label htmlFor={numberId}>Number</Label>
-                  <Input
-                    id={numberId}
-                    value={item.number}
-                    aria-describedby={violated ? warnId : undefined}
-                    aria-invalid={violated ? true : undefined}
-                    onChange={(event) => update(index, { number: event.target.value })}
-                    className={FIELD}
-                  />
-                  {violated ? (
-                    <p id={warnId} role="alert" className={ROW_ERROR}>
-                      Add the number before switching this on — it won&rsquo;t show on the website
-                      while empty.
-                    </p>
-                  ) : null}
+                    {violated ? (
+                      <p id={warnId} role="alert" className={ROW_ERROR}>
+                        Add the number before switching this on — it won&rsquo;t show on the website
+                        while empty.
+                      </p>
+                    ) : null}
+                  </div>
                 </div>
 
                 {item.builtin ? null : (
@@ -943,7 +961,7 @@ function AccreditationBlockEditor({ block, stored }: { block: BlockSpec; stored:
                     <Button
                       type="button"
                       variant="row-amber"
-                      aria-label={`Remove ${item.label || 'accreditation item'}`}
+                      aria-label={`Remove ${item.label || `accreditation item ${index + 1}`}`}
                       onClick={() => removeItem(index)}
                     >
                       Remove
@@ -960,7 +978,12 @@ function AccreditationBlockEditor({ block, stored }: { block: BlockSpec; stored:
         <Button type="submit" variant="primary-pill" disabled={write.isPending || hasViolation}>
           {write.isPending ? 'Saving…' : 'Save'}
         </Button>
-        <Button type="button" variant="secondary-pill" onClick={addItem}>
+        <Button
+          type="button"
+          variant="secondary-pill"
+          disabled={items.length >= 10}
+          onClick={addItem}
+        >
           Add accreditation
         </Button>
       </div>
