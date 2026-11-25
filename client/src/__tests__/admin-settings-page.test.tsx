@@ -93,7 +93,31 @@ const STORED: Record<string, unknown> = {
     isClosed: false,
   })),
   payment_methods: [{ key: 'gcash', label: 'GCash', enabled: true, sortOrder: 1 }],
-  permits: { dot: null, dti: null, bir: null },
+  /*
+   * Task 1A's NEW shape (`{ items: [...] }`), replacing the old flat
+   * `{ dot, dti, bir }` block — a mix of shown/hidden builtins plus one
+   * custom item, so Task 1B's tests can tell builtin-vs-custom rows apart.
+   */
+  permits: {
+    items: [
+      {
+        key: 'dot',
+        label: 'DOT Accreditation No.',
+        number: 'DOT-2026-001',
+        show: true,
+        builtin: true,
+      },
+      { key: 'dti', label: 'DTI Registration No.', number: null, show: false, builtin: true },
+      { key: 'bir', label: 'BIR TIN', number: '123-456-789', show: true, builtin: true },
+      {
+        key: 'custom-1',
+        label: "Mayor's Permit",
+        number: 'MP-2026-55',
+        show: true,
+        builtin: false,
+      },
+    ],
+  },
   how_it_works: [{ step: 1, title: 'Pick a tour', body: 'Choose a date' }],
   why_book_direct: [{ icon: 'shield', title: 'Direct', body: 'No middleman' }],
   faqs: [{ q: 'How do I pay?', a: '{{paymentMethods}}' }],
@@ -581,6 +605,158 @@ describe('AdminSettingsPage', () => {
         /could not save show tours on the website/i,
       );
       expect(within(details).queryByRole('status')).toBeNull();
+    });
+  });
+
+  /**
+   * Task 1B. The `permits` block replaced its flat `{ dot, dti, bir }` grid
+   * with a bespoke list editor (`AccreditationBlockEditor`): one row per
+   * item, builtins first (fixed label, never deletable), then custom items.
+   */
+  describe('permits block (accreditation numbers)', () => {
+    it('renders the three builtins with their canonical labels as plain text, not an editable Name field', async () => {
+      mockOwner();
+      renderPage();
+      const details = await openBlock('Accreditation numbers');
+
+      for (const label of ['DOT Accreditation No.', 'DTI Registration No.', 'BIR TIN']) {
+        expect(within(details).getByText(label)).toBeInTheDocument();
+      }
+      // Only the one custom row ("Mayor's Permit") has an editable Name field.
+      expect(within(details).getAllByRole('textbox', { name: 'Name' })).toHaveLength(1);
+    });
+
+    it("renders the custom item's name as an editable input", async () => {
+      mockOwner();
+      renderPage();
+      const details = await openBlock('Accreditation numbers');
+
+      const nameInputs = within(details).getAllByRole('textbox', { name: 'Name' });
+      expect(nameInputs).toHaveLength(1);
+      expect(nameInputs[0]).toHaveValue("Mayor's Permit");
+    });
+
+    it('offers no delete control on a builtin row, and removes a custom row on delete', async () => {
+      mockOwner();
+      renderPage();
+      const details = await openBlock('Accreditation numbers');
+
+      for (const label of ['DOT Accreditation No.', 'DTI Registration No.', 'BIR TIN']) {
+        expect(within(details).queryByRole('button', { name: `Remove ${label}` })).toBeNull();
+      }
+
+      expect(within(details).getByDisplayValue("Mayor's Permit")).toBeInTheDocument();
+      await user.click(within(details).getByRole('button', { name: "Remove Mayor's Permit" }));
+      expect(within(details).queryByDisplayValue("Mayor's Permit")).toBeNull();
+    });
+
+    it('adds a new custom row via "Add accreditation", with Show off and empty fields', async () => {
+      mockOwner();
+      renderPage();
+      const details = await openBlock('Accreditation numbers');
+
+      await user.click(within(details).getByRole('button', { name: 'Add accreditation' }));
+
+      const nameInputs = within(details).getAllByRole('textbox', { name: 'Name' });
+      expect(nameInputs).toHaveLength(2);
+      expect(nameInputs[1]).toHaveValue('');
+
+      const switches = within(details).getAllByRole('switch');
+      expect(switches.at(-1)).toHaveAttribute('aria-checked', 'false');
+    });
+
+    it('flips aria-checked when a switch is toggled', async () => {
+      mockOwner();
+      renderPage();
+      const details = await openBlock('Accreditation numbers');
+
+      // Rows are dot, dti, bir, custom-1 in that order — bir starts shown.
+      const birSwitch = within(details).getAllByRole('switch')[2]!;
+      expect(birSwitch).toHaveAttribute('aria-checked', 'true');
+      await user.click(birSwitch);
+      expect(birSwitch).toHaveAttribute('aria-checked', 'false');
+    });
+
+    it('warns and disables Save when a switched-on row has no number, and clears once filled', async () => {
+      mockOwner();
+      renderPage();
+      const details = await openBlock('Accreditation numbers');
+
+      // dti starts hidden with no number.
+      const dtiSwitch = within(details).getAllByRole('switch')[1]!;
+      expect(dtiSwitch).toHaveAttribute('aria-checked', 'false');
+
+      await user.click(dtiSwitch);
+      expect(dtiSwitch).toHaveAttribute('aria-checked', 'true');
+      expect(
+        await within(details).findByText(/add the number before switching this on/i),
+      ).toBeInTheDocument();
+      expect(within(details).getByRole('button', { name: 'Save' })).toBeDisabled();
+
+      const numberInputs = within(details).getAllByRole('textbox', { name: 'Number' });
+      await user.type(numberInputs[1]!, 'DTI-2026-99');
+
+      expect(within(details).queryByText(/add the number before switching this on/i)).toBeNull();
+      expect(within(details).getByRole('button', { name: 'Save' })).not.toBeDisabled();
+    });
+
+    it('shows a live count of switches currently on, updating as they are toggled', async () => {
+      mockOwner();
+      renderPage();
+      const details = await openBlock('Accreditation numbers');
+
+      // dot, bir and custom-1 are on in the fixture; dti is off.
+      expect(within(details).getByText('3 shown on the website')).toBeInTheDocument();
+
+      const dotSwitch = within(details).getAllByRole('switch')[0]!;
+      await user.click(dotSwitch);
+      expect(within(details).getByText('2 shown on the website')).toBeInTheDocument();
+    });
+
+    it('saves {key:"permits", value:{items:[...]}}, builtins first then custom', async () => {
+      const posted: unknown[] = [];
+      mockOwner({
+        'admin.settings.write': (input: unknown) => {
+          posted.push(input);
+          return { ok: true };
+        },
+      });
+      renderPage();
+      const details = await openBlock('Accreditation numbers');
+
+      await user.click(within(details).getByRole('button', { name: 'Save' }));
+
+      await waitFor(() => expect(posted).toHaveLength(1));
+      expect(posted[0]).toEqual({
+        key: 'permits',
+        value: {
+          items: [
+            {
+              key: 'dot',
+              label: 'DOT Accreditation No.',
+              number: 'DOT-2026-001',
+              show: true,
+              builtin: true,
+            },
+            {
+              key: 'dti',
+              label: 'DTI Registration No.',
+              number: null,
+              show: false,
+              builtin: true,
+            },
+            { key: 'bir', label: 'BIR TIN', number: '123-456-789', show: true, builtin: true },
+            {
+              key: 'custom-1',
+              label: "Mayor's Permit",
+              number: 'MP-2026-55',
+              show: true,
+              builtin: false,
+            },
+          ],
+        },
+      });
+      expect(await within(details).findByRole('status')).toHaveTextContent('Saved.');
     });
   });
 

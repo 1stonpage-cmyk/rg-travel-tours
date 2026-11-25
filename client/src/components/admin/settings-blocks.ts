@@ -71,8 +71,17 @@ export interface BlockSpec {
    * separate Save button (`ToggleBlockEditor`). Do not reuse `flag` for a
    * second boolean just because the stored shape matches: the shape here
    * describes the EDITOR, not the JSON type.
+   *
+   * `permits` (Task 1B) is the `permits` settings key's own bespoke shape — an
+   * admin-managed list with per-item Show switches, three protected builtin
+   * rows that can be hidden but never deleted or relabelled, and a per-row
+   * conditional warning the generic `array` grid has no notion of. Drawn by
+   * `AccreditationBlockEditor` in `AdminSettingsPage.tsx`, same pattern as
+   * `flag`/`toggle` above: a shape added because the generic machinery
+   * cannot express this block, not a second opinion about validity (the one
+   * validator stays `SETTING_SCHEMAS.permits` on the server).
    */
-  shape: 'object' | 'array' | 'flag' | 'toggle';
+  shape: 'object' | 'array' | 'flag' | 'toggle' | 'permits';
   fields: readonly FieldSpec[];
   /** array only: what one row is called — "Question 2", "Monday". */
   rowName?: (index: number) => string;
@@ -382,13 +391,15 @@ export const BLOCKS: readonly BlockSpec[] = [
     key: 'permits',
     title: 'Accreditation numbers',
     blurb:
-      'DOT, DTI and BIR registrations held by R&G Travel & Tours. Leave a field blank until the real number is in hand — the site then says "pending". Never invent one.',
-    shape: 'object',
-    fields: [
-      { name: 'dot', label: 'DOT accreditation', kind: 'text', nullable: true },
-      { name: 'dti', label: 'DTI registration', kind: 'text', nullable: true },
-      { name: 'bir', label: 'BIR registration', kind: 'text', nullable: true },
-    ],
+      'DOT, DTI and BIR registrations held by R&G Travel & Tours, plus any other accreditation worth showing. Each has its own Show switch — leave a number blank and Show off until the real number is in hand. Never invent one. The three builtins can be hidden but never removed.',
+    /*
+     * Bespoke editor (`AccreditationBlockEditor`) — see `BlockSpec.shape`'s
+     * own comment above for why. `fields: []` is correct here, same as
+     * `flag`/`toggle`: nothing reads `fields` for a shape whose renderer owns
+     * its own layout.
+     */
+    shape: 'permits',
+    fields: [],
   },
   {
     key: 'payment_methods',
@@ -674,4 +685,120 @@ export function fromFormRow(
   }
 
   return { record, errors };
+}
+
+/* ------------------------------------------------------- permits (Task 1B) */
+
+/**
+ * The three permanent accreditation items — copied verbatim from
+ * `server/src/content/settings-schema.ts`'s `BUILTIN_PERMITS` (Task 1A), NOT
+ * imported from it: `@rg/client` depends only on `@rg/shared`
+ * (`client/package.json`), never on `@rg/server` — the server package pulls
+ * in node-only dependencies (mysql2 and friends) that a browser bundle must
+ * never grow, and nothing in `@rg/shared` carries this constant either. If
+ * the server's three labels ever change, this copy must change with them —
+ * `AccreditationBlockEditor`'s tests below pin the exact strings so a drift
+ * fails loudly rather than silently mislabelling a builtin row.
+ */
+export const ACCREDITATION_BUILTINS = [
+  { key: 'dot', label: 'DOT Accreditation No.' },
+  { key: 'dti', label: 'DTI Registration No.' },
+  { key: 'bir', label: 'BIR TIN' },
+] as const;
+
+const ACCREDITATION_BUILTIN_KEYS: ReadonlySet<string> = new Set(
+  ACCREDITATION_BUILTINS.map((b) => b.key),
+);
+
+/** One `permits.items[]` entry, as the form holds it — `number` is `''` for `null`. */
+export interface AccreditationItemForm {
+  key: string;
+  label: string;
+  number: string;
+  show: boolean;
+  builtin: boolean;
+}
+
+/** One stored `items[]` entry (or anything shaped close enough) to a form row. */
+function toAccreditationForm(raw: unknown): AccreditationItemForm {
+  const record = raw !== null && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  return {
+    key: typeof record.key === 'string' ? record.key : '',
+    label: typeof record.label === 'string' ? record.label : '',
+    number: typeof record.number === 'string' ? record.number : '',
+    show: record.show === true,
+    builtin: record.builtin === true,
+  };
+}
+
+/**
+ * The NEW shape has an `items` array; the OLD shape (pre-Task-1A, still
+ * possibly sitting in a database row nobody has saved since) is a flat
+ * `{ dot, dti, bir }` object with no `items` key at all — the same test
+ * `server/src/content/settings-schema.ts`'s `isLegacyPermitsShape` uses.
+ * `admin.settings.all` returns raw rows with zero parsing, so either shape
+ * can arrive here.
+ */
+function extractAccreditationItems(raw: unknown): AccreditationItemForm[] {
+  if (
+    raw !== null &&
+    typeof raw === 'object' &&
+    !Array.isArray(raw) &&
+    Array.isArray((raw as Record<string, unknown>).items)
+  ) {
+    return (raw as { items: unknown[] }).items.map(toAccreditationForm);
+  }
+
+  // Old shape, or missing/null/malformed: nothing was ever "shown" under the
+  // old binary pending/number model, so every upgraded item starts hidden —
+  // mirroring `upgradeLegacyPermits` on the server.
+  const legacy =
+    raw !== null && typeof raw === 'object' && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : {};
+  return ACCREDITATION_BUILTINS.map((builtin) => ({
+    key: builtin.key,
+    label: builtin.label,
+    number: typeof legacy[builtin.key] === 'string' ? (legacy[builtin.key] as string) : '',
+    show: false,
+    builtin: true,
+  }));
+}
+
+/**
+ * `stored.permits` (either shape — see `extractAccreditationItems`) to the
+ * rows `AccreditationBlockEditor` renders: the three builtins first, in
+ * their fixed order, with their CANONICAL label always (never a stored one —
+ * the label is fixed server-side and this screen must not pretend
+ * otherwise), then every custom item in stored order.
+ */
+export function normalizePermitsBlock(raw: unknown): AccreditationItemForm[] {
+  const items = extractAccreditationItems(raw);
+  const byKey = new Map(items.map((item) => [item.key, item]));
+
+  const builtinsInOrder = ACCREDITATION_BUILTINS.map((builtin) => {
+    const found = byKey.get(builtin.key);
+    return {
+      key: builtin.key,
+      label: builtin.label,
+      number: found?.number ?? '',
+      show: found?.show ?? false,
+      builtin: true,
+    };
+  });
+  const customItems = items.filter((item) => !ACCREDITATION_BUILTIN_KEYS.has(item.key));
+
+  return [...builtinsInOrder, ...customItems];
+}
+
+/** A fresh, unique key for a newly-added custom row — never `dot`/`dti`/`bir`. */
+export function nextCustomAccreditationKey(existing: readonly { key: string }[]): string {
+  const used = new Set(existing.map((item) => item.key));
+  let n = existing.length;
+  let key = `custom-${n}`;
+  while (used.has(key) || ACCREDITATION_BUILTIN_KEYS.has(key)) {
+    n += 1;
+    key = `custom-${n}`;
+  }
+  return key;
 }

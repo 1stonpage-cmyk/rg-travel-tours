@@ -75,8 +75,11 @@ import {
   GROUPS,
   blankRow,
   fromFormRow,
+  nextCustomAccreditationKey,
+  normalizePermitsBlock,
   toFormRow,
   visibleFields,
+  type AccreditationItemForm,
   type BlockSpec,
   type FieldSpec,
 } from '@/components/admin/settings-blocks';
@@ -782,6 +785,190 @@ function ToggleBlockEditor({ block, stored }: { block: BlockSpec; stored: unknow
 }
 
 /**
+ * `permits` — Accreditation numbers (Task 1A/1B, owner decision 2026-11-26).
+ * Bespoke, same reasoning as `FlagBlockEditor`/`ToggleBlockEditor` above: the
+ * generic `ArrayBlockEditor`/`ObjectBlockEditor` machinery is built for flat
+ * string fields and has no notion of a protected row (the three builtins can
+ * be hidden but never deleted or relabelled — the server's schema refuses a
+ * save that drops, renames or un-builtins one), a real switch widget, or a
+ * per-row conditional warning.
+ *
+ * One row per item: builtins first in their fixed order, then custom items in
+ * stored order (`normalizePermitsBlock`, which also upgrades the OLD
+ * `{ dot, dti, bir }` shape a database row may still carry — `admin.settings.all`
+ * returns raw rows with zero parsing, so either shape can arrive as `stored`).
+ * Each row has a Show switch (`ToggleBlockEditor`'s exact switch markup, so
+ * this screen has only one visual switch style), a name (plain text for a
+ * builtin, an editable `Input` for a custom item), a number, and — custom
+ * rows only — a delete button. The SERVER still re-validates the whole block
+ * on Save (builtin presence/labels, uniqueness, the 10-item cap); this
+ * screen's own check is narrower — "a switched-on row needs a number" — so an
+ * owner is not surprised by a refusal they could have avoided, not a second
+ * copy of the server's rules.
+ */
+function AccreditationBlockEditor({ block, stored }: { block: BlockSpec; stored: unknown }) {
+  const { write, banner, notice, reset } = useSettingsWrite(block);
+  const [items, setItems] = useState<AccreditationItemForm[]>(() => normalizePermitsBlock(stored));
+
+  function update(index: number, patch: Partial<AccreditationItemForm>) {
+    setItems((current) => current.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+  }
+
+  function removeItem(index: number) {
+    setItems((current) => current.filter((_, i) => i !== index));
+  }
+
+  function addItem() {
+    setItems((current) => [
+      ...current,
+      {
+        key: nextCustomAccreditationKey(current),
+        label: '',
+        number: '',
+        show: false,
+        builtin: false,
+      },
+    ]);
+  }
+
+  // A switched-on row with no number: refused server-side, so flagged here
+  // before the owner ever submits.
+  const violatesEmptyNumber = items.map((item) => item.show && item.number.trim() === '');
+  const hasViolation = violatesEmptyNumber.some(Boolean);
+  const shownCount = items.filter((item) => item.show).length;
+
+  return (
+    <form
+      className="space-y-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        reset();
+        if (hasViolation) return;
+        const value = {
+          items: items.map((item) => ({
+            key: item.key,
+            label: item.label.trim(),
+            number: item.number.trim() === '' ? null : item.number.trim(),
+            show: item.show,
+            builtin: item.builtin,
+          })),
+        };
+        write.mutate({ key: block.key, value });
+      }}
+    >
+      <BlockBanners banner={banner} notice={notice} />
+
+      <p className="text-brand-ink text-sm font-semibold">{shownCount} shown on the website</p>
+
+      <ol className="space-y-4">
+        {items.map((item, index) => {
+          const idPrefix = `permits-${index}`;
+          const violated = violatesEmptyNumber[index];
+          const nameId = `${idPrefix}-name`;
+          const numberId = `${idPrefix}-number`;
+          const warnId = `${idPrefix}-warn`;
+
+          return (
+            <li
+              key={item.key}
+              className={cn(
+                'rounded-xl border p-4',
+                violated ? 'border-brand-warning bg-brand-gold-50' : 'border-brand-blue-100',
+              )}
+            >
+              <div className="flex flex-wrap items-start gap-4">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={item.show}
+                  aria-label={`Show ${item.label || 'this item'} on the website`}
+                  onClick={() => update(index, { show: !item.show })}
+                  className="tap-target focus-visible:ring-brand-blue-600 mt-6 inline-flex items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+                >
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      'relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors',
+                      item.show ? 'bg-brand-blue-600' : 'bg-slate-300',
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        'inline-block size-5 rounded-full bg-white shadow transition-transform',
+                        item.show ? 'translate-x-6' : 'translate-x-1',
+                      )}
+                    />
+                  </span>
+                </button>
+
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <Label htmlFor={nameId}>Name</Label>
+                  {item.builtin ? (
+                    <p
+                      id={nameId}
+                      className="text-brand-ink flex h-11 items-center text-sm font-semibold"
+                    >
+                      {item.label}
+                    </p>
+                  ) : (
+                    <Input
+                      id={nameId}
+                      value={item.label}
+                      onChange={(event) => update(index, { label: event.target.value })}
+                      className={FIELD}
+                    />
+                  )}
+                </div>
+
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <Label htmlFor={numberId}>Number</Label>
+                  <Input
+                    id={numberId}
+                    value={item.number}
+                    aria-describedby={violated ? warnId : undefined}
+                    aria-invalid={violated ? true : undefined}
+                    onChange={(event) => update(index, { number: event.target.value })}
+                    className={FIELD}
+                  />
+                  {violated ? (
+                    <p id={warnId} role="alert" className={ROW_ERROR}>
+                      Add the number before switching this on — it won&rsquo;t show on the website
+                      while empty.
+                    </p>
+                  ) : null}
+                </div>
+
+                {item.builtin ? null : (
+                  <div className="mt-6">
+                    <Button
+                      type="button"
+                      variant="row-amber"
+                      aria-label={`Remove ${item.label || 'accreditation item'}`}
+                      onClick={() => removeItem(index)}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+
+      <div className="flex flex-wrap gap-2">
+        <Button type="submit" variant="primary-pill" disabled={write.isPending || hasViolation}>
+          {write.isPending ? 'Saving…' : 'Save'}
+        </Button>
+        <Button type="button" variant="secondary-pill" onClick={addItem}>
+          Add accreditation
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+/**
  * One block behind a native disclosure.
  *
  * The editor is mounted on the FIRST open and stays mounted afterwards, so an
@@ -808,6 +995,8 @@ function BlockDisclosure({ block, stored }: { block: BlockSpec; stored: unknown 
             <ToggleBlockEditor block={block} stored={stored} />
           ) : block.shape === 'array' ? (
             <ArrayBlockEditor block={block} stored={stored} />
+          ) : block.shape === 'permits' ? (
+            <AccreditationBlockEditor block={block} stored={stored} />
           ) : (
             <ObjectBlockEditor block={block} stored={stored} />
           )
