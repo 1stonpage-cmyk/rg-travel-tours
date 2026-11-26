@@ -73,6 +73,7 @@ const CONTACT = {
   facebook: 'https://www.facebook.com/profile.php?id=61574390071362',
   motto: 'motto',
   otherServices: { before: 'a', link: 'b', after: 'c' },
+  showCallNumbers: true,
 };
 
 const OPEN_EVERY_DAY = Array.from({ length: 7 }, (_, weekday) => ({

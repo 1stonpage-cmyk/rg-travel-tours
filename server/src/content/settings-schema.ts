@@ -322,6 +322,18 @@ const contactSchema = z.object({
     link: z.string(),
     after: z.string(),
   }),
+  /**
+   * Admin switch (owner decision 2026-11-27): the owner works at sea and
+   * cannot take calls or SMS, so guests must be steered to WhatsApp/Viber/
+   * email/Facebook only. `.default(true)` is what makes a stored block
+   * written before this field existed parse as "calls shown" — nothing
+   * changes until an admin explicitly switches it off. See
+   * `resolveContact()` in `content/settings.ts` for how the public payload
+   * strips the four phone fields below when this is false, and
+   * `travelAgencyNode()` in `seo/jsonld.ts` for the independent JSON-LD gate
+   * (that path reads this raw block directly, not the resolved payload).
+   */
+  showCallNumbers: z.boolean().default(true),
 });
 
 /**

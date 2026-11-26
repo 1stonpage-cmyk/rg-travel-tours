@@ -14,6 +14,7 @@ import {
 } from '../content/settings';
 import {
   SETTING_KEYS,
+  SETTING_SCHEMAS,
   TRANSFER_OPERATIONS_DEFAULTS,
   type SettingsBlocks,
 } from '../content/settings-schema';
@@ -414,6 +415,37 @@ describe('isPaymongoConfigured()', () => {
   it('is true once a key is set', () => {
     env.PAYMONGO_SECRET_KEY = 'sk_test_notarealkey';
     expect(isPaymongoConfigured()).toBe(true);
+  });
+});
+
+describe('contact.showCallNumbers (owner decision 2026-11-27)', () => {
+  it('defaults to true when a legacy stored block has no key', () => {
+    const legacy = {
+      address: 'Cebu City',
+      tagline: 'Your Cebu guides',
+      hoursNote: 'Daily',
+      email: 'hello@example.test',
+      phoneDisplay: '0917 000 0000',
+      phoneTel: '639170000000',
+      whatsapp: '639170000000',
+      altPhoneDisplay: '',
+      altPhoneTel: '',
+      facebook: 'travelsugbo',
+      motto: 'Explore Cebu',
+      otherServices: { before: 'We also offer', link: 'transfers', after: 'on request.' },
+      // no showCallNumbers key — simulates every row written before this task
+    };
+    const result = SETTING_SCHEMAS.contact.parse(legacy);
+    expect(result.showCallNumbers).toBe(true);
+  });
+
+  it('parses an explicit false', () => {
+    const block = {
+      ...(validValueFor('contact') as object),
+      showCallNumbers: false,
+    };
+    const result = SETTING_SCHEMAS.contact.parse(block);
+    expect(result.showCallNumbers).toBe(false);
   });
 });
 

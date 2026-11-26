@@ -739,6 +739,7 @@ export const SEED_SETTINGS: SettingsBlocks = {
       link: 'Message us',
       after: '— R&G also handles airline booking, hotel reservations and spot transportation.',
     },
+    showCallNumbers: true,
   },
 
   /*

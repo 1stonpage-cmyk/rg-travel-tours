@@ -223,6 +223,7 @@ export const SETTINGS_FIXTURE: SettingsPayload = {
       link: 'Message us',
       after: '— R&G also handles airline booking, hotel reservations and spot transportation.',
     },
+    showCallNumbers: true,
   },
   /*
    * ABRIDGED, unlike every other block in this file. The seeded legal

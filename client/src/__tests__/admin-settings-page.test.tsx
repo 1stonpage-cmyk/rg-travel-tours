@@ -135,6 +135,7 @@ const STORED: Record<string, unknown> = {
     facebook: 'travelsugbo',
     motto: 'Explore Cebu',
     otherServices: { before: 'We also offer', link: 'transfers', after: 'on request.' },
+    showCallNumbers: true,
   },
   booking: { minLeadDays: 1, nextDayCutoffTime: '17:00', maxAdvanceDays: 180 },
   show_tours: false,
