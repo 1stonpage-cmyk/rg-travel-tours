@@ -166,7 +166,7 @@ export function travelAgencyNode(input: AgencyInput): JsonLdNode {
     url: input.siteUrl,
     description: input.description,
     image: input.imageUrl ?? undefined,
-    telephone: text(input.contact.phoneTel),
+    telephone: input.contact.showCallNumbers ? text(input.contact.phoneTel) : undefined,
     email: text(input.contact.email),
     areaServed: 'Cebu, Philippines',
     sameAs: sameAs.length > 0 ? sameAs : undefined,

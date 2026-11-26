@@ -194,6 +194,31 @@ describe('travelAgencyNode', () => {
     ]);
     expect(specs[0]).toMatchObject({ opens: '07:00', closes: '21:00' });
   });
+
+  it('omits telephone when contact.showCallNumbers is false (owner decision 2026-11-27)', () => {
+    const node = travelAgencyNode({
+      siteUrl: 'https://travelsugbo.com/',
+      description: 'd',
+      imageUrl: null,
+      contact: { ...CONTACT, showCallNumbers: false },
+      businessHours: OPEN_EVERY_DAY,
+      rating: undefined,
+    });
+    expect(node.telephone).toBeUndefined();
+    expect('telephone' in node).toBe(false);
+  });
+
+  it('still includes telephone when contact.showCallNumbers is true', () => {
+    const node = travelAgencyNode({
+      siteUrl: 'https://travelsugbo.com/',
+      description: 'd',
+      imageUrl: null,
+      contact: { ...CONTACT, showCallNumbers: true },
+      businessHours: OPEN_EVERY_DAY,
+      rating: undefined,
+    });
+    expect(node.telephone).toBeTruthy();
+  });
 });
 
 describe('faqPageNode', () => {
