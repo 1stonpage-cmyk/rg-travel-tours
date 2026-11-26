@@ -196,8 +196,7 @@ export const privacyContent: LegalPageContent = {
             To use any right, contact our Data Protection Officer:
             <br />
             <PlaceholderChip context="DPO name" /> ·{' '}
-            <a href={`mailto:${SITE.contact.email}`}>{SITE.contact.email}</a> ·{' '}
-            <ContactLine />
+            <a href={`mailto:${SITE.contact.email}`}>{SITE.contact.email}</a> · <ContactLine />
           </p>
           <p>
             We may need to confirm your identity (for example, your booking reference and email)
@@ -233,8 +232,7 @@ export const privacyContent: LegalPageContent = {
         <p>
           <PlaceholderChip context="registered business name" /> (R&amp;G Travel &amp; Tours) ·{' '}
           <PlaceholderChip context="business address" /> ·{' '}
-          <a href={`mailto:${SITE.contact.email}`}>{SITE.contact.email}</a> ·{' '}
-          <ContactLine />
+          <a href={`mailto:${SITE.contact.email}`}>{SITE.contact.email}</a> · <ContactLine />
         </p>
       ),
     },

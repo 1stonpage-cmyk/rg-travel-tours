@@ -193,8 +193,7 @@ export const termsContent: LegalPageContent = {
         <p>
           <PlaceholderChip context="registered business name" /> (R&amp;G Travel &amp; Tours) ·{' '}
           <PlaceholderChip context="business address" /> ·{' '}
-          <a href={`mailto:${SITE.contact.email}`}>{SITE.contact.email}</a> ·{' '}
-          <ContactLine />
+          <a href={`mailto:${SITE.contact.email}`}>{SITE.contact.email}</a> · <ContactLine />
         </p>
       ),
     },

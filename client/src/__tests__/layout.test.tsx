@@ -631,9 +631,10 @@ describe('SiteHeader — call number hidden (owner decision 2026-11-27)', () => 
       },
     });
     renderHeader();
-    expect(
-      await screen.findByRole('link', { name: SITE.contact.phone.display }),
-    ).toHaveAttribute('href', `tel:${SITE.contact.phone.tel}`);
+    expect(await screen.findByRole('link', { name: SITE.contact.phone.display })).toHaveAttribute(
+      'href',
+      `tel:${SITE.contact.phone.tel}`,
+    );
   });
 
   it('replaces the tel link with a WhatsApp action when showCallNumbers is false', async () => {

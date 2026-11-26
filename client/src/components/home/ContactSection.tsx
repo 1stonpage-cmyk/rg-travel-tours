@@ -261,7 +261,9 @@ export default function ContactSection() {
             )}
             {!showCallNumbers && (
               <li className="bg-background flex items-center gap-3 rounded-xl p-4 text-base sm:text-sm">
-                <p className="text-brand-blue-900 font-semibold">Message us on WhatsApp or Viber.</p>
+                <p className="text-brand-blue-900 font-semibold">
+                  Message us on WhatsApp or Viber.
+                </p>
               </li>
             )}
             <li>

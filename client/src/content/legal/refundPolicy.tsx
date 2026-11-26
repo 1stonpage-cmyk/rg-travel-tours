@@ -21,8 +21,8 @@ export const refundPolicyContent: LegalPageContent = {
         <>
           <p>
             Cancel by contacting us at{' '}
-            <a href={`mailto:${SITE.contact.email}`}>{SITE.contact.email}</a> or <ContactLine /> with
-            your booking reference. Cancellation time is counted from your tour's pickup time
+            <a href={`mailto:${SITE.contact.email}`}>{SITE.contact.email}</a> or <ContactLine />{' '}
+            with your booking reference. Cancellation time is counted from your tour's pickup time
             (Philippine time).
           </p>
           <ScrollableTable>

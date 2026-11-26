@@ -650,7 +650,9 @@ describe('contact details still come from the pinned site.ts-mirrored values', (
 describe('ContactSection — call numbers hidden (owner decision 2026-11-27)', () => {
   it('keeps both Call or text rows when showCallNumbers is true', async () => {
     mockTrpc({
-      'settings.get': settingsWith({ contact: { ...SETTINGS_FIXTURE.contact, showCallNumbers: true } }),
+      'settings.get': settingsWith({
+        contact: { ...SETTINGS_FIXTURE.contact, showCallNumbers: true },
+      }),
     });
     renderWithTrpc(<ContactSection />);
     expect(await screen.findByText(/Call or text \(Smart\)/)).toBeInTheDocument();
@@ -680,7 +682,9 @@ describe('ContactSection — call numbers hidden (owner decision 2026-11-27)', (
 describe('SiteFooter — call numbers hidden (owner decision 2026-11-27)', () => {
   it('keeps the Smart/Globe numbers when showCallNumbers is true', async () => {
     mockTrpc({
-      'settings.get': settingsWith({ contact: { ...SETTINGS_FIXTURE.contact, showCallNumbers: true } }),
+      'settings.get': settingsWith({
+        contact: { ...SETTINGS_FIXTURE.contact, showCallNumbers: true },
+      }),
     });
     renderWithTrpc(<SiteFooter />);
     expect(await screen.findByText(SITE.contact.phone.display)).toBeInTheDocument();

@@ -5,9 +5,10 @@
 **Goal:** Add an admin switch (`contact.showCallNumbers`, default `true`) that, when turned off, removes every "call or text this number" surface from the public site while leaving WhatsApp, Viber, email and Facebook working exactly as before.
 
 **Architecture:** One new boolean field on the existing `contact` settings block (owner decision 2026-11-27). Three independent consumers read it, because three independent code paths currently show a phone number and none of them share a resolver:
+
 1. **`server/src/content/settings.ts`** strips `phoneDisplay`/`phoneTel`/`altPhoneDisplay`/`altPhoneTel` from the public `settings.get` payload when the switch is off (defense in depth / explicit spec requirement — tested at the payload level).
 2. **`server/src/seo/jsonld.ts`** gates `telephone` on the SAME boolean independently, because `travelAgencyNode` is fed from `readSettingBlock('contact')` — the raw block — not from the resolved public payload. These two paths do not share code and both must be changed.
-3. **The actual on-screen phone numbers are static**, bundled into client JS from `client/src/lib/site.ts` (`SITE.contact.phone.*` / `SITE.contact.altPhone.*`). No existing component reads `settings.contact.phoneDisplay` to render a number — they all read the static `SITE` object. So hiding anything visually requires a *second*, separate change: gating the JSX in each component on `settings.contact.showCallNumbers`. Do not assume task 1A's payload change hides anything by itself — it doesn't, until 1C's render-gates are also done.
+3. **The actual on-screen phone numbers are static**, bundled into client JS from `client/src/lib/site.ts` (`SITE.contact.phone.*` / `SITE.contact.altPhone.*`). No existing component reads `settings.contact.phoneDisplay` to render a number — they all read the static `SITE` object. So hiding anything visually requires a _second_, separate change: gating the JSX in each component on `settings.contact.showCallNumbers`. Do not assume task 1A's payload change hides anything by itself — it doesn't, until 1C's render-gates are also done.
 
 **Tech Stack:** React + TS + Vite + Tailwind v4 (client), Express + tRPC + Zod + Drizzle (server). No new libraries — the "switch" UI reuses the hand-rolled `role="switch"` toggle markup already used twice in `AdminSettingsPage.tsx` (no Radix Switch is installed).
 
@@ -21,8 +22,8 @@
 - 44px (`size-11`/`h-11`) minimum tap targets; mobile-first, must work at 360px.
 - `settings.write` validates before opening a transaction — unaffected, since `showCallNumbers` is just a new field inside the existing `contact` schema's existing validate-then-write path. No new code needed for this.
 - **No new dependencies.**
-- **Do NOT touch:** `client/src/pages/driver/DriverTripPage.tsx` (shows the *guest's* phone to the driver) or `client/src/components/portal/DriverCard.tsx` (shows the *driver's* phone to the guest/portal user). Both are out of scope by the task brief and confirmed by this plan's own `tel:` grep.
-- **Do NOT touch** `coming-soon/index.html` or `scripts/check-contact-parity.mjs`. That page is static HTML with no settings access and cannot honour a database-driven switch; the parity guard runs inside `pnpm test` and requires the real numbers to stay in `client/src/lib/site.ts` byte-for-byte. Leave `site.ts`'s numbers exactly as they are — this plan only ever gates *whether a component renders them*, never the stored values themselves.
+- **Do NOT touch:** `client/src/pages/driver/DriverTripPage.tsx` (shows the _guest's_ phone to the driver) or `client/src/components/portal/DriverCard.tsx` (shows the _driver's_ phone to the guest/portal user). Both are out of scope by the task brief and confirmed by this plan's own `tel:` grep.
+- **Do NOT touch** `coming-soon/index.html` or `scripts/check-contact-parity.mjs`. That page is static HTML with no settings access and cannot honour a database-driven switch; the parity guard runs inside `pnpm test` and requires the real numbers to stay in `client/src/lib/site.ts` byte-for-byte. Leave `site.ts`'s numbers exactly as they are — this plan only ever gates _whether a component renders them_, never the stored values themselves.
 - Every new test must be proven able to fail (break the assertion, watch it go red, restore it) before being considered done.
 
 ---
@@ -30,10 +31,12 @@
 ### Task 1: Settings schema — `contact.showCallNumbers`
 
 **Files:**
+
 - Modify: `server/src/content/settings-schema.ts:308-325` (`contactSchema`)
 - Test: `server/src/__tests__/settings.test.ts`
 
 **Interfaces:**
+
 - Produces: `contactSchema` now validates/parses a `showCallNumbers: boolean` field. `SettingsBlocks['contact']` (the inferred type every other file in this plan imports) now includes `showCallNumbers: boolean`, required on the parsed/output side, defaulted when absent on the input side.
 
 - [ ] **Step 1: Write the failing test**
@@ -125,6 +128,7 @@ Expected: PASS
 - [ ] **Step 5: Fix the fixtures `pnpm typecheck` will now flag**
 
 `SettingsBlocks['contact']` (the type inferred from the schema) now requires `showCallNumbers: boolean` on every object typed against it. Add `showCallNumbers: true` to the `contact` object literal in:
+
 - `server/src/db/seed-data.ts` (the `SEED_SETTINGS.contact` block, right after `altPhoneTel: '+639277378431',` around line 734)
 - `client/src/__tests__/helpers/fixtures.ts` (the `SETTINGS_FIXTURE.contact` object, right after `otherServices: {...}` around line 225)
 - `client/src/__tests__/admin-settings-page.test.tsx` (the local raw-blocks fixture's `contact` object, right after `otherServices: {...}` around line 137)
@@ -148,10 +152,12 @@ git commit -m "feat(server): add contact.showCallNumbers setting, default true"
 ### Task 2: Public payload — strip phone fields when off
 
 **Files:**
+
 - Modify: `server/src/content/settings.ts` (interface `SettingsPayload` around line 399; add a `resolveContact` function beside `resolvePermits`, line ~514; wire it into `toSettingsPayload` at line ~552)
 - Test: `server/src/__tests__/settings.test.ts` (or wherever `toSettingsPayload` is already tested — check for an existing `describe('toSettingsPayload'...)` block first)
 
 **Interfaces:**
+
 - Consumes: `SettingsBlocks['contact']` (Task 1's output, now carries `showCallNumbers`).
 - Produces: `PublicContact` type and `resolveContact(contact: SettingsBlocks['contact']): PublicContact`, exported from `server/src/content/settings.ts`. `SettingsPayload['contact']` becomes `PublicContact` instead of `SettingsBlocks['contact']`.
 
@@ -242,7 +248,7 @@ export function resolveContact(contact: SettingsBlocks['contact']): PublicContac
 Change the `SettingsPayload` interface (line ~399):
 
 ```ts
-  contact: PublicContact;
+contact: PublicContact;
 ```
 
 Change the assembly in `toSettingsPayload` (line ~552):
@@ -273,10 +279,12 @@ git commit -m "feat(server): strip call-number fields from the public settings p
 ### Task 3: JSON-LD — omit `telephone` independently
 
 **Files:**
+
 - Modify: `server/src/seo/jsonld.ts:155-176` (`travelAgencyNode`)
 - Test: `server/src/__tests__/jsonld.test.ts`
 
 **Interfaces:**
+
 - Consumes: `AgencyInput.contact: SettingsBlocks['contact']` (raw block — unchanged type, now carries `showCallNumbers` per Task 1).
 - Produces: `travelAgencyNode(...)`'s returned node omits `telephone` when `input.contact.showCallNumbers` is `false`.
 
@@ -339,11 +347,13 @@ git commit -m "fix(server): omit JSON-LD telephone when call numbers are hidden"
 This task has two parts: (a) a `toFormRow` bug the advisor's review caught — a legacy stored `contact` row with no `showCallNumbers` key would, on next Save, silently write `false` (the BUG-118 shape: a successful-looking save that changes real configuration) — and (b) the actual switch field.
 
 **Files:**
+
 - Modify: `client/src/components/admin/settings-blocks.ts` (`FieldSpec` interface ~line 48; `toFormRow` ~line 585; the `contact` block's `fields` array ~line 276-296)
 - Modify: `client/src/pages/admin/AdminSettingsPage.tsx` (`FieldKind` import usage; `SettingField`'s render branches, ~line 131-225)
 - Test: `client/src/__tests__/admin-settings-page.test.tsx`
 
 **Interfaces:**
+
 - Consumes: `FieldSpec` (existing type), `YES_NO` (existing exported constant, reference-compared).
 - Produces: `FieldKind` gains `'switch'`. `FieldSpec` gains optional `defaultValue?: string`. `toFormRow` honours `defaultValue` when a path is `undefined` (key missing from the stored row) — not when it is `null`.
 
@@ -547,11 +557,13 @@ git commit -m "feat(client): admin switch for Show phone numbers for calls/SMS"
 ### Task 5: Shared client hook + SiteHeader
 
 **Files:**
+
 - Create: `client/src/lib/contact-visibility.ts`
 - Modify: `client/src/components/layout/SiteHeader.tsx`
 - Test: `client/src/__tests__/layout.test.tsx`
 
 **Interfaces:**
+
 - Produces: `useShowCallNumbers(): boolean` — `true` until `settings.get` resolves (so the happy path, where the switch stays on, never flickers), `false` only once the server has explicitly said so. Every task from here on imports this one hook rather than re-deriving the expression.
 
 - [ ] **Step 1: Create the shared hook**
@@ -589,7 +601,9 @@ In `client/src/__tests__/layout.test.tsx`, add a new `describe` block (model its
 describe('SiteHeader — call number hidden (owner decision 2026-11-27)', () => {
   it('shows the tel link when showCallNumbers is true', () => {
     mockTrpc({
-      'settings.get': settingsWith({ contact: { ...SETTINGS_FIXTURE.contact, showCallNumbers: true } }),
+      'settings.get': settingsWith({
+        contact: { ...SETTINGS_FIXTURE.contact, showCallNumbers: true },
+      }),
     });
     render(
       <TrpcProviders>
@@ -653,48 +667,50 @@ import { useShowCallNumbers } from '@/lib/contact-visibility';
 Inside `SiteHeader()`, after the existing `const { data: settings } = trpc.settings.get.useQuery();` line:
 
 ```tsx
-  const showCallNumbers = useShowCallNumbers();
+const showCallNumbers = useShowCallNumbers();
 ```
 
 Replace the desktop phone link (currently):
 
 ```tsx
-          <a
-            href={telLink(SITE.contact.phone.tel)}
-            className="text-brand-blue-700 tap-target hidden items-center gap-2 rounded-md px-3 text-sm font-semibold lg:flex"
-          >
-            <Phone className="size-4" aria-hidden="true" />
-            {SITE.contact.phone.display}
-          </a>
+<a
+  href={telLink(SITE.contact.phone.tel)}
+  className="text-brand-blue-700 tap-target hidden items-center gap-2 rounded-md px-3 text-sm font-semibold lg:flex"
+>
+  <Phone className="size-4" aria-hidden="true" />
+  {SITE.contact.phone.display}
+</a>
 ```
 
 with:
 
 ```tsx
-          {showCallNumbers ? (
-            <a
-              href={telLink(SITE.contact.phone.tel)}
-              className="text-brand-blue-700 tap-target hidden items-center gap-2 rounded-md px-3 text-sm font-semibold lg:flex"
-            >
-              <Phone className="size-4" aria-hidden="true" />
-              {SITE.contact.phone.display}
-            </a>
-          ) : (
-            <a
-              href={whatsappLink()}
-              target="_blank"
-              rel="noreferrer noopener"
-              aria-label="Chat on WhatsApp"
-              className="tap-target hidden items-center gap-2 lg:flex"
-            >
-              <span className="press-brand bg-whatsapp hover:bg-whatsapp-pressed flex size-11 shrink-0 items-center justify-center rounded-full text-white transition-[transform,box-shadow,background-color] duration-200 hover:-translate-y-0.5 hover:shadow-md">
-                <WhatsAppGlyph className="size-5" />
-              </span>
-              <span aria-hidden="true" className="text-brand-blue-700 text-sm font-semibold">
-                WhatsApp
-              </span>
-            </a>
-          )}
+{
+  showCallNumbers ? (
+    <a
+      href={telLink(SITE.contact.phone.tel)}
+      className="text-brand-blue-700 tap-target hidden items-center gap-2 rounded-md px-3 text-sm font-semibold lg:flex"
+    >
+      <Phone className="size-4" aria-hidden="true" />
+      {SITE.contact.phone.display}
+    </a>
+  ) : (
+    <a
+      href={whatsappLink()}
+      target="_blank"
+      rel="noreferrer noopener"
+      aria-label="Chat on WhatsApp"
+      className="tap-target hidden items-center gap-2 lg:flex"
+    >
+      <span className="press-brand bg-whatsapp hover:bg-whatsapp-pressed flex size-11 shrink-0 items-center justify-center rounded-full text-white transition-[transform,box-shadow,background-color] duration-200 hover:-translate-y-0.5 hover:shadow-md">
+        <WhatsAppGlyph className="size-5" />
+      </span>
+      <span aria-hidden="true" className="text-brand-blue-700 text-sm font-semibold">
+        WhatsApp
+      </span>
+    </a>
+  );
+}
 ```
 
 (This mirrors `SiteFooter.tsx`'s existing `ChatButton` accessibility pattern exactly: the pill is icon-only with its own `aria-label`, the visible "WhatsApp" word sits outside it in brand ink and is `aria-hidden` so the link's name isn't announced twice.)
@@ -721,10 +737,12 @@ git commit -m "feat(client): header shows WhatsApp instead of a tel link when ca
 ### Task 6: SiteFooter
 
 **Files:**
+
 - Modify: `client/src/components/layout/SiteFooter.tsx`
 - Test: `client/src/__tests__/contact-footer.test.tsx`
 
 **Interfaces:**
+
 - Consumes: `useShowCallNumbers()` from Task 5.
 
 - [ ] **Step 1: Write the failing test**
@@ -735,7 +753,9 @@ In `client/src/__tests__/contact-footer.test.tsx`, add:
 describe('SiteFooter — call numbers hidden (owner decision 2026-11-27)', () => {
   it('keeps the Smart/Globe numbers when showCallNumbers is true', async () => {
     mockTrpc({
-      'settings.get': settingsWith({ contact: { ...SETTINGS_FIXTURE.contact, showCallNumbers: true } }),
+      'settings.get': settingsWith({
+        contact: { ...SETTINGS_FIXTURE.contact, showCallNumbers: true },
+      }),
     });
     renderWithTrpc(<SiteFooter />);
     expect(await screen.findByText(SITE.contact.phone.display)).toBeInTheDocument();
@@ -784,7 +804,7 @@ import { useShowCallNumbers } from '@/lib/contact-visibility';
 Inside `SiteFooter()`, alongside the other derived values:
 
 ```tsx
-  const showCallNumbers = useShowCallNumbers();
+const showCallNumbers = useShowCallNumbers();
 ```
 
 Replace the "Primary line" `<li>` (currently the Phone-icon + `telLink(SITE.contact.phone.tel)` + "Smart" block, right after the opening `<ul className="mt-6 space-y-2 text-base sm:text-sm">`) and the "Alternate line" `<li>` together. Current code (both `<li>`s, unabridged):
@@ -835,52 +855,47 @@ Replace the "Primary line" `<li>` (currently the Phone-icon + `telLink(SITE.cont
 Replace with:
 
 ```tsx
-            {showCallNumbers && (
-              <li className="flex items-center gap-2">
-                <Phone className="size-4 shrink-0" aria-hidden="true" />
-                <a
-                  href={telLink(SITE.contact.phone.tel)}
-                  className="flex min-h-11 items-center gap-2 hover:underline"
-                >
-                  {SITE.contact.phone.display}
-                  <span className="text-brand-blue-300 text-xs">{SITE.contact.phone.network}</span>
-                </a>
-              </li>
-            )}
-            <li className="flex items-start gap-2">
-              <Phone className="mt-3.5 size-4 shrink-0" aria-hidden="true" />
-              <div>
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-                  {showCallNumbers && (
-                    <a
-                      href={telLink(SITE.contact.altPhone.tel)}
-                      className="flex min-h-11 items-center gap-2 hover:underline"
-                    >
-                      {SITE.contact.altPhone.display}
-                      <span className="text-brand-blue-300 text-xs">
-                        {SITE.contact.altPhone.network}
-                      </span>
-                    </a>
-                  )}
-                  <span className="flex items-center gap-2">
-                    <ChatButton
-                      tone="whatsapp"
-                      href={whatsappLink()}
-                      label="Chat on WhatsApp"
-                      external
-                    >
-                      <WhatsAppGlyph className="size-5" />
-                    </ChatButton>
-                    <ChatButton tone="viber" href={viberLink()} label="Chat on Viber">
-                      <ViberGlyph className="size-5" />
-                    </ChatButton>
-                  </span>
-                </div>
-                <p className="text-brand-blue-300 mt-1 text-xs">
-                  {showCallNumbers ? 'WhatsApp, Viber, calls and SMS' : 'Message us on WhatsApp or Viber'}
-                </p>
-              </div>
-            </li>
+{
+  showCallNumbers && (
+    <li className="flex items-center gap-2">
+      <Phone className="size-4 shrink-0" aria-hidden="true" />
+      <a
+        href={telLink(SITE.contact.phone.tel)}
+        className="flex min-h-11 items-center gap-2 hover:underline"
+      >
+        {SITE.contact.phone.display}
+        <span className="text-brand-blue-300 text-xs">{SITE.contact.phone.network}</span>
+      </a>
+    </li>
+  );
+}
+<li className="flex items-start gap-2">
+  <Phone className="mt-3.5 size-4 shrink-0" aria-hidden="true" />
+  <div>
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+      {showCallNumbers && (
+        <a
+          href={telLink(SITE.contact.altPhone.tel)}
+          className="flex min-h-11 items-center gap-2 hover:underline"
+        >
+          {SITE.contact.altPhone.display}
+          <span className="text-brand-blue-300 text-xs">{SITE.contact.altPhone.network}</span>
+        </a>
+      )}
+      <span className="flex items-center gap-2">
+        <ChatButton tone="whatsapp" href={whatsappLink()} label="Chat on WhatsApp" external>
+          <WhatsAppGlyph className="size-5" />
+        </ChatButton>
+        <ChatButton tone="viber" href={viberLink()} label="Chat on Viber">
+          <ViberGlyph className="size-5" />
+        </ChatButton>
+      </span>
+    </div>
+    <p className="text-brand-blue-300 mt-1 text-xs">
+      {showCallNumbers ? 'WhatsApp, Viber, calls and SMS' : 'Message us on WhatsApp or Viber'}
+    </p>
+  </div>
+</li>;
 ```
 
 (Keeping the alternate `<li>` mounted in both states — only its inner tel `<a>` and caption text change — avoids reflowing the WhatsApp/Viber buttons into a differently-shaped row.)
@@ -907,10 +922,12 @@ git commit -m "feat(client): footer drops Call or text numbers when showCallNumb
 ### Task 7: ContactSection
 
 **Files:**
+
 - Modify: `client/src/components/home/ContactSection.tsx`
 - Test: `client/src/__tests__/contact-footer.test.tsx` (this is where the existing `ContactSection` tests already live, per Task 6's research — confirm, and if `ContactSection` is actually covered in `home.test.tsx` instead, add there)
 
 **Interfaces:**
+
 - Consumes: `useShowCallNumbers()` from Task 5.
 
 - [ ] **Step 1: Write the failing test**
@@ -919,7 +936,9 @@ git commit -m "feat(client): footer drops Call or text numbers when showCallNumb
 describe('ContactSection — call numbers hidden (owner decision 2026-11-27)', () => {
   it('keeps both Call or text rows when showCallNumbers is true', async () => {
     mockTrpc({
-      'settings.get': settingsWith({ contact: { ...SETTINGS_FIXTURE.contact, showCallNumbers: true } }),
+      'settings.get': settingsWith({
+        contact: { ...SETTINGS_FIXTURE.contact, showCallNumbers: true },
+      }),
     });
     renderWithTrpc(<ContactSection />);
     expect(await screen.findByText(/Call or text \(Smart\)/)).toBeInTheDocument();
@@ -959,49 +978,55 @@ import { useShowCallNumbers } from '@/lib/contact-visibility';
 ```
 
 ```tsx
-  const showCallNumbers = useShowCallNumbers();
+const showCallNumbers = useShowCallNumbers();
 ```
 
 Wrap the two "Call or text" `<li>` items (currently the two unconditional `<li>` blocks right after `<ul className="space-y-4">`, each containing a `telLink(...)` anchor) in `{showCallNumbers && (...)}`:
 
 ```tsx
-            {showCallNumbers && (
-              <li>
-                <a
-                  href={telLink(SITE.contact.phone.tel)}
-                  className="bg-background hover:bg-brand-blue-100 flex min-h-11 items-center gap-3 rounded-xl p-4 text-base sm:text-sm"
-                >
-                  <Phone className="text-brand-blue-600 size-5 shrink-0" aria-hidden="true" />
-                  <span>
-                    <span className="text-brand-blue-900 block font-semibold">
-                      Call or text ({SITE.contact.phone.network})
-                    </span>
-                    <span className="text-muted-foreground">{SITE.contact.phone.display}</span>
-                  </span>
-                </a>
-              </li>
-            )}
-            {showCallNumbers && (
-              <li>
-                <a
-                  href={telLink(SITE.contact.altPhone.tel)}
-                  className="bg-background hover:bg-brand-blue-100 flex min-h-11 items-center gap-3 rounded-xl p-4 text-base sm:text-sm"
-                >
-                  <Phone className="text-brand-blue-600 size-5 shrink-0" aria-hidden="true" />
-                  <span>
-                    <span className="text-brand-blue-900 block font-semibold">
-                      Call or text ({SITE.contact.altPhone.network})
-                    </span>
-                    <span className="text-muted-foreground">{SITE.contact.altPhone.display}</span>
-                  </span>
-                </a>
-              </li>
-            )}
-            {!showCallNumbers && (
-              <li className="bg-background flex items-center gap-3 rounded-xl p-4 text-base sm:text-sm">
-                <p className="text-brand-blue-900 font-semibold">Message us on WhatsApp or Viber.</p>
-              </li>
-            )}
+{
+  showCallNumbers && (
+    <li>
+      <a
+        href={telLink(SITE.contact.phone.tel)}
+        className="bg-background hover:bg-brand-blue-100 flex min-h-11 items-center gap-3 rounded-xl p-4 text-base sm:text-sm"
+      >
+        <Phone className="text-brand-blue-600 size-5 shrink-0" aria-hidden="true" />
+        <span>
+          <span className="text-brand-blue-900 block font-semibold">
+            Call or text ({SITE.contact.phone.network})
+          </span>
+          <span className="text-muted-foreground">{SITE.contact.phone.display}</span>
+        </span>
+      </a>
+    </li>
+  );
+}
+{
+  showCallNumbers && (
+    <li>
+      <a
+        href={telLink(SITE.contact.altPhone.tel)}
+        className="bg-background hover:bg-brand-blue-100 flex min-h-11 items-center gap-3 rounded-xl p-4 text-base sm:text-sm"
+      >
+        <Phone className="text-brand-blue-600 size-5 shrink-0" aria-hidden="true" />
+        <span>
+          <span className="text-brand-blue-900 block font-semibold">
+            Call or text ({SITE.contact.altPhone.network})
+          </span>
+          <span className="text-muted-foreground">{SITE.contact.altPhone.display}</span>
+        </span>
+      </a>
+    </li>
+  );
+}
+{
+  !showCallNumbers && (
+    <li className="bg-background flex items-center gap-3 rounded-xl p-4 text-base sm:text-sm">
+      <p className="text-brand-blue-900 font-semibold">Message us on WhatsApp or Viber.</p>
+    </li>
+  );
+}
 ```
 
 (The WhatsApp/Viber/Email/Facebook/Office/Hours `<li>`s below are untouched — leave them exactly as they are.)
@@ -1030,10 +1055,12 @@ git commit -m "feat(client): contact section drops Call or text rows when showCa
 **Found during research, not in the original file list — the task's own "find all" instruction covers it.** `ContactToPay` in `PaymentOptions.tsx` renders "Message us on WhatsApp · {phone number}" on the public checkout/booking-status retry page whenever online payment is unavailable. This is a public call-number surface the original brief didn't name but clearly falls under "no 'call/text us' numbers shown."
 
 **Files:**
+
 - Modify: `client/src/components/checkout/PaymentOptions.tsx:97-130` (`ContactToPay`)
 - Test: `client/src/__tests__/payment-options.test.tsx`
 
 **Interfaces:**
+
 - Consumes: `useShowCallNumbers()` from Task 5.
 
 - [ ] **Step 1: Write the failing test**
@@ -1138,6 +1165,7 @@ git commit -m "feat(client): checkout's direct-payment fallback drops the phone 
 These three files build their JSX at **module scope** (`export const termsContent: LegalPageContent = {...}`), so no hook can run inline inside them. The fix is a small shared component in `client/src/content/legal/shared.tsx` (already the home of `PlaceholderChip`/`ScrollableTable`) that calls the settings query itself and is dropped into all five existing `tel:` spots.
 
 **Files:**
+
 - Modify: `client/src/content/legal/shared.tsx` (add `ContactLine`)
 - Modify: `client/src/content/legal/terms.tsx` (1 spot, line ~197)
 - Modify: `client/src/content/legal/privacy.tsx` (2 spots, lines ~200 and ~237)
@@ -1145,6 +1173,7 @@ These three files build their JSX at **module scope** (`export const termsConten
 - Test: `client/src/__tests__/legal-pages.test.tsx`
 
 **Interfaces:**
+
 - Produces: `ContactLine` — a React component (not a plain function returning JSX at module scope) that renders `<a href="tel:...">` when call numbers are shown, or a WhatsApp + Viber pair joined by " or " when they are not.
 - Consumes: `useShowCallNumbers()` from Task 5, `whatsappLink`/`viberLink`/`SITE` from `@/lib/site`.
 
@@ -1156,7 +1185,9 @@ In `client/src/__tests__/legal-pages.test.tsx`, check how it currently renders `
 describe('legal pages — contact line follows showCallNumbers (owner decision 2026-11-27)', () => {
   it('Terms shows the tel link when true', async () => {
     mockTrpc({
-      'settings.get': settingsWith({ contact: { ...SETTINGS_FIXTURE.contact, showCallNumbers: true } }),
+      'settings.get': settingsWith({
+        contact: { ...SETTINGS_FIXTURE.contact, showCallNumbers: true },
+      }),
     });
     renderLegalPage('/terms'); // match this file's actual render helper name
     expect(await screen.findByText(SITE.contact.phone.display)).toBeInTheDocument();
@@ -1237,24 +1268,28 @@ import { ContactLine, PlaceholderChip, type LegalPageContent } from './shared';
 Then replace each `<a href={`tel:${SITE.contact.phone.tel}`}>{SITE.contact.phone.display}</a>` with `<ContactLine />`:
 
 `terms.tsx` (~line 197):
+
 ```tsx
           <a href={`mailto:${SITE.contact.email}`}>{SITE.contact.email}</a> ·{' '}
           <ContactLine />
 ```
 
 `privacy.tsx` (~line 200, the DPO line):
+
 ```tsx
             <a href={`mailto:${SITE.contact.email}`}>{SITE.contact.email}</a> ·{' '}
             <ContactLine />
 ```
 
 `privacy.tsx` (~line 237, the "9. Contact" footer):
+
 ```tsx
           <a href={`mailto:${SITE.contact.email}`}>{SITE.contact.email}</a> ·{' '}
           <ContactLine />
 ```
 
 `refundPolicy.tsx` (~line 25, "Cancel by contacting us at..."):
+
 ```tsx
             Cancel by contacting us at{' '}
             <a href={`mailto:${SITE.contact.email}`}>{SITE.contact.email}</a> or <ContactLine /> with
@@ -1286,6 +1321,7 @@ git commit -m "feat(client): legal pages show WhatsApp/Viber instead of a phone 
 ### Task 10: FloatingWhatsApp — regression test only, no production code change
 
 **Files:**
+
 - Test: `client/src/__tests__/floating-whatsapp.test.tsx`
 
 **Why no code change:** `FloatingWhatsApp.tsx` (desktop bubble and mobile bottom bar) already has no call/phone button in either state — it only ever renders "Book a transfer"/"Book a tour" plus the WhatsApp control. Confirmed by reading the full file: no `tel:` link, no `SITE.contact.phone` reference anywhere in it. The task brief's "Mobile bar / floating contact: no call button; Book + WhatsApp stay" requirement is already satisfied. Add a test that pins this so a future change can't reintroduce one — and prove the test can actually fail before trusting it.
@@ -1296,16 +1332,19 @@ In `client/src/__tests__/floating-whatsapp.test.tsx`, add:
 
 ```tsx
 describe('FloatingWhatsApp — never shows a call number, in either showCallNumbers state (owner decision 2026-11-27)', () => {
-  it.each([true, false])('renders no tel: link when showCallNumbers is %s', async (showCallNumbers) => {
-    mockTrpc({
-      'settings.get': settingsWith({
-        contact: { ...SETTINGS_FIXTURE.contact, showCallNumbers },
-      }),
-    });
-    renderWithTrpc(<FloatingWhatsApp />); // match this file's actual render helper
-    await screen.findByRole('link', { name: 'Chat with us on WhatsApp' });
-    expect(document.querySelectorAll('a[href^="tel:"]')).toHaveLength(0);
-  });
+  it.each([true, false])(
+    'renders no tel: link when showCallNumbers is %s',
+    async (showCallNumbers) => {
+      mockTrpc({
+        'settings.get': settingsWith({
+          contact: { ...SETTINGS_FIXTURE.contact, showCallNumbers },
+        }),
+      });
+      renderWithTrpc(<FloatingWhatsApp />); // match this file's actual render helper
+      await screen.findByRole('link', { name: 'Chat with us on WhatsApp' });
+      expect(document.querySelectorAll('a[href^="tel:"]')).toHaveLength(0);
+    },
+  );
 });
 ```
 
