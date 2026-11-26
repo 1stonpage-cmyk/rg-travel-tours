@@ -646,3 +646,41 @@ describe('contact details still come from the pinned site.ts-mirrored values', (
     expect(occurrences.length).toBeGreaterThan(0);
   });
 });
+
+describe('SiteFooter — call numbers hidden (owner decision 2026-11-27)', () => {
+  it('keeps the Smart/Globe numbers when showCallNumbers is true', async () => {
+    mockTrpc({
+      'settings.get': settingsWith({ contact: { ...SETTINGS_FIXTURE.contact, showCallNumbers: true } }),
+    });
+    renderWithTrpc(<SiteFooter />);
+    expect(await screen.findByText(SITE.contact.phone.display)).toBeInTheDocument();
+    expect(screen.getByText(SITE.contact.altPhone.display)).toBeInTheDocument();
+    expect(screen.getByText('Smart')).toBeInTheDocument();
+    expect(screen.getByText('Globe')).toBeInTheDocument();
+  });
+
+  it('removes both numbers and the network labels, keeps WhatsApp/Viber/email/Facebook, when false', async () => {
+    mockTrpc({
+      'settings.get': settingsWith({
+        contact: { ...SETTINGS_FIXTURE.contact, showCallNumbers: false },
+      }),
+    });
+    renderWithTrpc(<SiteFooter />);
+    // ChatButton renders unconditionally in both states, so finding it would
+    // prove nothing about whether settings has actually resolved to `false`
+    // yet — wait for the caption text that ONLY renders once it has.
+    await screen.findByText('Message us on WhatsApp or Viber');
+
+    expect(screen.queryByText(SITE.contact.phone.display)).not.toBeInTheDocument();
+    expect(screen.queryByText(SITE.contact.altPhone.display)).not.toBeInTheDocument();
+    expect(screen.queryByText('Smart')).not.toBeInTheDocument();
+    expect(screen.queryByText('Globe')).not.toBeInTheDocument();
+    expect(document.querySelector('a[href^="tel:"]')).toBeNull();
+
+    expect(screen.getByRole('link', { name: 'Chat on WhatsApp' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Chat on Viber' })).toBeInTheDocument();
+    expect(screen.getByText(SITE.contact.email)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Facebook' })).toBeInTheDocument();
+    expect(screen.getByText('Message us on WhatsApp or Viber')).toBeInTheDocument();
+  });
+});

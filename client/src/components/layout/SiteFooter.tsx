@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ViberGlyph, WhatsAppGlyph } from '@/components/common/BrandGlyphs';
 import { useConsent } from '@/lib/consent/useConsent';
+import { useShowCallNumbers } from '@/lib/contact-visibility';
 import {
   BUILT_BY,
   footerTagline,
@@ -87,6 +88,9 @@ export default function SiteFooter() {
    */
   const { reopen: reopenCookieSettings } = useConsent();
   const { data: settings } = trpc.settings.get.useQuery();
+  // Owner decision 2026-11-27 ("hide call numbers"): the owner works at sea
+  // and cannot take calls/SMS. See @/lib/contact-visibility for the default.
+  const showCallNumbers = useShowCallNumbers();
   const permits = settings?.permits ?? [];
   // `show_tours` gate (transfers-launch plan, Task T16) — see `visibleNav`'s
   // own comment. Hidden by default before this resolves, same as SiteHeader.
@@ -130,16 +134,18 @@ export default function SiteFooter() {
                 follow-up — no "Calls only" caption here, this line's own
                 label elsewhere on the page ("Call or text (Smart)",
                 ContactSection.tsx) is untouched and is not repeated here). */}
-            <li className="flex items-center gap-2">
-              <Phone className="size-4 shrink-0" aria-hidden="true" />
-              <a
-                href={telLink(SITE.contact.phone.tel)}
-                className="flex min-h-11 items-center gap-2 hover:underline"
-              >
-                {SITE.contact.phone.display}
-                <span className="text-brand-blue-300 text-xs">{SITE.contact.phone.network}</span>
-              </a>
-            </li>
+            {showCallNumbers && (
+              <li className="flex items-center gap-2">
+                <Phone className="size-4 shrink-0" aria-hidden="true" />
+                <a
+                  href={telLink(SITE.contact.phone.tel)}
+                  className="flex min-h-11 items-center gap-2 hover:underline"
+                >
+                  {SITE.contact.phone.display}
+                  <span className="text-brand-blue-300 text-xs">{SITE.contact.phone.network}</span>
+                </a>
+              </li>
+            )}
             {/* Alternate line: WhatsApp, Viber, calls and SMS all land here now.
                 The apps are named as text rather than as extra links so the
                 footer keeps one unambiguous "call this number" target. */}
@@ -147,15 +153,17 @@ export default function SiteFooter() {
               <Phone className="mt-3.5 size-4 shrink-0" aria-hidden="true" />
               <div>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-                  <a
-                    href={telLink(SITE.contact.altPhone.tel)}
-                    className="flex min-h-11 items-center gap-2 hover:underline"
-                  >
-                    {SITE.contact.altPhone.display}
-                    <span className="text-brand-blue-300 text-xs">
-                      {SITE.contact.altPhone.network}
-                    </span>
-                  </a>
+                  {showCallNumbers && (
+                    <a
+                      href={telLink(SITE.contact.altPhone.tel)}
+                      className="flex min-h-11 items-center gap-2 hover:underline"
+                    >
+                      {SITE.contact.altPhone.display}
+                      <span className="text-brand-blue-300 text-xs">
+                        {SITE.contact.altPhone.network}
+                      </span>
+                    </a>
+                  )}
                   <span className="flex items-center gap-2">
                     <ChatButton
                       tone="whatsapp"
@@ -170,7 +178,11 @@ export default function SiteFooter() {
                     </ChatButton>
                   </span>
                 </div>
-                <p className="text-brand-blue-300 mt-1 text-xs">WhatsApp, Viber, calls and SMS</p>
+                <p className="text-brand-blue-300 mt-1 text-xs">
+                  {showCallNumbers
+                    ? 'WhatsApp, Viber, calls and SMS'
+                    : 'Message us on WhatsApp or Viber'}
+                </p>
               </div>
             </li>
             <li className="flex items-center gap-2">
