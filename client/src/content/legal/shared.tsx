@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react';
+import { useShowCallNumbers } from '@/lib/contact-visibility';
+import { SITE, viberLink, whatsappLink } from '@/lib/site';
 
 /**
  * Every [PLACEHOLDER] in the owner-approved drafts (C:\dev\project-notes\RGTravelTours\legal\)
@@ -17,6 +19,30 @@ export function PlaceholderChip({ context }: { context: string }) {
       {context ? <span className="sr-only">{context}: </span> : null}
       To be confirmed
     </span>
+  );
+}
+
+/**
+ * The phone contact for a legal page's "Contact us" line (owner decision
+ * 2026-11-27). `terms.tsx`/`privacy.tsx`/`refundPolicy.tsx` build their
+ * content as plain objects at MODULE scope, so none of them can call a hook
+ * directly — this is a real component instead, dropped into each spot as
+ * `<ContactLine />`, so the hook runs at actual render time inside whatever
+ * tree eventually mounts it.
+ */
+export function ContactLine() {
+  const showCallNumbers = useShowCallNumbers();
+  if (showCallNumbers) {
+    return <a href={`tel:${SITE.contact.phone.tel}`}>{SITE.contact.phone.display}</a>;
+  }
+  return (
+    <>
+      <a href={whatsappLink()} target="_blank" rel="noreferrer noopener">
+        WhatsApp
+      </a>
+      {' or '}
+      <a href={viberLink()}>Viber</a>
+    </>
   );
 }
 

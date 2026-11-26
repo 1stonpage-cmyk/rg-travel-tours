@@ -1,9 +1,10 @@
 import { render, screen, within } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import SiteFooter from '@/components/layout/SiteFooter';
 import { ConsentProvider } from '@/lib/consent/ConsentContext';
+import { SITE } from '@/lib/site';
 import { TrpcProviders } from '@/lib/trpc';
 import CookiesPage from '@/pages/public/CookiesPage';
 import PhotoCreditsPage from '@/pages/public/PhotoCreditsPage';
@@ -16,19 +17,15 @@ import { mockTrpc } from './helpers/mock-trpc';
 /**
  * Task 2B (2026-10-27) replaced the settings-driven `/privacy` and `/terms` (Task 3.6) with
  * static content, matching the two new pages (`/refund-policy`, `/cookies`) — see
- * docs/superpowers/plans/2026-10-27-legal-pages.md. These four pages need no tRPC provider any
- * more (no `settings.get` call); `CookiesPage` is the one exception — its "Cookie settings" link
- * reads `useConsent()`, so every render here goes through `ConsentProvider` regardless.
+ * docs/superpowers/plans/2026-10-27-legal-pages.md.
+ *
+ * Owner decision 2026-11-27 ("hide call numbers") reintroduced a `settings.get` dependency:
+ * `ContactLine` (client/src/content/legal/shared.tsx) calls `useShowCallNumbers()`, dropped into
+ * all five of these pages' `tel:` spots, so every render below now needs `TrpcProviders` —
+ * `beforeEach` seeds the happy-path default (numbers shown) so the pre-existing tests in this
+ * file, which never cared about this query, keep passing unmodified.
  */
 function renderPage(node: ReactNode) {
-  return render(
-    <MemoryRouter>
-      <ConsentProvider>{node}</ConsentProvider>
-    </MemoryRouter>,
-  );
-}
-
-function renderFooter(node: ReactNode) {
   return render(
     <TrpcProviders>
       <MemoryRouter>
@@ -37,6 +34,10 @@ function renderFooter(node: ReactNode) {
     </TrpcProviders>,
   );
 }
+
+beforeEach(() => {
+  mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
+});
 
 describe('PrivacyPage', () => {
   it('renders the real section content, not the old settings-driven markdown', () => {
@@ -167,7 +168,7 @@ describe('CookiesPage', () => {
 describe('SiteFooter — legal links', () => {
   it('links to all four legal pages and a working Cookie settings button, beside the copyright', async () => {
     mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
-    renderFooter(<SiteFooter />);
+    renderPage(<SiteFooter />);
 
     const legalNav = screen.getByRole('navigation', { name: 'Legal' });
     expect(within(legalNav).getByRole('link', { name: 'Privacy Policy' })).toHaveAttribute(
@@ -195,7 +196,7 @@ describe('SiteFooter — legal links', () => {
 
   it('links to /photo-credits beside the other legal links (Task 1D)', () => {
     mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
-    renderFooter(<SiteFooter />);
+    renderPage(<SiteFooter />);
 
     const legalNav = screen.getByRole('navigation', { name: 'Legal' });
     expect(within(legalNav).getByRole('link', { name: 'Photo Credits' })).toHaveAttribute(
@@ -225,5 +226,37 @@ describe('PhotoCreditsPage', () => {
     renderPage(<PhotoCreditsPage />);
     const h1s = screen.getAllByRole('heading', { level: 1 });
     expect(h1s).toHaveLength(1);
+  });
+});
+
+describe('legal pages — contact line follows showCallNumbers (owner decision 2026-11-27)', () => {
+  it('Terms shows the tel link when true', async () => {
+    mockTrpc({
+      'settings.get': {
+        ...SETTINGS_FIXTURE,
+        contact: { ...SETTINGS_FIXTURE.contact, showCallNumbers: true },
+      },
+    });
+    renderPage(<TermsPage />);
+    expect(await screen.findByText(SITE.contact.phone.display)).toBeInTheDocument();
+  });
+
+  it('Terms, Privacy and Refund Policy all drop the tel link and show WhatsApp/Viber when false', async () => {
+    mockTrpc({
+      'settings.get': {
+        ...SETTINGS_FIXTURE,
+        contact: { ...SETTINGS_FIXTURE.contact, showCallNumbers: false },
+      },
+    });
+    for (const Page of [TermsPage, PrivacyPage, RefundPolicyPage]) {
+      const { unmount } = renderPage(<Page />);
+      // Privacy has two ContactLine spots (DPO + footer), so there can be
+      // more than one WhatsApp/Viber link on the page — assert presence,
+      // not uniqueness.
+      expect((await screen.findAllByText('WhatsApp')).length).toBeGreaterThan(0);
+      expect(document.querySelector('a[href^="tel:"]')).toBeNull();
+      expect(screen.getAllByText('Viber').length).toBeGreaterThan(0);
+      unmount();
+    }
   });
 });

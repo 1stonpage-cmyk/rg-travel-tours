@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { SITE } from '@/lib/site';
-import { PlaceholderChip, type LegalPageContent } from './shared';
+import { ContactLine, PlaceholderChip, type LegalPageContent } from './shared';
 
 /**
  * Transcribed by hand from C:\dev\project-notes\RGTravelTours\legal\02-terms-of-service.md
@@ -194,7 +194,7 @@ export const termsContent: LegalPageContent = {
           <PlaceholderChip context="registered business name" /> (R&amp;G Travel &amp; Tours) ·{' '}
           <PlaceholderChip context="business address" /> ·{' '}
           <a href={`mailto:${SITE.contact.email}`}>{SITE.contact.email}</a> ·{' '}
-          <a href={`tel:${SITE.contact.phone.tel}`}>{SITE.contact.phone.display}</a>
+          <ContactLine />
         </p>
       ),
     },

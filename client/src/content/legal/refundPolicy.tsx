@@ -1,5 +1,5 @@
 import { SITE } from '@/lib/site';
-import { PlaceholderChip, ScrollableTable, type LegalPageContent } from './shared';
+import { ContactLine, PlaceholderChip, ScrollableTable, type LegalPageContent } from './shared';
 
 /**
  * Transcribed by hand from C:\dev\project-notes\RGTravelTours\legal\03-refund-policy.md
@@ -21,10 +21,9 @@ export const refundPolicyContent: LegalPageContent = {
         <>
           <p>
             Cancel by contacting us at{' '}
-            <a href={`mailto:${SITE.contact.email}`}>{SITE.contact.email}</a> or{' '}
-            <a href={`tel:${SITE.contact.phone.tel}`}>{SITE.contact.phone.display}</a> with your
-            booking reference. Cancellation time is counted from your tour's pickup time (Philippine
-            time).
+            <a href={`mailto:${SITE.contact.email}`}>{SITE.contact.email}</a> or <ContactLine /> with
+            your booking reference. Cancellation time is counted from your tour's pickup time
+            (Philippine time).
           </p>
           <ScrollableTable>
             <thead>
@@ -147,9 +146,8 @@ export const refundPolicyContent: LegalPageContent = {
       body: (
         <p>
           Contact us at <a href={`mailto:${SITE.contact.email}`}>{SITE.contact.email}</a> or{' '}
-          <a href={`tel:${SITE.contact.phone.tel}`}>{SITE.contact.phone.display}</a> with your
-          booking reference. If you are not satisfied, you may also approach the Department of Trade
-          and Industry (DTI).
+          <ContactLine /> with your booking reference. If you are not satisfied, you may also
+          approach the Department of Trade and Industry (DTI).
         </p>
       ),
     },
