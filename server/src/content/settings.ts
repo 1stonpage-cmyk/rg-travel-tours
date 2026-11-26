@@ -396,7 +396,7 @@ export interface SettingsPayload {
   howItWorks: SettingsBlocks['how_it_works'];
   whyBookDirect: SettingsBlocks['why_book_direct'];
   faqs: SettingsBlocks['faqs'];
-  contact: SettingsBlocks['contact'];
+  contact: PublicContact;
   /**
    * The bookable date window, **already resolved** against the Manila clock
    * — two civil dates, inclusive. The raw `booking` block (`minLeadDays`,
@@ -518,6 +518,30 @@ export function resolvePermits(block: SettingsBlocks['permits']): ResolvedAccred
 }
 
 /**
+ * The public `contact` block (owner decision 2026-11-27, "hide call
+ * numbers"). The four call/SMS fields are OPTIONAL here, not nullable —
+ * when `showCallNumbers` is false they are omitted from the object
+ * entirely ("must NOT send them to the browser at all"), not sent as
+ * `null`. `whatsapp`/`email`/`facebook`/`address`/`hoursNote`/`tagline`/
+ * `motto`/`otherServices` always pass through unchanged: WhatsApp/Viber
+ * deep links necessarily carry a number, and that is accepted (see this
+ * plan's header).
+ */
+export type PublicContact = Omit<
+  SettingsBlocks['contact'],
+  'phoneDisplay' | 'phoneTel' | 'altPhoneDisplay' | 'altPhoneTel'
+> &
+  Partial<
+    Pick<SettingsBlocks['contact'], 'phoneDisplay' | 'phoneTel' | 'altPhoneDisplay' | 'altPhoneTel'>
+  >;
+
+export function resolveContact(contact: SettingsBlocks['contact']): PublicContact {
+  if (contact.showCallNumbers) return contact;
+  const { phoneDisplay, phoneTel, altPhoneDisplay, altPhoneTel, ...rest } = contact;
+  return rest;
+}
+
+/**
  * Pure — takes already-parsed blocks plus the instant to resolve schedules
  * against, so it's testable with no DB and no real clock.
  *
@@ -549,7 +573,7 @@ export function toSettingsPayload(
     howItWorks: blocks.how_it_works,
     whyBookDirect: blocks.why_book_direct,
     faqs: blocks.faqs,
-    contact: blocks.contact,
+    contact: resolveContact(blocks.contact),
     // Resolved here, beside `openState` and the announcement window, and for
     // the same reason: Manila-clock logic belongs on the server.
     bookingWindow: bookableDateRange(blocks.booking, now),

@@ -449,6 +449,53 @@ describe('contact.showCallNumbers (owner decision 2026-11-27)', () => {
   });
 });
 
+describe('toSettingsPayload — contact.showCallNumbers (owner decision 2026-11-27)', () => {
+  const baseContact = {
+    address: 'Cebu City',
+    tagline: 'Your Cebu guides',
+    hoursNote: 'Daily',
+    email: 'hello@example.test',
+    phoneDisplay: '0917 000 0000',
+    phoneTel: '639170000000',
+    // Deliberately a DIFFERENT number from phoneTel/altPhoneTel: whatsapp is
+    // always kept (WhatsApp/Viber deep links necessarily carry a number — see
+    // the "hide call numbers" plan header), so the fixture must not reuse a
+    // stripped number here or the "no raw dialable digits leak" assertion
+    // below would be unsatisfiable by construction regardless of correctness.
+    whatsapp: '639179998888',
+    altPhoneDisplay: '0917 111 1111',
+    altPhoneTel: '639171111111',
+    facebook: 'travelsugbo',
+    motto: 'Explore Cebu',
+    otherServices: { before: 'We also offer', link: 'transfers', after: 'on request.' },
+  };
+
+  it('sends every phone field when showCallNumbers is true', () => {
+    const blocks = blocksFixture({ contact: { ...baseContact, showCallNumbers: true } });
+    const payload = toSettingsPayload(blocks, NOW, true, true);
+    expect(payload.contact.phoneDisplay).toBe('0917 000 0000');
+    expect(payload.contact.phoneTel).toBe('639170000000');
+    expect(payload.contact.altPhoneDisplay).toBe('0917 111 1111');
+    expect(payload.contact.altPhoneTel).toBe('639171111111');
+    expect(payload.contact.whatsapp).toBe('639179998888');
+  });
+
+  it('strips all four phone fields when showCallNumbers is false, keeping whatsapp', () => {
+    const blocks = blocksFixture({ contact: { ...baseContact, showCallNumbers: false } });
+    const payload = toSettingsPayload(blocks, NOW, true, true);
+    const serialized = JSON.stringify(payload.contact);
+    expect(serialized).not.toContain('0917 000 0000');
+    expect(serialized).not.toContain('639170000000'); // phoneTel's raw digits gone
+    expect(serialized).not.toContain('639171111111'); // altPhoneTel's raw digits gone
+    expect('phoneDisplay' in payload.contact).toBe(false);
+    expect('phoneTel' in payload.contact).toBe(false);
+    expect('altPhoneDisplay' in payload.contact).toBe(false);
+    expect('altPhoneTel' in payload.contact).toBe(false);
+    expect(payload.contact.whatsapp).toBe('639179998888');
+    expect(payload.contact.showCallNumbers).toBe(false);
+  });
+});
+
 /* =======================================================================
  * `transfer_operations` fallback (pre-task 0A). This block is the lone,
  * explicitly-requested exception to the fail-loud contract tested above: a
