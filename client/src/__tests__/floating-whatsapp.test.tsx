@@ -177,3 +177,50 @@ describe('FloatingWhatsApp observes both hero forms', () => {
     expect(whatsappLinks().length).toBeGreaterThan(0);
   });
 });
+
+/**
+ * Owner decision 2026-11-27 ("hide call numbers") — the owner works at sea
+ * and cannot take calls/SMS. `FloatingWhatsApp` (desktop bubble and mobile
+ * bottom bar) already carries no call/phone surface in either state; this
+ * pins that so a future change can't reintroduce one.
+ */
+describe('FloatingWhatsApp — never shows a call number, in either showCallNumbers state (owner decision 2026-11-27)', () => {
+  afterEach(() => {
+    localStorage.clear();
+  });
+
+  it.each([true, false])(
+    'renders no tel: link when showCallNumbers is %s',
+    async (showCallNumbers) => {
+      mockTrpc({
+        'settings.get': {
+          ...SETTINGS_FIXTURE,
+          contact: { ...SETTINGS_FIXTURE.contact, showCallNumbers },
+        },
+      });
+      // Seed an already-decided consent choice — otherwise the undecided
+      // cookie banner hides this component entirely (see
+      // FloatingWhatsApp.tsx's `consentOpen` gate), and the control this test
+      // is checking would never render at all.
+      localStorage.setItem(
+        CONSENT_STORAGE_KEY,
+        JSON.stringify({ v: 1, analytics: false, marketing: false, at: new Date().toISOString() }),
+      );
+      render(
+        <TrpcProviders>
+          <ConsentProvider>
+            <MemoryRouter>
+              <FloatingWhatsApp />
+            </MemoryRouter>
+          </ConsentProvider>
+        </TrpcProviders>,
+      );
+      // Both the desktop bubble and the mobile bottom bar mount in jsdom (CSS,
+      // not conditional rendering, picks one per breakpoint) — see
+      // layout.test.tsx's identical note — so this finds at least one, not
+      // exactly one.
+      await screen.findAllByRole('link', { name: 'Chat with us on WhatsApp' });
+      expect(document.querySelectorAll('a[href^="tel:"]')).toHaveLength(0);
+    },
+  );
+});
