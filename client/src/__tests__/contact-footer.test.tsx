@@ -648,7 +648,7 @@ describe('contact details still come from the pinned site.ts-mirrored values', (
 });
 
 describe('ContactSection — call numbers hidden (owner decision 2026-11-27)', () => {
-  it('keeps both Call or text rows when showCallNumbers is true', async () => {
+  it('keeps both Call or text rows, and shows the real number on the WhatsApp/Viber rows, when showCallNumbers is true', async () => {
     mockTrpc({
       'settings.get': settingsWith({
         contact: { ...SETTINGS_FIXTURE.contact, showCallNumbers: true },
@@ -657,21 +657,50 @@ describe('ContactSection — call numbers hidden (owner decision 2026-11-27)', (
     renderWithTrpc(<ContactSection />);
     expect(await screen.findByText(/Call or text \(Smart\)/)).toBeInTheDocument();
     expect(screen.getByText(/Call or text \(Globe\)/)).toBeInTheDocument();
+    // Task 1A: ON means exactly as before — the WhatsApp/Viber rows still
+    // show the real number under their heading, alongside the existing
+    // "Call or text (Globe)" row that already shared this same number.
+    expect(screen.getAllByText(SITE.contact.altPhone.display)).toHaveLength(3);
   });
 
-  it('removes both Call or text rows and adds the WhatsApp/Viber line when false', async () => {
+  /**
+   * Task 1A: the WhatsApp/Viber rows used to print the number as visible
+   * text (`SITE.contact.altPhone.display`) unconditionally, so switching
+   * showCallNumbers off hid the "Call or text" rows but left "0927 737
+   * 8431" sitting directly under "WhatsApp" and "Viber" anyway. This pins
+   * the fix: no digits anywhere on the rendered section, and each row's
+   * number line becomes "Chat with us on WhatsApp"/"Chat with us on
+   * Viber" instead — proven able to fail by reverting the two ternaries in
+   * ContactSection.tsx back to a bare `SITE.contact.altPhone.display`.
+   */
+  it('removes both Call or text rows and all visible digits, replacing the WhatsApp/Viber number line, when false', async () => {
     mockTrpc({
       'settings.get': settingsWith({
         contact: { ...SETTINGS_FIXTURE.contact, showCallNumbers: false },
       }),
     });
-    renderWithTrpc(<ContactSection />);
+    const { container } = renderWithTrpc(<ContactSection />);
     await screen.findByText('Message us on WhatsApp or Viber.');
 
     expect(screen.queryByText(/Call or text/)).not.toBeInTheDocument();
     expect(document.querySelector('a[href^="tel:"]')).toBeNull();
     expect(screen.getByText('WhatsApp')).toBeInTheDocument();
     expect(screen.getByText('Viber')).toBeInTheDocument();
+    expect(screen.getByText('Chat with us on WhatsApp')).toBeInTheDocument();
+    expect(screen.getByText('Chat with us on Viber')).toBeInTheDocument();
+    // No visible phone digits anywhere in the rendered section — neither
+    // the primary (0908) nor the alt/WhatsApp-Viber (0927) number.
+    expect(container.textContent).not.toMatch(/0927/);
+    expect(container.textContent).not.toMatch(/0908/);
+    // The links themselves are untouched — same wa.me / viber:// targets.
+    expect(screen.getByText('WhatsApp').closest('a')).toHaveAttribute(
+      'href',
+      expect.stringContaining('wa.me'),
+    );
+    expect(screen.getByText('Viber').closest('a')).toHaveAttribute(
+      'href',
+      expect.stringContaining('viber://'),
+    );
     // "Email" alone is ambiguous here — the contact form below has its own
     // <Label>Email</Label> field — so assert the mailto link directly.
     expect(document.querySelector('a[href^="mailto:"]')).not.toBeNull();

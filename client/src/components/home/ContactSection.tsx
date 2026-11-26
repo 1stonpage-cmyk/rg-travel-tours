@@ -278,7 +278,9 @@ export default function ContactSection() {
                 </ChatIcon>
                 <span>
                   <span className="text-brand-blue-900 block font-semibold">WhatsApp</span>
-                  <span className="text-muted-foreground">{SITE.contact.altPhone.display}</span>
+                  <span className="text-muted-foreground">
+                    {showCallNumbers ? SITE.contact.altPhone.display : 'Chat with us on WhatsApp'}
+                  </span>
                 </span>
               </a>
             </li>
@@ -292,7 +294,9 @@ export default function ContactSection() {
                 </ChatIcon>
                 <span>
                   <span className="text-brand-blue-900 block font-semibold">Viber</span>
-                  <span className="text-muted-foreground">{SITE.contact.altPhone.display}</span>
+                  <span className="text-muted-foreground">
+                    {showCallNumbers ? SITE.contact.altPhone.display : 'Chat with us on Viber'}
+                  </span>
                 </span>
               </a>
             </li>
