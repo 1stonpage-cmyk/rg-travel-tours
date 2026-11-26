@@ -8,6 +8,7 @@ import TurnstileWidget from '@/components/common/TurnstileWidget';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { useShowCallNumbers } from '@/lib/contact-visibility';
 import { getFieldErrors, getFormErrors } from '@/lib/field-errors';
 import { describeMutationError } from '@/lib/mutation-errors';
 import { SITE, telLink, viberLink, whatsappLink } from '@/lib/site';
@@ -181,6 +182,9 @@ export default function ContactSection() {
    */
   const { data: settings } = trpc.settings.get.useQuery();
   const openState = settings?.openState ?? null;
+  // Owner decision 2026-11-27 ("hide call numbers"): the owner works at sea
+  // and cannot take calls/SMS. See @/lib/contact-visibility for the default.
+  const showCallNumbers = useShowCallNumbers();
   /**
    * The displayed hours come from `settings.contact.hoursNote`, not from
    * `SITE.contact.hours` and not from a hardcoded "7 AM–9 PM" subtitle.
@@ -223,34 +227,43 @@ export default function ContactSection() {
 
         <div className="mt-10 grid gap-8 lg:grid-cols-2">
           <ul className="space-y-4">
-            <li>
-              <a
-                href={telLink(SITE.contact.phone.tel)}
-                className="bg-background hover:bg-brand-blue-100 flex min-h-11 items-center gap-3 rounded-xl p-4 text-base sm:text-sm"
-              >
-                <Phone className="text-brand-blue-600 size-5 shrink-0" aria-hidden="true" />
-                <span>
-                  <span className="text-brand-blue-900 block font-semibold">
-                    Call or text ({SITE.contact.phone.network})
+            {showCallNumbers && (
+              <li>
+                <a
+                  href={telLink(SITE.contact.phone.tel)}
+                  className="bg-background hover:bg-brand-blue-100 flex min-h-11 items-center gap-3 rounded-xl p-4 text-base sm:text-sm"
+                >
+                  <Phone className="text-brand-blue-600 size-5 shrink-0" aria-hidden="true" />
+                  <span>
+                    <span className="text-brand-blue-900 block font-semibold">
+                      Call or text ({SITE.contact.phone.network})
+                    </span>
+                    <span className="text-muted-foreground">{SITE.contact.phone.display}</span>
                   </span>
-                  <span className="text-muted-foreground">{SITE.contact.phone.display}</span>
-                </span>
-              </a>
-            </li>
-            <li>
-              <a
-                href={telLink(SITE.contact.altPhone.tel)}
-                className="bg-background hover:bg-brand-blue-100 flex min-h-11 items-center gap-3 rounded-xl p-4 text-base sm:text-sm"
-              >
-                <Phone className="text-brand-blue-600 size-5 shrink-0" aria-hidden="true" />
-                <span>
-                  <span className="text-brand-blue-900 block font-semibold">
-                    Call or text ({SITE.contact.altPhone.network})
+                </a>
+              </li>
+            )}
+            {showCallNumbers && (
+              <li>
+                <a
+                  href={telLink(SITE.contact.altPhone.tel)}
+                  className="bg-background hover:bg-brand-blue-100 flex min-h-11 items-center gap-3 rounded-xl p-4 text-base sm:text-sm"
+                >
+                  <Phone className="text-brand-blue-600 size-5 shrink-0" aria-hidden="true" />
+                  <span>
+                    <span className="text-brand-blue-900 block font-semibold">
+                      Call or text ({SITE.contact.altPhone.network})
+                    </span>
+                    <span className="text-muted-foreground">{SITE.contact.altPhone.display}</span>
                   </span>
-                  <span className="text-muted-foreground">{SITE.contact.altPhone.display}</span>
-                </span>
-              </a>
-            </li>
+                </a>
+              </li>
+            )}
+            {!showCallNumbers && (
+              <li className="bg-background flex items-center gap-3 rounded-xl p-4 text-base sm:text-sm">
+                <p className="text-brand-blue-900 font-semibold">Message us on WhatsApp or Viber.</p>
+              </li>
+            )}
             <li>
               <a
                 href={whatsappLink()}

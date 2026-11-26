@@ -647,6 +647,36 @@ describe('contact details still come from the pinned site.ts-mirrored values', (
   });
 });
 
+describe('ContactSection — call numbers hidden (owner decision 2026-11-27)', () => {
+  it('keeps both Call or text rows when showCallNumbers is true', async () => {
+    mockTrpc({
+      'settings.get': settingsWith({ contact: { ...SETTINGS_FIXTURE.contact, showCallNumbers: true } }),
+    });
+    renderWithTrpc(<ContactSection />);
+    expect(await screen.findByText(/Call or text \(Smart\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Call or text \(Globe\)/)).toBeInTheDocument();
+  });
+
+  it('removes both Call or text rows and adds the WhatsApp/Viber line when false', async () => {
+    mockTrpc({
+      'settings.get': settingsWith({
+        contact: { ...SETTINGS_FIXTURE.contact, showCallNumbers: false },
+      }),
+    });
+    renderWithTrpc(<ContactSection />);
+    await screen.findByText('Message us on WhatsApp or Viber.');
+
+    expect(screen.queryByText(/Call or text/)).not.toBeInTheDocument();
+    expect(document.querySelector('a[href^="tel:"]')).toBeNull();
+    expect(screen.getByText('WhatsApp')).toBeInTheDocument();
+    expect(screen.getByText('Viber')).toBeInTheDocument();
+    // "Email" alone is ambiguous here — the contact form below has its own
+    // <Label>Email</Label> field — so assert the mailto link directly.
+    expect(document.querySelector('a[href^="mailto:"]')).not.toBeNull();
+    expect(screen.getByText('Facebook')).toBeInTheDocument();
+  });
+});
+
 describe('SiteFooter — call numbers hidden (owner decision 2026-11-27)', () => {
   it('keeps the Smart/Globe numbers when showCallNumbers is true', async () => {
     mockTrpc({
