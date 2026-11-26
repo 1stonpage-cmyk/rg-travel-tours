@@ -537,8 +537,23 @@ export type PublicContact = Omit<
 
 export function resolveContact(contact: SettingsBlocks['contact']): PublicContact {
   if (contact.showCallNumbers) return contact;
-  const { phoneDisplay, phoneTel, altPhoneDisplay, altPhoneTel, ...rest } = contact;
-  return rest;
+  // Explicit allow-list rather than rest-omit destructuring: destructuring the
+  // four excluded names just to discard them trips
+  // @typescript-eslint/no-unused-vars (no ignoreRestSiblings override exists in
+  // this project's eslint.config.js, and none should be added for this one
+  // function) — so this never binds phoneDisplay/phoneTel/altPhoneDisplay/
+  // altPhoneTel at all.
+  return {
+    address: contact.address,
+    tagline: contact.tagline,
+    hoursNote: contact.hoursNote,
+    email: contact.email,
+    whatsapp: contact.whatsapp,
+    facebook: contact.facebook,
+    motto: contact.motto,
+    otherServices: contact.otherServices,
+    showCallNumbers: contact.showCallNumbers,
+  };
 }
 
 /**
