@@ -14,6 +14,7 @@ import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 import PaymentOptions from '@/components/checkout/PaymentOptions';
+import { SITE } from '@/lib/site';
 import { TrpcProviders } from '@/lib/trpc';
 import { SETTINGS_FIXTURE } from './helpers/fixtures';
 import { mockTrpc } from './helpers/mock-trpc';
@@ -71,5 +72,46 @@ describe('PaymentOptions — manual-transfer link target (Bug 1B)', () => {
 
     const link = await screen.findByRole('link', { name: /gcash, maya or bank transfer/i });
     expect(link).toHaveAttribute('href', `/portal/login?ref=${REF}&next=/portal/pay`);
+  });
+});
+
+/**
+ * State 3 (`ContactToPay`, neither online nor manual transfer configured):
+ * the "We'll take your payment directly" fallback. Owner decision
+ * 2026-11-27 ("hide call numbers") — the owner works at sea and cannot take
+ * calls/SMS.
+ */
+describe('ContactToPay — call number hidden (owner decision 2026-11-27)', () => {
+  it('keeps the phone number when showCallNumbers is true', async () => {
+    mockTrpc({
+      'settings.get': {
+        ...SETTINGS_FIXTURE,
+        onlinePaymentEnabled: false,
+        manualTransferEnabled: false,
+        contact: { ...SETTINGS_FIXTURE.contact, showCallNumbers: true },
+      },
+    });
+    renderPaymentOptions();
+    expect(await screen.findByText(SITE.contact.phone.display)).toBeInTheDocument();
+  });
+
+  it('removes the phone number and keeps the WhatsApp link when false', async () => {
+    mockTrpc({
+      'settings.get': {
+        ...SETTINGS_FIXTURE,
+        onlinePaymentEnabled: false,
+        manualTransferEnabled: false,
+        contact: { ...SETTINGS_FIXTURE.contact, showCallNumbers: false },
+      },
+    });
+    renderPaymentOptions();
+    // `ContactToPay` only mounts once `settingsQuery.isPending` is false, so
+    // waiting for its own heading (rather than "Message us on WhatsApp",
+    // which renders unconditionally in both states) is what actually proves
+    // settings has resolved before the assertions below run.
+    await screen.findByText("We'll take your payment directly");
+    expect(screen.queryByText(SITE.contact.phone.display)).not.toBeInTheDocument();
+    expect(document.querySelector('a[href^="tel:"]')).toBeNull();
+    expect(screen.getByText('Message us on WhatsApp')).toBeInTheDocument();
   });
 });

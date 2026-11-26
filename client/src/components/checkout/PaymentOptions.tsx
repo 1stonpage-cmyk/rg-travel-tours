@@ -3,6 +3,7 @@ import PayNowButton from '@/components/checkout/PayNowButton';
 import { Skeleton } from '@/components/common/Skeleton';
 import { Button } from '@/components/ui/button';
 import { trackEvent } from '@/lib/consent/scripts';
+import { useShowCallNumbers } from '@/lib/contact-visibility';
 import { SITE, telLink, whatsappLink } from '@/lib/site';
 import { trpc } from '@/lib/trpc';
 
@@ -96,6 +97,9 @@ function trackManualPaymentStarted(bookingRef: string): void {
 /** State 3's fallback: the site's real contact details, never new copy of its own. */
 function ContactToPay({ bookingRef }: { bookingRef: string }) {
   const message = `Hi ${SITE.name}! I'd like to pay for booking ${bookingRef}.`;
+  // Owner decision 2026-11-27 ("hide call numbers"): the owner works at sea
+  // and cannot take calls/SMS. See @/lib/contact-visibility for the default.
+  const showCallNumbers = useShowCallNumbers();
   return (
     <div
       role="status"
@@ -115,15 +119,19 @@ function ContactToPay({ bookingRef }: { bookingRef: string }) {
         >
           Message us on WhatsApp
         </a>
-        <span className="px-2" aria-hidden="true">
-          ·
-        </span>
-        <a
-          href={telLink(SITE.contact.phone.tel)}
-          className="text-brand-blue-700 hover:text-brand-blue-900 tap-target inline-flex items-center font-semibold underline underline-offset-2"
-        >
-          {SITE.contact.phone.display}
-        </a>
+        {showCallNumbers && (
+          <>
+            <span className="px-2" aria-hidden="true">
+              ·
+            </span>
+            <a
+              href={telLink(SITE.contact.phone.tel)}
+              className="text-brand-blue-700 hover:text-brand-blue-900 tap-target inline-flex items-center font-semibold underline underline-offset-2"
+            >
+              {SITE.contact.phone.display}
+            </a>
+          </>
+        )}
       </p>
     </div>
   );
