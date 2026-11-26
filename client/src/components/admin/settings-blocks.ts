@@ -29,6 +29,8 @@ export type FieldKind =
   | 'textarea'
   | 'number'
   | 'select'
+  /** A boolean, drawn as the same labeled toggle used elsewhere on this screen — not a <select>. */
+  | 'switch'
   | 'time'
   /** A UTC ISO instant, typed and shown as Asia/Manila wall clock. */
   | 'manilaDatetime'
@@ -55,6 +57,16 @@ export interface FieldSpec {
   options?: readonly { value: string; label: string }[];
   hint?: string;
   rows?: number;
+  /**
+   * What `toFormRow` shows when this field's path is MISSING from the
+   * stored record (`undefined`, never `null`) — e.g. `'true'` for a
+   * boolean added after rows already existed, so a legacy row's next Save
+   * does not silently flip it to the opposite of its documented default
+   * (owner decision 2026-11-27; this is the BUG-118 shape: a successful
+   * save that changes real configuration). Leave unset for every field
+   * whose correct missing-value behaviour is genuinely blank.
+   */
+  defaultValue?: string;
 }
 
 export interface BlockSpec {
@@ -277,6 +289,14 @@ export const BLOCKS: readonly BlockSpec[] = [
       { name: 'address', label: 'Address', kind: 'textarea', rows: 2 },
       { name: 'tagline', label: 'Tagline', kind: 'text' },
       { name: 'hoursNote', label: 'Hours note', kind: 'text' },
+      {
+        name: 'showCallNumbers',
+        label: 'Show phone numbers for calls/SMS',
+        kind: 'switch',
+        options: YES_NO,
+        defaultValue: 'true',
+        hint: 'Off = guests only see WhatsApp and Viber. The numbers still power those buttons.',
+      },
       { name: 'email', label: 'Email', kind: 'text' },
       { name: 'phoneDisplay', label: 'Phone (as shown)', kind: 'text' },
       {
@@ -586,11 +606,15 @@ export function toFormRow(record: unknown, fields: readonly FieldSpec[]): Record
   const row: Record<string, string> = {};
   for (const field of fields) {
     const raw = readPath(record, field.name);
+    if (raw === undefined) {
+      row[field.name] = field.defaultValue ?? '';
+      continue;
+    }
     if (field.kind === 'manilaDatetime') {
       row[field.name] = typeof raw === 'string' ? utcIsoToManilaLocal(raw) : '';
       continue;
     }
-    row[field.name] = raw === null || raw === undefined ? '' : String(raw);
+    row[field.name] = raw === null ? '' : String(raw);
   }
   return row;
 }

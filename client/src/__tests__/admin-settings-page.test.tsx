@@ -549,6 +549,64 @@ describe('AdminSettingsPage', () => {
   });
 
   /**
+   * Task 4 (hide-call-numbers plan, owner decision 2026-11-27). Unlike
+   * `show_tours` above, this is an ordinary field INSIDE the `contact`
+   * object block — saved by that block's own Save button, not a separate
+   * auto-save toggle — drawn with the same `role="switch"` markup as
+   * `ToggleBlockEditor` and the accreditation "Show" switch.
+   */
+  describe('Contact details — showCallNumbers switch', () => {
+    it('shows a labeled switch with the owner-specified helper text', async () => {
+      mockOwner();
+      renderPage();
+
+      const details = await openBlock('Contact details');
+      expect(within(details).getByText('Show phone numbers for calls/SMS')).toBeInTheDocument();
+      expect(
+        within(details).getByText(
+          'Off = guests only see WhatsApp and Viber. The numbers still power those buttons.',
+        ),
+      ).toBeInTheDocument();
+      const toggle = within(details).getByRole('switch', { name: /show phone numbers/i });
+      // STORED.contact.showCallNumbers is true.
+      expect(toggle).toHaveAttribute('aria-checked', 'true');
+    });
+
+    /**
+     * BUG-118 shape, caught by the plan's own research: a `contact` row
+     * saved before this field existed has no `showCallNumbers` key at all.
+     * Clicking Save without touching anything must still send the
+     * documented default (`true`) — a successful-looking save silently
+     * flipping it to `false` is exactly the incident this rule exists to
+     * prevent (see `toFormRow`'s `defaultValue` handling).
+     */
+    it('a legacy row with no showCallNumbers key still saves true, not false', async () => {
+      const legacyContact: Record<string, unknown> = { ...(STORED.contact as object) };
+      delete legacyContact.showCallNumbers;
+      const posted: unknown[] = [];
+      mockOwner({
+        'admin.settings.all': { ...STORED, contact: legacyContact },
+        'admin.settings.write': (input: unknown) => {
+          posted.push(input);
+          return { ok: true };
+        },
+      });
+      renderPage();
+
+      const details = await openBlock('Contact details');
+      await user.click(within(details).getByRole('button', { name: 'Save' }));
+
+      await waitFor(() => expect(posted).toHaveLength(1));
+      expect(posted[0]).toEqual(
+        expect.objectContaining({
+          key: 'contact',
+          value: expect.objectContaining({ showCallNumbers: true }),
+        }),
+      );
+    });
+  });
+
+  /**
    * Task T16, Part A/D. `show_tours` is an ORDINARY feature switch (unlike
    * `content_unverified`'s two-step confirm above): one tap, no confirm,
    * `admin.settings.write` called immediately with the flipped boolean.

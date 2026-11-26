@@ -181,6 +181,47 @@ function SettingField({
             </option>
           ))}
         </select>
+      ) : field.kind === 'switch' ? (
+        /*
+         * The same hand-rolled role="switch" markup as `ToggleBlockEditor`
+         * and the per-item accreditation "Show" switch — reused a third
+         * time rather than abstracted, matching how this file already
+         * duplicates it once (owner decision 2026-11-27). `value`/`onChange`
+         * still carry 'true'/'false' strings, exactly like a YES_NO select —
+         * `fromFormRow`'s `field.options === YES_NO` check (this field sets
+         * `options: YES_NO`) is what converts that string to a real boolean
+         * on Save, unchanged from how every other boolean-in-an-object-block
+         * field already works.
+         */
+        <div className="flex items-center gap-3">
+          <button
+            id={inputId}
+            type="button"
+            role="switch"
+            aria-checked={value === 'true'}
+            aria-describedby={describedBy}
+            onClick={() => onChange(value === 'true' ? 'false' : 'true')}
+            className="tap-target focus-visible:ring-brand-blue-600 inline-flex items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+          >
+            <span
+              aria-hidden="true"
+              className={cn(
+                'relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors',
+                value === 'true' ? 'bg-brand-blue-600' : 'bg-slate-300',
+              )}
+            >
+              <span
+                className={cn(
+                  'inline-block size-5 rounded-full bg-white shadow transition-transform',
+                  value === 'true' ? 'translate-x-6' : 'translate-x-1',
+                )}
+              />
+            </span>
+          </button>
+          <span className="text-brand-ink text-sm font-medium">
+            {value === 'true' ? 'On' : 'Off'}
+          </span>
+        </div>
       ) : (
         <Input
           id={inputId}
