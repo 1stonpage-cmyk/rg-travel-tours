@@ -1,8 +1,10 @@
 import { Menu, Phone, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { WhatsAppGlyph } from '@/components/common/BrandGlyphs';
 import { Button } from '@/components/ui/button';
-import { SITE, telLink, visibleNav } from '@/lib/site';
+import { useShowCallNumbers } from '@/lib/contact-visibility';
+import { SITE, telLink, visibleNav, whatsappLink } from '@/lib/site';
 import { trpc } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
 
@@ -44,6 +46,9 @@ export default function SiteHeader() {
    */
   const { data: settings } = trpc.settings.get.useQuery();
   const nav = visibleNav(settings?.showTours ?? false, settings?.hasRealReviews ?? false);
+  // Owner decision 2026-11-27 ("hide call numbers"): the owner works at sea
+  // and cannot take calls/SMS. See @/lib/contact-visibility for the default.
+  const showCallNumbers = useShowCallNumbers();
 
   // Header shrink/solidify (spec task 2.9F). Deliberately does not animate
   // `height`, or change it at all, in either direction: the box below is
@@ -124,13 +129,30 @@ export default function SiteHeader() {
         </nav>
 
         <div className="flex items-center gap-2">
-          <a
-            href={telLink(SITE.contact.phone.tel)}
-            className="text-brand-blue-700 tap-target hidden items-center gap-2 rounded-md px-3 text-sm font-semibold lg:flex"
-          >
-            <Phone className="size-4" aria-hidden="true" />
-            {SITE.contact.phone.display}
-          </a>
+          {showCallNumbers ? (
+            <a
+              href={telLink(SITE.contact.phone.tel)}
+              className="text-brand-blue-700 tap-target hidden items-center gap-2 rounded-md px-3 text-sm font-semibold lg:flex"
+            >
+              <Phone className="size-4" aria-hidden="true" />
+              {SITE.contact.phone.display}
+            </a>
+          ) : (
+            <a
+              href={whatsappLink()}
+              target="_blank"
+              rel="noreferrer noopener"
+              aria-label="Chat on WhatsApp"
+              className="tap-target hidden items-center gap-2 lg:flex"
+            >
+              <span className="press-brand bg-whatsapp hover:bg-whatsapp-pressed flex size-11 shrink-0 items-center justify-center rounded-full text-white transition-[transform,box-shadow,background-color] duration-200 hover:-translate-y-0.5 hover:shadow-md">
+                <WhatsAppGlyph className="size-5" />
+              </span>
+              <span aria-hidden="true" className="text-brand-blue-700 text-sm font-semibold">
+                WhatsApp
+              </span>
+            </a>
+          )}
           {/*
            * Transfers lead (Task T14, owner decision 8): the primary header
            * CTA now points at the transfer booking flow. Tours stays fully

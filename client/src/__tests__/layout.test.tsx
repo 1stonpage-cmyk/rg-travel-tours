@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import PublicLayout from '@/components/layout/PublicLayout';
+import SiteHeader from '@/components/layout/SiteHeader';
 import { CONSENT_STORAGE_KEY } from '@/lib/consent/types';
 import { SITE, viberLink, whatsappLink } from '@/lib/site';
 import { TrpcProviders } from '@/lib/trpc';
@@ -603,6 +604,51 @@ describe('SiteFooter — WhatsApp/Viber icon buttons beside the phone number (sp
   it('keeps the visible phone number rendered — it is not replaced by the new buttons', () => {
     renderLayout();
     expect(screen.getByRole('contentinfo')).toHaveTextContent(SITE.contact.phone.display);
+  });
+});
+
+/**
+ * Owner decision 2026-11-27 ("hide call numbers") — the owner works at sea
+ * and cannot take calls/SMS. `SiteHeader`'s desktop phone link is the first
+ * of several public surfaces gated on `settings.contact.showCallNumbers`.
+ */
+describe('SiteHeader — call number hidden (owner decision 2026-11-27)', () => {
+  function renderHeader() {
+    return render(
+      <TrpcProviders>
+        <MemoryRouter>
+          <SiteHeader />
+        </MemoryRouter>
+      </TrpcProviders>,
+    );
+  }
+
+  it('shows the tel link when showCallNumbers is true', async () => {
+    mockTrpc({
+      'settings.get': {
+        ...SETTINGS_FIXTURE,
+        contact: { ...SETTINGS_FIXTURE.contact, showCallNumbers: true },
+      },
+    });
+    renderHeader();
+    expect(
+      await screen.findByRole('link', { name: SITE.contact.phone.display }),
+    ).toHaveAttribute('href', `tel:${SITE.contact.phone.tel}`);
+  });
+
+  it('replaces the tel link with a WhatsApp action when showCallNumbers is false', async () => {
+    mockTrpc({
+      'settings.get': {
+        ...SETTINGS_FIXTURE,
+        contact: { ...SETTINGS_FIXTURE.contact, showCallNumbers: false },
+      },
+    });
+    renderHeader();
+    const chat = await screen.findByRole('link', { name: 'Chat on WhatsApp' });
+    expect(screen.queryByText(SITE.contact.phone.display)).not.toBeInTheDocument();
+    expect(document.querySelector(`a[href^="tel:"]`)).toBeNull();
+    expect(chat).toHaveAttribute('href', expect.stringContaining('wa.me'));
+    expect(screen.getByText('WhatsApp')).toBeInTheDocument();
   });
 });
 
