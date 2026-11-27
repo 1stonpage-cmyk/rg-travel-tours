@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { useShowCallNumbers } from '@/lib/contact-visibility';
 import { SITE, viberLink, whatsappLink } from '@/lib/site';
+import { trpc } from '@/lib/trpc';
 
 /**
  * Every [PLACEHOLDER] in the owner-approved drafts (C:\dev\project-notes\RGTravelTours\legal\)
@@ -32,12 +33,17 @@ export function PlaceholderChip({ context }: { context: string }) {
  */
 export function ContactLine() {
   const showCallNumbers = useShowCallNumbers();
+  const { data: settings } = trpc.settings.get.useQuery();
   if (showCallNumbers) {
     return <a href={`tel:${SITE.contact.phone.tel}`}>{SITE.contact.phone.display}</a>;
   }
   return (
     <>
-      <a href={whatsappLink()} target="_blank" rel="noreferrer noopener">
+      <a
+        href={whatsappLink(settings?.whatsappMessage.general)}
+        target="_blank"
+        rel="noreferrer noopener"
+      >
         WhatsApp
       </a>
       {' or '}

@@ -595,9 +595,17 @@ describe('SiteFooter — WhatsApp/Viber icon buttons beside the phone number (sp
     }
   });
 
-  it('reuses the shared whatsappLink()/viberLink() helpers — no new link target', () => {
+  it('reuses the shared whatsappLink()/viberLink() helpers — no new link target', async () => {
     renderLayout();
-    expect(pillFor('whatsapp')).toHaveAttribute('href', whatsappLink());
+    // whatsapp carries the settings-driven "general" quote-request message
+    // (owner spec, 2026-11-28, Task 1C), once `settings.get` resolves; viber
+    // has no reliable prefill and its href never depends on that query.
+    await waitFor(() =>
+      expect(pillFor('whatsapp')).toHaveAttribute(
+        'href',
+        whatsappLink(SETTINGS_FIXTURE.whatsappMessage.general),
+      ),
+    );
     expect(pillFor('viber')).toHaveAttribute('href', viberLink());
   });
 

@@ -3,7 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { WhatsAppGlyph } from '@/components/common/BrandGlyphs';
 import { Button } from '@/components/ui/button';
 import { useConsent } from '@/lib/consent/useConsent';
-import { SITE, whatsappLink } from '@/lib/site';
+import { whatsappLink } from '@/lib/site';
 import { trpc } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
 
@@ -264,9 +264,15 @@ export default function FloatingWhatsApp() {
   };
   const endPeek = () => setPeek(false);
 
-  const message = showTours
-    ? `Hi ${SITE.name}! I'd like to ask about a Cebu tour.`
-    : `Hi ${SITE.name}! I'd like to ask about a transfer.`;
+  /*
+   * The admin-editable "general" quote-request message (owner spec,
+   * 2026-11-28, Task 1C), replacing the two hardcoded tour/transfer
+   * sentences this used to branch on — one wording, settings-driven,
+   * everywhere a guest hasn't told us anything yet. `undefined` while
+   * `settings.get` is still loading: `whatsappLink()` already degrades to
+   * the bare link with no prefilled text in that case.
+   */
+  const message = settings?.whatsappMessage.general;
 
   return (
     <>

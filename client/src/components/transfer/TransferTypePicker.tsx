@@ -2,6 +2,7 @@ import { CalendarClock, CheckCircle2, Plane } from 'lucide-react';
 import type { TransferProductType } from '@rg/shared';
 import { TRANSFER_PRODUCT_TYPES } from '@rg/shared';
 import FieldError from '@/components/common/FieldError';
+import { TRANSFER_PRODUCT_TYPE_LABELS } from '@/lib/transfer-product-labels';
 import { cn } from '@/lib/utils';
 
 /**
@@ -39,10 +40,7 @@ const TYPE_ICONS: Record<TransferProductType, typeof Plane> = {
   transfer_day_use: CalendarClock,
 };
 
-const TYPE_LABELS: Record<TransferProductType, string> = {
-  transfer_one_way: 'Airport transfer',
-  transfer_day_use: 'Day use',
-};
+const TYPE_LABELS = TRANSFER_PRODUCT_TYPE_LABELS;
 
 const TYPE_DESCRIPTIONS: Record<TransferProductType, string> = {
   transfer_one_way: 'One-way trip between the airport and your destination',

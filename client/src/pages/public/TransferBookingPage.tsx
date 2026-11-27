@@ -34,6 +34,7 @@ import VehicleOptionCard from '@/components/transfer/VehicleOptionCard';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { WhatsAppGlyph } from '@/components/common/BrandGlyphs';
 import { trackEvent } from '@/lib/consent/scripts';
 import {
   clientSideErrors,
@@ -46,7 +47,10 @@ import {
 import { describeCheckoutError } from '@/lib/mutation-errors';
 import { scrollToAndFocus } from '@/lib/scroll-to-field';
 import { cn } from '@/lib/utils';
+import { whatsappLink } from '@/lib/site';
+import { TRANSFER_PRODUCT_TYPE_LABELS } from '@/lib/transfer-product-labels';
 import { trpc } from '@/lib/trpc';
+import { buildWithDetailsMessage } from '@/lib/whatsapp-message';
 
 /**
  * Task T14, rebuilt 2026-11-08 for the flexible places/routes/vehicle-types
@@ -941,6 +945,52 @@ export default function TransferBookingPage() {
   const routeSelection: TransferRouteSelection | null =
     routeId !== null ? { routeId, direction } : null;
 
+  /*
+   * "Prefer to chat? Ask on WhatsApp" (owner spec, 2026-11-28, Task 1C) —
+   * filled in from whatever the guest has typed so far. `pax`/`luggageCount`/
+   * `productType`/`routeId`/`direction`/`vehicleTypeId` are all page-level
+   * React state already; `date` and `pickup` live as plain uncontrolled
+   * inputs inside `TransferGuestDetailsForm` (no second source of truth
+   * added here just for this link), so `formRef` reads them straight off the
+   * DOM at the moment the token values are built.
+   */
+  const formRef = useRef<HTMLFormElement>(null);
+  const settingsQuery = trpc.settings.get.useQuery();
+
+  function whatsappTokenValues() {
+    const data = formRef.current ? new FormData(formRef.current) : null;
+    const routeName =
+      selectedRoute && direction === 'forward'
+        ? `${selectedRoute.fromPlace.name} to ${selectedRoute.toPlace.name}`
+        : selectedRoute
+          ? `${selectedRoute.toPlace.name} to ${selectedRoute.fromPlace.name}`
+          : '';
+    const otherVehicles = vehicleOptions
+      .filter((option) => option.vehicleTypeId !== vehicleTypeId)
+      .map((option) => option.vehicleTypeName);
+    const vehicleValue = selectedOption
+      ? otherVehicles.length > 0
+        ? `${selectedOption.vehicleTypeName} (also send me the price for ${otherVehicles.join(' and ')})`
+        : selectedOption.vehicleTypeName
+      : '';
+    return {
+      route: routeName,
+      trip: productType ? TRANSFER_PRODUCT_TYPE_LABELS[productType] : '',
+      date: String(data?.get('date') ?? ''),
+      passengers: vehiclePricingEnabled ? String(pax) : '',
+      bags: vehiclePricingEnabled ? String(luggageCount) : '',
+      vehicle: vehicleValue,
+      pickup: String(data?.get('pickup') ?? ''),
+    };
+  }
+
+  const whatsappHref = whatsappLink(
+    buildWithDetailsMessage(
+      settingsQuery.data?.whatsappMessage.withDetails ?? '',
+      whatsappTokenValues(),
+    ),
+  );
+
   return (
     <div className="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8">
       <h1 className="text-brand-blue-900 text-2xl font-bold tracking-tight sm:text-3xl">
@@ -968,6 +1018,7 @@ export default function TransferBookingPage() {
         </div>
       ) : (
         <form
+          ref={formRef}
           aria-label="Transfer booking form"
           onSubmit={handleSubmit}
           className="mt-8 max-w-2xl space-y-6"
@@ -1234,6 +1285,42 @@ export default function TransferBookingPage() {
                 >
                   {createHoldTransfer.isPending ? 'Holding your spot…' : 'Book now, hold my spot'}
                 </Button>
+
+                {/*
+                 * "Prefer to chat? Ask on WhatsApp" (owner spec, 2026-11-28,
+                 * Task 1C). `type="button"` — never a submit, and outside
+                 * `handleSubmit`'s own validation. Brand-colour exception
+                 * (CLAUDE.md): the circle is icon-only/decorative, the
+                 * visible wording sits outside it in brand ink. The href is
+                 * refreshed on click (`onClick`, synchronously, before the
+                 * browser follows it) so `date`/`pickup` — plain uncontrolled
+                 * inputs above, not page state — are read at the moment the
+                 * guest actually taps rather than from a stale render.
+                 */}
+                <p className="text-center">
+                  <a
+                    href={whatsappHref}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    onClick={(event) => {
+                      event.currentTarget.href = whatsappLink(
+                        buildWithDetailsMessage(
+                          settingsQuery.data?.whatsappMessage.withDetails ?? '',
+                          whatsappTokenValues(),
+                        ),
+                      );
+                    }}
+                    className="text-brand-ink tap-target inline-flex min-h-11 items-center gap-2 text-sm font-semibold"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="bg-whatsapp hover:bg-whatsapp-pressed flex size-9 shrink-0 items-center justify-center rounded-full text-white transition-colors"
+                    >
+                      <WhatsAppGlyph className="size-4" />
+                    </span>
+                    Prefer to chat? Ask on WhatsApp
+                  </a>
+                </p>
               </>
             )}
         </form>

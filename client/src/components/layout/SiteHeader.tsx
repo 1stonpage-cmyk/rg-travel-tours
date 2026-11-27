@@ -139,7 +139,7 @@ export default function SiteHeader() {
             </a>
           ) : (
             <a
-              href={whatsappLink()}
+              href={whatsappLink(settings?.whatsappMessage.general)}
               target="_blank"
               rel="noreferrer noopener"
               aria-label="Chat on WhatsApp"

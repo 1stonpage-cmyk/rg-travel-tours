@@ -268,7 +268,7 @@ export default function ContactSection() {
             )}
             <li>
               <a
-                href={whatsappLink()}
+                href={whatsappLink(settings?.whatsappMessage.general)}
                 target="_blank"
                 rel="noreferrer noopener"
                 className="bg-background hover:bg-brand-blue-100 flex min-h-11 items-center gap-3 rounded-xl p-4 text-base sm:text-sm"

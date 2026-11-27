@@ -11,8 +11,12 @@ import { useRawDocumentTitle } from '@/hooks/useDocumentTitle';
 import { EmptyState } from '@/components/common/QueryBoundary';
 import { Skeleton } from '@/components/common/Skeleton';
 import { Button } from '@/components/ui/button';
+import { WhatsAppGlyph } from '@/components/common/BrandGlyphs';
 import { trackEvent } from '@/lib/consent/scripts';
+import { whatsappLink } from '@/lib/site';
+import { TRANSFER_PRODUCT_TYPE_LABELS } from '@/lib/transfer-product-labels';
 import { trpc } from '@/lib/trpc';
+import { buildWithDetailsMessage } from '@/lib/whatsapp-message';
 
 /**
  * `/transfers/:slug` — a direction-specific transfer route landing page
@@ -129,6 +133,7 @@ function dropoffGuidance(
 export default function TransferRoutePage() {
   const { slug } = useParams<{ slug: string }>();
   const routesQuery = trpc.transferRoutes.list.useQuery();
+  const settingsQuery = trpc.settings.get.useQuery();
   const view = routesQuery.data ? matchRouteDirection(routesQuery.data, slug ?? '') : null;
 
   // `view.pageTitle` is the server's own `transferRouteTitle()` output for
@@ -198,6 +203,20 @@ export default function TransferRoutePage() {
   );
   const pickupNote = pickupGuidance(pickupPlace.placeType);
   const dropoffNote = dropoffGuidance(dropoffPlace.placeType);
+
+  /*
+   * "Ask on WhatsApp" (owner spec, 2026-11-28, Task 1C) — the withDetails
+   * template filled in with just what this page already knows: the route
+   * and the trip type (always "Airport transfer" here; a route page only
+   * ever links to the one-way product). Every other token (date/passengers/
+   * bags/vehicle/pickup) is unknown at this point, so those lines drop.
+   */
+  const whatsappHref = whatsappLink(
+    buildWithDetailsMessage(settingsQuery.data?.whatsappMessage.withDetails ?? '', {
+      route: `${pickupPlace.name} to ${dropoffPlace.name}`,
+      trip: TRANSFER_PRODUCT_TYPE_LABELS.transfer_one_way,
+    }),
+  );
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
@@ -295,7 +314,7 @@ export default function TransferRoutePage() {
         </dl>
       </section>
 
-      <div className="mt-8 flex flex-wrap gap-3">
+      <div className="mt-8 flex flex-wrap items-center gap-4">
         <Button asChild size="lg" className="tap-target">
           <Link
             to={`/transfer?productType=transfer_one_way&routeId=${route.id}&direction=${direction}`}
@@ -303,6 +322,27 @@ export default function TransferRoutePage() {
             Book this transfer
           </Link>
         </Button>
+
+        {/*
+         * "Ask on WhatsApp" (owner spec, 2026-11-28, Task 1C). Brand-colour
+         * exception (CLAUDE.md): the circle is icon-only and decorative
+         * (`aria-hidden`); the visible wording sits OUTSIDE it, in brand
+         * ink, as the link's own accessible name.
+         */}
+        <a
+          href={whatsappHref}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="text-brand-ink tap-target inline-flex min-h-11 items-center gap-2 font-semibold"
+        >
+          <span
+            aria-hidden="true"
+            className="bg-whatsapp hover:bg-whatsapp-pressed flex size-11 shrink-0 items-center justify-center rounded-full text-white transition-colors"
+          >
+            <WhatsAppGlyph className="size-5" />
+          </span>
+          Ask on WhatsApp
+        </a>
       </div>
 
       {relatedRoutes.length > 0 && (

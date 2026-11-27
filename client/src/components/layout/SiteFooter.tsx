@@ -167,7 +167,7 @@ export default function SiteFooter() {
                   <span className="flex items-center gap-2">
                     <ChatButton
                       tone="whatsapp"
-                      href={whatsappLink()}
+                      href={whatsappLink(settings?.whatsappMessage.general)}
                       label="Chat on WhatsApp"
                       external
                     >
