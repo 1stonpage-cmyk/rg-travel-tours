@@ -1,9 +1,11 @@
 /**
- * The twenty `settings` keys, and the shape `admin.settings.write` accepts
+ * The twenty-one `settings` keys, and the shape `admin.settings.write` accepts
  * (Week 7 plan, Task 9; BUILD_SPEC §9 "Users, settings"). The eighteenth,
  * `transfer_operations`, arrived with the transfers-launch plan's Task T7. The
  * nineteenth, `show_tours`, arrived with the same plan's Task T15. The
  * twentieth, `signup_coupon`, arrived with the sign-up coupons plan's Task 1B-i.
+ * The twenty-first, `whatsapp_message`, arrived with the WhatsApp quote-message
+ * plan's Task 1A (2026-11-28).
  *
  * **Why the key list lives here as well as in the server.** The per-block Zod
  * schemas are `SETTING_SCHEMAS` in `server/src/content/settings-schema.ts` and
@@ -55,6 +57,7 @@ export const SETTING_KEYS = [
   'legal_privacy',
   'legal_terms',
   'signup_coupon',
+  'whatsapp_message',
 ] as const;
 
 export const settingKeySchema = z.enum(SETTING_KEYS);
@@ -90,9 +93,9 @@ export const BUILTIN_PERMITS = [
  * `.strict()`, so a third field cannot be smuggled past a resolver that reads
  * only two. `value` is `z.unknown()` and therefore OPTIONAL in Zod's inferred
  * input — which is harmless here and deliberately not patched around: every
- * one of the nineteen block schemas refuses `undefined`, so a `write` with no
- * `value` at all is a `BAD_REQUEST` from the real validator rather than a row
- * quietly set to null.
+ * one of the twenty-one block schemas refuses `undefined`, so a `write` with
+ * no `value` at all is a `BAD_REQUEST` from the real validator rather than a
+ * row quietly set to null.
  */
 export const settingWriteInput = z
   .object({

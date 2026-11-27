@@ -177,14 +177,14 @@ afterAll(async () => {
  * are built from; `SETTING_SCHEMAS` in the server is what validates a block.
  * The shared list cannot be derived from the schemas (the client must not
  * import the server), so this is the seam that keeps them one list: a
- * twentieth-and-a-half key added to one side and not the other fails here,
- * rather than becoming an editing screen for a key nothing validates.
+ * twenty-second key added to one side and not the other fails here, rather
+ * than becoming an editing screen for a key nothing validates.
  *
  * No database — a pure test, outside `describeWithDb`.
  */
-it('offers the shared key list and the server schemas the SAME twenty keys', () => {
+it('offers the shared key list and the server schemas the SAME twenty-one keys', () => {
   expect([...SHARED_SETTING_KEYS].sort()).toEqual([...SETTING_KEYS].sort());
-  expect(SHARED_SETTING_KEYS).toHaveLength(20);
+  expect(SHARED_SETTING_KEYS).toHaveLength(21);
 });
 
 describeWithDb('admin.settings', () => {
@@ -355,6 +355,38 @@ describeWithDb('admin.settings', () => {
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
 
     expect(await storedValue('booking')).toEqual(before);
+  });
+
+  /**
+   * WhatsApp quote-message plan, Task 1A: an unknown `{{token}}` is refused
+   * at save time, before a typo like `{{routee}}` could ever reach a
+   * guest's chat app as literal, unresolved brace text.
+   */
+  it('REFUSES whatsapp_message with an unknown token, and writes NOTHING', async () => {
+    const before = await remember('whatsapp_message');
+
+    await expect(
+      ownerApi().admin.settings.write({
+        key: 'whatsapp_message',
+        value: { general: 'Hi! Quote please.', withDetails: 'Route: {{routee}}' },
+      }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+    expect(await storedValue('whatsapp_message')).toEqual(before);
+  });
+
+  it('SAVES whatsapp_message with every allowed token', async () => {
+    await remember('whatsapp_message');
+    const value = {
+      general: 'Hi! Quote please.',
+      withDetails:
+        'Route: {{route}}\nTrip: {{trip}}\nDate: {{date}}\nPassengers: {{passengers}}\n' +
+        'Bags: {{bags}}\nVehicle: {{vehicle}}\nPickup: {{pickup}}',
+    };
+
+    await ownerApi().admin.settings.write({ key: 'whatsapp_message', value });
+
+    expect(await storedValue('whatsapp_message')).toEqual(value);
   });
 
   /**

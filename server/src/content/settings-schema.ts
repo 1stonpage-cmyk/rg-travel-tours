@@ -486,6 +486,83 @@ const signupCouponSchema = z.object({
   expiryDays: z.number().int().min(1).max(365),
 });
 
+/**
+ * WhatsApp quote-request message templates (owner spec, 2026-11-28, Task 1A)
+ * — the text every public "Chat on WhatsApp" link opens with, pre-filled via
+ * `wa.me/<number>?text=`, editable from Admin → Settings rather than
+ * hardcoded per component.
+ *
+ * `general` has no tokens (it is the one link shown before a guest has told
+ * us anything — FloatingWhatsApp, header, footer, ContactSection, legal
+ * pages). `withDetails` is filled in from whatever a guest has typed into
+ * the transfer booking form or a route page so far, via the allowed tokens
+ * below; the actual substitution (and "drop a line whose only token is
+ * still blank") lives in the ONE shared helper this project's content-token
+ * rule requires — `client/src/lib/tokens.ts`, also used by the existing
+ * `{{paymentMethods}}` FAQ token (`FaqSection.tsx`) — not duplicated here.
+ *
+ * An unknown `{{token}}` refuses the save outright (`superRefine` below):
+ * a typo'd token would otherwise reach a guest's chat app as literal
+ * `{{routee}}` text.
+ */
+export const WHATSAPP_MESSAGE_TOKENS = [
+  'route',
+  'trip',
+  'date',
+  'passengers',
+  'bags',
+  'vehicle',
+  'pickup',
+] as const;
+
+const WHATSAPP_MESSAGE_TOKEN_SET: ReadonlySet<string> = new Set(WHATSAPP_MESSAGE_TOKENS);
+const TOKEN_PATTERN = /\{\{(\w+)\}\}/g;
+
+function unknownWhatsappTokens(text: string): string[] {
+  const found = new Set<string>();
+  for (const match of text.matchAll(TOKEN_PATTERN)) {
+    if (!WHATSAPP_MESSAGE_TOKEN_SET.has(match[1]!)) found.add(match[1]!);
+  }
+  return [...found];
+}
+
+const whatsappMessageFieldSchema = z
+  .string()
+  .min(1)
+  .max(1000)
+  .superRefine((value, ctx) => {
+    const unknown = unknownWhatsappTokens(value);
+    if (unknown.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Unknown token(s): ${unknown.map((t) => `{{${t}}}`).join(', ')}. Allowed: ${WHATSAPP_MESSAGE_TOKENS.map((t) => `{{${t}}}`).join(', ')}.`,
+      });
+    }
+  });
+
+export const whatsappMessageSchema = z.object({
+  general: whatsappMessageFieldSchema,
+  withDetails: whatsappMessageFieldSchema,
+});
+
+/**
+ * Fallback for `whatsapp_message` when its row is missing or malformed in
+ * the database (owner spec, 2026-11-28, Task 1A — "Missing block → these
+ * defaults, so live keeps working before anyone saves"), the same narrow,
+ * explicitly-requested carve-out `transfer_operations`/`show_tours` get —
+ * see this file's sibling note in `content/settings.ts`. These are the same
+ * strings `db/seed-data.ts` seeds, not invented copy.
+ */
+export const WHATSAPP_MESSAGE_DEFAULTS: z.infer<typeof whatsappMessageSchema> = {
+  general:
+    "Hi TravelSugbo! I'd like a quote for a private transfer.\n\nPickup:\nDrop-off:\nDate:\nPassengers:",
+  withDetails:
+    "Hi TravelSugbo! I'd like a quote for a private transfer.\n\n" +
+    'Route: {{route}}\nTrip: {{trip}}\nDate: {{date}}\nPassengers: {{passengers}}\n' +
+    'Bags: {{bags}}\nVehicle: {{vehicle}}\nPickup: {{pickup}}\n\n' +
+    'Please confirm the price and pickup details.',
+};
+
 export const SETTING_SCHEMAS = {
   content_unverified: z.boolean(),
   site_seo: siteSeoSchema,
@@ -507,6 +584,7 @@ export const SETTING_SCHEMAS = {
   legal_privacy: legalDocSchema,
   legal_terms: legalDocSchema,
   signup_coupon: signupCouponSchema,
+  whatsapp_message: whatsappMessageSchema,
 } satisfies Record<string, z.ZodType>;
 
 export type SettingKey = keyof typeof SETTING_SCHEMAS;

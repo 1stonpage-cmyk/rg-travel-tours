@@ -7,6 +7,7 @@ import {
   readSettings,
   readRawSettings,
   readShowTours,
+  readWhatsappMessageSettings,
   resolvePermits,
   toSettingsPayload,
   readTransferOperationsSettings,
@@ -16,6 +17,7 @@ import {
   SETTING_KEYS,
   SETTING_SCHEMAS,
   TRANSFER_OPERATIONS_DEFAULTS,
+  WHATSAPP_MESSAGE_DEFAULTS,
   type SettingsBlocks,
 } from '../content/settings-schema';
 import { env } from '../env';
@@ -143,6 +145,12 @@ function validValueFor(key: string): unknown {
       // The owner's defaults (sign-up coupons plan, Task 1B-i; same as
       // `SEED_SETTINGS.signup_coupon`).
       return { discountPercent: 5, expiryDays: 60 };
+    case 'whatsapp_message':
+      // WhatsApp quote-message plan, Task 1A — a valid, non-default fixture
+      // (deliberately different text from `WHATSAPP_MESSAGE_DEFAULTS`, so a
+      // test reading this value back can tell "the real stored row" apart
+      // from "the fallback kicked in").
+      return { general: 'Hi! Fixture general message.', withDetails: 'Fixture: {{route}}' };
     default:
       throw new Error(`no fixture value for "${key}"`);
   }
@@ -752,6 +760,91 @@ describeWithDb('show_tours fallback (Task T15)', () => {
     const payload = await getSettingsPayload(NOW);
     expect(payload.showTours).toBe(false);
     expect(payload.contact.email.length).toBeGreaterThan(0);
+  });
+});
+
+/* =======================================================================
+ * `whatsapp_message` fallback (WhatsApp quote-message plan, Task 1A). The
+ * THIRD exception to this file's fail-loud contract — same shape as
+ * `show_tours` above: resolved inside `readSettings()`'s own loop, not only
+ * in its own reader, because `readSettings()` is what `settings.get` (every
+ * public page) runs. "Missing block -> these defaults" is the owner's own
+ * requirement, so a guest's WhatsApp link keeps real words before anyone has
+ * ever saved this block.
+ * ======================================================================= */
+describeWithDb('whatsapp_message fallback (Task 1A)', () => {
+  async function setWhatsappMessageRow(value: unknown | undefined) {
+    await getDb().delete(settings).where(eq(settings.key, 'whatsapp_message'));
+    if (value !== undefined) {
+      await getDb().insert(settings).values({
+        key: 'whatsapp_message',
+        value,
+        updatedAt: new Date(),
+      });
+    }
+  }
+
+  afterAll(async () => {
+    await resetTestDb();
+  });
+
+  it('missing row -> defaults, warning once and naming the missing row', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await setWhatsappMessageRow(undefined);
+
+    expect(await readWhatsappMessageSettings()).toEqual(WHATSAPP_MESSAGE_DEFAULTS);
+    expect(warn).toHaveBeenCalledTimes(1);
+    const message = String(warn.mock.calls[0]![0]);
+    expect(message).toMatch(/whatsapp_message/);
+    expect(message).toMatch(/missing/i);
+    warn.mockRestore();
+  });
+
+  it('malformed row -> defaults, warning once and never logging the stored value', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await setWhatsappMessageRow({ general: '', withDetails: 'fine' }); // general fails min(1)
+
+    expect(await readWhatsappMessageSettings()).toEqual(WHATSAPP_MESSAGE_DEFAULTS);
+    expect(warn).toHaveBeenCalledTimes(1);
+    const message = String(warn.mock.calls[0]![0]);
+    expect(message).toMatch(/whatsapp_message/);
+    expect(message).toMatch(/invalid/i);
+    expect(message).not.toContain('fine');
+    warn.mockRestore();
+  });
+
+  it('a row with an unknown token is malformed and falls back to defaults', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await setWhatsappMessageRow({ general: 'Hi', withDetails: 'Route: {{routee}}' });
+
+    expect(await readWhatsappMessageSettings()).toEqual(WHATSAPP_MESSAGE_DEFAULTS);
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  it('valid row -> parsed as stored, with no warning', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const stored = { general: 'Hi! Real message.', withDetails: 'Route: {{route}}' };
+    await setWhatsappMessageRow(stored);
+
+    expect(await readWhatsappMessageSettings()).toEqual(stored);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('missing row does NOT take settings.get down — the whole payload still resolves', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await setWhatsappMessageRow(undefined);
+
+    const blocks = await readSettings();
+    expect(blocks.whatsapp_message).toEqual(WHATSAPP_MESSAGE_DEFAULTS);
+    expect(blocks.content_unverified).toBeDefined();
+    expect(blocks.contact.email.length).toBeGreaterThan(0);
+
+    const payload = await getSettingsPayload(NOW);
+    expect(payload.whatsappMessage).toEqual(WHATSAPP_MESSAGE_DEFAULTS);
+    expect(payload.contact.email.length).toBeGreaterThan(0);
+    vi.restoreAllMocks();
   });
 });
 

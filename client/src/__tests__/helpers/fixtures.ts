@@ -285,6 +285,15 @@ export const SETTINGS_FIXTURE: SettingsPayload = {
     },
   },
   signupCoupon: { discountPercent: 5 },
+  whatsappMessage: {
+    general:
+      "Hi TravelSugbo! I'd like a quote for a private transfer.\n\nPickup:\nDrop-off:\nDate:\nPassengers:",
+    withDetails:
+      "Hi TravelSugbo! I'd like a quote for a private transfer.\n\n" +
+      'Route: {{route}}\nTrip: {{trip}}\nDate: {{date}}\nPassengers: {{passengers}}\n' +
+      'Bags: {{bags}}\nVehicle: {{vehicle}}\nPickup: {{pickup}}\n\n' +
+      'Please confirm the price and pickup details.',
+  },
 };
 
 export const DESTINATIONS_FIXTURE: Destination[] = [

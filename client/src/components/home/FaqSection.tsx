@@ -7,6 +7,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion';
+import { substituteTokens } from '@/lib/tokens';
 import { trpc } from '@/lib/trpc';
 
 const SKELETON_ITEM_COUNT = 5;
@@ -32,8 +33,12 @@ const SKELETON_ITEM_COUNT = 5;
  * answer with no token renders exactly as stored. An admin who deletes the
  * token sees it gone from their own text — visible, unlike an invisible
  * dependency on a question string.
+ *
+ * The substitution itself goes through `substituteTokens` (`lib/tokens.ts`)
+ * — the ONE shared `{{token}}` helper CLAUDE.md requires once a second
+ * token type exists (the WhatsApp quote-message tokens, `lib/whatsapp-
+ * message.ts`), rather than this file keeping its own split/join copy.
  */
-const PAYMENT_METHODS_TOKEN = '{{paymentMethods}}';
 
 /**
  * Fix round 1, F2: an earlier version of this function folded the 'visa'
@@ -92,8 +97,7 @@ function paymentMethodsSentence(methods: { label: string }[]): string {
  * reword any question freely and this keeps working.
  */
 function resolveAnswer(answer: string, methods: { label: string }[]): string {
-  if (!answer.includes(PAYMENT_METHODS_TOKEN)) return answer;
-  return answer.split(PAYMENT_METHODS_TOKEN).join(paymentMethodsSentence(methods));
+  return substituteTokens(answer, { paymentMethods: paymentMethodsSentence(methods) });
 }
 
 /** One bar per question row, roughly the trigger's own min-h-11 height, so the real accordion causes no layout shift once it resolves. */

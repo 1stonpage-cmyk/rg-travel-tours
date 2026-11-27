@@ -28,6 +28,13 @@
  *    the loop below). The fallback is `false` — tours hidden — because a
  *    database that cannot prove tours are meant to be visible must not show
  *    them.
+ * 3. `whatsapp_message` (owner spec, 2026-11-28, Task 1A). Every public
+ *    WhatsApp link on the site reads it, through the SAME `settings.get`
+ *    payload every page already calls — a missing or malformed row here must
+ *    not take the whole site down over a WhatsApp quote-message template.
+ *    `resolveWhatsappMessage()` falls back to `WHATSAPP_MESSAGE_DEFAULTS` (the
+ *    same text `db/seed-data.ts` seeds), so a link keeps working, with real
+ *    words, before anyone has saved this block even once.
  *
  * Do not extend this pattern to any other settings key without a new owner
  * decision.
@@ -46,6 +53,8 @@ import {
   SHOW_TOURS_DEFAULT,
   TRANSFER_OPERATIONS_DEFAULTS,
   transferOperationsSchema,
+  WHATSAPP_MESSAGE_DEFAULTS,
+  whatsappMessageSchema,
   type SettingKey,
   type SettingsBlocks,
 } from './settings-schema';
@@ -82,6 +91,10 @@ export async function readSettings(): Promise<SettingsBlocks> {
   for (const key of SETTING_KEYS) {
     if (key === 'show_tours') {
       blocks[key] = resolveShowTours(raw[key]);
+      continue;
+    }
+    if (key === 'whatsapp_message') {
+      blocks[key] = resolveWhatsappMessage(raw[key]);
       continue;
     }
     if (!(key in raw)) {
@@ -332,6 +345,40 @@ export async function readShowTours(): Promise<boolean> {
   return resolveShowTours(row?.value);
 }
 
+/**
+ * `whatsapp_message`, never throwing — the third narrow carve-out, see this
+ * file's top-of-file note. Missing row, or a row that fails the schema
+ * (including the unknown-token refusal) -> full defaults. Unlike
+ * `transfer_operations` there is no partial-field merge: both fields are
+ * always written together by the one Settings editor Save, so a
+ * one-field-missing shape is not a real shape worth coding a merge for.
+ * Logs exactly one console.warn naming which case fired, never the raw
+ * stored value (a guest's quote-message template is still admin-entered
+ * text, same rule as every other settings reader in this file).
+ */
+function resolveWhatsappMessage(raw: unknown): SettingsBlocks['whatsapp_message'] {
+  if (raw === undefined) {
+    console.warn('[settings] whatsapp_message row is missing; using defaults.');
+    return WHATSAPP_MESSAGE_DEFAULTS;
+  }
+  const result = whatsappMessageSchema.safeParse(raw);
+  if (result.success) return result.data;
+  console.warn('[settings] whatsapp_message value is invalid; using defaults.');
+  return WHATSAPP_MESSAGE_DEFAULTS;
+}
+
+/**
+ * Just the `whatsapp_message` block — mirrors `readShowTours()`'s own named
+ * wrapper, for the same reason: a direct, no-fallback-ambiguity read for
+ * anything that wants only this block, never throwing (see
+ * `resolveWhatsappMessage` above).
+ */
+export async function readWhatsappMessageSettings(): Promise<SettingsBlocks['whatsapp_message']> {
+  const db = getDb();
+  const [row] = await db.select().from(settings).where(eq(settings.key, 'whatsapp_message'));
+  return resolveWhatsappMessage(row?.value);
+}
+
 // ---------------------------------------------------------------------------
 // SettingsPayload — the RESOLVED shape `settings.get` sends to the browser
 // (Task 1.6, ruling 3). `SettingsBlocks` above is the raw, Zod-parsed row
@@ -471,6 +518,20 @@ export interface SettingsPayload {
   signupCoupon: {
     discountPercent: number;
   };
+  /**
+   * The two WhatsApp quote-request templates, verbatim (owner spec,
+   * 2026-11-28, Task 1A) — `general` has no tokens; `withDetails` still
+   * carries its `{{token}}` placeholders, substituted CLIENT-side (from
+   * whatever a guest has typed into the booking form so far, never from
+   * anything the server knows), through the shared helper in
+   * `client/src/lib/tokens.ts`. A missing or malformed stored row degrades to
+   * `WHATSAPP_MESSAGE_DEFAULTS` rather than failing the whole payload — see
+   * `resolveWhatsappMessage()` in this file.
+   */
+  whatsappMessage: {
+    general: string;
+    withDetails: string;
+  };
 }
 
 function resolveAnnouncement(
@@ -603,6 +664,10 @@ export function toSettingsPayload(
     hasRealReviews,
     legal: { privacy: blocks.legal_privacy, terms: blocks.legal_terms },
     signupCoupon: { discountPercent: blocks.signup_coupon.discountPercent },
+    whatsappMessage: {
+      general: blocks.whatsapp_message.general,
+      withDetails: blocks.whatsapp_message.withDetails,
+    },
   };
 }
 

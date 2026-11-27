@@ -506,6 +506,57 @@ describe('settings schemas', () => {
   });
 
   /**
+   * `whatsapp_message` — the WhatsApp quote-request templates (owner spec,
+   * 2026-11-28, Task 1A). The one rule with no analogue elsewhere in this
+   * file: an unknown `{{token}}` is refused, so a typo can never reach a
+   * guest's chat app as literal, unresolved brace text.
+   */
+  describe('whatsapp_message', () => {
+    const schema = SETTING_SCHEMAS.whatsapp_message;
+
+    it('accepts the block the seed ships, with every allowed token', () => {
+      expect(
+        schema.safeParse({
+          general: "Hi TravelSugbo! I'd like a quote for a private transfer.",
+          withDetails:
+            'Route: {{route}}\nTrip: {{trip}}\nDate: {{date}}\nPassengers: {{passengers}}\n' +
+            'Bags: {{bags}}\nVehicle: {{vehicle}}\nPickup: {{pickup}}',
+        }).success,
+      ).toBe(true);
+    });
+
+    it('accepts a message with no tokens at all', () => {
+      expect(schema.safeParse({ general: 'Hi!', withDetails: 'Hi, no tokens here.' }).success).toBe(
+        true,
+      );
+    });
+
+    it('REFUSES an unknown token in either field', () => {
+      expect(
+        schema.safeParse({ general: 'Hi {{guestName}}!', withDetails: 'Route: {{route}}' }).success,
+      ).toBe(false);
+      expect(schema.safeParse({ general: 'Hi!', withDetails: 'Phone: {{phone}}' }).success).toBe(
+        false,
+      );
+    });
+
+    it('REFUSES an empty field in either direction', () => {
+      expect(schema.safeParse({ general: '', withDetails: 'fine' }).success).toBe(false);
+      expect(schema.safeParse({ general: 'fine', withDetails: '' }).success).toBe(false);
+    });
+
+    it('REFUSES a field over 1000 characters', () => {
+      const tooLong = 'a'.repeat(1001);
+      expect(schema.safeParse({ general: tooLong, withDetails: 'fine' }).success).toBe(false);
+    });
+
+    it('accepts a field at exactly 1000 characters', () => {
+      const atLimit = 'a'.repeat(1000);
+      expect(schema.safeParse({ general: atLimit, withDetails: 'fine' }).success).toBe(true);
+    });
+  });
+
+  /**
    * Fifteen from the dynamic-site plan, plus `booking` (the bookable date
    * window, owner decision 2026-10-13), `payment_qr` (the R&G payment QR and
    * account, owner decision 2026-10-14 Q3), `transfer_operations` (the
@@ -517,7 +568,7 @@ describe('settings schemas', () => {
    * down until the seed runs — `show_tours` being the one exception, since
    * `readSettings()` resolves it through a fallback rather than throwing.
    */
-  it('covers all 20 settings keys — the 15 from the plan, plus booking, payment_qr, transfer_operations, show_tours and signup_coupon', () => {
+  it('covers all 21 settings keys — the 15 from the plan, plus booking, payment_qr, transfer_operations, show_tours, signup_coupon and whatsapp_message', () => {
     const expectedKeys = [
       'content_unverified',
       'site_seo',
@@ -539,6 +590,7 @@ describe('settings schemas', () => {
       'transfer_operations',
       'show_tours',
       'signup_coupon',
+      'whatsapp_message',
     ];
     expect(Object.keys(SETTING_SCHEMAS).sort()).toEqual(expectedKeys.sort());
   });

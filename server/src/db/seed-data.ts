@@ -25,7 +25,7 @@
  * Permit numbers are null: never invent an accreditation number.
  */
 import type { TransferPlaceType } from '@rg/shared';
-import { BUILTIN_PERMITS } from '../content/settings-schema';
+import { BUILTIN_PERMITS, WHATSAPP_MESSAGE_DEFAULTS } from '../content/settings-schema';
 import type { SettingsBlocks } from '../content/settings-schema';
 
 const placeholderImage = (slug: string) => `/placeholders/${slug}.svg`;
@@ -868,6 +868,17 @@ This placeholder will be replaced with reviewed terms before launch.`,
     discountPercent: 5,
     expiryDays: 60,
   },
+
+  /**
+   * WhatsApp quote-request message templates (owner spec, 2026-11-28, Task
+   * 1A). `WHATSAPP_MESSAGE_DEFAULTS` lives in `settings-schema.ts` rather
+   * than being retyped here, because `resolveWhatsappMessage()` in
+   * `content/settings.ts` falls back to the SAME constant when the row is
+   * missing or malformed — one set of words, not two. Insert-only like every
+   * other `seedBase` row: an admin who has already edited this through the
+   * Settings screen keeps their own wording.
+   */
+  whatsapp_message: WHATSAPP_MESSAGE_DEFAULTS,
 };
 
 // ---------------------------------------------------------------------------
