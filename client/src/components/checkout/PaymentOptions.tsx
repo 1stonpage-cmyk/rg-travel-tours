@@ -4,7 +4,7 @@ import { Skeleton } from '@/components/common/Skeleton';
 import { Button } from '@/components/ui/button';
 import { trackEvent } from '@/lib/consent/scripts';
 import { useShowCallNumbers } from '@/lib/contact-visibility';
-import { SITE, telLink, whatsappLink } from '@/lib/site';
+import { phoneWhatsappLink, SITE, telLink } from '@/lib/site';
 import { trpc } from '@/lib/trpc';
 
 /**
@@ -100,6 +100,13 @@ function ContactToPay({ bookingRef }: { bookingRef: string }) {
   // Owner decision 2026-11-27 ("hide call numbers"): the owner works at sea
   // and cannot take calls/SMS. See @/lib/contact-visibility for the default.
   const showCallNumbers = useShowCallNumbers();
+  // Settings-driven, never a hardcoded copy from @/lib/site (owner spec,
+  // 2026-11-28, Task 1A). Same cached `settings.get` entry every other
+  // component on the page reads — no extra request.
+  const { data: settings } = trpc.settings.get.useQuery();
+  const whatsapp = settings?.contact.whatsapp ?? '';
+  const phoneTel = settings?.contact.phoneTel ?? '';
+  const phoneDisplay = settings?.contact.phoneDisplay ?? '';
   return (
     <div
       role="status"
@@ -112,7 +119,7 @@ function ContactToPay({ bookingRef }: { bookingRef: string }) {
       </p>
       <p className="text-sm">
         <a
-          href={whatsappLink(message)}
+          href={phoneWhatsappLink(whatsapp, message)}
           target="_blank"
           rel="noreferrer noopener"
           className="text-brand-blue-700 hover:text-brand-blue-900 tap-target inline-flex items-center font-semibold underline underline-offset-2"
@@ -125,10 +132,10 @@ function ContactToPay({ bookingRef }: { bookingRef: string }) {
               ·
             </span>
             <a
-              href={telLink(SITE.contact.phone.tel)}
+              href={telLink(phoneTel)}
               className="text-brand-blue-700 hover:text-brand-blue-900 tap-target inline-flex items-center font-semibold underline underline-offset-2"
             >
-              {SITE.contact.phone.display}
+              {phoneDisplay}
             </a>
           </>
         )}

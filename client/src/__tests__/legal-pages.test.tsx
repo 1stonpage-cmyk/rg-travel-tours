@@ -4,7 +4,6 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it } from 'vitest';
 import SiteFooter from '@/components/layout/SiteFooter';
 import { ConsentProvider } from '@/lib/consent/ConsentContext';
-import { SITE } from '@/lib/site';
 import { TrpcProviders } from '@/lib/trpc';
 import CookiesPage from '@/pages/public/CookiesPage';
 import PhotoCreditsPage from '@/pages/public/PhotoCreditsPage';
@@ -50,14 +49,17 @@ describe('PrivacyPage', () => {
     expect(screen.getByText(/Data Privacy Act of 2012/)).toBeInTheDocument();
   });
 
-  it('shows the real, already-confirmed contact email and phone — not a placeholder chip', () => {
+  it('shows the real, already-confirmed contact email and phone — not a placeholder chip', async () => {
     renderPage(<PrivacyPage />);
 
     // Task 2A: SITE.contact.email/phone are real, client-confirmed values —
     // 05-cookie-consent-spec.md's sibling drafts' [CONTACT EMAIL]/[CONTACT
-    // PHONE] brackets become these, never a "To be confirmed" chip.
+    // PHONE] brackets become these, never a "To be confirmed" chip. The
+    // phone number comes through `ContactLine`, which reads
+    // `settings.contact.phoneDisplay` (owner spec, 2026-11-28, Task 1A) —
+    // async now, unlike the email, so it needs `findAllByText`.
     expect(screen.getAllByText('hello@travelsugbo.com').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('0908 469 6246').length).toBeGreaterThan(0);
+    expect((await screen.findAllByText('0908 469 6246')).length).toBeGreaterThan(0);
   });
 
   it('renders every genuinely unconfirmed value as a visible amber "To be confirmed" chip, never bare brackets', () => {
@@ -238,7 +240,7 @@ describe('legal pages — contact line follows showCallNumbers (owner decision 2
       },
     });
     renderPage(<TermsPage />);
-    expect(await screen.findByText(SITE.contact.phone.display)).toBeInTheDocument();
+    expect(await screen.findByText(SETTINGS_FIXTURE.contact.phoneDisplay!)).toBeInTheDocument();
   });
 
   it('Terms, Privacy and Refund Policy all drop the tel link and show WhatsApp/Viber when false', async () => {

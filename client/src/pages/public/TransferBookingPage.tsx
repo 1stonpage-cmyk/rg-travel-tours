@@ -47,7 +47,7 @@ import {
 import { describeCheckoutError } from '@/lib/mutation-errors';
 import { scrollToAndFocus } from '@/lib/scroll-to-field';
 import { cn } from '@/lib/utils';
-import { whatsappLink } from '@/lib/site';
+import { phoneWhatsappLink } from '@/lib/site';
 import { TRANSFER_PRODUCT_TYPE_LABELS } from '@/lib/transfer-product-labels';
 import { trpc } from '@/lib/trpc';
 import { buildWithDetailsMessage } from '@/lib/whatsapp-message';
@@ -984,7 +984,8 @@ export default function TransferBookingPage() {
     };
   }
 
-  const whatsappHref = whatsappLink(
+  const whatsappHref = phoneWhatsappLink(
+    settingsQuery.data?.contact.whatsapp ?? '',
     buildWithDetailsMessage(
       settingsQuery.data?.whatsappMessage.withDetails ?? '',
       whatsappTokenValues(),
@@ -1303,7 +1304,8 @@ export default function TransferBookingPage() {
                     target="_blank"
                     rel="noreferrer noopener"
                     onClick={(event) => {
-                      event.currentTarget.href = whatsappLink(
+                      event.currentTarget.href = phoneWhatsappLink(
+                        settingsQuery.data?.contact.whatsapp ?? '',
                         buildWithDetailsMessage(
                           settingsQuery.data?.whatsappMessage.withDetails ?? '',
                           whatsappTokenValues(),

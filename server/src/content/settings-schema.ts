@@ -305,36 +305,87 @@ const faqSchema = z.object({
   a: z.string(),
 });
 
-const contactSchema = z.object({
-  address: z.string(),
-  tagline: z.string(),
-  hoursNote: z.string(),
-  email: z.string(),
-  phoneDisplay: z.string(),
-  phoneTel: z.string(),
-  whatsapp: z.string(),
-  altPhoneDisplay: z.string(),
-  altPhoneTel: z.string(),
-  facebook: z.string(),
-  motto: z.string(),
-  otherServices: z.object({
-    before: z.string(),
-    link: z.string(),
-    after: z.string(),
-  }),
-  /**
-   * Admin switch (owner decision 2026-11-27): the owner works at sea and
-   * cannot take calls or SMS, so guests must be steered to WhatsApp/Viber/
-   * email/Facebook only. `.default(true)` is what makes a stored block
-   * written before this field existed parse as "calls shown" — nothing
-   * changes until an admin explicitly switches it off. See
-   * `resolveContact()` in `content/settings.ts` for how the public payload
-   * strips the four phone fields below when this is false, and
-   * `travelAgencyNode()` in `seo/jsonld.ts` for the independent JSON-LD gate
-   * (that path reads this raw block directly, not the resolved payload).
-   */
-  showCallNumbers: z.boolean().default(true),
-});
+/**
+ * Loose PH mobile check, tolerant of a leading "+" or its absence (owner
+ * spec, 2026-11-28, Task 1A). `phoneTel`/`altPhoneTel` have always been
+ * stored as `+63…`; `whatsapp` has always been stored as bare `63…` digits
+ * (what `wa.me` wants) — this schema is the ONE validator for every one of
+ * these fields (`writeSettingBlock`'s own rule: never a second, looser
+ * schema), so it has to accept both shapes rather than retroactively
+ * rejecting whichever stored row predates this check. A write is free to use
+ * either form; nothing here rewrites the value it was given.
+ */
+const PH_PHONE_PATTERN = /^\+?63\d{10}$/;
+
+function isPhPhoneOrEmpty(value: string): boolean {
+  return value === '' || PH_PHONE_PATTERN.test(value);
+}
+
+const phPhoneField = z
+  .string()
+  .refine(isPhPhoneOrEmpty, 'Enter the number in +63 form, e.g. +639171234567.');
+
+const contactSchema = z
+  .object({
+    address: z.string(),
+    tagline: z.string(),
+    hoursNote: z.string(),
+    email: z.string(),
+    phoneDisplay: z.string(),
+    phoneTel: phPhoneField,
+    whatsapp: phPhoneField,
+    /**
+     * Admin-editable, optional (owner spec, 2026-11-28, Task 1A). Empty means
+     * "use the WhatsApp number" — `resolveContact()` in `content/settings.ts`
+     * is where that fallback is actually applied, so every public surface
+     * gets an already-resolved number and never re-implements the rule.
+     * `.default('')` is what makes a stored block written before this field
+     * existed parse as "no Viber number of its own" rather than throwing
+     * `readSettings()`'s `Invalid setting: "contact"` for every page on the
+     * site.
+     */
+    viber: phPhoneField.default(''),
+    altPhoneDisplay: z.string(),
+    altPhoneTel: phPhoneField,
+    facebook: z.string(),
+    motto: z.string(),
+    otherServices: z.object({
+      before: z.string(),
+      link: z.string(),
+      after: z.string(),
+    }),
+    /**
+     * Admin switch (owner decision 2026-11-27): the owner works at sea and
+     * cannot take calls or SMS, so guests must be steered to WhatsApp/Viber/
+     * email/Facebook only. `.default(true)` is what makes a stored block
+     * written before this field existed parse as "calls shown" — nothing
+     * changes until an admin explicitly switches it off. See
+     * `resolveContact()` in `content/settings.ts` for how the public payload
+     * strips the four phone fields below when this is false, and
+     * `travelAgencyNode()` in `seo/jsonld.ts` for the independent JSON-LD gate
+     * (that path reads this raw block directly, not the resolved payload).
+     */
+    showCallNumbers: z.boolean().default(true),
+  })
+  .superRefine((value, ctx) => {
+    // Display fields non-empty when their tel is set (owner spec, 2026-11-28,
+    // Task 1A) — a dialable number with nothing to show beside it is a
+    // half-entered row, not a valid one.
+    if (value.phoneTel !== '' && value.phoneDisplay.trim() === '') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['phoneDisplay'],
+        message: 'Add the text to show for this number.',
+      });
+    }
+    if (value.altPhoneTel !== '' && value.altPhoneDisplay.trim() === '') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['altPhoneDisplay'],
+        message: 'Add the text to show for this number.',
+      });
+    }
+  });
 
 /**
  * The bookable date window (owner decision 2026-10-13 — **proposed by

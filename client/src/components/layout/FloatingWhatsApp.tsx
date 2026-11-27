@@ -3,7 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { WhatsAppGlyph } from '@/components/common/BrandGlyphs';
 import { Button } from '@/components/ui/button';
 import { useConsent } from '@/lib/consent/useConsent';
-import { whatsappLink } from '@/lib/site';
+import { phoneWhatsappLink } from '@/lib/site';
 import { trpc } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
 
@@ -269,10 +269,13 @@ export default function FloatingWhatsApp() {
    * 2026-11-28, Task 1C), replacing the two hardcoded tour/transfer
    * sentences this used to branch on — one wording, settings-driven,
    * everywhere a guest hasn't told us anything yet. `undefined` while
-   * `settings.get` is still loading: `whatsappLink()` already degrades to
-   * the bare link with no prefilled text in that case.
+   * `settings.get` is still loading: `phoneWhatsappLink()` already degrades
+   * to the bare link with no prefilled text in that case.
    */
   const message = settings?.whatsappMessage.general;
+  // Settings-driven, never a hardcoded copy from @/lib/site (owner spec,
+  // 2026-11-28, Task 1A).
+  const whatsapp = settings?.contact.whatsapp ?? '';
 
   return (
     <>
@@ -292,7 +295,7 @@ export default function FloatingWhatsApp() {
           {openState && <OpenStatusChip openState={openState} />}
           <ChatLabel reveal={false} onRevealEnd={() => {}} />
           <a
-            href={whatsappLink(message)}
+            href={phoneWhatsappLink(whatsapp, message)}
             target="_blank"
             rel="noreferrer noopener"
             aria-label="Chat with us on WhatsApp"
@@ -352,7 +355,7 @@ export default function FloatingWhatsApp() {
           {openState && <OpenStatusChip openState={openState} />}
           <ChatLabel reveal={peek} onRevealEnd={endPeek} />
           <a
-            href={whatsappLink(message)}
+            href={phoneWhatsappLink(whatsapp, message)}
             target="_blank"
             rel="noreferrer noopener"
             aria-label="Chat with us on WhatsApp"

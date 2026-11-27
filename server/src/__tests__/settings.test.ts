@@ -105,6 +105,7 @@ function validValueFor(key: string): unknown {
         phoneDisplay: '0917 000 0000',
         phoneTel: '+639170000000',
         whatsapp: '+639170000000',
+        viber: '',
         altPhoneDisplay: '',
         altPhoneTel: '',
         facebook: '',
@@ -501,6 +502,95 @@ describe('toSettingsPayload — contact.showCallNumbers (owner decision 2026-11-
     expect('altPhoneTel' in payload.contact).toBe(false);
     expect(payload.contact.whatsapp).toBe('639179998888');
     expect(payload.contact.showCallNumbers).toBe(false);
+  });
+});
+
+/**
+ * BUG (owner spec, 2026-11-28, Task 1A): the admin's `whatsapp`/`viber`
+ * fields had no effect on the live site because no public component read
+ * them. `resolveContact()` is where the fix's one piece of real logic lives
+ * — "an empty Viber number falls back to WhatsApp" — so it is pinned
+ * directly here, independent of any one component.
+ */
+describe('resolveContact — viber falls back to whatsapp when empty (owner spec, 2026-11-28, Task 1A)', () => {
+  const withViber = {
+    address: 'Cebu City',
+    tagline: 'Your Cebu guides',
+    hoursNote: 'Daily',
+    email: 'hello@example.test',
+    phoneDisplay: '0917 000 0000',
+    phoneTel: '639170000000',
+    whatsapp: '639179998888',
+    altPhoneDisplay: '0917 111 1111',
+    altPhoneTel: '639171111111',
+    facebook: 'travelsugbo',
+    motto: 'Explore Cebu',
+    otherServices: { before: 'We also offer', link: 'transfers', after: 'on request.' },
+  };
+
+  it('sends the Viber number unchanged when one is set', () => {
+    const blocks = blocksFixture({
+      contact: { ...withViber, viber: '639112223333', showCallNumbers: true },
+    });
+    const payload = toSettingsPayload(blocks, NOW, true, true);
+    expect(payload.contact.viber).toBe('639112223333');
+    // Proven able to fail: it's genuinely a DIFFERENT number from whatsapp,
+    // so a bug that always returned whatsapp would be caught here.
+    expect(payload.contact.viber).not.toBe(payload.contact.whatsapp);
+  });
+
+  it('falls back to the whatsapp number when viber is empty', () => {
+    const blocks = blocksFixture({
+      contact: { ...withViber, viber: '', showCallNumbers: true },
+    });
+    const payload = toSettingsPayload(blocks, NOW, true, true);
+    expect(payload.contact.viber).toBe('639179998888');
+  });
+
+  it('still falls back even when showCallNumbers is false — viber is always sent', () => {
+    const blocks = blocksFixture({
+      contact: { ...withViber, viber: '', showCallNumbers: false },
+    });
+    const payload = toSettingsPayload(blocks, NOW, true, true);
+    expect(payload.contact.viber).toBe('639179998888');
+  });
+});
+
+describe('contactSchema — number format and display-field validation (owner spec, 2026-11-28, Task 1A)', () => {
+  const valid = validValueFor('contact') as Record<string, unknown>;
+
+  it('accepts the existing stored shapes — bare digits and a leading "+"', () => {
+    expect(SETTING_SCHEMAS.contact.safeParse(valid).success).toBe(true);
+  });
+
+  it('accepts an empty viber (falls back to whatsapp) and refuses garbage', () => {
+    expect(SETTING_SCHEMAS.contact.safeParse({ ...valid, viber: '' }).success).toBe(true);
+    expect(SETTING_SCHEMAS.contact.safeParse({ ...valid, viber: 'not-a-number' }).success).toBe(
+      false,
+    );
+  });
+
+  it('refuses a whatsapp value that is not a PH number', () => {
+    const result = SETTING_SCHEMAS.contact.safeParse({ ...valid, whatsapp: 'call me maybe' });
+    expect(result.success).toBe(false);
+  });
+
+  it('refuses a phoneTel set with no phoneDisplay text', () => {
+    const result = SETTING_SCHEMAS.contact.safeParse({
+      ...valid,
+      phoneTel: '+639170000000',
+      phoneDisplay: '',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('allows both phoneTel and phoneDisplay empty together (no primary number at all)', () => {
+    const result = SETTING_SCHEMAS.contact.safeParse({
+      ...valid,
+      phoneTel: '',
+      phoneDisplay: '',
+    });
+    expect(result.success).toBe(true);
   });
 });
 

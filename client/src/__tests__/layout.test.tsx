@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import PublicLayout from '@/components/layout/PublicLayout';
 import SiteHeader from '@/components/layout/SiteHeader';
 import { CONSENT_STORAGE_KEY } from '@/lib/consent/types';
-import { SITE, viberLink, whatsappLink } from '@/lib/site';
+import { phoneViberLink, phoneWhatsappLink, SITE } from '@/lib/site';
 import { TrpcProviders } from '@/lib/trpc';
 import { SETTINGS_FIXTURE } from './helpers/fixtures';
 import { mockTrpc } from './helpers/mock-trpc';
@@ -595,23 +595,36 @@ describe('SiteFooter — WhatsApp/Viber icon buttons beside the phone number (sp
     }
   });
 
-  it('reuses the shared whatsappLink()/viberLink() helpers — no new link target', async () => {
+  it('reuses the shared phoneWhatsappLink()/phoneViberLink() helpers, fed by settings.contact — no new link target', async () => {
     renderLayout();
-    // whatsapp carries the settings-driven "general" quote-request message
-    // (owner spec, 2026-11-28, Task 1C), once `settings.get` resolves; viber
-    // has no reliable prefill and its href never depends on that query.
+    // Both pills' numbers come from `settings.contact` now (owner spec,
+    // 2026-11-28, Task 1A), so both hrefs depend on `settings.get`
+    // resolving — unlike before this fix, when only the WhatsApp pill's
+    // prefilled message did.
     await waitFor(() =>
       expect(pillFor('whatsapp')).toHaveAttribute(
         'href',
-        whatsappLink(SETTINGS_FIXTURE.whatsappMessage.general),
+        phoneWhatsappLink(
+          SETTINGS_FIXTURE.contact.whatsapp,
+          SETTINGS_FIXTURE.whatsappMessage.general,
+        ),
       ),
     );
-    expect(pillFor('viber')).toHaveAttribute('href', viberLink());
+    await waitFor(() =>
+      expect(pillFor('viber')).toHaveAttribute(
+        'href',
+        phoneViberLink(SETTINGS_FIXTURE.contact.viber),
+      ),
+    );
   });
 
-  it('keeps the visible phone number rendered — it is not replaced by the new buttons', () => {
+  it('keeps the visible phone number rendered — it is not replaced by the new buttons', async () => {
     renderLayout();
-    expect(screen.getByRole('contentinfo')).toHaveTextContent(SITE.contact.phone.display);
+    await waitFor(() =>
+      expect(screen.getByRole('contentinfo')).toHaveTextContent(
+        SETTINGS_FIXTURE.contact.phoneDisplay!,
+      ),
+    );
   });
 });
 
@@ -639,10 +652,9 @@ describe('SiteHeader — call number hidden (owner decision 2026-11-27)', () => 
       },
     });
     renderHeader();
-    expect(await screen.findByRole('link', { name: SITE.contact.phone.display })).toHaveAttribute(
-      'href',
-      `tel:${SITE.contact.phone.tel}`,
-    );
+    expect(
+      await screen.findByRole('link', { name: SETTINGS_FIXTURE.contact.phoneDisplay! }),
+    ).toHaveAttribute('href', `tel:${SETTINGS_FIXTURE.contact.phoneTel!}`);
   });
 
   it('replaces the tel link with a WhatsApp action when showCallNumbers is false', async () => {
@@ -654,7 +666,7 @@ describe('SiteHeader — call number hidden (owner decision 2026-11-27)', () => 
     });
     renderHeader();
     const chat = await screen.findByRole('link', { name: 'Chat on WhatsApp' });
-    expect(screen.queryByText(SITE.contact.phone.display)).not.toBeInTheDocument();
+    expect(screen.queryByText(SETTINGS_FIXTURE.contact.phoneDisplay!)).not.toBeInTheDocument();
     expect(document.querySelector(`a[href^="tel:"]`)).toBeNull();
     expect(chat).toHaveAttribute('href', expect.stringContaining('wa.me'));
     expect(screen.getByText('WhatsApp')).toBeInTheDocument();

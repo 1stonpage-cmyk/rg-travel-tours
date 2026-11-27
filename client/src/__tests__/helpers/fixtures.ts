@@ -214,6 +214,12 @@ export const SETTINGS_FIXTURE: SettingsPayload = {
     phoneDisplay: '0908 469 6246',
     phoneTel: '+639084696246',
     whatsapp: '639084696246',
+    // This fixture mirrors the WIRE payload, i.e. already resolved by
+    // `resolveContact()` (server/src/content/settings.ts) — the seeded
+    // `viber` row is empty, and resolution falls back to `whatsapp` above,
+    // so the real payload never actually carries an empty string here.
+    // Individual tests override this to exercise "has its own Viber number".
+    viber: '639084696246',
     altPhoneDisplay: '0927 737 8431',
     altPhoneTel: '+639277378431',
     facebook: 'https://www.facebook.com/profile.php?id=61574390071362',

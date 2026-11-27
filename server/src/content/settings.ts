@@ -586,7 +586,9 @@ export function resolvePermits(block: SettingsBlocks['permits']): ResolvedAccred
  * `null`. `whatsapp`/`email`/`facebook`/`address`/`hoursNote`/`tagline`/
  * `motto`/`otherServices` always pass through unchanged: WhatsApp/Viber
  * deep links necessarily carry a number, and that is accepted (see this
- * plan's header).
+ * plan's header). `viber` is likewise always sent, already resolved to a
+ * real number by `resolveContact()` below — never the raw, possibly-empty
+ * stored value.
  */
 export type PublicContact = Omit<
   SettingsBlocks['contact'],
@@ -596,8 +598,23 @@ export type PublicContact = Omit<
     Pick<SettingsBlocks['contact'], 'phoneDisplay' | 'phoneTel' | 'altPhoneDisplay' | 'altPhoneTel'>
   >;
 
+/**
+ * "Empty means use the WhatsApp number" (owner spec, 2026-11-28, Task 1A) —
+ * applied here, once, so every public surface receives an already-resolved
+ * Viber number and never re-implements the fallback itself. `contact.viber`
+ * can legitimately be `undefined` here: some test harnesses build a
+ * `SettingsBlocks['contact']` fixture by hand rather than through
+ * `contactSchema.parse()` (which is where `.default('')` normally applies),
+ * so this tolerates a missing key rather than throwing on it.
+ */
+function resolvedViber(contact: SettingsBlocks['contact']): string {
+  const viber = contact.viber?.trim();
+  return viber ? contact.viber : contact.whatsapp;
+}
+
 export function resolveContact(contact: SettingsBlocks['contact']): PublicContact {
-  if (contact.showCallNumbers) return contact;
+  const viber = resolvedViber(contact);
+  if (contact.showCallNumbers) return { ...contact, viber };
   // Explicit allow-list rather than rest-omit destructuring: destructuring the
   // four excluded names just to discard them trips
   // @typescript-eslint/no-unused-vars (no ignoreRestSiblings override exists in
@@ -610,6 +627,7 @@ export function resolveContact(contact: SettingsBlocks['contact']): PublicContac
     hoursNote: contact.hoursNote,
     email: contact.email,
     whatsapp: contact.whatsapp,
+    viber,
     facebook: contact.facebook,
     motto: contact.motto,
     otherServices: contact.otherServices,

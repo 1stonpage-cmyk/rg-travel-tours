@@ -4,7 +4,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { WhatsAppGlyph } from '@/components/common/BrandGlyphs';
 import { Button } from '@/components/ui/button';
 import { useShowCallNumbers } from '@/lib/contact-visibility';
-import { SITE, telLink, visibleNav, whatsappLink } from '@/lib/site';
+import { phoneWhatsappLink, SITE, telLink, visibleNav } from '@/lib/site';
 import { trpc } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
 
@@ -49,6 +49,11 @@ export default function SiteHeader() {
   // Owner decision 2026-11-27 ("hide call numbers"): the owner works at sea
   // and cannot take calls/SMS. See @/lib/contact-visibility for the default.
   const showCallNumbers = useShowCallNumbers();
+  // Settings-driven, never a hardcoded copy from @/lib/site (owner spec,
+  // 2026-11-28, Task 1A).
+  const phoneTel = settings?.contact.phoneTel ?? '';
+  const phoneDisplay = settings?.contact.phoneDisplay ?? '';
+  const whatsapp = settings?.contact.whatsapp ?? '';
 
   // Header shrink/solidify (spec task 2.9F). Deliberately does not animate
   // `height`, or change it at all, in either direction: the box below is
@@ -131,15 +136,15 @@ export default function SiteHeader() {
         <div className="flex items-center gap-2">
           {showCallNumbers ? (
             <a
-              href={telLink(SITE.contact.phone.tel)}
+              href={telLink(phoneTel)}
               className="text-brand-blue-700 tap-target hidden items-center gap-2 rounded-md px-3 text-sm font-semibold lg:flex"
             >
               <Phone className="size-4" aria-hidden="true" />
-              {SITE.contact.phone.display}
+              {phoneDisplay}
             </a>
           ) : (
             <a
-              href={whatsappLink(settings?.whatsappMessage.general)}
+              href={phoneWhatsappLink(whatsapp, settings?.whatsappMessage.general)}
               target="_blank"
               rel="noreferrer noopener"
               aria-label="Chat on WhatsApp"

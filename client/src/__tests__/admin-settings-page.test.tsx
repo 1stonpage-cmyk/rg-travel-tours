@@ -130,6 +130,7 @@ const STORED: Record<string, unknown> = {
     phoneDisplay: '0917 000 0000',
     phoneTel: '639170000000',
     whatsapp: '639170000000',
+    viber: '',
     altPhoneDisplay: '',
     altPhoneTel: '',
     facebook: 'travelsugbo',

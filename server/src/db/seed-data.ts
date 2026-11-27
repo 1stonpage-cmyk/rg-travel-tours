@@ -717,8 +717,15 @@ export const SEED_SETTINGS: SettingsBlocks = {
     },
   ],
 
-  // Mirrors client/src/lib/site.ts exactly — site.ts stays the source of truth;
-  // server/src/__tests__/seed-parity.test.ts pins these values to it.
+  // The real, client-confirmed numbers (owner spec, 2026-11-28, Task 1A) —
+  // these are now the ONE source of truth for them. Every public surface
+  // reads them from the database via `settings.get`, not from a hardcoded
+  // copy in `client/src/lib/site.ts` (which no longer carries any of its
+  // own — see that file's own header). scripts/check-contact-parity.mjs
+  // compares these against the standalone coming-soon page, which has no
+  // build step and so cannot read them from the database itself;
+  // server/src/__tests__/seed-parity.test.ts pins the non-number fields
+  // (motto, facebook, tagline, otherServices) that still live in site.ts.
   contact: {
     address: 'Office address pending — Cebu, Philippines',
     tagline: 'Private airport and island transfers across Cebu, booked direct.',
@@ -730,6 +737,11 @@ export const SEED_SETTINGS: SettingsBlocks = {
     phoneDisplay: '0908 469 6246',
     phoneTel: '+639084696246',
     whatsapp: '639084696246',
+    // Empty — no Viber number of its own yet, so every public surface falls
+    // back to `whatsapp` above (`resolveContact()`,
+    // `server/src/content/settings.ts`). An admin can give it a real one from
+    // the Settings screen at any time.
+    viber: '',
     altPhoneDisplay: '0927 737 8431',
     altPhoneTel: '+639277378431',
     facebook: 'https://www.facebook.com/profile.php?id=61574390071362',

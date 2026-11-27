@@ -11,7 +11,7 @@ import { Label } from '@/components/ui/label';
 import { useShowCallNumbers } from '@/lib/contact-visibility';
 import { getFieldErrors, getFormErrors } from '@/lib/field-errors';
 import { describeMutationError } from '@/lib/mutation-errors';
-import { SITE, telLink, viberLink, whatsappLink } from '@/lib/site';
+import { phoneViberLink, phoneWhatsappLink, SITE, telLink } from '@/lib/site';
 import { trpc } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
 
@@ -195,6 +195,21 @@ export default function ContactSection() {
    * statements now come off the same settings payload.
    */
   const hoursNote = settings?.contact.hoursNote ?? null;
+  /*
+   * Phone/WhatsApp/Viber numbers come from `settings.contact`, never from a
+   * hardcoded copy in `@/lib/site` (owner spec, 2026-11-28, Task 1A) — an
+   * admin editing them in Settings used to have no effect on the live site.
+   * `''` while the query is still loading degrades to a non-dialable `tel:`
+   * link / a bare `wa.me`/`viber://` target for one render, same as the
+   * pre-existing gap on the WhatsApp prefill message.
+   */
+  const contact = settings?.contact;
+  const phoneTel = contact?.phoneTel ?? '';
+  const phoneDisplay = contact?.phoneDisplay ?? '';
+  const altPhoneTel = contact?.altPhoneTel ?? '';
+  const altPhoneDisplay = contact?.altPhoneDisplay ?? '';
+  const whatsapp = contact?.whatsapp ?? '';
+  const viber = contact?.viber ?? '';
 
   /*
    * `inquiries.create`'s refusal, split the same way every other form in
@@ -230,7 +245,7 @@ export default function ContactSection() {
             {showCallNumbers && (
               <li>
                 <a
-                  href={telLink(SITE.contact.phone.tel)}
+                  href={telLink(phoneTel)}
                   className="bg-background hover:bg-brand-blue-100 flex min-h-11 items-center gap-3 rounded-xl p-4 text-base sm:text-sm"
                 >
                   <Phone className="text-brand-blue-600 size-5 shrink-0" aria-hidden="true" />
@@ -238,7 +253,7 @@ export default function ContactSection() {
                     <span className="text-brand-blue-900 block font-semibold">
                       Call or text ({SITE.contact.phone.network})
                     </span>
-                    <span className="text-muted-foreground">{SITE.contact.phone.display}</span>
+                    <span className="text-muted-foreground">{phoneDisplay}</span>
                   </span>
                 </a>
               </li>
@@ -246,7 +261,7 @@ export default function ContactSection() {
             {showCallNumbers && (
               <li>
                 <a
-                  href={telLink(SITE.contact.altPhone.tel)}
+                  href={telLink(altPhoneTel)}
                   className="bg-background hover:bg-brand-blue-100 flex min-h-11 items-center gap-3 rounded-xl p-4 text-base sm:text-sm"
                 >
                   <Phone className="text-brand-blue-600 size-5 shrink-0" aria-hidden="true" />
@@ -254,7 +269,7 @@ export default function ContactSection() {
                     <span className="text-brand-blue-900 block font-semibold">
                       Call or text ({SITE.contact.altPhone.network})
                     </span>
-                    <span className="text-muted-foreground">{SITE.contact.altPhone.display}</span>
+                    <span className="text-muted-foreground">{altPhoneDisplay}</span>
                   </span>
                 </a>
               </li>
@@ -268,7 +283,7 @@ export default function ContactSection() {
             )}
             <li>
               <a
-                href={whatsappLink(settings?.whatsappMessage.general)}
+                href={phoneWhatsappLink(whatsapp, settings?.whatsappMessage.general)}
                 target="_blank"
                 rel="noreferrer noopener"
                 className="bg-background hover:bg-brand-blue-100 flex min-h-11 items-center gap-3 rounded-xl p-4 text-base sm:text-sm"
@@ -279,14 +294,14 @@ export default function ContactSection() {
                 <span>
                   <span className="text-brand-blue-900 block font-semibold">WhatsApp</span>
                   <span className="text-muted-foreground">
-                    {showCallNumbers ? SITE.contact.altPhone.display : 'Chat with us on WhatsApp'}
+                    {showCallNumbers ? altPhoneDisplay : 'Chat with us on WhatsApp'}
                   </span>
                 </span>
               </a>
             </li>
             <li>
               <a
-                href={viberLink()}
+                href={phoneViberLink(viber)}
                 className="bg-background hover:bg-brand-blue-100 flex min-h-11 items-center gap-3 rounded-xl p-4 text-base sm:text-sm"
               >
                 <ChatIcon tone="viber">
@@ -295,7 +310,7 @@ export default function ContactSection() {
                 <span>
                   <span className="text-brand-blue-900 block font-semibold">Viber</span>
                   <span className="text-muted-foreground">
-                    {showCallNumbers ? SITE.contact.altPhone.display : 'Chat with us on Viber'}
+                    {showCallNumbers ? altPhoneDisplay : 'Chat with us on Viber'}
                   </span>
                 </span>
               </a>
@@ -368,7 +383,8 @@ export default function ContactSection() {
               <p className="text-brand-ink">
                 {SITE.otherServices.before}{' '}
                 <a
-                  href={whatsappLink(
+                  href={phoneWhatsappLink(
+                    whatsapp,
                     `Hi ${SITE.name}! I'd like to ask about transfers, flights or hotels.`,
                   )}
                   target="_blank"

@@ -1,9 +1,18 @@
 /**
  * Static site configuration.
  *
- * The phone numbers and the Facebook URL are REAL, client-confirmed values.
- * The office address is still pending (spec task 8D). The email keeps its
- * env override until the client confirms it.
+ * The Facebook URL is a REAL, client-confirmed value. The office address is
+ * still pending (spec task 8D). The email keeps its env override until the
+ * client confirms it.
+ *
+ * The phone/WhatsApp/Viber NUMBERS are deliberately NOT here (owner spec,
+ * 2026-11-28, Task 1A — they used to be, and an admin editing them in
+ * Settings had no effect on the live site, which is the bug this fixed).
+ * They are admin-editable content now: `settings.contact.{phoneDisplay,
+ * phoneTel, whatsapp, viber, altPhoneDisplay, altPhoneTel}`, read through
+ * `trpc.settings.get`. `phoneWhatsappLink()`/`phoneViberLink()` below build
+ * the deep links from whatever number a caller passes in — never from a
+ * number of their own.
  *
  * BRAND vs LEGAL ENTITY — these are deliberately two different values:
  *   `name`          the public trading brand, shown everywhere on the site
@@ -43,29 +52,15 @@ export const SITE = {
   motto: 'Your journey, our priority',
   contact: {
     /**
-     * Real client-confirmed numbers. These are NOT env-driven: the standalone
-     * coming-soon page (coming-soon/index.html) is plain static HTML that
-     * cannot read Vite env, and the two surfaces must never drift apart.
-     * scripts/check-contact-parity.mjs fails the build if they do.
-     *
-     * `altPhone` is the WhatsApp/Viber line as well as calls and SMS
-     * (owner decision 2026-11-11, 1B — moved off `phone`). `phone` is now
-     * calls only.
+     * Carrier labels only — not numbers, so they stay here (owner spec,
+     * 2026-11-28, Task 1A: "keep non-number brand fields"). The actual
+     * numbers these sit beside now come from `settings.contact` and can
+     * change at any time from the admin Settings screen; if the primary or
+     * second line's carrier ever changes along with its number, update the
+     * label here too.
      */
-    phone: {
-      display: '0908 469 6246',
-      network: 'Smart',
-      tel: '+639084696246',
-      /** wa.me wants the international number with no "+" or spaces. */
-      whatsapp: '639084696246',
-    },
-    altPhone: {
-      display: '0927 737 8431',
-      network: 'Globe',
-      tel: '+639277378431',
-      /** wa.me wants the international number with no "+" or spaces. */
-      whatsapp: '639277378431',
-    },
+    phone: { network: 'Smart' },
+    altPhone: { network: 'Globe' },
     email: (env.VITE_CONTACT_EMAIL as string) ?? 'hello@travelsugbo.com',
     facebook: 'https://www.facebook.com/profile.php?id=61574390071362',
     address: 'Office address pending — Cebu, Philippines',
@@ -158,26 +153,19 @@ export function footerTagline(
   return trimmed ? trimmed : siteTagline(showTours);
 }
 
-/** Builds a wa.me deep link with an optional prefilled message. */
-export function whatsappLink(message?: string) {
-  const base = `https://wa.me/${SITE.contact.altPhone.whatsapp}`;
-  return message ? `${base}?text=${encodeURIComponent(message)}` : base;
-}
-
-/**
- * Viber deep link. The number must be percent-encoded ("+" becomes %2B) or
- * Viber reads it as a space and the chat opens on an empty recipient.
- */
-export function viberLink() {
-  return `viber://chat?number=${encodeURIComponent(SITE.contact.altPhone.tel)}`;
-}
-
 /** `tel:` href for either line. */
 export function telLink(tel: string) {
   return `tel:${tel}`;
 }
 
-/** Builds a wa.me deep link for a specific E.164 phone number with an optional message. */
+/**
+ * Builds a wa.me deep link for a given number with an optional prefilled
+ * message. Every public surface's WhatsApp link goes through this, passing
+ * `settings.contact.whatsapp` from `trpc.settings.get` — never a hardcoded
+ * number of its own (owner spec, 2026-11-28, Task 1A). `e164` need not
+ * actually carry a leading "+" (the stored `whatsapp` setting doesn't); any
+ * one is stripped here since wa.me wants bare digits.
+ */
 export function phoneWhatsappLink(e164: string, message?: string): string {
   const digits = e164.replace(/^\+/, '');
   const base = `https://wa.me/${digits}`;
@@ -185,10 +173,15 @@ export function phoneWhatsappLink(e164: string, message?: string): string {
 }
 
 /**
- * Viber deep link for a specific E.164 phone number. The number must be
- * percent-encoded ("+" becomes %2B) or Viber reads it as a space and the
- * chat opens on an empty recipient.
+ * Viber deep link for a given number. The number must carry a leading "+",
+ * percent-encoded ("+" becomes %2B), or Viber reads it as a space and the
+ * chat opens on an empty recipient — added here if missing, since the
+ * fallback value (`settings.contact.viber`, resolved server-side to the
+ * WhatsApp number when no Viber number of its own is set — owner spec,
+ * 2026-11-28, Task 1A) carries no "+" of its own. Every public surface's
+ * Viber link passes that settings value — never a hardcoded number.
  */
 export function phoneViberLink(e164: string): string {
-  return `viber://chat?number=${encodeURIComponent(e164)}`;
+  const withPlus = e164 === '' || e164.startsWith('+') ? e164 : `+${e164}`;
+  return `viber://chat?number=${encodeURIComponent(withPlus)}`;
 }

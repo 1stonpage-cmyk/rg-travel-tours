@@ -13,7 +13,7 @@ import { Skeleton } from '@/components/common/Skeleton';
 import { Button } from '@/components/ui/button';
 import { WhatsAppGlyph } from '@/components/common/BrandGlyphs';
 import { trackEvent } from '@/lib/consent/scripts';
-import { whatsappLink } from '@/lib/site';
+import { phoneWhatsappLink } from '@/lib/site';
 import { TRANSFER_PRODUCT_TYPE_LABELS } from '@/lib/transfer-product-labels';
 import { trpc } from '@/lib/trpc';
 import { buildWithDetailsMessage } from '@/lib/whatsapp-message';
@@ -211,7 +211,8 @@ export default function TransferRoutePage() {
    * ever links to the one-way product). Every other token (date/passengers/
    * bags/vehicle/pickup) is unknown at this point, so those lines drop.
    */
-  const whatsappHref = whatsappLink(
+  const whatsappHref = phoneWhatsappLink(
+    settingsQuery.data?.contact.whatsapp ?? '',
     buildWithDetailsMessage(settingsQuery.data?.whatsappMessage.withDetails ?? '', {
       route: `${pickupPlace.name} to ${dropoffPlace.name}`,
       trip: TRANSFER_PRODUCT_TYPE_LABELS.transfer_one_way,

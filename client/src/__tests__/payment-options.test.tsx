@@ -14,7 +14,6 @@ import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 import PaymentOptions from '@/components/checkout/PaymentOptions';
-import { SITE } from '@/lib/site';
 import { TrpcProviders } from '@/lib/trpc';
 import { SETTINGS_FIXTURE } from './helpers/fixtures';
 import { mockTrpc } from './helpers/mock-trpc';
@@ -92,7 +91,7 @@ describe('ContactToPay — call number hidden (owner decision 2026-11-27)', () =
       },
     });
     renderPaymentOptions();
-    expect(await screen.findByText(SITE.contact.phone.display)).toBeInTheDocument();
+    expect(await screen.findByText(SETTINGS_FIXTURE.contact.phoneDisplay!)).toBeInTheDocument();
   });
 
   it('removes the phone number and keeps the WhatsApp link when false', async () => {
@@ -110,7 +109,7 @@ describe('ContactToPay — call number hidden (owner decision 2026-11-27)', () =
     // which renders unconditionally in both states) is what actually proves
     // settings has resolved before the assertions below run.
     await screen.findByText("We'll take your payment directly");
-    expect(screen.queryByText(SITE.contact.phone.display)).not.toBeInTheDocument();
+    expect(screen.queryByText(SETTINGS_FIXTURE.contact.phoneDisplay!)).not.toBeInTheDocument();
     expect(document.querySelector('a[href^="tel:"]')).toBeNull();
     expect(screen.getByText('Message us on WhatsApp')).toBeInTheDocument();
   });

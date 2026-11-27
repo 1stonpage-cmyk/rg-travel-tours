@@ -68,6 +68,7 @@ const CONTACT = {
   phoneDisplay: '0908 469 6246',
   phoneTel: '+639084696246',
   whatsapp: '639084696246',
+  viber: '639084696246',
   altPhoneDisplay: '0927 737 8431',
   altPhoneTel: '+639277378431',
   facebook: 'https://www.facebook.com/profile.php?id=61574390071362',

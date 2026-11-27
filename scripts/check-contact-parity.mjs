@@ -1,15 +1,24 @@
 /**
  * The contact details exist in two places that cannot import from each other:
  *
- *   client/src/lib/site.ts   the React app's single source of truth
- *   coming-soon/index.html   a standalone static page, no build step, no JS
+ *   server/src/db/seed-data.ts   the real phone/WhatsApp/Viber numbers (and
+ *                                 the source every public page reads them
+ *                                 from, via the database — see
+ *                                 client/src/lib/site.ts's own header)
+ *   client/src/lib/site.ts       motto, Facebook URL, email and the
+ *                                 other-services sentence — non-number brand
+ *                                 fields that stayed hardcoded (owner spec,
+ *                                 2026-11-28, Task 1A)
+ *   coming-soon/index.html       a standalone static page, no build step, no
+ *                                 JS, so it cannot read either source live
  *
  * A number corrected in one and forgotten in the other is the exact failure
  * this guards: the holding page is what the apex domain serves until launch,
- * so a stale number there is a lost booking. This script reads the real values
- * out of site.ts and fails if the static page disagrees — including any extra
- * `tel:`, `wa.me`, `viber:` or `mailto:` target that site.ts does not know
- * about, which is how a leftover placeholder would survive.
+ * so a stale number there is a lost booking. This script reads the real
+ * values out of the two source files and fails if the static page disagrees
+ * — including any extra `tel:`, `wa.me`, `viber:` or `mailto:` target that
+ * neither source knows about, which is how a leftover placeholder would
+ * survive.
  *
  * Run standalone (`node scripts/check-contact-parity.mjs`) or via `pnpm test`.
  */
@@ -19,41 +28,43 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const siteFile = join(repoRoot, 'client/src/lib/site.ts');
+const seedFile = join(repoRoot, 'server/src/db/seed-data.ts');
 const pageFile = join(repoRoot, 'coming-soon/index.html');
 
 const site = readFileSync(siteFile, 'utf8');
+const seed = readFileSync(seedFile, 'utf8');
 const page = readFileSync(pageFile, 'utf8');
 
 const failures = [];
 
-/** Pull a single quoted string value out of site.ts by key path. */
-function value(key) {
-  const match = new RegExp(`${key}:\\s*'([^']*)'`).exec(site);
+/** Pull a single quoted string value out of a source file by key. */
+function value(source, sourceLabel, key) {
+  const match = new RegExp(`${key}:\\s*'([^']*)'`).exec(source);
   if (!match) {
-    failures.push(`site.ts: could not read ${key} — the shape of SITE.contact changed`);
+    failures.push(`${sourceLabel}: could not read ${key} — its shape changed`);
     return null;
   }
   return match[1];
 }
 
+// The real numbers now live in the seed (server/src/db/seed-data.ts's
+// `contact` block), not in site.ts — see this file's own header.
 const expected = {
-  phoneDisplay: value('display'),
-  phoneTel: value('tel'),
-  whatsapp: value('whatsapp'),
-  facebook: value('facebook'),
-  motto: value('motto'),
+  phoneDisplay: value(seed, 'seed-data.ts', 'phoneDisplay'),
+  phoneTel: value(seed, 'seed-data.ts', 'phoneTel'),
+  whatsapp: value(seed, 'seed-data.ts', 'whatsapp'),
+  altPhoneDisplay: value(seed, 'seed-data.ts', 'altPhoneDisplay'),
+  altPhoneTel: value(seed, 'seed-data.ts', 'altPhoneTel'),
+  facebook: value(site, 'site.ts', 'facebook'),
+  motto: value(site, 'site.ts', 'motto'),
 };
 
-// `display`/`tel`/`whatsapp` each appear twice (primary, then alternate);
-// take the second of each. WhatsApp/Viber now link off the ALTERNATE number
-// (owner decision 2026-11-11, 1B), so `altPhoneWhatsapp` is what the wa.me/
-// viber checks below must compare against — not the primary `whatsapp`.
-const displays = [...site.matchAll(/display:\s*'([^']*)'/g)].map((m) => m[1]);
-const tels = [...site.matchAll(/tel:\s*'([^']*)'/g)].map((m) => m[1]);
-const whatsapps = [...site.matchAll(/whatsapp:\s*'([^']*)'/g)].map((m) => m[1]);
-expected.altPhoneDisplay = displays[1] ?? null;
-expected.altPhoneTel = tels[1] ?? null;
-expected.altPhoneWhatsapp = whatsapps[1] ?? null;
+// "Empty means use the WhatsApp number" (owner spec, 2026-11-28, Task 1A) —
+// the same fallback `resolveContact()` applies server-side. The seed ships
+// an empty `viber`, so Viber's real target today is `whatsapp`, with a
+// leading "+" added (wa.me wants bare digits; viber:// wants "+").
+const seededViber = value(seed, 'seed-data.ts', 'viber');
+expected.viber = seededViber || `+${expected.whatsapp ?? ''}`;
 
 // Email keeps its env fallback: `(env.VITE_CONTACT_EMAIL as string) ?? '...'`.
 expected.email = /VITE_CONTACT_EMAIL as string\) \?\? '([^']*)'/.exec(site)?.[1] ?? null;
@@ -66,7 +77,7 @@ expected.services = [before, link, after].every(Boolean)
   : null;
 
 for (const [key, got] of Object.entries(expected)) {
-  if (got === null || got === undefined) failures.push(`site.ts: ${key} is missing`);
+  if (got === null || got === undefined) failures.push(`${key} is missing`);
 }
 
 /** Text of the page with entities and whitespace normalised for comparison. */
@@ -78,15 +89,14 @@ const pageText = page
   .replace(/\s+/g, ' ')
   .trim();
 
+// WhatsApp/Viber are independent settings fields now (owner spec,
+// 2026-11-28, Task 1A) — no longer tied by construction to `altPhoneTel`, so
+// each is checked against its own expected value above.
 const must = [
-  ['WhatsApp link', `https://wa.me/${expected.altPhoneWhatsapp}`, page],
+  ['WhatsApp link', `https://wa.me/${expected.whatsapp}`, page],
   ['primary tel: link', `"tel:${expected.phoneTel}"`, page],
   ['alternate tel: link', `"tel:${expected.altPhoneTel}"`, page],
-  [
-    'Viber deep link',
-    `viber://chat?number=${encodeURIComponent(expected.altPhoneTel ?? '')}`,
-    page,
-  ],
+  ['Viber deep link', `viber://chat?number=${encodeURIComponent(expected.viber ?? '')}`, page],
   ['Facebook link', expected.facebook, page],
   ['mailto: link', `mailto:${expected.email}`, page],
   ['primary number, displayed', expected.phoneDisplay, pageText],
@@ -101,11 +111,11 @@ for (const [label, needle, haystack] of must) {
   }
 }
 
-/** No contact target may exist on the page that site.ts does not declare. */
+/** No contact target may exist on the page that the seed/site do not declare. */
 const allowed = {
   'tel:': new Set([`tel:${expected.phoneTel}`, `tel:${expected.altPhoneTel}`]),
-  'wa.me': new Set([`https://wa.me/${expected.altPhoneWhatsapp}`]),
-  'viber:': new Set([`viber://chat?number=${encodeURIComponent(expected.altPhoneTel ?? '')}`]),
+  'wa.me': new Set([`https://wa.me/${expected.whatsapp}`]),
+  'viber:': new Set([`viber://chat?number=${encodeURIComponent(expected.viber ?? '')}`]),
   'mailto:': new Set([`mailto:${expected.email}`]),
   'facebook.com': new Set([expected.facebook]),
 };
@@ -120,7 +130,8 @@ for (const [, href] of page.matchAll(/href="([^"]+)"/g)) {
 
 if (failures.length > 0) {
   console.error(
-    `\nContact details differ between ${relative(repoRoot, siteFile).replace(/\\/g, '/')} and ` +
+    `\nContact details differ between ${relative(repoRoot, seedFile).replace(/\\/g, '/')} / ` +
+      `${relative(repoRoot, siteFile).replace(/\\/g, '/')} and ` +
       `${relative(repoRoot, pageFile).replace(/\\/g, '/')}:\n` +
       failures.map((f) => `  - ${f}`).join('\n') +
       '\n',
@@ -129,6 +140,6 @@ if (failures.length > 0) {
 }
 
 console.log(
-  `check-contact-parity: site.ts and coming-soon/index.html agree ` +
+  `check-contact-parity: seed-data.ts / site.ts and coming-soon/index.html agree ` +
     `(${expected.phoneDisplay} / ${expected.altPhoneDisplay}).`,
 );

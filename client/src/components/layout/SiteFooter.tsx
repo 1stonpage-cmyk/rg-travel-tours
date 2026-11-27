@@ -7,11 +7,11 @@ import { useShowCallNumbers } from '@/lib/contact-visibility';
 import {
   BUILT_BY,
   footerTagline,
+  phoneViberLink,
+  phoneWhatsappLink,
   SITE,
   telLink,
-  viberLink,
   visibleNav,
-  whatsappLink,
 } from '@/lib/site';
 import { trpc } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
@@ -110,6 +110,14 @@ export default function SiteFooter() {
   const manualEnabled = settings?.manualTransferEnabled === true;
   /** BUG-100 — same source as ContactSection's hours. See the Clock row below. */
   const hoursNote = settings?.contact.hoursNote ?? null;
+  // Settings-driven, never a hardcoded copy from @/lib/site (owner spec,
+  // 2026-11-28, Task 1A).
+  const phoneTel = settings?.contact.phoneTel ?? '';
+  const phoneDisplay = settings?.contact.phoneDisplay ?? '';
+  const altPhoneTel = settings?.contact.altPhoneTel ?? '';
+  const altPhoneDisplay = settings?.contact.altPhoneDisplay ?? '';
+  const whatsapp = settings?.contact.whatsapp ?? '';
+  const viber = settings?.contact.viber ?? '';
 
   return (
     <footer className="bg-brand-blue-950 text-brand-blue-100 mt-16">
@@ -138,10 +146,10 @@ export default function SiteFooter() {
               <li className="flex items-center gap-2">
                 <Phone className="size-4 shrink-0" aria-hidden="true" />
                 <a
-                  href={telLink(SITE.contact.phone.tel)}
+                  href={telLink(phoneTel)}
                   className="flex min-h-11 items-center gap-2 hover:underline"
                 >
-                  {SITE.contact.phone.display}
+                  {phoneDisplay}
                   <span className="text-brand-blue-300 text-xs">{SITE.contact.phone.network}</span>
                 </a>
               </li>
@@ -155,10 +163,10 @@ export default function SiteFooter() {
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                   {showCallNumbers && (
                     <a
-                      href={telLink(SITE.contact.altPhone.tel)}
+                      href={telLink(altPhoneTel)}
                       className="flex min-h-11 items-center gap-2 hover:underline"
                     >
-                      {SITE.contact.altPhone.display}
+                      {altPhoneDisplay}
                       <span className="text-brand-blue-300 text-xs">
                         {SITE.contact.altPhone.network}
                       </span>
@@ -167,13 +175,13 @@ export default function SiteFooter() {
                   <span className="flex items-center gap-2">
                     <ChatButton
                       tone="whatsapp"
-                      href={whatsappLink(settings?.whatsappMessage.general)}
+                      href={phoneWhatsappLink(whatsapp, settings?.whatsappMessage.general)}
                       label="Chat on WhatsApp"
                       external
                     >
                       <WhatsAppGlyph className="size-5" />
                     </ChatButton>
-                    <ChatButton tone="viber" href={viberLink()} label="Chat on Viber">
+                    <ChatButton tone="viber" href={phoneViberLink(viber)} label="Chat on Viber">
                       <ViberGlyph className="size-5" />
                     </ChatButton>
                   </span>

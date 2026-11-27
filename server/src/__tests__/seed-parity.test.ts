@@ -20,12 +20,17 @@ function firstQuoted(key: string): string {
   return m[1];
 }
 
-describe('seeded contact settings mirror site.ts', () => {
+/**
+ * Only the NON-number fields still mirror `site.ts` — motto, Facebook,
+ * tagline, the other-services sentence. The phone/WhatsApp/Viber numbers do
+ * not: `site.ts` no longer carries any of its own (owner spec, 2026-11-28,
+ * Task 1A — it used to, and an admin editing them in Settings had no effect
+ * on the live site, which is the bug this fixed). `SEED_SETTINGS.contact` is
+ * now the one source of truth for those; `scripts/check-contact-parity.mjs`
+ * is what keeps THAT in sync with the standalone coming-soon page.
+ */
+describe('seeded contact settings mirror site.ts (non-number fields only)', () => {
   const contact = SEED_SETTINGS.contact;
-
-  it('matches the WhatsApp number', () => {
-    expect(contact.whatsapp).toBe(firstQuoted('whatsapp'));
-  });
 
   it('matches the Facebook URL and motto', () => {
     expect(contact.facebook).toBe(firstQuoted('facebook'));
@@ -40,16 +45,26 @@ describe('seeded contact settings mirror site.ts', () => {
     expect(contact.tagline).toBe(firstQuoted('tagline'));
   });
 
-  it('matches both displayed numbers', () => {
-    const displays = [...siteTs.matchAll(/display:\s*'([^']*)'/g)].map((m) => m[1]);
-    expect(contact.phoneDisplay).toBe(displays[0]);
-    expect(contact.altPhoneDisplay).toBe(displays[1]);
-  });
-
   it('matches the other-services sentence, part for part', () => {
     const parts = /otherServices:\s*{([\s\S]*?)}/.exec(siteTs)?.[1] ?? '';
     const [before, link, after] = [...parts.matchAll(/'([^']*)'/g)].map((m) => m[1]);
     expect(contact.otherServices).toEqual({ before, link, after });
+  });
+});
+
+describe('seeded contact numbers (owner spec, 2026-11-28, Task 1A)', () => {
+  const contact = SEED_SETTINGS.contact;
+
+  it('seeds the real, client-confirmed numbers', () => {
+    expect(contact.phoneDisplay).toBe('0908 469 6246');
+    expect(contact.phoneTel).toBe('+639084696246');
+    expect(contact.whatsapp).toBe('639084696246');
+    expect(contact.altPhoneDisplay).toBe('0927 737 8431');
+    expect(contact.altPhoneTel).toBe('+639277378431');
+  });
+
+  it('seeds no Viber number of its own — falls back to WhatsApp', () => {
+    expect(contact.viber).toBe('');
   });
 });
 

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { useShowCallNumbers } from '@/lib/contact-visibility';
-import { SITE, viberLink, whatsappLink } from '@/lib/site';
+import { phoneViberLink, phoneWhatsappLink } from '@/lib/site';
 import { trpc } from '@/lib/trpc';
 
 /**
@@ -35,19 +35,24 @@ export function ContactLine() {
   const showCallNumbers = useShowCallNumbers();
   const { data: settings } = trpc.settings.get.useQuery();
   if (showCallNumbers) {
-    return <a href={`tel:${SITE.contact.phone.tel}`}>{SITE.contact.phone.display}</a>;
+    const phoneTel = settings?.contact.phoneTel ?? '';
+    const phoneDisplay = settings?.contact.phoneDisplay ?? '';
+    return <a href={`tel:${phoneTel}`}>{phoneDisplay}</a>;
   }
   return (
     <>
       <a
-        href={whatsappLink(settings?.whatsappMessage.general)}
+        href={phoneWhatsappLink(
+          settings?.contact.whatsapp ?? '',
+          settings?.whatsappMessage.general,
+        )}
         target="_blank"
         rel="noreferrer noopener"
       >
         WhatsApp
       </a>
       {' or '}
-      <a href={viberLink()}>Viber</a>
+      <a href={phoneViberLink(settings?.contact.viber ?? '')}>Viber</a>
     </>
   );
 }

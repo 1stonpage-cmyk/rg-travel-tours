@@ -637,12 +637,12 @@ describe('permits', () => {
   });
 });
 
-describe('contact details still come from the pinned site.ts-mirrored values', () => {
+describe('contact details come from settings, not a hardcoded site.ts copy', () => {
   it('keeps the real phone number in ContactSection', async () => {
     mockTrpc({ 'settings.get': SETTINGS_FIXTURE });
     renderWithTrpc(<ContactSection />);
 
-    const occurrences = await screen.findAllByText(SITE.contact.phone.display);
+    const occurrences = await screen.findAllByText(SETTINGS_FIXTURE.contact.phoneDisplay!);
     expect(occurrences.length).toBeGreaterThan(0);
   });
 });
@@ -655,12 +655,16 @@ describe('ContactSection — call numbers hidden (owner decision 2026-11-27)', (
       }),
     });
     renderWithTrpc(<ContactSection />);
-    expect(await screen.findByText(/Call or text \(Smart\)/)).toBeInTheDocument();
+    // "Call or text (Smart)" is a static label (SITE.contact.phone.network)
+    // and renders on the very first paint, before `settings.get` resolves —
+    // waiting on it would prove nothing about the settings-driven numbers
+    // below. Wait on the number itself instead.
+    expect(await screen.findAllByText(SETTINGS_FIXTURE.contact.altPhoneDisplay!)).toHaveLength(3);
+    expect(screen.getByText(/Call or text \(Smart\)/)).toBeInTheDocument();
     expect(screen.getByText(/Call or text \(Globe\)/)).toBeInTheDocument();
     // Task 1A: ON means exactly as before — the WhatsApp/Viber rows still
     // show the real number under their heading, alongside the existing
     // "Call or text (Globe)" row that already shared this same number.
-    expect(screen.getAllByText(SITE.contact.altPhone.display)).toHaveLength(3);
   });
 
   /**
@@ -716,8 +720,8 @@ describe('SiteFooter — call numbers hidden (owner decision 2026-11-27)', () =>
       }),
     });
     renderWithTrpc(<SiteFooter />);
-    expect(await screen.findByText(SITE.contact.phone.display)).toBeInTheDocument();
-    expect(screen.getByText(SITE.contact.altPhone.display)).toBeInTheDocument();
+    expect(await screen.findByText(SETTINGS_FIXTURE.contact.phoneDisplay!)).toBeInTheDocument();
+    expect(screen.getByText(SETTINGS_FIXTURE.contact.altPhoneDisplay!)).toBeInTheDocument();
     expect(screen.getByText('Smart')).toBeInTheDocument();
     expect(screen.getByText('Globe')).toBeInTheDocument();
   });
@@ -734,8 +738,8 @@ describe('SiteFooter — call numbers hidden (owner decision 2026-11-27)', () =>
     // yet — wait for the caption text that ONLY renders once it has.
     await screen.findByText('Message us on WhatsApp or Viber');
 
-    expect(screen.queryByText(SITE.contact.phone.display)).not.toBeInTheDocument();
-    expect(screen.queryByText(SITE.contact.altPhone.display)).not.toBeInTheDocument();
+    expect(screen.queryByText(SETTINGS_FIXTURE.contact.phoneDisplay!)).not.toBeInTheDocument();
+    expect(screen.queryByText(SETTINGS_FIXTURE.contact.altPhoneDisplay!)).not.toBeInTheDocument();
     expect(screen.queryByText('Smart')).not.toBeInTheDocument();
     expect(screen.queryByText('Globe')).not.toBeInTheDocument();
     expect(document.querySelector('a[href^="tel:"]')).toBeNull();
