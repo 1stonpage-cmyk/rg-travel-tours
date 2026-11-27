@@ -1,5 +1,5 @@
 /**
- * What each of the twenty `settings` blocks looks like on the admin screen,
+ * What each of the twenty-one `settings` blocks looks like on the admin screen,
  * and how its fields convert to and from the stored JSON (Week 7 plan, Task 9).
  *
  * Separate from `AdminSettingsPage.tsx` for two reasons: the page then holds
@@ -507,6 +507,29 @@ export const BLOCKS: readonly BlockSpec[] = [
     ],
   },
   {
+    key: 'whatsapp_message',
+    title: 'WhatsApp message',
+    blurb:
+      'The pre-written text every "Chat on WhatsApp" link opens with. "General" has no tokens and is used before a guest has told us anything. "With details" is used on a route page and the transfer booking form, filled in from whatever the guest has typed so far — a line whose only token is still blank is dropped rather than shown empty.',
+    shape: 'object',
+    fields: [
+      {
+        name: 'general',
+        label: 'General message',
+        kind: 'textarea',
+        rows: 6,
+        hint: 'No tokens. Shown before a guest has told us anything about their trip.',
+      },
+      {
+        name: 'withDetails',
+        label: 'With-details message',
+        kind: 'textarea',
+        rows: 10,
+        hint: 'Allowed tokens: {{route}} {{trip}} {{date}} {{passengers}} {{bags}} {{vehicle}} {{pickup}}. A line whose only token is still blank is dropped.',
+      },
+    ],
+  },
+  {
     key: 'legal_privacy',
     title: 'Privacy notice',
     blurb:
@@ -555,8 +578,16 @@ export const GROUPS: readonly GroupSpec[] = [
     id: 'business',
     title: 'Business',
     blurb:
-      'Opening hours, contact details, the bookable date window, whether tours are shown at all, how transfers are run, and the permits.',
-    keys: ['business_hours', 'contact', 'booking', 'show_tours', 'transfer_operations', 'permits'],
+      'Opening hours, contact details, the bookable date window, whether tours are shown at all, how transfers are run, the permits, and the WhatsApp message.',
+    keys: [
+      'business_hours',
+      'contact',
+      'booking',
+      'show_tours',
+      'transfer_operations',
+      'permits',
+      'whatsapp_message',
+    ],
   },
   {
     id: 'payments',

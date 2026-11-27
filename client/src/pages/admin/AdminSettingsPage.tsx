@@ -86,6 +86,7 @@ import {
 import { firstValidationMessage } from '@/lib/field-errors';
 import { trpc } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
+import { buildWithDetailsMessage } from '@/lib/whatsapp-message';
 
 const CARD = 'border-brand-blue-100 rounded-[14px] border bg-white';
 const NOTICE =
@@ -525,6 +526,58 @@ function PaymentQrImage({
   );
 }
 
+/**
+ * A sample trip for the `whatsapp_message` block's live preview below — not
+ * real data, just enough to show an owner what a filled-in `withDetails`
+ * message actually looks like once sent.
+ */
+const WHATSAPP_PREVIEW_SAMPLE_TRIP = {
+  route: 'Mactan-Cebu Airport to Moalboal',
+  trip: 'Airport transfer',
+  date: '2026-12-10',
+  passengers: '2',
+  bags: '3',
+  vehicle: 'SUV',
+  pickup: 'Terminal 2 arrivals',
+} as const;
+
+/**
+ * `whatsapp_message`'s own bespoke addition to the generic `object` editor —
+ * same pattern as `PaymentQrImage` beside `payment_qr`'s fields (see
+ * `BlockSpec.shape`'s own note): the two textareas are plain generic
+ * fields, this is the one thing the generic grid cannot draw. Shows the
+ * general message as typed, and the with-details message filled in from a
+ * fixed sample trip through the SAME helper (`buildWithDetailsMessage`) the
+ * public booking form actually calls, plus the literal `wa.me` text so an
+ * owner can see what guest actually ends up sending.
+ */
+function WhatsappMessagePreview({ row }: { row: Record<string, string> }) {
+  const sample = buildWithDetailsMessage(row.withDetails ?? '', WHATSAPP_PREVIEW_SAMPLE_TRIP);
+  return (
+    <div className="space-y-3">
+      <div>
+        <p className="text-brand-ink text-xs font-bold uppercase tracking-wide">
+          General — as typed
+        </p>
+        <pre className="border-brand-blue-100 mt-1 whitespace-pre-wrap rounded-xl border bg-white p-3 text-sm">
+          {row.general || '—'}
+        </pre>
+      </div>
+      <div>
+        <p className="text-brand-ink text-xs font-bold uppercase tracking-wide">
+          With details — sample trip
+        </p>
+        <pre className="border-brand-blue-100 mt-1 whitespace-pre-wrap rounded-xl border bg-white p-3 text-sm">
+          {sample || '—'}
+        </pre>
+        <p className="text-muted-foreground mt-1 break-all text-xs">
+          wa.me text= {encodeURIComponent(sample)}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 /* ---------------------------------------------------------- The three shapes */
 
 /** One record: the fields, flat, with a single Save. */
@@ -561,6 +614,8 @@ function ObjectBlockEditor({ block, stored }: { block: BlockSpec; stored: unknow
         errors={errors}
         onChange={(name, next) => setRow((current) => ({ ...current, [name]: next }))}
       />
+
+      {block.key === 'whatsapp_message' ? <WhatsappMessagePreview row={row} /> : null}
 
       <div className="flex justify-end">
         <Button type="submit" variant="primary-pill" disabled={write.isPending}>
